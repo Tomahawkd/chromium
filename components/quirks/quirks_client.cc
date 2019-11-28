@@ -5,6 +5,7 @@
 #include "components/quirks/quirks_client.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/strings/stringprintf.h"
@@ -62,8 +63,7 @@ QuirksClient::QuirksClient(int64_t product_id,
       manager_(manager),
       icc_path_(manager->delegate()->GetDisplayProfileDirectory().Append(
           IdToFileName(product_id))),
-      backoff_entry_(&kDefaultBackoffPolicy),
-      weak_ptr_factory_(this) {}
+      backoff_entry_(&kDefaultBackoffPolicy) {}
 
 QuirksClient::~QuirksClient() {}
 
@@ -89,7 +89,7 @@ void QuirksClient::StartDownload() {
   resource_request->url = GURL(url);
   resource_request->load_flags =
       net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
-  resource_request->allow_credentials = false;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("quirks_display_fetcher", R"(
@@ -188,7 +188,7 @@ void QuirksClient::Retry() {
 bool QuirksClient::ParseResult(const std::string& result, std::string* data) {
   std::string data64;
   const base::DictionaryValue* dict;
-  std::unique_ptr<base::Value> json = base::JSONReader::Read(result);
+  std::unique_ptr<base::Value> json = base::JSONReader::ReadDeprecated(result);
   if (!json || !json->GetAsDictionary(&dict) ||
       !dict->GetString("icc", &data64)) {
     VLOG(1) << "Failed to parse JSON icc data";

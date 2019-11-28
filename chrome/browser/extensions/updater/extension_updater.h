@@ -8,18 +8,16 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <queue>
 #include <set>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
-#include "base/containers/stack.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
-#include "base/time/time.h"
-#include "base/timer/timer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/extension_registry_observer.h"
@@ -36,6 +34,7 @@ namespace extensions {
 
 class ExtensionCache;
 class ExtensionPrefs;
+class ExtensionRegistry;
 class ExtensionServiceInterface;
 class ExtensionSet;
 struct ExtensionUpdateCheckParams;
@@ -78,14 +77,26 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
     // right away.
     bool install_immediately;
 
-    // An extension update check can be originated by a user or by a timer.
-    // When the value of |fetch_priority| is FOREGROUND, the update request was
-    // initiated by a user.
+    // An extension update check can be originated by a user or by a scheduled
+    // task. When the value of |fetch_priority| is FOREGROUND, the update
+    // request was initiated by a user.
     ManifestFetchData::FetchPriority fetch_priority;
 
     // Callback to call when the update check is complete. Can be null, if
     // you're not interested in when this happens.
     FinishedCallback callback;
+  };
+
+  // A class for use in tests to skip scheduled update checks for extensions
+  // during the lifetime of an instance of it. Only one instance should be alive
+  // at any given time.
+  class ScopedSkipScheduledCheckForTest {
+   public:
+    ScopedSkipScheduledCheckForTest();
+    ~ScopedSkipScheduledCheckForTest();
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(ScopedSkipScheduledCheckForTest);
   };
 
   // Holds a pointer to the passed |service|, using it for querying installed
@@ -112,10 +123,6 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // already a pending task that has not yet run.
   void CheckSoon();
 
-  // Starts an update check for the specified extension soon.
-  void CheckExtensionSoon(const std::string& extension_id,
-                          FinishedCallback callback);
-
   // Starts an update check right now, instead of waiting for the next
   // regularly scheduled check or a pending check from CheckSoon().
   void CheckNow(CheckParams params);
@@ -128,8 +135,13 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // Overrides the extension cache with |extension_cache| for testing.
   void SetExtensionCacheForTesting(ExtensionCache* extension_cache);
 
-  // Stop the timer to prevent scheduled updates for testing.
-  void StopTimerForTesting();
+  // Overrides the extension downloader with |downloader| for testing.
+  void SetExtensionDownloaderForTesting(
+      std::unique_ptr<ExtensionDownloader> downloader);
+
+  // After this is called, the next ExtensionUpdater instance to be started will
+  // call CheckNow() instead of CheckSoon() for its initial update.
+  static void UpdateImmediatelyForFirstRun();
 
  private:
   friend class ExtensionUpdaterTest;
@@ -170,14 +182,9 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // |downloader|.
   void EnsureDownloaderCreated();
 
-  // Computes when to schedule the first update check.
-  base::TimeDelta DetermineFirstCheckDelay();
-
-  // Sets the timer to call TimerFired after roughly |target_delay| from now.
-  // To help spread load evenly on servers, this method adds some random
-  // jitter. It also saves the scheduled time so it can be reloaded on
-  // browser restart.
-  void ScheduleNextCheck(const base::TimeDelta& target_delay);
+  // Schedules a task to call NextCheck after |frequency_| delay, plus
+  // or minus 0 to 20% (to help spread load evenly on servers).
+  void ScheduleNextCheck();
 
   // Add fetch records for extensions that are installed to the downloader,
   // ignoring |pending_ids| so the extension isn't fetched again.
@@ -187,14 +194,18 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
                        ManifestFetchData::FetchPriority fetch_priority,
                        ExtensionUpdateCheckParams* update_check_params);
 
-  // BaseTimer::ReceiverMethod callback.
-  void TimerFired();
+  // Conduct a check as scheduled by ScheduleNextCheck.
+  void NextCheck();
 
   // Posted by CheckSoon().
   void DoCheckSoon();
 
   // Implementation of ExtensionDownloaderDelegate.
-  void OnExtensionDownloadFailed(const std::string& id,
+  void OnExtensionDownloadStageChanged(const ExtensionId& id,
+                                       Stage stage) override;
+  void OnExtensionDownloadCacheStatusRetrieved(const ExtensionId& id,
+                                               CacheStatus status) override;
+  void OnExtensionDownloadFailed(const ExtensionId& id,
                                  Error error,
                                  const PingResult& ping,
                                  const std::set<int>& request_ids) override;
@@ -205,14 +216,14 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
                                    const PingResult& ping,
                                    const std::set<int>& request_id,
                                    const InstallCallback& callback) override;
-  bool GetPingDataForExtension(const std::string& id,
+  bool GetPingDataForExtension(const ExtensionId& id,
                                ManifestFetchData::PingData* ping_data) override;
-  std::string GetUpdateUrlData(const std::string& id) override;
-  bool IsExtensionPending(const std::string& id) override;
-  bool GetExtensionExistingVersion(const std::string& id,
+  std::string GetUpdateUrlData(const ExtensionId& id) override;
+  bool IsExtensionPending(const ExtensionId& id) override;
+  bool GetExtensionExistingVersion(const ExtensionId& id,
                                    std::string* version) override;
 
-  void UpdatePingData(const std::string& id, const PingResult& ping_result);
+  void UpdatePingData(const ExtensionId& id, const PingResult& ping_result);
 
   // Starts installing a crx file that has been fetched but not installed yet.
   void MaybeInstallCRXFile();
@@ -254,13 +265,15 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   // shutdown.
   UpdateService* update_service_;
 
-  base::OneShotTimer timer_;
-  int frequency_seconds_;
+  bool do_scheduled_checks_;
+  base::TimeDelta frequency_;
   bool will_check_soon_;
 
   ExtensionPrefs* extension_prefs_;
   PrefService* prefs_;
   Profile* profile_;
+
+  ExtensionRegistry* registry_;
 
   std::map<int, InProgressCheck> requests_in_progress_;
   int next_request_id_;
@@ -273,12 +286,12 @@ class ExtensionUpdater : public ExtensionDownloaderDelegate,
   bool crx_install_is_running_;
 
   // Fetched CRX files waiting to be installed.
-  std::stack<FetchedCRXFile> fetched_crx_files_;
+  std::queue<FetchedCRXFile> fetched_crx_files_;
   FetchedCRXFile current_crx_file_;
 
   ExtensionCache* extension_cache_;
 
-  base::WeakPtrFactory<ExtensionUpdater> weak_ptr_factory_;
+  base::WeakPtrFactory<ExtensionUpdater> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionUpdater);
 };

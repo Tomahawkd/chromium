@@ -20,6 +20,10 @@ class Rect;
 class RectF;
 }
 
+namespace cc {
+struct ImageHeaderMetadata;
+}
+
 namespace gpu {
 
 struct SwapBuffersCompleteParams;
@@ -116,7 +120,7 @@ class ContextSupport {
   // Maps a buffer that will receive serialized data for an entry to be created.
   // Returns nullptr on failure. If success, must be paired with a call to
   // UnmapAndCreateTransferCacheEntry.
-  virtual void* MapTransferCacheEntry(size_t serialized_size) = 0;
+  virtual void* MapTransferCacheEntry(uint32_t serialized_size) = 0;
 
   // Unmaps the buffer and creates a transfer cache entry with the serialized
   // data.
@@ -134,6 +138,19 @@ class ContextSupport {
 
   virtual unsigned int GetTransferBufferFreeSize() const = 0;
 
+  // Determines if hardware decode acceleration is supported for JPEG images.
+  virtual bool IsJpegDecodeAccelerationSupported() const = 0;
+
+  // Determines if hardware decode acceleration is supported for WebP images.
+  virtual bool IsWebPDecodeAccelerationSupported() const = 0;
+
+  // Determines if |image_metadata| corresponds to an image that can be decoded
+  // using hardware decode acceleration. If this method returns true, then the
+  // client can be confident that a call to
+  // RasterInterface::ScheduleImageDecode() will succeed.
+  virtual bool CanDecodeWithHardwareAcceleration(
+      const cc::ImageHeaderMetadata* image_metadata) const = 0;
+
   // Returns true if the context provider automatically manages calls to
   // GrContext::resetContext under the hood to prevent GL state synchronization
   // problems between the GLES2 interface and skia.
@@ -146,6 +163,10 @@ class ContextSupport {
   virtual void WillCallGLFromSkia() = 0;
 
   virtual void DidCallGLFromSkia() = 0;
+
+  // Notifies the onscreen surface of the display transform applied to the swaps
+  // from the client.
+  virtual void SetDisplayTransform(gfx::OverlayTransform transform) = 0;
 
  protected:
   ContextSupport() = default;

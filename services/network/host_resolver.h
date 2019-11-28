@@ -7,12 +7,16 @@
 
 #include <memory>
 #include <set>
+#include <string>
 
 #include "base/callback.h"
 #include "base/component_export.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "net/dns/public/dns_query_type.h"
 #include "services/network/public/mojom/host_resolver.mojom.h"
 
 namespace net {
@@ -22,6 +26,7 @@ class NetLog;
 }  // namespace net
 
 namespace network {
+class HostResolverMdnsListener;
 class ResolveHostRequest;
 
 class COMPONENT_EXPORT(NETWORK_SERVICE) HostResolver
@@ -30,11 +35,11 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) HostResolver
   using ConnectionShutdownCallback = base::OnceCallback<void(HostResolver*)>;
 
   // Constructs and binds to the given mojom::HostResolver pipe. On pipe close,
-  // cancels all outstanding requests (whether made through the pipe or by
+  // cancels all outstanding receivers (whether made through the pipe or by
   // directly calling ResolveHost()) with ERR_FAILED. Also on pipe close, calls
   // |connection_shutdown_callback| and passes |this| to notify that the
-  // resolver has cancelled all requests and may be cleaned up.
-  HostResolver(mojom::HostResolverRequest resolver_request,
+  // resolver has cancelled all receivers and may be cleaned up.
+  HostResolver(mojo::PendingReceiver<mojom::HostResolver> resolver_receiver,
                ConnectionShutdownCallback connection_shutdown_callback,
                net::HostResolver* internal_resolver,
                net::NetLog* net_log);
@@ -44,9 +49,14 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) HostResolver
   HostResolver(net::HostResolver* internal_resolver, net::NetLog* net_log);
   ~HostResolver() override;
 
-  void ResolveHost(const net::HostPortPair& host,
-                   mojom::ResolveHostParametersPtr optional_parameters,
-                   mojom::ResolveHostClientPtr response_client) override;
+  void ResolveHost(
+      const net::HostPortPair& host,
+      mojom::ResolveHostParametersPtr optional_parameters,
+      mojo::PendingRemote<mojom::ResolveHostClient> response_client) override;
+  void MdnsListen(const net::HostPortPair& host,
+                  net::DnsQueryType query_type,
+                  mojo::PendingRemote<mojom::MdnsListenClient> response_client,
+                  MdnsListenCallback callback) override;
 
   size_t GetNumOutstandingRequestsForTesting() const;
 
@@ -57,12 +67,15 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) HostResolver
 
  private:
   void OnResolveHostComplete(ResolveHostRequest* request, int error);
+  void OnMdnsListenerCancelled(HostResolverMdnsListener* listener);
   void OnConnectionError();
 
-  mojo::Binding<mojom::HostResolver> binding_;
+  mojo::Receiver<mojom::HostResolver> receiver_;
   ConnectionShutdownCallback connection_shutdown_callback_;
   std::set<std::unique_ptr<ResolveHostRequest>, base::UniquePtrComparator>
       requests_;
+  std::set<std::unique_ptr<HostResolverMdnsListener>, base::UniquePtrComparator>
+      listeners_;
 
   net::HostResolver* const internal_resolver_;
   net::NetLog* const net_log_;

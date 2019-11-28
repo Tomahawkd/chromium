@@ -121,14 +121,7 @@ class Printer(object):
 
     def _print_expected_results_of_type(self, run_results, result_type, result_type_str, tests_with_result_type_callback):
         tests = tests_with_result_type_callback(result_type)
-        now = run_results.tests_by_timeline[test_expectations.NOW]
-        wontfix = run_results.tests_by_timeline[test_expectations.WONTFIX]
-
-        # We use a fancy format string in order to print the data out in a
-        # nicely-aligned table.
-        fmtstr = ('Expect: %%5d %%-8s (%%%dd now, %%%dd wontfix)'
-                  % (self._num_digits(now), self._num_digits(wontfix)))
-        self._print_debug(fmtstr % (len(tests), result_type_str, len(tests & now), len(tests & wontfix)))
+        self._print_debug('Expect: %5d %-8s' % (len(tests), result_type_str))
 
     def _num_digits(self, num):
         ndigits = 1
@@ -165,7 +158,7 @@ class Printer(object):
         if self._options.timing:
             parallel_time = sum(result.total_run_time for result in run_results.results_by_name.values())
 
-            # There is serial overhead in layout_test_runner.run() that we can't easily account for when
+            # There is serial overhead in web_test_runner.run() that we can't easily account for when
             # really running in parallel, but taking the min() ensures that in the worst case
             # (if parallel time is less than run_time) we do account for it.
             serial_time = total_time - min(run_results.run_time, parallel_time)
@@ -275,11 +268,10 @@ class Printer(object):
 
         base = port.lookup_virtual_test_base(test_name)
         if base:
-            args = ' '.join(port.lookup_virtual_test_args(test_name))
-            reference_args = ' '.join(port.lookup_virtual_reference_args(test_name))
             self._print_default(' base: %s' % base)
-            self._print_default(' args: %s' % args)
-            self._print_default(' reference_args: %s' % reference_args)
+        args = port.args_for_test(test_name)
+        if args:
+            self._print_default(' args: %s' % ' '.join(args))
 
         references = port.reference_files(test_name)
         if references:

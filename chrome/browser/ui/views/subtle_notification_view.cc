@@ -10,6 +10,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/font_list.h"
@@ -55,9 +56,7 @@ class SubtleNotificationView::InstructionView : public views::View {
   // more segments delimited by a pair of pipes ('|'); each of these segments
   // will be displayed as a keyboard key. e.g., "Press |Alt|+|Q| to exit" will
   // have "Alt" and "Q" rendered as keys.
-  InstructionView(const base::string16& text,
-                  SkColor foreground_color,
-                  SkColor background_color);
+  explicit InstructionView(const base::string16& text);
 
   const base::string16 text() const { return text_; }
   void SetText(const base::string16& text);
@@ -68,22 +67,17 @@ class SubtleNotificationView::InstructionView : public views::View {
   // keyboard key.
   void AddTextSegment(const base::string16& text, bool format_as_key);
 
-  SkColor foreground_color_;
-  SkColor background_color_;
-
   base::string16 text_;
 
   DISALLOW_COPY_AND_ASSIGN(InstructionView);
 };
 
 SubtleNotificationView::InstructionView::InstructionView(
-    const base::string16& text,
-    SkColor foreground_color,
-    SkColor background_color)
-    : foreground_color_(foreground_color), background_color_(background_color) {
+    const base::string16& text) {
   // The |between_child_spacing| is the horizontal margin of the key name.
   SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::kHorizontal, gfx::Insets(), kKeyNameMarginHorizPx));
+      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(),
+      kKeyNameMarginHorizPx));
 
   SetText(text);
 }
@@ -119,9 +113,12 @@ void SubtleNotificationView::InstructionView::SetText(
 
 void SubtleNotificationView::InstructionView::AddTextSegment(
     const base::string16& text, bool format_as_key) {
+  constexpr SkColor kForegroundColor = SK_ColorWHITE;
+
   views::Label* label = new views::Label(text, kInstructionTextContext);
-  label->SetEnabledColor(foreground_color_);
-  label->SetBackgroundColor(background_color_);
+  label->SetEnabledColor(kForegroundColor);
+  label->SetBackgroundColor(kSubtleNotificationBackgroundColor);
+
   if (!format_as_key) {
     AddChildView(label);
     return;
@@ -129,36 +126,34 @@ void SubtleNotificationView::InstructionView::AddTextSegment(
 
   views::View* key = new views::View;
   auto key_name_layout = std::make_unique<views::BoxLayout>(
-      views::BoxLayout::kHorizontal, gfx::Insets(0, kKeyNamePaddingPx), 0);
+      views::BoxLayout::Orientation::kHorizontal,
+      gfx::Insets(0, kKeyNamePaddingPx), 0);
   key_name_layout->set_minimum_cross_axis_size(
       label->GetPreferredSize().height() + kKeyNamePaddingPx * 2);
   key->SetLayoutManager(std::move(key_name_layout));
   key->AddChildView(label);
   // The key name has a border around it.
   std::unique_ptr<views::Border> border(views::CreateRoundedRectBorder(
-      kKeyNameBorderPx, kKeyNameCornerRadius, foreground_color_));
+      kKeyNameBorderPx, kKeyNameCornerRadius, kForegroundColor));
   key->SetBorder(std::move(border));
   AddChildView(key);
 }
 
 SubtleNotificationView::SubtleNotificationView() : instruction_view_(nullptr) {
-  const SkColor kForegroundColor = SK_ColorWHITE;
-
   std::unique_ptr<views::BubbleBorder> bubble_border(new views::BubbleBorder(
       views::BubbleBorder::NONE, views::BubbleBorder::NO_ASSETS,
       kSubtleNotificationBackgroundColor));
   SetBackground(std::make_unique<views::BubbleBackground>(bubble_border.get()));
   SetBorder(std::move(bubble_border));
 
-  instruction_view_ = new InstructionView(base::string16(), kForegroundColor,
-                                          kSubtleNotificationBackgroundColor);
+  instruction_view_ = new InstructionView(base::string16());
 
   int outer_padding_horiz = kOuterPaddingHorizPx;
   int outer_padding_vert = kOuterPaddingVertPx;
   AddChildView(instruction_view_);
 
   SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::kHorizontal,
+      views::BoxLayout::Orientation::kHorizontal,
       gfx::Insets(outer_padding_vert, outer_padding_horiz), kMiddlePaddingPx));
 }
 
@@ -178,11 +173,11 @@ views::Widget* SubtleNotificationView::CreatePopupWidget(
   // Initialize the popup.
   views::Widget* popup = new views::Widget;
   views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
-  params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
+  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = parent_view;
   params.accept_events = false;
-  popup->Init(params);
+  popup->Init(std::move(params));
   popup->SetContentsView(view);
   // We set layout manager to nullptr to prevent the widget from sizing its
   // contents to the same size as itself. This prevents the widget contents from

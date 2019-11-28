@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
@@ -280,9 +281,9 @@ void SupervisedUserAuthentication::LoadPasswordUpdateData(
       AccountId::FromUserEmail(user_id));
   base::FilePath profile_path =
       ProfileHelper::GetProfilePathByUserIdHash(user->username_hash());
-  PostTaskWithTraitsAndReplyWithResult(
+  PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&LoadPasswordData, profile_path),
       base::BindOnce(&OnPasswordDataLoaded, success_callback,

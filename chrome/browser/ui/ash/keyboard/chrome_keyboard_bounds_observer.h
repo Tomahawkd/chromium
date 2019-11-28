@@ -9,8 +9,8 @@
 
 #include "base/macros.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
-#include "ui/aura/window_observer.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/widget/widget_observer.h"
 
 namespace content {
 class RenderWidgetHostView;
@@ -19,39 +19,36 @@ class RenderWidgetHostView;
 // Class responsible for updating insets for windows overlapping the virtual
 // keyboard.
 class ChromeKeyboardBoundsObserver
-    : public aura::WindowObserver,
+    : public views::WidgetObserver,
       public ChromeKeyboardControllerClient::Observer {
  public:
   explicit ChromeKeyboardBoundsObserver(aura::Window* keyboard_window);
   ~ChromeKeyboardBoundsObserver() override;
 
-  // Provides the bounds occluded by the keyboard any time they change.
-  // (i.e. by the KeyboardController through KeyboardUI::InitInsets).
-  void UpdateOccludedBounds(const gfx::Rect& occluded_bounds);
-
   // keyboard::ChromeKeyboardControllerClient::Observer:
   void OnKeyboardVisibilityChanged(bool visible) override {}
-  void OnKeyboardOccludedBoundsChanged(const gfx::Rect& bounds) override;
+  void OnKeyboardOccludedBoundsChanged(const gfx::Rect& screen_bounds) override;
 
  private:
+  // Provides the bounds occluded by the keyboard any time they change.
+  // (i.e. by the KeyboardController through KeyboardUI::InitInsets).
+  void UpdateOccludedBounds(const gfx::Rect& screen_bounds);
+
   void AddObservedWindow(aura::Window* window);
   void RemoveAllObservedWindows();
 
-  // aura::WindowObserver
-  void OnWindowBoundsChanged(aura::Window* window,
-                             const gfx::Rect& old_bounds,
-                             const gfx::Rect& new_bounds,
-                             ui::PropertyChangeReason reason) override;
-  void OnWindowDestroyed(aura::Window* window) override;
+  // views::WidgetObserver:
+  void OnWidgetBoundsChanged(views::Widget* widget,
+                             const gfx::Rect& new_bounds) override;
+  void OnWidgetDestroying(views::Widget* widget) override;
 
-  void UpdateInsetsForWindow(aura::Window* window);
-  void UpdateInsetsForHostView(content::RenderWidgetHostView* view);
+  void UpdateInsets(aura::Window* window, content::RenderWidgetHostView* view);
   bool ShouldWindowOverscroll(aura::Window* window);
   bool ShouldEnableInsets(aura::Window* window);
 
   aura::Window* const keyboard_window_;
-  std::set<aura::Window*> observed_windows_;
-  gfx::Rect occluded_bounds_;
+  std::set<views::Widget*> observed_widgets_;
+  gfx::Rect occluded_bounds_in_screen_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeKeyboardBoundsObserver);
 };

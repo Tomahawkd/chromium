@@ -166,8 +166,20 @@ void ScriptPromisePropertyBase::ClearWrappers() {
     if (!wrapper.IsEmpty()) {
       v8::Context::Scope scope(wrapper->CreationContext());
       // TODO(peria): Use deleteProperty() if http://crbug.com/v8/6227 is fixed.
-      ResolverSymbol().Set(wrapper, v8::Undefined(isolate_));
-      PromiseSymbol().Set(wrapper, v8::Undefined(isolate_));
+
+      // Check whether the value has been set or not. Unfortunately, HasValue
+      // cannot be used as it triggers regular ScriptForbiddenScope through V8
+      // callbacks. GetOrUndefined avoids this because it does not enter a
+      // proper scope in V8.
+      v8::Local<v8::Value> cache;
+      if (ResolverSymbol().GetOrUndefined(wrapper).ToLocal(&cache) &&
+          !cache->IsUndefined()) {
+        ResolverSymbol().Set(wrapper, v8::Undefined(isolate_));
+      }
+      if (PromiseSymbol().GetOrUndefined(wrapper).ToLocal(&cache) &&
+          !cache->IsUndefined()) {
+        PromiseSymbol().Set(wrapper, v8::Undefined(isolate_));
+      }
     }
   }
   wrappers_.clear();
@@ -186,32 +198,35 @@ void ScriptPromisePropertyBase::CheckWrappers() {
 
 V8PrivateProperty::Symbol ScriptPromisePropertyBase::PromiseSymbol() {
   switch (name_) {
-#define P(Interface, Name)                                     \
-  case Name:                                                   \
-    return V8PrivateProperty::V8_PRIVATE_PROPERTY_GETTER_NAME( \
-        Interface, Name##Promise)(isolate_);
+#define P(Interface, Name)                                                     \
+  case Name:                                                                   \
+    static const V8PrivateProperty::SymbolKey kPrivateProperty##Name##Promise; \
+    return V8PrivateProperty::GetSymbol(isolate_,                              \
+                                        kPrivateProperty##Name##Promise);
 
     SCRIPT_PROMISE_PROPERTIES(P)
 
 #undef P
   }
   NOTREACHED();
-  return V8PrivateProperty::GetSymbol(isolate_, "noPromise");
+  return V8PrivateProperty::GetEmptySymbol();
 }
 
 V8PrivateProperty::Symbol ScriptPromisePropertyBase::ResolverSymbol() {
   switch (name_) {
-#define P(Interface, Name)                                     \
-  case Name:                                                   \
-    return V8PrivateProperty::V8_PRIVATE_PROPERTY_GETTER_NAME( \
-        Interface, Name##Resolver)(isolate_);
+#define P(Interface, Name)                        \
+  case Name:                                      \
+    static const V8PrivateProperty::SymbolKey     \
+        kPrivateProperty##Name##Resolver;         \
+    return V8PrivateProperty::GetSymbol(isolate_, \
+                                        kPrivateProperty##Name##Resolver);
 
     SCRIPT_PROMISE_PROPERTIES(P)
 
 #undef P
   }
   NOTREACHED();
-  return V8PrivateProperty::GetSymbol(isolate_, "noResolver");
+  return V8PrivateProperty::GetEmptySymbol();
 }
 
 void ScriptPromisePropertyBase::Trace(blink::Visitor* visitor) {

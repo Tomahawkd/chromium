@@ -40,12 +40,12 @@ class CONTENT_EXPORT PluginInstanceThrottlerImpl
   // PluginInstanceThrottler implementation:
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
-  bool IsThrottled() const override;
-  bool IsHiddenForPlaceholder() const override;
+  bool IsThrottled() override;
+  bool IsHiddenForPlaceholder() override;
   void MarkPluginEssential(PowerSaverUnthrottleMethod method) override;
   void SetHiddenForPlaceholder(bool hidden) override;
-  PepperWebPluginImpl* GetWebPlugin() const override;
-  const gfx::Size& GetSize() const override;
+  PepperWebPluginImpl* GetWebPlugin() override;
+  const gfx::Size& GetSize() override;
   void NotifyAudioThrottled() override;
 
   void SetWebPlugin(PepperWebPluginImpl* web_plugin);
@@ -115,7 +115,7 @@ class CONTENT_EXPORT PluginInstanceThrottlerImpl
 
   base::ObserverList<Observer>::Unchecked observer_list_;
 
-  base::WeakPtrFactory<PluginInstanceThrottlerImpl> weak_factory_;
+  base::WeakPtrFactory<PluginInstanceThrottlerImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PluginInstanceThrottlerImpl);
 };

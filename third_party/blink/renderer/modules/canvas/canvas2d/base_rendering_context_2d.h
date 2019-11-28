@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_CANVAS2D_BASE_RENDERING_CONTEXT_2D_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_CANVAS2D_BASE_RENDERING_CONTEXT_2D_H_
 
+#include "base/macros.h"
 #include "third_party/blink/renderer/bindings/modules/v8/canvas_image_source.h"
 #include "third_party/blink/renderer/bindings/modules/v8/string_or_canvas_gradient_or_canvas_pattern.h"
 #include "third_party/blink/renderer/core/geometry/dom_matrix.h"
@@ -26,8 +27,6 @@ typedef CSSImageValueOrHTMLImageElementOrSVGImageElementOrHTMLVideoElementOrHTML
 
 class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
                                               public CanvasPath {
-  WTF_MAKE_NONCOPYABLE(BaseRenderingContext2D);
-
  public:
   ~BaseRenderingContext2D() override;
 
@@ -90,13 +89,13 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
                  double m22,
                  double dx,
                  double dy);
-  void setTransform(double m11,
-                    double m12,
-                    double m21,
-                    double m22,
-                    double dx,
-                    double dy);
-  void setTransform(DOMMatrix2DInit*, ExceptionState&);
+  virtual void setTransform(double m11,
+                            double m12,
+                            double m21,
+                            double m22,
+                            double dx,
+                            double dy);
+  virtual void setTransform(DOMMatrix2DInit*, ExceptionState&);
   DOMMatrix* getTransform();
   void resetTransform();
 
@@ -194,6 +193,8 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
                              ImageDataColorSettings*,
                              ExceptionState&) const;
 
+  // For deferred canvases this will have the side effect of drawing recorded
+  // commands in order to finalize the frame
   ImageData* getImageData(int sx, int sy, int sw, int sh, ExceptionState&);
   void putImageData(ImageData*, int dx, int dy, ExceptionState&);
   void putImageData(ImageData*,
@@ -228,7 +229,6 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
 
   virtual cc::PaintCanvas* DrawingCanvas() const = 0;
   virtual cc::PaintCanvas* ExistingDrawingCanvas() const = 0;
-  virtual void DisableDeferral(DisableDeferralReason) = 0;
 
   virtual void DidDraw(const SkIRect& dirty_rect) = 0;
 
@@ -334,7 +334,7 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
 
   void UnwindStateStack();
 
-  virtual CanvasColorParams ColorParams() const { return CanvasColorParams(); };
+  virtual CanvasColorParams ColorParams() const { return CanvasColorParams(); }
   virtual bool WritePixels(const SkImageInfo& orig_info,
                            const void* pixels,
                            size_t row_bytes,
@@ -343,7 +343,7 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
     NOTREACHED();
     return false;
   }
-  virtual scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) const {
+  virtual scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) {
     NOTREACHED();
     return nullptr;
   }
@@ -363,7 +363,7 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
 
   mutable UsageCounters usage_counters_;
 
-  virtual void NeedsFinalizeFrame() {}
+  virtual void FinalizeFrame() {}
 
   float GetFontBaseline(const SimpleFontData&) const;
 
@@ -375,7 +375,6 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
   static const double kCDeviceScaleFactor;
 
   virtual void DisableAcceleration() {}
-  virtual void DidInvokeGPUReadbackInCurrentFrame() {}
 
   virtual bool IsPaint2D() const { return false; }
   virtual void WillOverwriteCanvas() {}
@@ -410,6 +409,12 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
                       CanvasRenderingContext2DState::PaintType,
                       CanvasRenderingContext2DState::ImageType);
 
+  template <typename T>
+  bool ValidateRectForCanvas(T x, T y, T width, T height);
+
+  template <typename T>
+  void AdjustRectForCanvas(T& x, T& y, T& width, T& height);
+
   void ClearCanvas();
   bool RectContainsTransformedRect(const FloatRect&, const SkIRect&) const;
   // Sets the origin to be tainted by the content of the canvas, such
@@ -433,6 +438,8 @@ class MODULES_EXPORT BaseRenderingContext2D : public GarbageCollectedMixin,
                            base::TimeTicks start_time);
 
   bool origin_tainted_by_content_;
+
+  DISALLOW_COPY_AND_ASSIGN(BaseRenderingContext2D);
 };
 
 template <typename DrawFunc, typename ContainsFunc>
@@ -519,6 +526,31 @@ void BaseRenderingContext2D::CompositedDraw(
   draw_func(c, &foreground_flags);
   c->restore();
   c->setMatrix(ctm);
+}
+
+template <typename T>
+bool BaseRenderingContext2D::ValidateRectForCanvas(T x,
+                                                   T y,
+                                                   T width,
+                                                   T height) {
+  return (std::isfinite(x) && std::isfinite(y) && std::isfinite(width) &&
+          std::isfinite(height) && (width || height));
+}
+
+template <typename T>
+void BaseRenderingContext2D::AdjustRectForCanvas(T& x,
+                                                 T& y,
+                                                 T& width,
+                                                 T& height) {
+  if (width < 0) {
+    width = -width;
+    x -= width;
+  }
+
+  if (height < 0) {
+    height = -height;
+    y -= height;
+  }
 }
 
 }  // namespace blink

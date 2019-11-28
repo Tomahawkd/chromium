@@ -17,7 +17,6 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/loader/fetch/script_fetch_options.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -59,7 +58,6 @@ TEST_F(ResizeObserverUnitTest, ResizeObservationSize) {
   SimRequest main_resource("https://example.com/", "text/html");
   LoadURL("https://example.com/");
 
-  main_resource.Start();
   main_resource.Write(R"HTML(
     <div id='domTarget' style='width:100px;height:100px'>yo</div>
     <svg height='200' width='200'>

@@ -9,14 +9,10 @@
 
 #include "base/barrier_closure.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/stl_util.h"
 
 namespace ash {
-
-namespace {
-// A no-op callback that can be used when managing an animation that didn't
-// actually have a callback given.
-void DummyCallback() {}
-}  // namespace
 
 const SessionStateAnimator::Container
     TestSessionStateAnimator::kAllContainers[] = {
@@ -84,18 +80,22 @@ TestSessionStateAnimator::ActiveAnimation::ActiveAnimation(
     SessionStateAnimator::Container container,
     AnimationType type,
     AnimationSpeed speed,
-    base::Closure success_callback,
-    base::Closure failed_callback)
+    base::OnceClosure success_callback,
+    base::OnceClosure failed_callback)
     : animation_epoch(animation_epoch),
       remaining_duration(duration),
       container(container),
       type(type),
       speed(speed),
-      success_callback(success_callback),
-      failed_callback(failed_callback) {}
+      success_callback(std::move(success_callback)),
+      failed_callback(std::move(failed_callback)) {}
 
 TestSessionStateAnimator::ActiveAnimation::ActiveAnimation(
-    const ActiveAnimation& other) = default;
+    ActiveAnimation&& other) = default;
+
+TestSessionStateAnimator::ActiveAnimation&
+TestSessionStateAnimator::ActiveAnimation::operator=(ActiveAnimation&& other) =
+    default;
 
 TestSessionStateAnimator::ActiveAnimation::~ActiveAnimation() = default;
 
@@ -120,7 +120,7 @@ void TestSessionStateAnimator::Advance(const base::TimeDelta& duration) {
       ActiveAnimation& active_animation = *animation_iter;
       active_animation.remaining_duration -= duration;
       if (active_animation.remaining_duration <= base::TimeDelta()) {
-        active_animation.success_callback.Run();
+        std::move(active_animation.success_callback).Run();
         animation_iter = (*container_iter).second.erase(animation_iter);
       } else {
         ++animation_iter;
@@ -136,12 +136,12 @@ void TestSessionStateAnimator::CompleteAnimations(int animation_epoch,
        container_iter != active_animations_.end(); ++container_iter) {
     AnimationList::iterator animation_iter = (*container_iter).second.begin();
     while (animation_iter != (*container_iter).second.end()) {
-      ActiveAnimation active_animation = *animation_iter;
+      ActiveAnimation& active_animation = *animation_iter;
       if (active_animation.animation_epoch <= animation_epoch) {
         if (completed_successfully)
-          active_animation.success_callback.Run();
+          std::move(active_animation.success_callback).Run();
         else
-          active_animation.failed_callback.Run();
+          std::move(active_animation.failed_callback).Run();
         animation_iter = (*container_iter).second.erase(animation_iter);
       } else {
         ++animation_iter;
@@ -175,7 +175,7 @@ bool TestSessionStateAnimator::IsContainerAnimated(
 bool TestSessionStateAnimator::AreContainersAnimated(
     int container_mask,
     SessionStateAnimator::AnimationType type) const {
-  for (size_t i = 0; i < arraysize(kAllContainers); ++i) {
+  for (size_t i = 0; i < base::size(kAllContainers); ++i) {
     if (container_mask & kAllContainers[i] &&
         !IsContainerAnimated(kAllContainers[i], type)) {
       return false;
@@ -198,12 +198,10 @@ void TestSessionStateAnimator::StartAnimation(int container_mask,
                                               AnimationType type,
                                               AnimationSpeed speed) {
   ++last_animation_epoch_;
-  for (size_t i = 0; i < arraysize(kAllContainers); ++i) {
+  for (size_t i = 0; i < base::size(kAllContainers); ++i) {
     if (container_mask & kAllContainers[i]) {
-      // Use a dummy no-op callback because one isn't required by the client
-      // but one is required when completing or aborting animations.
-      base::Closure callback = base::Bind(&DummyCallback);
-      AddAnimation(kAllContainers[i], type, speed, callback, callback);
+      AddAnimation(kAllContainers[i], type, speed, base::DoNothing(),
+                   base::DoNothing());
     }
   }
 }
@@ -216,14 +214,14 @@ void TestSessionStateAnimator::StartAnimationWithCallback(
   ++last_animation_epoch_;
 
   int container_count = 0;
-  for (size_t i = 0; i < arraysize(kAllContainers); ++i) {
+  for (size_t i = 0; i < base::size(kAllContainers); ++i) {
     if (container_mask & kAllContainers[i])
       ++container_count;
   }
 
   base::RepeatingClosure completion_callback =
       base::BarrierClosure(container_count, std::move(callback));
-  for (size_t i = 0; i < arraysize(kAllContainers); ++i) {
+  for (size_t i = 0; i < base::size(kAllContainers); ++i) {
     if (container_mask & kAllContainers[i]) {
       // ash::SessionStateAnimatorImpl invokes the callback whether or not the
       // animation was completed successfully or not.
@@ -256,17 +254,17 @@ void TestSessionStateAnimator::StartAnimationInSequence(
     AnimationSpeed speed,
     AnimationSequence* animation_sequence) {
   ++last_animation_epoch_;
-  for (size_t i = 0; i < arraysize(kAllContainers); ++i) {
+  for (size_t i = 0; i < base::size(kAllContainers); ++i) {
     if (container_mask & kAllContainers[i]) {
-      base::Closure success_callback =
-          base::Bind(&AnimationSequence::SequenceFinished,
-                     base::Unretained(animation_sequence), true);
-      base::Closure failed_callback =
-          base::Bind(&AnimationSequence::SequenceFinished,
-                     base::Unretained(animation_sequence), false);
+      base::OnceClosure success_callback =
+          base::BindOnce(&AnimationSequence::SequenceFinished,
+                         base::Unretained(animation_sequence), true);
+      base::OnceClosure failed_callback =
+          base::BindOnce(&AnimationSequence::SequenceFinished,
+                         base::Unretained(animation_sequence), false);
       animation_sequence->SequenceAttached();
-      AddAnimation(kAllContainers[i], type, speed, success_callback,
-                   failed_callback);
+      AddAnimation(kAllContainers[i], type, speed, std::move(success_callback),
+                   std::move(failed_callback));
     }
   }
 }
@@ -275,16 +273,16 @@ void TestSessionStateAnimator::AddAnimation(
     SessionStateAnimator::Container container,
     AnimationType type,
     AnimationSpeed speed,
-    base::Closure success_callback,
-    base::Closure failed_callback) {
+    base::OnceClosure success_callback,
+    base::OnceClosure failed_callback) {
   base::TimeDelta duration = GetDuration(speed);
   ActiveAnimation active_animation(last_animation_epoch_, duration, container,
-                                   type, speed, success_callback,
-                                   failed_callback);
+                                   type, speed, std::move(success_callback),
+                                   std::move(failed_callback));
   // This test double is limited to only have one animation active for a given
   // container at a time.
   AbortAnimation(container);
-  active_animations_[container].push_back(active_animation);
+  active_animations_[container].push_back(std::move(active_animation));
 }
 
 void TestSessionStateAnimator::AbortAnimation(
@@ -294,8 +292,8 @@ void TestSessionStateAnimator::AbortAnimation(
   if (container_iter != active_animations_.end()) {
     AnimationList::iterator animation_iter = (*container_iter).second.begin();
     while (animation_iter != (*container_iter).second.end()) {
-      ActiveAnimation active_animation = *animation_iter;
-      active_animation.failed_callback.Run();
+      ActiveAnimation& active_animation = *animation_iter;
+      std::move(active_animation.failed_callback).Run();
       animation_iter = (*container_iter).second.erase(animation_iter);
     }
   }

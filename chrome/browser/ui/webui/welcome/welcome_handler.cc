@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/welcome/welcome_handler.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/profiles/profile.h"
@@ -14,22 +15,28 @@
 #include "chrome/browser/ui/profile_chooser_constants.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/url_constants.h"
-#include "components/signin/core/browser/signin_metrics.h"
-#include "services/identity/public/cpp/identity_manager.h"
+#include "components/signin/public/base/signin_metrics.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "ui/base/page_transition_types.h"
 
 const char kWelcomeReturningUserUrl[] = "chrome://welcome/returning-user";
-const char kWelcomeEmailInterstitial[] = "chrome://welcome/email-interstitial";
 
 WelcomeHandler::WelcomeHandler(content::WebUI* web_ui)
     : profile_(Profile::FromWebUI(web_ui)),
       login_ui_service_(LoginUIServiceFactory::GetForProfile(profile_)),
-      result_(WelcomeResult::DEFAULT) {
+      result_(WelcomeResult::DEFAULT),
+      is_redirected_welcome_impression_(false) {
   login_ui_service_->AddObserver(this);
 }
 
 WelcomeHandler::~WelcomeHandler() {
   login_ui_service_->RemoveObserver(this);
+
+  // If this instance is spawned due to being redirected back to welcome page
+  // by the onboarding logic, there's no need to log sign-in metrics again.
+  if (is_redirected_welcome_impression_) {
+    return;
+  }
 
   // We log that an impression occurred at destruct-time. This can't be done at
   // construct-time on some platforms because this page is shown immediately
@@ -42,19 +49,22 @@ WelcomeHandler::~WelcomeHandler() {
                             WelcomeResult::WELCOME_RESULT_MAX);
 }
 
+bool WelcomeHandler::isValidRedirectUrl() {
+  GURL current_url = web_ui()->GetWebContents()->GetVisibleURL();
+
+  return current_url == kWelcomeReturningUserUrl;
+}
+
 // Override from LoginUIService::Observer.
 void WelcomeHandler::OnSyncConfirmationUIClosed(
     LoginUIService::SyncConfirmationUIClosedResult result) {
   if (result != LoginUIService::ABORT_SIGNIN) {
     result_ = WelcomeResult::SIGNED_IN;
 
-    // When signed in from NUX onboarding flow, it's possible to come back to
+    // When signed in from welcome flow, it's possible to come back to
     // chrome://welcome/... after closing sync-confirmation UI. If current URL
     // matches such a case, do not navigate away.
-    GURL current_url = web_ui()->GetWebContents()->GetVisibleURL();
-    if (current_url != kWelcomeReturningUserUrl &&
-        current_url.spec().find(kWelcomeEmailInterstitial) ==
-            std::string::npos) {
+    if (!is_redirected_welcome_impression_) {
       GoToNewTabPage();
     }
   }
@@ -94,11 +104,17 @@ void WelcomeHandler::HandleUserDecline(const base::ListValue* args) {
   result_ = (result_ == WelcomeResult::ATTEMPTED)
                 ? WelcomeResult::ATTEMPTED_DECLINED
                 : WelcomeResult::DECLINED;
+
   GoToNewTabPage();
 }
 
 // Override from WebUIMessageHandler.
 void WelcomeHandler::RegisterMessages() {
+  // Check if this instance of WelcomeHandler is spawned by welcome flow
+  // redirecting users back to welcome page. This is done here instead of
+  // constructor, because web_ui hasn't loaded yet at that time.
+  is_redirected_welcome_impression_ = isValidRedirectUrl();
+
   web_ui()->RegisterMessageCallback(
       "handleActivateSignIn",
       base::BindRepeating(&WelcomeHandler::HandleActivateSignIn,
@@ -110,7 +126,11 @@ void WelcomeHandler::RegisterMessages() {
 }
 
 void WelcomeHandler::GoToNewTabPage() {
-  NavigateParams params(GetBrowser(), GURL(chrome::kChromeUINewTabURL),
+  WelcomeHandler::GoToURL(GURL(chrome::kChromeUINewTabURL));
+}
+
+void WelcomeHandler::GoToURL(GURL url) {
+  NavigateParams params(GetBrowser(), url,
                         ui::PageTransition::PAGE_TRANSITION_LINK);
   params.source_contents = web_ui()->GetWebContents();
   Navigate(&params);

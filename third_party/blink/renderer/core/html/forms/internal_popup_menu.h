@@ -24,17 +24,17 @@ class HTMLSelectElement;
 class CORE_EXPORT InternalPopupMenu final : public PopupMenu,
                                             public PagePopupClient {
  public:
-  static InternalPopupMenu* Create(ChromeClient*, HTMLSelectElement&);
-
   InternalPopupMenu(ChromeClient*, HTMLSelectElement&);
   ~InternalPopupMenu() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   void Update();
 
   void Dispose();
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(InternalPopupMenuTest, ShowSelectDisplayNone);
+
   class ItemIterationContext;
   void AddOption(ItemIterationContext&, HTMLOptionElement&);
   void AddOptGroup(ItemIterationContext&, HTMLOptGroupElement&);
@@ -52,8 +52,9 @@ class CORE_EXPORT InternalPopupMenu final : public PopupMenu,
   void SelectFontsFromOwnerDocument(Document&) override;
   void SetValueAndClosePopup(int, const String&) override;
   void SetValue(const String&) override;
-  void ClosePopup() override;
+  void CancelPopup() override;
   Element& OwnerElement() override;
+  ChromeClient& GetChromeClient() override;
   float ZoomFactor() override { return 1.0; }
   Locale& GetLocale() override;
   void DidClosePopup() override;

@@ -6,6 +6,7 @@
 
 #include "base/base64.h"
 #include "base/containers/span.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -51,7 +52,7 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
 
     return factory_->CreateAuthHandlerFromString(
         "NTLM", HttpAuth::AUTH_SERVER, null_ssl_info, gurl, NetLogWithSource(),
-        &auth_handler_);
+        nullptr, &auth_handler_);
   }
 
   std::string CreateNtlmAuthHeader(base::span<const uint8_t> buffer) {
@@ -201,9 +202,8 @@ TEST_F(HttpAuthHandlerNtlmPortableTest, InvalidBase64Encoding) {
   ASSERT_EQ(OK, GetGenerateAuthTokenResult());
 
   // Token isn't valid base64.
-  ASSERT_EQ(HttpAuth::AUTHORIZATION_RESULT_ACCEPT,
+  ASSERT_EQ(HttpAuth::AUTHORIZATION_RESULT_INVALID,
             HandleAnotherChallenge("NTLM !!!!!!!!!!!!!"));
-  ASSERT_EQ(ERR_UNEXPECTED, GetGenerateAuthTokenResult());
 }
 
 TEST_F(HttpAuthHandlerNtlmPortableTest, CantChangeSchemeMidway) {
@@ -230,7 +230,7 @@ TEST_F(HttpAuthHandlerNtlmPortableTest, NtlmV1AuthenticationSuccess) {
   // Validate the authenticate message
   std::string decoded;
   ASSERT_TRUE(DecodeChallenge(token, &decoded));
-  ASSERT_EQ(arraysize(ntlm::test::kExpectedAuthenticateMsgSpecResponseV1),
+  ASSERT_EQ(base::size(ntlm::test::kExpectedAuthenticateMsgSpecResponseV1),
             decoded.size());
   ASSERT_EQ(0, memcmp(decoded.data(),
                       ntlm::test::kExpectedAuthenticateMsgSpecResponseV1,

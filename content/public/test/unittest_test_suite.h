@@ -6,16 +6,10 @@
 #define CONTENT_PUBLIC_TEST_UNITTEST_TEST_SUITE_H_
 
 #include <memory>
+#include <string>
 
 #include "base/macros.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-
-#if defined(USE_AURA)
-namespace aura {
-class AuraTestSuiteSetup;
-}
-#endif
 
 namespace base {
 class TestSuite;
@@ -23,6 +17,7 @@ class TestSuite;
 
 namespace content {
 class TestBlinkWebUnitTestSupport;
+class TestHostResolver;
 
 // A special test suite that also initializes WebKit once for all unittests.
 // This is useful for two reasons:
@@ -31,7 +26,7 @@ class TestBlinkWebUnitTestSupport;
 // it here ensures attempts to do so within an individual test will fail.
 class UnitTestTestSuite {
  public:
-   // Takes ownership of |test_suite|.
+  // Takes ownership of |test_suite|.
   explicit UnitTestTestSuite(base::TestSuite* test_suite);
   ~UnitTestTestSuite();
 
@@ -40,12 +35,9 @@ class UnitTestTestSuite {
  private:
   std::unique_ptr<base::TestSuite> test_suite_;
 
-  base::test::ScopedFeatureList feature_list_;
-
   std::unique_ptr<TestBlinkWebUnitTestSupport> blink_test_support_;
-#if defined(USE_AURA)
-  std::unique_ptr<aura::AuraTestSuiteSetup> aura_test_suite_setup_;
-#endif
+
+  std::unique_ptr<TestHostResolver> test_host_resolver_;
 
   DISALLOW_COPY_AND_ASSIGN(UnitTestTestSuite);
 };

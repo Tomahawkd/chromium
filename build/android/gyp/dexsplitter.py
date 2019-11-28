@@ -49,7 +49,7 @@ def _ParseOptions(args):
 
 def _RunDexsplitter(options, output_dir):
   cmd = [
-      'java',
+      build_utils.JAVA_PATH,
       '-jar',
       options.r8_path,
       'dexsplitter',
@@ -81,7 +81,7 @@ def main(args):
   args = build_utils.ExpandFileArgs(args)
   options = _ParseOptions(args)
 
-  input_paths = []
+  input_paths = [options.input_dex_zip]
   for feature_jars in options.features.itervalues():
     for feature_jar in feature_jars:
       input_paths.append(feature_jar)
@@ -110,7 +110,7 @@ def main(args):
       with build_utils.AtomicOutput(dest) as f:
         if curr_location.endswith('.zip'):
           if dest.endswith('.zip'):
-            shutil.move(curr_location, f.name)
+            shutil.copy(curr_location, f.name)
           else:
             with zipfile.ZipFile(curr_location, 'r') as z:
               namelist = z.namelist()

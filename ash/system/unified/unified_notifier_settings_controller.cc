@@ -6,8 +6,9 @@
 
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/message_center/notifier_settings_view.h"
+#include "ash/system/tray/detailed_view_delegate.h"
 #include "ash/system/tray/tray_detailed_view.h"
-#include "ash/system/unified/unified_detailed_view_delegate.h"
+#include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_observer.h"
 #include "ui/views/layout/box_layout.h"
 
@@ -37,6 +38,10 @@ class UnifiedNotifierSettingsView
     settings_view_->SetQuietModeState(in_quiet_mode);
   }
 
+  const char* GetClassName() const override {
+    return "UnifiedNotifierSettingsView";
+  }
+
  private:
   NotifierSettingsView* const settings_view_;
 
@@ -48,7 +53,7 @@ class UnifiedNotifierSettingsView
 UnifiedNotifierSettingsController::UnifiedNotifierSettingsController(
     UnifiedSystemTrayController* tray_controller)
     : detailed_view_delegate_(
-          std::make_unique<UnifiedDetailedViewDelegate>(tray_controller)) {}
+          std::make_unique<DetailedViewDelegate>(tray_controller)) {}
 
 UnifiedNotifierSettingsController::~UnifiedNotifierSettingsController() =
     default;

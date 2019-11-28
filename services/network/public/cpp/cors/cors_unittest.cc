@@ -21,7 +21,7 @@ TEST_F(CorsTest, CheckAccessDetectsInvalidResponse) {
       CheckAccess(GURL(), 0 /* response_status_code */,
                   base::nullopt /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, url::Origin());
+                  network::mojom::CredentialsMode::kOmit, url::Origin());
   ASSERT_TRUE(error_status);
   EXPECT_EQ(mojom::CorsError::kInvalidResponse, error_status->cors_error);
 }
@@ -38,7 +38,7 @@ TEST_F(CorsTest, CheckAccessDetectsWildcardOriginNotAllowed) {
       CheckAccess(response_url, response_status_code,
                   allow_all_header /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, origin);
+                  network::mojom::CredentialsMode::kOmit, origin);
   EXPECT_FALSE(error1);
 
   // Access-Control-Allow-Origin '*' should not be allowed if credentials mode
@@ -47,7 +47,7 @@ TEST_F(CorsTest, CheckAccessDetectsWildcardOriginNotAllowed) {
       CheckAccess(response_url, response_status_code,
                   allow_all_header /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kInclude, origin);
+                  network::mojom::CredentialsMode::kInclude, origin);
   ASSERT_TRUE(error2);
   EXPECT_EQ(mojom::CorsError::kWildcardOriginNotAllowed, error2->cors_error);
 }
@@ -63,7 +63,7 @@ TEST_F(CorsTest, CheckAccessDetectsMissingAllowOriginHeader) {
       CheckAccess(response_url, response_status_code,
                   base::nullopt /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, origin);
+                  network::mojom::CredentialsMode::kOmit, origin);
   ASSERT_TRUE(error);
   EXPECT_EQ(mojom::CorsError::kMissingAllowOriginHeader, error->cors_error);
 }
@@ -81,7 +81,7 @@ TEST_F(CorsTest, CheckAccessDetectsMultipleAllowOriginValues) {
       CheckAccess(response_url, response_status_code,
                   space_separated_multiple_origins /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, origin);
+                  network::mojom::CredentialsMode::kOmit, origin);
   ASSERT_TRUE(error1);
   EXPECT_EQ(mojom::CorsError::kMultipleAllowOriginValues, error1->cors_error);
 
@@ -91,7 +91,7 @@ TEST_F(CorsTest, CheckAccessDetectsMultipleAllowOriginValues) {
       CheckAccess(response_url, response_status_code,
                   comma_separated_multiple_origins /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, origin);
+                  network::mojom::CredentialsMode::kOmit, origin);
   ASSERT_TRUE(error2);
   EXPECT_EQ(mojom::CorsError::kMultipleAllowOriginValues, error2->cors_error);
 }
@@ -106,7 +106,7 @@ TEST_F(CorsTest, CheckAccessDetectsInvalidAllowOriginValue) {
       CheckAccess(response_url, response_status_code,
                   std::string("invalid.origin") /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, origin);
+                  network::mojom::CredentialsMode::kOmit, origin);
   ASSERT_TRUE(error);
   EXPECT_EQ(mojom::CorsError::kInvalidAllowOriginValue, error->cors_error);
   EXPECT_EQ("invalid.origin", error->failed_parameter);
@@ -122,14 +122,14 @@ TEST_F(CorsTest, CheckAccessDetectsAllowOriginMismatch) {
       CheckAccess(response_url, response_status_code,
                   origin.Serialize() /* allow_origin_header */,
                   base::nullopt /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kOmit, origin);
+                  network::mojom::CredentialsMode::kOmit, origin);
   ASSERT_FALSE(error1);
 
   base::Optional<CorsErrorStatus> error2 = CheckAccess(
       response_url, response_status_code,
       std::string("http://not.google.com") /* allow_origin_header */,
       base::nullopt /* allow_credentials_header */,
-      network::mojom::FetchCredentialsMode::kOmit, origin);
+      network::mojom::CredentialsMode::kOmit, origin);
   ASSERT_TRUE(error2);
   EXPECT_EQ(mojom::CorsError::kAllowOriginMismatch, error2->cors_error);
   EXPECT_EQ("http://not.google.com", error2->failed_parameter);
@@ -142,7 +142,7 @@ TEST_F(CorsTest, CheckAccessDetectsAllowOriginMismatch) {
   base::Optional<CorsErrorStatus> error3 = CheckAccess(
       response_url, response_status_code, null_string /* allow_origin_header */,
       base::nullopt /* allow_credentials_header */,
-      network::mojom::FetchCredentialsMode::kOmit, null_origin);
+      network::mojom::CredentialsMode::kOmit, null_origin);
   EXPECT_FALSE(error3);
 }
 
@@ -156,14 +156,14 @@ TEST_F(CorsTest, CheckAccessDetectsInvalidAllowCredential) {
       CheckAccess(response_url, response_status_code,
                   origin.Serialize() /* allow_origin_header */,
                   std::string("true") /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kInclude, origin);
+                  network::mojom::CredentialsMode::kInclude, origin);
   ASSERT_FALSE(error1);
 
   base::Optional<CorsErrorStatus> error2 =
       CheckAccess(response_url, response_status_code,
                   origin.Serialize() /* allow_origin_header */,
                   std::string("fuga") /* allow_credentials_header */,
-                  network::mojom::FetchCredentialsMode::kInclude, origin);
+                  network::mojom::CredentialsMode::kInclude, origin);
   ASSERT_TRUE(error2);
   EXPECT_EQ(mojom::CorsError::kInvalidAllowCredentials, error2->cors_error);
   EXPECT_EQ("fuga", error2->failed_parameter);
@@ -174,16 +174,16 @@ TEST_F(CorsTest, CheckAccessDetectsInvalidAllowCredential) {
 TEST_F(CorsTest, CheckRedirectLocation) {
   struct TestCase {
     GURL url;
-    mojom::FetchRequestMode request_mode;
+    mojom::RequestMode request_mode;
     bool cors_flag;
     bool tainted;
     base::Optional<CorsErrorStatus> expectation;
   };
 
-  const auto kCors = mojom::FetchRequestMode::kCors;
+  const auto kCors = mojom::RequestMode::kCors;
   const auto kCorsWithForcedPreflight =
-      mojom::FetchRequestMode::kCorsWithForcedPreflight;
-  const auto kNoCors = mojom::FetchRequestMode::kNoCors;
+      mojom::RequestMode::kCorsWithForcedPreflight;
+  const auto kNoCors = mojom::RequestMode::kNoCors;
 
   const url::Origin origin = url::Origin::Create(GURL("http://example.com/"));
   const GURL same_origin_url("http://example.com/");
@@ -309,95 +309,6 @@ TEST_F(CorsTest, CheckPreflightDetectsErrors) {
   EXPECT_EQ("TRUE", error3->failed_parameter);
 }
 
-TEST_F(CorsTest, CalculateResponseTainting) {
-  using mojom::FetchResponseType;
-  using mojom::FetchRequestMode;
-
-  const GURL same_origin_url("https://example.com/");
-  const GURL cross_origin_url("https://example2.com/");
-  const url::Origin origin = url::Origin::Create(GURL("https://example.com"));
-  const base::Optional<url::Origin> no_origin;
-
-  // CORS flag is false, same-origin request
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kSameOrigin,
-                                origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kNoCors,
-                                origin, false, false));
-  EXPECT_EQ(FetchResponseType::kBasic,
-            CalculateResponseTainting(same_origin_url, FetchRequestMode::kCors,
-                                      origin, false, false));
-  EXPECT_EQ(FetchResponseType::kBasic,
-            CalculateResponseTainting(
-                same_origin_url, FetchRequestMode::kCorsWithForcedPreflight,
-                origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kNavigate,
-                                origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kOpaque,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kNoCors,
-                                origin, false, true));
-  EXPECT_EQ(FetchResponseType::kBasic,
-            CalculateResponseTainting(
-                same_origin_url, FetchRequestMode::kCorsWithForcedPreflight,
-                origin, false, true));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kNavigate,
-                                origin, false, false));
-
-  // CORS flag is false, cross-origin request
-  EXPECT_EQ(
-      FetchResponseType::kOpaque,
-      CalculateResponseTainting(cross_origin_url, FetchRequestMode::kNoCors,
-                                origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(cross_origin_url, FetchRequestMode::kNavigate,
-                                origin, false, false));
-
-  // CORS flag is true, same-origin request
-  EXPECT_EQ(FetchResponseType::kCors,
-            CalculateResponseTainting(same_origin_url, FetchRequestMode::kCors,
-                                      origin, true, false));
-  EXPECT_EQ(FetchResponseType::kCors,
-            CalculateResponseTainting(
-                same_origin_url, FetchRequestMode::kCorsWithForcedPreflight,
-                origin, true, false));
-
-  // CORS flag is true, cross-origin request
-  EXPECT_EQ(FetchResponseType::kCors,
-            CalculateResponseTainting(cross_origin_url, FetchRequestMode::kCors,
-                                      origin, true, false));
-  EXPECT_EQ(FetchResponseType::kCors,
-            CalculateResponseTainting(
-                cross_origin_url, FetchRequestMode::kCorsWithForcedPreflight,
-                origin, true, false));
-
-  // Origin is not provided.
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kNoCors,
-                                no_origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(same_origin_url, FetchRequestMode::kNavigate,
-                                no_origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(cross_origin_url, FetchRequestMode::kNoCors,
-                                no_origin, false, false));
-  EXPECT_EQ(
-      FetchResponseType::kBasic,
-      CalculateResponseTainting(cross_origin_url, FetchRequestMode::kNavigate,
-                                no_origin, false, false));
-}
-
 TEST_F(CorsTest, SafelistedMethod) {
   // Method check should be case-insensitive.
   EXPECT_TRUE(IsCorsSafelistedMethod("get"));
@@ -466,6 +377,23 @@ TEST_F(CorsTest, SafelistedAcceptLanguage) {
   EXPECT_TRUE(IsCorsSafelistedHeader("aCcEPT-lAngUAge", std::string(128, 'a')));
   EXPECT_FALSE(
       IsCorsSafelistedHeader("aCcEPT-lAngUAge", std::string(129, 'a')));
+}
+
+TEST_F(CorsTest, SafelistedSecCHLang) {
+  EXPECT_TRUE(IsCorsSafelistedHeader("Sec-CH-Lang", "\"en\", \"de\""));
+
+  // TODO(mkwst): Validate that `Sec-CH-Lang` is a structured header.
+  // https://crbug.com/924969
+}
+
+TEST_F(CorsTest, SafelistedSecCHUA) {
+  EXPECT_TRUE(IsCorsSafelistedHeader("Sec-CH-UA", "\"User Agent!\""));
+  EXPECT_TRUE(IsCorsSafelistedHeader("Sec-CH-UA-Platform", "\"Platform!\""));
+  EXPECT_TRUE(IsCorsSafelistedHeader("Sec-CH-UA-Arch", "\"Architecture!\""));
+  EXPECT_TRUE(IsCorsSafelistedHeader("Sec-CH-UA-Model", "\"Model!\""));
+
+  // TODO(mkwst): Validate that `Sec-CH-UA-*` is a structured header.
+  // https://crbug.com/924969
 }
 
 TEST_F(CorsTest, SafelistedContentLanguage) {
@@ -778,6 +706,29 @@ TEST_F(CorsTest, CorsUnsafeNotForbiddenRequestHeaderNamesWithRevalidating) {
                                                 {"CACHE-ContrOl", "z"}},
                                                false /* is_revalidating */),
       List({"if-modified-since", "if-none-match", "cache-control"}));
+}
+
+TEST_F(CorsTest, NoCorsSafelistedHeaderName) {
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("accept"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("AcCePT"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("accept-language"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("acCEPt-lAnguage"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("content-language"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("coNTENt-lAnguage"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("content-type"));
+  EXPECT_TRUE(IsNoCorsSafelistedHeaderName("CONTENT-TYPE"));
+
+  EXPECT_FALSE(IsNoCorsSafelistedHeaderName("range"));
+  EXPECT_FALSE(IsNoCorsSafelistedHeaderName("cookie"));
+  EXPECT_FALSE(IsNoCorsSafelistedHeaderName("foobar"));
+}
+
+TEST_F(CorsTest, PrivilegedNoCorsHeaderName) {
+  EXPECT_TRUE(IsPrivilegedNoCorsHeaderName("range"));
+  EXPECT_TRUE(IsPrivilegedNoCorsHeaderName("RanGe"));
+  EXPECT_FALSE(IsPrivilegedNoCorsHeaderName("content-type"));
+  EXPECT_FALSE(IsPrivilegedNoCorsHeaderName("foobar"));
+  EXPECT_FALSE(IsPrivilegedNoCorsHeaderName("cookie"));
 }
 
 }  // namespace

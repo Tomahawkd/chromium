@@ -6,15 +6,19 @@
 
 #include <memory>
 
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/events/test/event_generator.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/view.h"
+#include "ui/views/widget/widget_utils.h"
 
 namespace {
 
@@ -44,17 +48,58 @@ class HoverButtonTest : public ChromeViewsTestBase {
  public:
   HoverButtonTest() {}
 
+  void SetUp() override {
+    ChromeViewsTestBase::SetUp();
+    CreateWidget();
+    generator_ = std::make_unique<ui::test::EventGenerator>(
+        GetRootWindow(widget_.get()), widget_->GetNativeWindow());
+  }
+
+  void TearDown() override {
+    widget_.reset();
+    generator_.reset();
+    ChromeViewsTestBase::TearDown();
+  }
+
   std::unique_ptr<views::View> CreateIcon() {
     auto icon = std::make_unique<views::View>();
     icon->SetPreferredSize(gfx::Size(16, 16));
     return icon;
   }
 
+  ui::test::EventGenerator* generator() { return generator_.get(); }
+  views::Widget* widget() { return widget_.get(); }
+
+  void CreateWidget() {
+    widget_ = std::make_unique<views::Widget>();
+    views::Widget::InitParams params =
+        CreateParams(views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+    params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+    params.bounds = gfx::Rect(100, 100, 200, 200);
+    widget_->Init(std::move(params));
+  }
+
  private:
+  std::unique_ptr<views::Widget> widget_;
+  std::unique_ptr<ui::test::EventGenerator> generator_;
   DISALLOW_COPY_AND_ASSIGN(HoverButtonTest);
 };
 
-}  // namespace
+class TestButtonListener : public views::ButtonListener {
+ public:
+  TestButtonListener() = default;
+  ~TestButtonListener() override = default;
+
+  void ButtonPressed(views::Button* sender, const ui::Event& event) override {
+    last_sender_ = sender;
+  }
+
+  views::View* last_sender() { return last_sender_; }
+
+ private:
+  views::View* last_sender_ = nullptr;
+  DISALLOW_COPY_AND_ASSIGN(TestButtonListener);
+};
 
 // Double check the length of the strings used for testing are either over or
 // under the width used for the following tests.
@@ -77,7 +122,7 @@ TEST_F(HoverButtonTest, ValidateTestData) {
 
 // Tests whether the HoverButton has the correct tooltip and accessible name.
 TEST_F(HoverButtonTest, TooltipAndAccessibleName) {
-  for (size_t i = 0; i < arraysize(kTitleSubtitlePairs); ++i) {
+  for (size_t i = 0; i < base::size(kTitleSubtitlePairs); ++i) {
     TitleSubtitlePair pair = kTitleSubtitlePairs[i];
     SCOPED_TRACE(testing::Message() << "Index: " << i << ", expected_tooltip="
                                     << (pair.tooltip ? "true" : "false"));
@@ -99,13 +144,8 @@ TEST_F(HoverButtonTest, TooltipAndAccessibleName) {
         base::ASCIIToUTF16("\n"));
     EXPECT_EQ(expected, base::UTF8ToUTF16(accessible_name));
 
-    base::string16 tooltip_text;
-    button->GetTooltipText(gfx::Point(), &tooltip_text);
-    if (pair.tooltip) {
-      EXPECT_EQ(expected, tooltip_text);
-    } else {
-      EXPECT_EQ(base::string16(), tooltip_text);
-    }
+    EXPECT_EQ(pair.tooltip ? expected : base::string16(),
+              button->GetTooltipText(gfx::Point()));
   }
 }
 
@@ -114,7 +154,7 @@ TEST_F(HoverButtonTest, TooltipAndAccessibleName) {
 TEST_F(HoverButtonTest, CustomTooltip) {
   const base::string16 custom_tooltip = base::ASCIIToUTF16("custom");
 
-  for (size_t i = 0; i < arraysize(kTitleSubtitlePairs); ++i) {
+  for (size_t i = 0; i < base::size(kTitleSubtitlePairs); ++i) {
     SCOPED_TRACE(testing::Message() << "Index: " << i);
     TitleSubtitlePair pair = kTitleSubtitlePairs[i];
     auto button = std::make_unique<HoverButton>(
@@ -123,10 +163,7 @@ TEST_F(HoverButtonTest, CustomTooltip) {
     button->set_auto_compute_tooltip(false);
     button->SetTooltipText(custom_tooltip);
     button->SetSize(gfx::Size(kButtonWidth, 40));
-
-    base::string16 tooltip_text;
-    button->GetTooltipText(gfx::Point(), &tooltip_text);
-    EXPECT_EQ(custom_tooltip, tooltip_text);
+    EXPECT_EQ(custom_tooltip, button->GetTooltipText(gfx::Point()));
 
     // Make sure the accessible name is still set.
     ui::AXNodeData data;
@@ -167,3 +204,24 @@ TEST_F(HoverButtonTest, CreateButtonWithSubtitleAndIcons) {
   EXPECT_TRUE(button.Contains(primary_icon_raw));
   EXPECT_TRUE(button.Contains(secondary_icon_raw));
 }
+
+// Tests that the listener is notified on mouse release rather than mouse press.
+TEST_F(HoverButtonTest, ActivatesOnMouseReleased) {
+  TestButtonListener button_listener;
+  HoverButton button(&button_listener, CreateIcon(),
+                     base::ASCIIToUTF16("Title"), base::string16());
+
+  button.SetBoundsRect(gfx::Rect(100, 100, 200, 200));
+  widget()->SetContentsView(&button);
+  widget()->Show();
+
+  // ButtonListener should not be activated on press.
+  generator()->PressLeftButton();
+  EXPECT_EQ(nullptr, button_listener.last_sender());
+
+  // ButtonListener should be activated on release.
+  generator()->ReleaseLeftButton();
+  EXPECT_EQ(&button, button_listener.last_sender());
+}
+
+}  // namespace

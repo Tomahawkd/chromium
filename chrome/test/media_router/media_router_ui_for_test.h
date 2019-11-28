@@ -30,12 +30,16 @@ class MediaRouterUiForTest
 
   ~MediaRouterUiForTest() override;
 
+  // Cleans up after a test.
+  void TearDown();
+
   void ShowDialog();
   void HideDialog();
   bool IsDialogShown() const;
 
   // Chooses the source type in the dialog. Requires that the dialog is shown.
   void ChooseSourceType(CastDialogView::SourceType source_type);
+  CastDialogView::SourceType GetChosenSourceType() const;
 
   // These methods require that the dialog is shown and the specified sink is
   // shown in the dialog.
@@ -59,6 +63,11 @@ class MediaRouterUiForTest
   MediaRoute::Id GetRouteIdForSink(const std::string& sink_name) const;
   std::string GetStatusTextForSink(const std::string& sink_name) const;
   std::string GetIssueTextForSink(const std::string& sink_name) const;
+
+  // Sets up a mock file picker that returns |file_url| as the selected file.
+  void SetLocalFile(const GURL& file_url);
+  // Sets up a mock file picker that fails with |issue|.
+  void SetLocalFileSelectionIssue(const IssueInfo& issue);
 
   content::WebContents* web_contents() const { return web_contents_; }
 
@@ -99,7 +108,7 @@ class MediaRouterUiForTest
   base::Optional<base::OnceClosure> watch_callback_;
   WatchType watch_type_ = WatchType::kNone;
 
-  base::WeakPtrFactory<MediaRouterUiForTest> weak_factory_;
+  base::WeakPtrFactory<MediaRouterUiForTest> weak_factory_{this};
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

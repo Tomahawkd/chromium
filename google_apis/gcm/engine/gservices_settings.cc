@@ -8,8 +8,8 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/macros.h"
-#include "base/sha1.h"
+#include "base/hash/sha1.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -200,7 +200,7 @@ std::string GServicesSettings::CalculateDigest(const SettingsMap& settings) {
   return digest;
 }
 
-GServicesSettings::GServicesSettings() : weak_ptr_factory_(this) {
+GServicesSettings::GServicesSettings() {
   digest_ = CalculateDigest(settings_);
 }
 
@@ -230,7 +230,7 @@ bool GServicesSettings::UpdateFromCheckinResponse(
     if (settings_diff && base::StartsWith(name, kDeleteSettingPrefix,
                                           base::CompareCase::SENSITIVE)) {
       std::string setting_to_delete =
-          name.substr(arraysize(kDeleteSettingPrefix) - 1);
+          name.substr(base::size(kDeleteSettingPrefix) - 1);
       new_settings.erase(setting_to_delete);
       DVLOG(1) << "Setting deleted: " << setting_to_delete;
     } else {

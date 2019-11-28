@@ -5,6 +5,7 @@
 #ifndef CHROME_COMMON_MEDIA_ROUTER_MEDIA_ROUTE_H_
 #define CHROME_COMMON_MEDIA_ROUTER_MEDIA_ROUTE_H_
 
+#include <iosfwd>
 #include <string>
 
 #include "base/logging.h"
@@ -16,7 +17,7 @@ namespace media_router {
 
 // TODO(imcheng): Use the Mojo enum directly once we Mojo-ified
 // MediaRouterAndroid.
-enum class RouteControllerType { kNone, kGeneric, kHangouts, kMirroring };
+enum class RouteControllerType { kNone, kGeneric, kMirroring };
 
 // MediaRoute objects contain the status and metadata of a routing
 // operation. The fields are immutable and reflect the route status
@@ -98,9 +99,12 @@ class MediaRoute {
   }
   bool is_local_presentation() const { return is_local_presentation_; }
 
-  bool Equals(const MediaRoute& other) const;
+  bool operator==(const MediaRoute& other) const;
 
  private:
+  friend std::ostream& operator<<(std::ostream& stream,
+                                  const MediaRoute& route);
+
   // The media route identifier.
   MediaRoute::Id media_route_id_;
 

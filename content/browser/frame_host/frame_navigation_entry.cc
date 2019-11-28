@@ -24,6 +24,7 @@ FrameNavigationEntry::FrameNavigationEntry(
     const GURL& url,
     const url::Origin* origin,
     const Referrer& referrer,
+    const base::Optional<url::Origin>& initiator_origin,
     const std::vector<GURL>& redirect_chain,
     const PageState& page_state,
     const std::string& method,
@@ -36,27 +37,31 @@ FrameNavigationEntry::FrameNavigationEntry(
       source_site_instance_(std::move(source_site_instance)),
       url_(url),
       referrer_(referrer),
+      initiator_origin_(initiator_origin),
       redirect_chain_(redirect_chain),
       page_state_(page_state),
+      bindings_(kInvalidBindings),
       method_(method),
       post_id_(post_id),
       blob_url_loader_factory_(std::move(blob_url_loader_factory)) {
   if (origin)
-    origin_ = *origin;
+    committed_origin_ = *origin;
 }
 
-FrameNavigationEntry::~FrameNavigationEntry() {
-}
+FrameNavigationEntry::~FrameNavigationEntry() {}
 
-FrameNavigationEntry* FrameNavigationEntry::Clone() const {
-  FrameNavigationEntry* copy = new FrameNavigationEntry();
+scoped_refptr<FrameNavigationEntry> FrameNavigationEntry::Clone() const {
+  auto copy = base::MakeRefCounted<FrameNavigationEntry>();
 
   // Omit any fields cleared at commit time.
-  copy->UpdateEntryInternal(frame_unique_name_, item_sequence_number_,
-                            document_sequence_number_, site_instance_.get(),
-                            nullptr, url_, base::OptionalOrNullptr(origin_),
-                            referrer_, redirect_chain_, page_state_, method_,
-                            post_id_, nullptr /* blob_url_loader_factory */);
+  copy->UpdateEntry(frame_unique_name_, item_sequence_number_,
+                    document_sequence_number_, site_instance_.get(), nullptr,
+                    url_, committed_origin_, referrer_, initiator_origin_,
+                    redirect_chain_, page_state_, method_, post_id_,
+                    nullptr /* blob_url_loader_factory */);
+  // |bindings_| gets only updated through the SetBindings API, not through
+  // UpdateEntry, so make a copy of it explicitly here as part of cloning.
+  copy->bindings_ = bindings_;
   return copy;
 }
 
@@ -67,29 +72,9 @@ void FrameNavigationEntry::UpdateEntry(
     SiteInstanceImpl* site_instance,
     scoped_refptr<SiteInstanceImpl> source_site_instance,
     const GURL& url,
-    const url::Origin& origin,
+    const base::Optional<url::Origin>& origin,
     const Referrer& referrer,
-    const std::vector<GURL>& redirect_chain,
-    const PageState& page_state,
-    const std::string& method,
-    int64_t post_id,
-    scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory) {
-  UpdateEntryInternal(frame_unique_name, item_sequence_number,
-                      document_sequence_number, site_instance,
-                      std::move(source_site_instance), url, &origin, referrer,
-                      redirect_chain, page_state, method, post_id,
-                      std::move(blob_url_loader_factory));
-}
-
-void FrameNavigationEntry::UpdateEntryInternal(
-    const std::string& frame_unique_name,
-    int64_t item_sequence_number,
-    int64_t document_sequence_number,
-    SiteInstanceImpl* site_instance,
-    scoped_refptr<SiteInstanceImpl> source_site_instance,
-    const GURL& url,
-    const url::Origin* origin,
-    const Referrer& referrer,
+    const base::Optional<url::Origin>& initiator_origin,
     const std::vector<GURL>& redirect_chain,
     const PageState& page_state,
     const std::string& method,
@@ -102,16 +87,13 @@ void FrameNavigationEntry::UpdateEntryInternal(
   source_site_instance_ = std::move(source_site_instance);
   redirect_chain_ = redirect_chain;
   url_ = url;
+  committed_origin_ = origin;
   referrer_ = referrer;
+  initiator_origin_ = initiator_origin;
   page_state_ = page_state;
   method_ = method;
   post_id_ = post_id;
   blob_url_loader_factory_ = std::move(blob_url_loader_factory);
-
-  if (origin)
-    origin_ = *origin;
-  else
-    origin_.reset();
 }
 
 void FrameNavigationEntry::set_item_sequence_number(
@@ -139,6 +121,13 @@ void FrameNavigationEntry::SetPageState(const PageState& page_state) {
 
   item_sequence_number_ = exploded_state.top.item_sequence_number;
   document_sequence_number_ = exploded_state.top.document_sequence_number;
+}
+
+void FrameNavigationEntry::SetBindings(int bindings) {
+  // Ensure this is set to a valid value, and that it stays the same once set.
+  CHECK_NE(bindings, kInvalidBindings);
+  CHECK(bindings_ == kInvalidBindings || bindings_ == bindings);
+  bindings_ = bindings;
 }
 
 scoped_refptr<network::ResourceRequestBody> FrameNavigationEntry::GetPostData(

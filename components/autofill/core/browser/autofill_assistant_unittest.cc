@@ -11,15 +11,16 @@
 #include "base/feature_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/autofill/core/browser/autofill_driver.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/browser/mock_autocomplete_history_manager.h"
+#include "components/autofill/core/browser/payments/test_credit_card_save_manager.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
 #include "components/autofill/core/browser/test_autofill_driver.h"
-#include "components/autofill/core/browser/test_credit_card_save_manager.h"
 #include "components/autofill/core/browser/test_personal_data_manager.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -37,9 +38,10 @@ class MockAutofillManager : public AutofillManager {
  public:
   MockAutofillManager(TestAutofillDriver* driver,
                       TestAutofillClient* client,
-                      PersonalDataManager* pdm)
+                      PersonalDataManager* pdm,
+                      AutocompleteHistoryManager* ahm)
       // Force to use the constructor designated for unit test.
-      : AutofillManager(driver, client, pdm) {}
+      : AutofillManager(driver, client, pdm, ahm) {}
   virtual ~MockAutofillManager() {}
 
   MOCK_METHOD5(FillCreditCardForm,
@@ -60,13 +62,17 @@ class MockAutofillManager : public AutofillManager {
 class AutofillAssistantTest : public testing::Test {
  protected:
   AutofillAssistantTest()
-      : task_environment_(), autofill_client_(), autofill_driver_(), pdm_() {}
+      : task_environment_(),
+        autofill_client_(),
+        autofill_driver_(),
+        pdm_(),
+        ahm_() {}
 
   void SetUp() {
     payments::TestPaymentsClient* payments_client =
-        new payments::TestPaymentsClient(
-            autofill_driver_.GetURLLoaderFactory(), autofill_client_.GetPrefs(),
-            autofill_client_.GetIdentityManager(), &pdm_);
+        new payments::TestPaymentsClient(autofill_driver_.GetURLLoaderFactory(),
+                                         autofill_client_.GetIdentityManager(),
+                                         &pdm_);
     autofill_client_.set_test_payments_client(
         std::unique_ptr<payments::TestPaymentsClient>(payments_client));
     TestCreditCardSaveManager* credit_card_save_manager =
@@ -81,7 +87,7 @@ class AutofillAssistantTest : public testing::Test {
         std::unique_ptr<TestFormDataImporter>(test_form_data_importer));
 
     autofill_manager_ = std::make_unique<MockAutofillManager>(
-        &autofill_driver_, &autofill_client_, &pdm_);
+        &autofill_driver_, &autofill_client_, &pdm_, &ahm_);
 
     autofill_assistant_ =
         std::make_unique<AutofillAssistant>(autofill_manager_.get());
@@ -95,7 +101,7 @@ class AutofillAssistantTest : public testing::Test {
   // Returns a valid credit card form.
   FormData CreateValidCreditCardFormData() {
     FormData form;
-    form.origin = GURL("https://myform.com");
+    form.url = GURL("https://myform.com");
     form.action = GURL("https://myform.com/submit");
 
     FormFieldData field;
@@ -133,10 +139,20 @@ class AutofillAssistantTest : public testing::Test {
     return form_structure;
   }
 
-  base::test::ScopedTaskEnvironment task_environment_;
+  // Convenience method to cast the FullCardRequest into a CardUnmaskDelegate.
+  CardUnmaskDelegate* full_card_unmask_delegate() {
+    payments::FullCardRequest* full_card_request =
+        autofill_manager_->credit_card_access_manager_->cvc_authenticator_
+            ->full_card_request_.get();
+    DCHECK(full_card_request);
+    return static_cast<CardUnmaskDelegate*>(full_card_request);
+  }
+
+  base::test::SingleThreadTaskEnvironment task_environment_;
   TestAutofillClient autofill_client_;
   testing::NiceMock<TestAutofillDriver> autofill_driver_;
   TestPersonalDataManager pdm_;
+  MockAutocompleteHistoryManager ahm_;
   std::unique_ptr<MockAutofillManager> autofill_manager_;
   std::unique_ptr<AutofillAssistant> autofill_assistant_;
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -195,7 +211,7 @@ TEST_F(AutofillAssistantTest, CanShowCreditCardAssist_FeatureOn_NotSecure) {
 
   // Cannot be shown if the context is not secure.
   FormData form = CreateValidCreditCardFormData();
-  form.origin = GURL("http://myform.com");
+  form.url = GURL("http://myform.com");
   form.action = GURL("http://myform.com/submit");
   auto form_structure = std::make_unique<FormStructure>(form);
   form_structure->DetermineHeuristicTypes();
@@ -272,9 +288,7 @@ TEST_F(AutofillAssistantTest, ShowAssistForCreditCard_ValidCard_CancelCvc) {
   EXPECT_CALL(*autofill_manager_, FillCreditCardForm(_, _, _, _, _)).Times(0);
 
   autofill_assistant_->ShowAssistForCreditCard(card);
-  static_cast<CardUnmaskDelegate*>(
-      autofill_manager_->GetOrCreateFullCardRequest())
-      ->OnUnmaskPromptClosed();
+  full_card_unmask_delegate()->OnUnmaskPromptClosed();
 }
 
 TEST_F(AutofillAssistantTest, ShowAssistForCreditCard_ValidCard_SubmitCvc) {
@@ -301,11 +315,9 @@ TEST_F(AutofillAssistantTest, ShowAssistForCreditCard_ValidCard_SubmitCvc) {
 
   autofill_assistant_->ShowAssistForCreditCard(card);
 
-  CardUnmaskDelegate::UnmaskResponse unmask_response;
-  unmask_response.cvc = base::ASCIIToUTF16("123");
-  static_cast<CardUnmaskDelegate*>(
-      autofill_manager_->GetOrCreateFullCardRequest())
-      ->OnUnmaskResponse(unmask_response);
+  CardUnmaskDelegate::UserProvidedUnmaskDetails unmask_details;
+  unmask_details.cvc = base::ASCIIToUTF16("123");
+  full_card_unmask_delegate()->OnUnmaskPromptAccepted(unmask_details);
 }
 
 }  // namespace autofill

@@ -21,16 +21,18 @@
 #include "content/public/browser/media_device_id.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/media_stream_request.h"
+#include "content/public/common/content_client.h"
 #include "media/base/media_switches.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 namespace content {
 
 namespace {
 
-std::string GetDefaultMediaDeviceIDOnUIThread(MediaDeviceType device_type,
-                                              int render_process_id,
-                                              int render_frame_id) {
+std::string GetDefaultMediaDeviceIDOnUIThread(
+    blink::MediaDeviceType device_type,
+    int render_process_id,
+    int render_frame_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   RenderFrameHostImpl* frame_host =
       RenderFrameHostImpl::FromID(render_process_id, render_frame_id);
@@ -41,13 +43,13 @@ std::string GetDefaultMediaDeviceIDOnUIThread(MediaDeviceType device_type,
   if (!delegate)
     return std::string();
 
-  MediaStreamType media_stream_type;
+  blink::mojom::MediaStreamType media_stream_type;
   switch (device_type) {
-    case MEDIA_DEVICE_TYPE_AUDIO_INPUT:
-      media_stream_type = MEDIA_DEVICE_AUDIO_CAPTURE;
+    case blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT:
+      media_stream_type = blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE;
       break;
-    case MEDIA_DEVICE_TYPE_VIDEO_INPUT:
-      media_stream_type = MEDIA_DEVICE_VIDEO_CAPTURE;
+    case blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT:
+      media_stream_type = blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE;
       break;
     default:
       return std::string();
@@ -59,7 +61,7 @@ std::string GetDefaultMediaDeviceIDOnUIThread(MediaDeviceType device_type,
 // This function is intended for testing purposes. It returns an empty string
 // if no default device is supplied via the command line.
 std::string GetDefaultMediaDeviceIDFromCommandLine(
-    MediaDeviceType device_type) {
+    blink::MediaDeviceType device_type) {
   DCHECK(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kUseFakeDeviceForMediaStream));
   const std::string option =
@@ -81,10 +83,10 @@ std::string GetDefaultMediaDeviceIDFromCommandLine(
       return std::string();
     }
 
-    if (device_type == MEDIA_DEVICE_TYPE_AUDIO_INPUT &&
+    if (device_type == blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT &&
         param.front() == "audio-input-default-id") {
       return param.back();
-    } else if (device_type == MEDIA_DEVICE_TYPE_VIDEO_INPUT &&
+    } else if (device_type == blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT &&
                param.front() == "video-input-default-id") {
       return param.back();
     }
@@ -105,7 +107,7 @@ MediaDeviceSaltAndOrigin::MediaDeviceSaltAndOrigin(std::string device_id_salt,
       origin(std::move(origin)) {}
 
 void GetDefaultMediaDeviceID(
-    MediaDeviceType device_type,
+    blink::MediaDeviceType device_type,
     int render_process_id,
     int render_frame_id,
     const base::Callback<void(const std::string&)>& callback) {
@@ -119,7 +121,7 @@ void GetDefaultMediaDeviceID(
     }
   }
 
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE, {BrowserThread::UI},
       base::Bind(&GetDefaultMediaDeviceIDOnUIThread, device_type,
                  render_process_id, render_frame_id),
@@ -129,32 +131,59 @@ void GetDefaultMediaDeviceID(
 MediaDeviceSaltAndOrigin GetMediaDeviceSaltAndOrigin(int render_process_id,
                                                      int render_frame_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  RenderFrameHost* frame_host =
-      RenderFrameHost::FromID(render_process_id, render_frame_id);
+  RenderFrameHostImpl* frame_host =
+      RenderFrameHostImpl::FromID(render_process_id, render_frame_id);
   RenderProcessHost* process_host =
       RenderProcessHost::FromID(render_process_id);
-  WebContentsImpl* web_contents = static_cast<WebContentsImpl*>(
-      WebContents::FromRenderFrameHost(frame_host));
 
-  std::string device_id_salt =
-      process_host ? process_host->GetBrowserContext()->GetMediaDeviceIDSalt()
-                   : std::string();
-  std::string group_id_salt =
-      device_id_salt + (web_contents
-                            ? web_contents->GetMediaDeviceGroupIDSaltBase()
-                            : std::string());
-  url::Origin origin =
-      frame_host ? frame_host->GetLastCommittedOrigin() : url::Origin();
+  url::Origin origin;
+  GURL url;
+  GURL site_for_cookies;
+  url::Origin top_level_origin;
+  std::string frame_salt;
+
+  if (frame_host) {
+    origin = frame_host->GetLastCommittedOrigin();
+    url = frame_host->GetLastCommittedURL();
+    site_for_cookies = frame_host->ComputeSiteForCookies();
+    top_level_origin = frame_host->frame_tree_node()
+                           ->frame_tree()
+                           ->GetMainFrame()
+                           ->GetLastCommittedOrigin();
+    frame_salt = frame_host->GetMediaDeviceIDSaltBase();
+  }
+
+  bool are_persistent_ids_allowed = false;
+  std::string device_id_salt;
+  std::string group_id_salt;
+  if (process_host) {
+    are_persistent_ids_allowed =
+        GetContentClient()->browser()->ArePersistentMediaDeviceIDsAllowed(
+            process_host->GetBrowserContext(), url, site_for_cookies,
+            top_level_origin);
+    device_id_salt = process_host->GetBrowserContext()->GetMediaDeviceIDSalt();
+    group_id_salt = device_id_salt;
+  }
+
+  // If persistent IDs are not allowed, append |frame_salt| to make it
+  // specific to the current document.
+  if (!are_persistent_ids_allowed)
+    device_id_salt += frame_salt;
+
+  // |group_id_salt| must be unique per document, but it must also change if
+  // cookies are cleared. Also, it must be different from |device_id_salt|,
+  // thus appending a constant.
+  group_id_salt += frame_salt + "groupid";
 
   return {std::move(device_id_salt), std::move(group_id_salt),
           std::move(origin)};
 }
 
-MediaDeviceInfo TranslateMediaDeviceInfo(
+blink::WebMediaDeviceInfo TranslateMediaDeviceInfo(
     bool has_permission,
     const MediaDeviceSaltAndOrigin& salt_and_origin,
-    const MediaDeviceInfo& device_info) {
-  return MediaDeviceInfo(
+    const blink::WebMediaDeviceInfo& device_info) {
+  return blink::WebMediaDeviceInfo(
       GetHMACForMediaDeviceID(salt_and_origin.device_id_salt,
                               salt_and_origin.origin, device_info.device_id),
       has_permission ? device_info.label : std::string(),
@@ -167,11 +196,11 @@ MediaDeviceInfo TranslateMediaDeviceInfo(
                      : media::MEDIA_VIDEO_FACING_NONE);
 }
 
-MediaDeviceInfoArray TranslateMediaDeviceInfoArray(
+blink::WebMediaDeviceInfoArray TranslateMediaDeviceInfoArray(
     bool has_permission,
     const MediaDeviceSaltAndOrigin& salt_and_origin,
-    const MediaDeviceInfoArray& device_infos) {
-  MediaDeviceInfoArray result;
+    const blink::WebMediaDeviceInfoArray& device_infos) {
+  blink::WebMediaDeviceInfoArray result;
   for (const auto& device_info : device_infos) {
     result.push_back(
         TranslateMediaDeviceInfo(has_permission, salt_and_origin, device_info));

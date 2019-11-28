@@ -6,20 +6,24 @@ package org.chromium.chrome.browser.tab;
 
 import android.view.ViewGroup;
 
+import org.chromium.content_public.browser.RenderWidgetHostView;
 import org.chromium.ui.base.ViewAndroidDelegate;
 
 /**
  * Implementation of the abstract class {@link ViewAndroidDelegate} for Chrome.
  */
-class TabViewAndroidDelegate extends ViewAndroidDelegate {
-    /** Used for logging. */
-    private static final String TAG = "TabVAD";
+public class TabViewAndroidDelegate extends ViewAndroidDelegate {
+    private final TabImpl mTab;
 
-    private final Tab mTab;
+    /**
+     * The inset for the bottom of the Visual Viewport in pixels, or 0 for no insetting.
+     * This is the source of truth for the application viewport inset for this embedder.
+     */
+    private int mApplicationViewportInsetBottomPx;
 
     TabViewAndroidDelegate(Tab tab, ViewGroup containerView) {
         super(containerView);
-        mTab = tab;
+        mTab = (TabImpl) tab;
     }
 
     @Override
@@ -28,19 +32,30 @@ class TabViewAndroidDelegate extends ViewAndroidDelegate {
     }
 
     @Override
-    public void onTopControlsChanged(float topControlsOffsetY, float topContentOffsetY) {
-        TabBrowserControlsOffsetHelper.from(mTab).onOffsetsChanged(
-                topControlsOffsetY, Float.NaN, topContentOffsetY);
+    public void onTopControlsChanged(int topControlsOffsetY, int contentOffsetY) {
+        TabBrowserControlsOffsetHelper.get(mTab).setTopOffset(topControlsOffsetY, contentOffsetY);
     }
 
     @Override
-    public void onBottomControlsChanged(float bottomControlsOffsetY, float bottomContentOffsetY) {
-        TabBrowserControlsOffsetHelper.from(mTab).onOffsetsChanged(
-                Float.NaN, bottomControlsOffsetY, Float.NaN);
+    public void onBottomControlsChanged(int bottomControlsOffsetY, int bottomContentOffsetY) {
+        TabBrowserControlsOffsetHelper.get(mTab).setBottomOffset(bottomControlsOffsetY);
+    }
+
+    /**
+     * Sets the Visual Viewport bottom inset.
+     * @param viewportInsetBottomPx The bottom inset in pixels.  Use {@code 0} for no inset.
+     */
+    public void insetViewportBottom(int viewportInsetBottomPx) {
+        mApplicationViewportInsetBottomPx = viewportInsetBottomPx;
+
+        RenderWidgetHostView renderWidgetHostView = mTab.getWebContents().getRenderWidgetHostView();
+        if (renderWidgetHostView == null) return;
+
+        renderWidgetHostView.onViewportInsetBottomChanged();
     }
 
     @Override
-    public int getSystemWindowInsetBottom() {
-        return mTab.getSystemWindowInsetBottom();
+    protected int getViewportInsetBottom() {
+        return mApplicationViewportInsetBottomPx;
     }
 }

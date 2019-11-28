@@ -9,13 +9,13 @@
 
 namespace service_manager {
 
-InterfaceProvider::InterfaceProvider() : weak_factory_(this) {
-  pending_request_ = MakeRequest(&interface_provider_);
+InterfaceProvider::InterfaceProvider() {
+  pending_request_ = interface_provider_.BindNewPipeAndPassReceiver();
 }
 
 InterfaceProvider::InterfaceProvider(
-    mojom::InterfaceProviderPtr interface_provider)
-    : interface_provider_(std::move(interface_provider)), weak_factory_(this) {}
+    mojo::PendingRemote<mojom::InterfaceProvider> interface_provider)
+    : interface_provider_(std::move(interface_provider)) {}
 
 InterfaceProvider::~InterfaceProvider() {}
 
@@ -25,14 +25,16 @@ void InterfaceProvider::Close() {
   interface_provider_.reset();
 }
 
-void InterfaceProvider::Bind(mojom::InterfaceProviderPtr interface_provider) {
+void InterfaceProvider::Bind(
+    mojo::PendingRemote<mojom::InterfaceProvider> interface_provider) {
   DCHECK(pending_request_.is_pending() || !interface_provider_);
   DCHECK(forward_callback_.is_null());
   if (pending_request_.is_pending()) {
     mojo::FuseInterface(std::move(pending_request_),
-                        interface_provider.PassInterface());
+                        mojo::InterfacePtrInfo<mojom::InterfaceProvider>(
+                            interface_provider.PassPipe(), 0u));
   } else {
-    interface_provider_ = std::move(interface_provider);
+    interface_provider_.Bind(std::move(interface_provider));
   }
 }
 
@@ -45,8 +47,9 @@ void InterfaceProvider::Forward(const ForwardCallback& callback) {
 }
 
 void InterfaceProvider::SetConnectionLostClosure(
-    const base::Closure& connection_lost_closure) {
-  interface_provider_.set_connection_error_handler(connection_lost_closure);
+    base::OnceClosure connection_lost_closure) {
+  interface_provider_.set_disconnect_handler(
+      std::move(connection_lost_closure));
 }
 
 base::WeakPtr<InterfaceProvider> InterfaceProvider::GetWeakPtr() {

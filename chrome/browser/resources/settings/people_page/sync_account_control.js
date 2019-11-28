@@ -78,7 +78,21 @@ Polymer({
       computed: 'computeShouldShowAvatarRow_(storedAccounts_, syncStatus,' +
           'storedAccounts_.length, syncStatus.signedIn)',
       observer: 'onShouldShowAvatarRowChange_',
-    }
+    },
+
+    /** @private */
+    subLabel_: {
+      type: String,
+      computed: 'computeSubLabel_(promoSecondaryLabelWithAccount,' +
+          'promoSecondaryLabelWithNoAccount, shownAccount_)',
+    },
+
+    /** @private */
+    showSetupButtons_: {
+      type: Boolean,
+      computed: 'computeShowSetupButtons_(' +
+          'hideButtons, syncStatus.firstSetupInProgress)',
+    },
   },
 
   observers: [
@@ -126,7 +140,7 @@ Polymer({
    * @private
    */
   computeSignedIn_: function() {
-    return !!this.syncStatus.signedIn;
+    return !!this.syncStatus && !!this.syncStatus.signedIn;
   },
 
   /** @private */
@@ -145,8 +159,9 @@ Polymer({
       // Turn off the promo if the user is signed in.
       this.showingPromo = false;
     }
-    if (!this.syncStatus.signedIn && this.shownAccount_ !== undefined)
+    if (!this.syncStatus.signedIn && this.shownAccount_ !== undefined) {
       this.recordImpressionUserActions_();
+    }
   },
 
   /**
@@ -157,6 +172,23 @@ Polymer({
    */
   getLabel_: function(labelWithAccount, labelWithNoAccount) {
     return this.shownAccount_ ? labelWithAccount : labelWithNoAccount;
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  computeSubLabel_: function() {
+    return this.getLabel_(this.promoSecondaryLabelWithAccount,
+                          this.promoSecondaryLabelWithNoAccount);
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getPromoHeaderClass_: function() {
+    return this.subLabel_ ? 'two-line' : '';
   },
 
   /**
@@ -176,6 +208,9 @@ Polymer({
    * @private
    */
   getAccountLabel_: function(label, account) {
+    if (this.syncStatus.firstSetupInProgress) {
+      return this.syncStatus.statusText || account;
+    }
     return this.syncStatus.signedIn && !this.syncStatus.hasError &&
             !this.syncStatus.disabled ?
         loadTimeData.substituteString(label, account) :
@@ -198,17 +233,20 @@ Polymer({
    * @private
    */
   getSyncIconStyle_: function() {
-    if (!!this.syncStatus.hasUnrecoverableError)
-      return 'sync-problem';
-    if (!!this.syncStatus.hasError) {
-      return this.syncStatus.statusAction ==
-              settings.StatusAction.REAUTHENTICATE ?
-          'sync-paused' :
-          'sync-problem';
-    }
-    if (!!this.syncStatus.disabled)
+    if (this.syncStatus.disabled) {
       return 'sync-disabled';
-    return 'sync';
+    }
+    if (!this.syncStatus.hasError) {
+      return 'sync';
+    }
+    // Specific error cases below.
+    if (this.syncStatus.hasUnrecoverableError) {
+      return 'sync-problem';
+    }
+    if (this.syncStatus.statusAction == settings.StatusAction.REAUTHENTICATE) {
+      return 'sync-paused';
+    }
+    return 'sync-problem';
   },
 
   /**
@@ -228,21 +266,34 @@ Polymer({
   },
 
   /**
+   * @param {string} accountName
+   * @param {string} syncErrorLabel
+   * @param {string} syncPasswordsOnlyErrorLabel
+   * @param {string} authErrorLabel
+   * @param {string} disabledLabel
    * @return {string}
    * @private
    */
   getAvatarRowTitle_: function(
-      accountName, syncErrorLabel, authErrorLabel, disabledLabel) {
-    switch (this.getSyncIconStyle_()) {
-      case 'sync-problem':
-        return syncErrorLabel;
-      case 'sync-paused':
-        return authErrorLabel;
-      case 'sync-disabled':
-        return disabledLabel;
-      default:
-        return accountName;
+      accountName, syncErrorLabel, syncPasswordsOnlyErrorLabel, authErrorLabel,
+      disabledLabel) {
+    if (this.syncStatus.disabled) {
+      return disabledLabel;
     }
+    if (!this.syncStatus.hasError) {
+      return accountName;
+    }
+    // Specific error cases below.
+    if (this.syncStatus.hasUnrecoverableError) {
+      return syncErrorLabel;
+    }
+    if (this.syncStatus.statusAction == settings.StatusAction.REAUTHENTICATE) {
+      return authErrorLabel;
+    }
+    if (this.syncStatus.hasPasswordsOnlyError) {
+      return syncPasswordsOnlyErrorLabel;
+    }
+    return syncErrorLabel;
   },
 
   /**
@@ -250,8 +301,8 @@ Polymer({
    * @private
    */
   shouldShowTurnOffButton_: function() {
-    return !this.hideButtons && !!this.syncStatus.signedIn &&
-        !this.embeddedInSubpage;
+    return !this.hideButtons && !this.showSetupButtons_ &&
+        !!this.syncStatus.signedIn;
   },
 
   /**
@@ -265,8 +316,8 @@ Polymer({
       // In a subpage the passphrase button is not required.
       return false;
     }
-    return !this.hideButtons && !!this.syncStatus.signedIn &&
-        !!this.syncStatus.hasError &&
+    return !this.hideButtons && !this.showSetupButtons_ &&
+        !!this.syncStatus.signedIn && !!this.syncStatus.hasError &&
         this.syncStatus.statusAction != settings.StatusAction.NO_ACTION;
   },
 
@@ -283,8 +334,9 @@ Polymer({
    * @private
    */
   computeShouldShowAvatarRow_: function() {
-    if (this.storedAccounts_ === undefined || this.syncStatus === undefined)
+    if (this.storedAccounts_ === undefined || this.syncStatus === undefined) {
       return false;
+    }
 
     return this.syncStatus.signedIn || this.storedAccounts_.length > 0;
   },
@@ -296,9 +348,9 @@ Polymer({
         this.syncBrowserProxy_.startSignIn();
         break;
       case settings.StatusAction.SIGNOUT_AND_SIGNIN:
-        if (this.syncStatus.domain)
+        if (this.syncStatus.domain) {
           settings.navigateTo(settings.routes.SIGN_OUT);
-        else {
+        } else {
           // Silently sign the user out without deleting their profile and
           // prompt them to sign back in.
           this.syncBrowserProxy_.signOut(false);
@@ -307,6 +359,9 @@ Polymer({
         break;
       case settings.StatusAction.UPGRADE_CLIENT:
         settings.navigateTo(settings.routes.ABOUT);
+        break;
+      case settings.StatusAction.RETRIEVE_TRUSTED_VAULT_KEYS:
+        this.syncBrowserProxy_.startKeyRetrieval();
         break;
       case settings.StatusAction.ENTER_PASSPHRASE:
       case settings.StatusAction.CONFIRM_SYNC_SETTINGS:
@@ -359,8 +414,9 @@ Polymer({
     // Close dropdown when avatar-row hides, so if it appears again, the menu
     // won't be open by default.
     const actionMenu = this.$$('#menu');
-    if (!this.shouldShowAvatarRow_ && actionMenu && actionMenu.open)
+    if (!this.shouldShowAvatarRow_ && actionMenu && actionMenu.open) {
       actionMenu.close();
+    }
   },
 
   /**
@@ -376,8 +432,9 @@ Polymer({
 
   /** @private */
   onShownAccountShouldChange_: function() {
-    if (this.storedAccounts_ === undefined || this.syncStatus === undefined)
+    if (this.storedAccounts_ === undefined || this.syncStatus === undefined) {
       return;
+    }
 
     if (this.syncStatus.signedIn) {
       for (let i = 0; i < this.storedAccounts_.length; i++) {
@@ -402,8 +459,27 @@ Polymer({
 
       this.shownAccount_ = firstStoredAccount;
 
-      if (shouldRecordImpression)
+      if (shouldRecordImpression) {
         this.recordImpressionUserActions_();
+      }
     }
-  }
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeShowSetupButtons_: function() {
+    return !this.hideButtons && !!this.syncStatus.firstSetupInProgress;
+  },
+
+  /** @private */
+  onSetupCancel_: function() {
+    this.fire('sync-setup-done', false);
+  },
+
+  /** @private */
+  onSetupConfirm_: function() {
+    this.fire('sync-setup-done', true);
+  },
 });

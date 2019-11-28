@@ -18,7 +18,6 @@ class FilePath;
 namespace metrics {
 class MetricsService;
 class MetricsServiceClient;
-class MetricsStateManager;
 }
 
 namespace rappor {
@@ -83,6 +82,9 @@ class MetricsServicesManager {
   // Gets the current state of metric reporting.
   bool IsMetricsReportingEnabled() const;
 
+  // Gets the current state of metrics consent.
+  bool IsMetricsConsentGiven() const;
+
  private:
   // Update the managed services when permissions for recording/uploading
   // metrics change.
@@ -91,8 +93,6 @@ class MetricsServicesManager {
   // Returns the MetricsServiceClient, creating it if it hasn't been
   // created yet (and additionally creating the MetricsService in that case).
   metrics::MetricsServiceClient* GetMetricsServiceClient();
-
-  metrics::MetricsStateManager* GetMetricsStateManager();
 
   // Update which services are running to match current permissions.
   void UpdateRunningServices();

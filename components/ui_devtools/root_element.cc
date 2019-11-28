@@ -14,12 +14,6 @@ RootElement::RootElement(UIElementDelegate* ui_element_delegate)
 
 RootElement::~RootElement() {}
 
-std::vector<std::pair<std::string, std::string>>
-RootElement::GetCustomProperties() const {
-  NOTREACHED();
-  return {};
-}
-
 void RootElement::GetBounds(gfx::Rect* bounds) const {
   NOTREACHED();
 }
@@ -35,14 +29,14 @@ void RootElement::GetVisible(bool* visible) const {
 void RootElement::SetVisible(bool visible) {
   NOTREACHED();
 }
-std::unique_ptr<protocol::Array<std::string>> RootElement::GetAttributes()
-    const {
+
+std::vector<std::string> RootElement::GetAttributes() const {
   NOTREACHED();
-  return nullptr;
+  return {};
 }
 
-std::pair<gfx::NativeWindow, gfx::Rect> RootElement::GetNodeWindowAndBounds()
-    const {
+std::pair<gfx::NativeWindow, gfx::Rect>
+RootElement::GetNodeWindowAndScreenBounds() const {
   NOTREACHED();
   return {};
 }

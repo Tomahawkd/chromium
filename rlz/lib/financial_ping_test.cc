@@ -19,7 +19,7 @@
 #include <stdint.h>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -28,6 +28,7 @@
 #include "rlz/lib/machine_id.h"
 #include "rlz/lib/rlz_lib.h"
 #include "rlz/lib/rlz_value_store.h"
+#include "rlz/lib/time_util.h"
 #include "rlz/test/rlz_test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -175,7 +176,7 @@ TEST_F(FinancialPingTest, FormRequest) {
        ap < rlz_lib::LAST_ACCESS_POINT; ap++) {
     rlz[0] = 0;
     rlz_lib::AccessPoint point = static_cast<rlz_lib::AccessPoint>(ap);
-    if (rlz_lib::GetAccessPointRlz(point, rlz, arraysize(rlz)) && rlz[0]) {
+    if (rlz_lib::GetAccessPointRlz(point, rlz, base::size(rlz)) && rlz[0]) {
       rlz_lib::SetAccessPointRlz(point, "");
     }
   }
@@ -192,7 +193,7 @@ TEST_F(FinancialPingTest, FormRequest) {
       "Q1:QsbRlzValue" DCC_PARAM, brand);
   EXPECT_STREQ(expected_response.c_str(), request.c_str());
 
-  if (!GetAccessPointRlz(rlz_lib::IE_HOME_PAGE, rlz, arraysize(rlz))) {
+  if (!GetAccessPointRlz(rlz_lib::IE_HOME_PAGE, rlz, base::size(rlz))) {
     points[2] = rlz_lib::IE_HOME_PAGE;
     EXPECT_TRUE(rlz_lib::FinancialPing::FormRequest(rlz_lib::TOOLBAR_NOTIFIER,
         points, "swg", brand, "MyId", "en-US", true, &request));
@@ -224,7 +225,7 @@ static void SetLastPingTime(int64_t time, rlz_lib::Product product) {
 }
 
 TEST_F(FinancialPingTest, IsPingTime) {
-  int64_t now = rlz_lib::FinancialPing::GetSystemTimeAsInt64();
+  int64_t now = rlz_lib::GetSystemTimeAsInt64();
   int64_t last_ping = now - rlz_lib::kEventsPingInterval - k1MinuteInterval;
   SetLastPingTime(last_ping, rlz_lib::TOOLBAR_NOTIFIER);
 
@@ -276,7 +277,7 @@ TEST_F(FinancialPingTest, BrandingIsPingTime) {
   if (!rlz_lib::SupplementaryBranding::GetBrand().empty())
     return;
 
-  int64_t now = rlz_lib::FinancialPing::GetSystemTimeAsInt64();
+  int64_t now = rlz_lib::GetSystemTimeAsInt64();
   int64_t last_ping = now - rlz_lib::kEventsPingInterval - k1MinuteInterval;
   SetLastPingTime(last_ping, rlz_lib::TOOLBAR_NOTIFIER);
 
@@ -311,7 +312,7 @@ TEST_F(FinancialPingTest, BrandingIsPingTime) {
 }
 
 TEST_F(FinancialPingTest, ClearLastPingTime) {
-  int64_t now = rlz_lib::FinancialPing::GetSystemTimeAsInt64();
+  int64_t now = rlz_lib::GetSystemTimeAsInt64();
   int64_t last_ping = now - rlz_lib::kEventsPingInterval + k1MinuteInterval;
   SetLastPingTime(last_ping, rlz_lib::TOOLBAR_NOTIFIER);
 

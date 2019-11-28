@@ -9,7 +9,6 @@
 
 #include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/display/display_layout.h"
-#include "ui/display/manager/display_configurator.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/display/manager/touch_device_manager.h"
@@ -17,7 +16,7 @@
 #include "ui/display/screen.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/display_snapshot.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/touch_device_transform.h"
 
 namespace display {
@@ -27,7 +26,7 @@ namespace {
 ui::TouchscreenDevice FindTouchscreenByIdentifier(
     const TouchDeviceIdentifier& identifier) {
   const std::vector<ui::TouchscreenDevice>& touchscreens =
-      ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices();
+      ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices();
   for (const auto& touchscreen : touchscreens) {
     if (TouchDeviceIdentifier::FromDevice(touchscreen) == identifier)
       return touchscreen;
@@ -281,11 +280,9 @@ gfx::Transform TouchTransformController::GetTouchTransform(
 }
 
 TouchTransformController::TouchTransformController(
-    DisplayConfigurator* display_configurator,
     DisplayManager* display_manager,
     std::unique_ptr<TouchTransformSetter> setter)
-    : display_configurator_(display_configurator),
-      display_manager_(display_manager),
+    : display_manager_(display_manager),
       touch_transform_setter_(std::move(setter)) {}
 
 TouchTransformController::~TouchTransformController() {}

@@ -8,19 +8,6 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/content_mock_cert_verifier.h"
 
-// Helper class for use by tests that already derive from
-// InProcessBrowserTest so can't use CertVerifierBrowserTest.
-class ChromeMockCertVerifier : public content::ContentMockCertVerifier {
- public:
-  ChromeMockCertVerifier();
-  ~ChromeMockCertVerifier() override;
-  void SetUpInProcessBrowserTestFixture() override;
-  void TearDownInProcessBrowserTestFixture() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ChromeMockCertVerifier);
-};
-
 // CertVerifierBrowserTest allows tests to force certificate
 // verification results for requests made with any profile's main
 // request context (such as navigations). To do so, tests can use the
@@ -41,7 +28,7 @@ class CertVerifierBrowserTest : public InProcessBrowserTest {
   }
 
  private:
-  ChromeMockCertVerifier mock_cert_verifier_;
+  content::ContentMockCertVerifier mock_cert_verifier_;
 
   DISALLOW_COPY_AND_ASSIGN(CertVerifierBrowserTest);
 };

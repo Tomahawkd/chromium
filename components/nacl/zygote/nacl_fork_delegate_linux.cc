@@ -18,7 +18,6 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
@@ -26,6 +25,7 @@
 #include "base/posix/unix_domain_socket.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
 #include "components/nacl/common/nacl_nonsfi_util.h"
@@ -230,7 +230,7 @@ void NaClForkDelegate::Init(const int sandboxdesc,
       const base::CommandLine& current_cmd_line =
           *base::CommandLine::ForCurrentProcess();
       cmd_line.CopySwitchesFrom(current_cmd_line, kForwardSwitches,
-                                arraysize(kForwardSwitches));
+                                base::size(kForwardSwitches));
 
       // The command line needs to be tightly controlled to use
       // |helper_bootstrap_exe|. So from now on, argv_to_launch should be
@@ -277,8 +277,17 @@ void NaClForkDelegate::Init(const int sandboxdesc,
 
     // To avoid information leaks in Non-SFI mode, clear the environment for
     // the NaCl Helper process.
-    options.clear_environ = true;
+    options.clear_environment = true;
     AddPassthroughEnvToOptions(&options);
+
+#ifdef COMPONENT_BUILD
+    // In component build, nacl_helper loads libgnutls.so.
+    // Newer versions of libgnutls do implicit initialization when loaded that
+    // leaves an additional /dev/urandom file descriptor open.  Passing the
+    // following env var asks libgnutls not to do that implicit initialization.
+    // (crbug.com/973024)
+    options.environment["GNUTLS_NO_EXPLICIT_INIT"] = "1";
+#endif
 
     base::Process process =
         using_namespace_sandbox
@@ -458,7 +467,7 @@ void NaClForkDelegate::AddPassthroughEnvToOptions(
   for (size_t i = 0; i < pass_through_vars.size(); ++i) {
     std::string temp;
     if (env->GetVar(pass_through_vars[i], &temp))
-      options->environ[pass_through_vars[i]] = temp;
+      options->environment[pass_through_vars[i]] = temp;
   }
 }
 

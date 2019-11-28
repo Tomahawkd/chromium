@@ -15,10 +15,14 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_command_line.h"
 #include "base/values.h"
+#include "content/public/test/test_utils.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/features/complex_feature.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/features/feature_session_type.h"
 #include "extensions/common/manifest.h"
+#include "extensions/common/manifest_handlers/background_info.h"
+#include "extensions/common/scoped_worker_based_extensions_channel.h"
 #include "extensions/common/switches.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -99,7 +103,7 @@ TEST_F(SimpleFeatureTest, IsAvailableNullCase) {
        Feature::UNSPECIFIED_PLATFORM, 25, Feature::IS_AVAILABLE}};
 
   SimpleFeature feature;
-  for (size_t i = 0; i < arraysize(tests); ++i) {
+  for (size_t i = 0; i < base::size(tests); ++i) {
     const IsAvailableTestData& test = tests[i];
     EXPECT_EQ(test.expected_result,
               feature
@@ -511,7 +515,7 @@ TEST_F(SimpleFeatureTest, SessionType) {
        FeatureSessionType::AUTOLAUNCHED_KIOSK,
        {FeatureSessionType::KIOSK}}};
 
-  for (size_t i = 0; i < arraysize(kTestData); ++i) {
+  for (size_t i = 0; i < base::size(kTestData); ++i) {
     std::unique_ptr<base::AutoReset<FeatureSessionType>> current_session(
         ScopedCurrentFeatureSessionType(kTestData[i].current_session_type));
 
@@ -545,6 +549,8 @@ TEST_F(SimpleFeatureTest, Location) {
                                   Manifest::COMPONENT));
   EXPECT_TRUE(
       LocationIsAvailable(SimpleFeature::POLICY_LOCATION, Manifest::COMPONENT));
+  EXPECT_TRUE(LocationIsAvailable(SimpleFeature::UNPACKED_LOCATION,
+                                  Manifest::COMPONENT));
 
   // Only component extensions can access the "component" location.
   EXPECT_FALSE(LocationIsAvailable(SimpleFeature::COMPONENT_LOCATION,
@@ -580,6 +586,15 @@ TEST_F(SimpleFeatureTest, Location) {
   // location.
   EXPECT_TRUE(LocationIsAvailable(SimpleFeature::EXTERNAL_COMPONENT_LOCATION,
                                   Manifest::EXTERNAL_COMPONENT));
+
+  // Only unpacked and command line extensions can access the "unpacked"
+  // location.
+  EXPECT_TRUE(LocationIsAvailable(SimpleFeature::UNPACKED_LOCATION,
+                                  Manifest::UNPACKED));
+  EXPECT_TRUE(LocationIsAvailable(SimpleFeature::UNPACKED_LOCATION,
+                                  Manifest::COMMAND_LINE));
+  EXPECT_FALSE(LocationIsAvailable(SimpleFeature::UNPACKED_LOCATION,
+                                   Manifest::INTERNAL));
 }
 
 TEST_F(SimpleFeatureTest, Platform) {
@@ -710,13 +725,13 @@ TEST_F(SimpleFeatureTest, IsIdInArray) {
     // aaaabbbbccccddddeeeeffffgggghhhh
     "9A0417016F345C934A1A88F55CA17C05014EEEBA"
   };
-  EXPECT_FALSE(SimpleFeature::IsIdInArray("", kIdArray, arraysize(kIdArray)));
-  EXPECT_FALSE(SimpleFeature::IsIdInArray(
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", kIdArray, arraysize(kIdArray)));
-  EXPECT_TRUE(SimpleFeature::IsIdInArray(
-      "bbbbccccdddddddddeeeeeeffffgghhh", kIdArray, arraysize(kIdArray)));
-  EXPECT_TRUE(SimpleFeature::IsIdInArray(
-      "aaaabbbbccccddddeeeeffffgggghhhh", kIdArray, arraysize(kIdArray)));
+  EXPECT_FALSE(SimpleFeature::IsIdInArray("", kIdArray, base::size(kIdArray)));
+  EXPECT_FALSE(SimpleFeature::IsIdInArray("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                          kIdArray, base::size(kIdArray)));
+  EXPECT_TRUE(SimpleFeature::IsIdInArray("bbbbccccdddddddddeeeeeeffffgghhh",
+                                         kIdArray, base::size(kIdArray)));
+  EXPECT_TRUE(SimpleFeature::IsIdInArray("aaaabbbbccccddddeeeeffffgggghhhh",
+                                         kIdArray, base::size(kIdArray)));
 }
 
 // Tests that all combinations of feature channel and Chrome channel correctly
@@ -890,10 +905,10 @@ TEST(SimpleFeatureUnitTest, TestChannelsWithoutExtension) {
   // Create a webui feature available on trunk.
   SimpleFeature feature;
   feature.set_contexts({Feature::WEBUI_CONTEXT});
-  feature.set_matches({"chrome://settings/*"});
+  feature.set_matches({content::GetWebUIURLString("settings/*").c_str()});
   feature.set_channel(version_info::Channel::UNKNOWN);
 
-  const GURL kAllowlistedUrl("chrome://settings/foo");
+  const GURL kAllowlistedUrl(content::GetWebUIURL("settings/foo"));
   const GURL kOtherUrl("https://example.com");
 
   {
@@ -985,6 +1000,53 @@ TEST(SimpleFeatureUnitTest, TestExperimentalExtensionApisSwitch) {
         switches::kEnableExperimentalExtensionApis);
     EXPECT_EQ(Feature::IS_AVAILABLE, test_feature());
   }
+}
+
+TEST(SimpleFeatureUnitTest, DisallowForServiceWorkers) {
+  ScopedWorkerBasedExtensionsChannel worker_channel_override;
+
+  SimpleFeature feature;
+  feature.set_name("somefeature");
+  feature.set_contexts({Feature::BLESSED_EXTENSION_CONTEXT});
+  feature.set_extension_types({Manifest::TYPE_EXTENSION});
+
+  auto extension = ExtensionBuilder("test")
+                       .SetBackgroundContext(
+                           ExtensionBuilder::BackgroundContext::SERVICE_WORKER)
+                       .Build();
+  ASSERT_TRUE(extension.get());
+  EXPECT_TRUE(BackgroundInfo::IsServiceWorkerBased(extension.get()));
+
+  // Expect the feature is allowed, since the default is to allow.
+  EXPECT_EQ(Feature::IS_AVAILABLE,
+            feature
+                .IsAvailableToContext(
+                    extension.get(), Feature::BLESSED_EXTENSION_CONTEXT,
+                    extension->GetResourceURL(
+                        ExtensionBuilder::kServiceWorkerScriptFile),
+                    Feature::CHROMEOS_PLATFORM)
+                .result());
+
+  // Check with a different script file, which should return available,
+  // since it's not a service worker context.
+  EXPECT_EQ(Feature::IS_AVAILABLE,
+            feature
+                .IsAvailableToContext(extension.get(),
+                                      Feature::BLESSED_EXTENSION_CONTEXT,
+                                      extension->GetResourceURL("other.js"),
+                                      Feature::CHROMEOS_PLATFORM)
+                .result());
+
+  // Disable the feature for service workers. The feature should be disallowed.
+  feature.set_disallow_for_service_workers(true);
+  EXPECT_EQ(Feature::INVALID_CONTEXT,
+            feature
+                .IsAvailableToContext(
+                    extension.get(), Feature::BLESSED_EXTENSION_CONTEXT,
+                    extension->GetResourceURL(
+                        ExtensionBuilder::kServiceWorkerScriptFile),
+                    Feature::CHROMEOS_PLATFORM)
+                .result());
 }
 
 }  // namespace extensions

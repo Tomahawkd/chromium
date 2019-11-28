@@ -16,6 +16,7 @@
 #include "extensions/browser/extension_host.h"
 
 class Browser;
+class Profile;
 
 namespace content {
 class SiteInstance;
@@ -41,6 +42,7 @@ class ExtensionViewHost
                     ViewType host_type);
   ~ExtensionViewHost() override;
 
+  Browser* browser() { return browser_; }
   ExtensionView* view() { return view_.get(); }
   const ExtensionView* view() const { return view_.get(); }
 
@@ -54,8 +56,8 @@ class ExtensionViewHost
 
   // Handles keyboard events that were not handled by HandleKeyboardEvent().
   // Platform specific implementation may override this method to handle the
-  // event in platform specific way.
-  virtual void UnhandledKeyboardEvent(
+  // event in platform specific way. Returns whether the events are handled.
+  virtual bool UnhandledKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event);
 
@@ -117,12 +119,16 @@ class ExtensionViewHost
   // Implemented per-platform. Create the platform-specific ExtensionView.
   static std::unique_ptr<ExtensionView> CreateExtensionView(
       ExtensionViewHost* host,
-      Browser* browser);
+      Profile* profile);
+
+  // The browser associated with the ExtensionView, if any.
+  Browser* browser_ = nullptr;
+
   // Optional view that shows the rendered content in the UI.
   std::unique_ptr<ExtensionView> view_;
 
   // The relevant WebContents associated with this ExtensionViewHost, if any.
-  content::WebContents* associated_web_contents_;
+  content::WebContents* associated_web_contents_ = nullptr;
 
   // Observer to detect when the associated web contents is destroyed.
   class AssociatedWebContentsObserver;

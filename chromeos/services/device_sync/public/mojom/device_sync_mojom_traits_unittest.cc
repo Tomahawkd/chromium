@@ -1,107 +1,71 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "chromeos/services/device_sync/public/mojom/device_sync_mojom_traits.h"
 
-#include "base/time/time.h"
-#include "chromeos/components/multidevice/remote_device.h"
+#include "chromeos/services/device_sync/feature_status_change.h"
+#include "chromeos/services/device_sync/proto/cryptauth_devicesync.pb.h"
 #include "chromeos/services/device_sync/public/mojom/device_sync.mojom.h"
-#include "components/cryptauth/proto/cryptauth_api.pb.h"
-#include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace {
+TEST(DeviceSyncMojomTraitsTest, ConnectivityStatus) {
+  static constexpr cryptauthv2::ConnectivityStatus kTestConnectivityStatuses[] =
+      {cryptauthv2::ConnectivityStatus::ONLINE,
+       cryptauthv2::ConnectivityStatus::OFFLINE};
 
-const char kTestBeaconSeedData[] = "data";
-const int64_t kTestBeaconSeedStartTimeMillis = 1L;
-const int64_t kTestBeaconSeedEndTimeMillis = 2L;
+  for (auto status_in : kTestConnectivityStatuses) {
+    cryptauthv2::ConnectivityStatus status_out;
 
-cryptauth::BeaconSeed CreateTestBeaconSeed() {
-  cryptauth::BeaconSeed beacon_seed;
-
-  beacon_seed.set_data(kTestBeaconSeedData);
-  beacon_seed.set_start_time_millis(kTestBeaconSeedStartTimeMillis);
-  beacon_seed.set_end_time_millis(kTestBeaconSeedEndTimeMillis);
-
-  return beacon_seed;
-}
-
-}  // namespace
-
-TEST(DeviceSyncMojomStructTraitsTest, BeaconSeed) {
-  cryptauth::BeaconSeed input = CreateTestBeaconSeed();
-
-  cryptauth::BeaconSeed output;
-  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
-              chromeos::device_sync::mojom::BeaconSeed>(&input, &output));
-
-  EXPECT_EQ(kTestBeaconSeedData, output.data());
-  EXPECT_EQ(kTestBeaconSeedStartTimeMillis, output.start_time_millis());
-  EXPECT_EQ(kTestBeaconSeedEndTimeMillis, output.end_time_millis());
-}
-
-TEST(DeviceSyncMojomStructTraitsTest, RemoteDevice) {
-  std::map<cryptauth::SoftwareFeature,
-           chromeos::multidevice::SoftwareFeatureState>
-      software_features =
-          std::map<cryptauth::SoftwareFeature,
-                   chromeos::multidevice::SoftwareFeatureState>();
-  software_features[cryptauth::SoftwareFeature::BETTER_TOGETHER_CLIENT] =
-      chromeos::multidevice::SoftwareFeatureState::kSupported;
-  software_features[cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST] =
-      chromeos::multidevice::SoftwareFeatureState::kEnabled;
-
-  chromeos::multidevice::RemoteDevice input;
-  input.user_id = "userId";
-  input.name = "name";
-  input.public_key = "publicKey";
-  input.persistent_symmetric_key = "persistentSymmetricKey";
-  input.last_update_time_millis = 3L;
-  input.software_features = software_features;
-  input.beacon_seeds = {CreateTestBeaconSeed()};
-
-  chromeos::multidevice::RemoteDevice output;
-  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
-              chromeos::device_sync::mojom::RemoteDevice>(&input, &output));
-
-  EXPECT_EQ("userId", output.user_id);
-  EXPECT_EQ("name", output.name);
-  EXPECT_EQ("publicKey", output.public_key);
-  EXPECT_EQ("persistentSymmetricKey", output.persistent_symmetric_key);
-  EXPECT_EQ(3L, output.last_update_time_millis);
-  EXPECT_EQ(software_features, output.software_features);
-  ASSERT_EQ(1u, output.beacon_seeds.size());
-  EXPECT_EQ(kTestBeaconSeedData, output.beacon_seeds[0].data());
-  EXPECT_EQ(kTestBeaconSeedStartTimeMillis,
-            output.beacon_seeds[0].start_time_millis());
-  EXPECT_EQ(kTestBeaconSeedEndTimeMillis,
-            output.beacon_seeds[0].end_time_millis());
-}
-
-TEST(DeviceSyncMojomEnumTraitsTest, SoftwareFeature) {
-  static constexpr cryptauth::SoftwareFeature kTestSoftwareFeatures[] = {
-      cryptauth::SoftwareFeature::UNKNOWN_FEATURE,
-      cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST,
-      cryptauth::SoftwareFeature::BETTER_TOGETHER_CLIENT,
-      cryptauth::SoftwareFeature::EASY_UNLOCK_HOST,
-      cryptauth::SoftwareFeature::EASY_UNLOCK_CLIENT,
-      cryptauth::SoftwareFeature::MAGIC_TETHER_HOST,
-      cryptauth::SoftwareFeature::MAGIC_TETHER_CLIENT,
-      cryptauth::SoftwareFeature::SMS_CONNECT_HOST,
-      cryptauth::SoftwareFeature::SMS_CONNECT_CLIENT};
-
-  for (auto feature_in : kTestSoftwareFeatures) {
-    cryptauth::SoftwareFeature feature_out;
-
-    chromeos::device_sync::mojom::SoftwareFeature serialized_feature =
-        mojo::EnumTraits<chromeos::device_sync::mojom::SoftwareFeature,
-                         cryptauth::SoftwareFeature>::ToMojom(feature_in);
+    chromeos::device_sync::mojom::ConnectivityStatus serialized_status =
+        mojo::EnumTraits<chromeos::device_sync::mojom::ConnectivityStatus,
+                         cryptauthv2::ConnectivityStatus>::ToMojom(status_in);
     ASSERT_TRUE((mojo::EnumTraits<
-                 chromeos::device_sync::mojom::SoftwareFeature,
-                 cryptauth::SoftwareFeature>::FromMojom(serialized_feature,
-                                                        &feature_out)));
-    EXPECT_EQ(feature_in, feature_out);
+                 chromeos::device_sync::mojom::ConnectivityStatus,
+                 cryptauthv2::ConnectivityStatus>::FromMojom(serialized_status,
+                                                             &status_out)));
+    EXPECT_EQ(status_in, status_out);
+  }
+}
+
+TEST(DeviceSyncMojomTraitsTest, FeatureStatusChange) {
+  static constexpr chromeos::device_sync::FeatureStatusChange
+      kTestFeatureStatusChanges[] = {
+          chromeos::device_sync::FeatureStatusChange::kEnableExclusively,
+          chromeos::device_sync::FeatureStatusChange::kEnableNonExclusively,
+          chromeos::device_sync::FeatureStatusChange::kDisable};
+
+  for (auto status_in : kTestFeatureStatusChanges) {
+    chromeos::device_sync::FeatureStatusChange status_out;
+
+    chromeos::device_sync::mojom::FeatureStatusChange serialized_status =
+        mojo::EnumTraits<
+            chromeos::device_sync::mojom::FeatureStatusChange,
+            chromeos::device_sync::FeatureStatusChange>::ToMojom(status_in);
+    ASSERT_TRUE(
+        (mojo::EnumTraits<chromeos::device_sync::mojom::FeatureStatusChange,
+                          chromeos::device_sync::FeatureStatusChange>::
+             FromMojom(serialized_status, &status_out)));
+    EXPECT_EQ(status_in, status_out);
+  }
+}
+
+TEST(DeviceSyncMojomTraitsTest, TargetService) {
+  static constexpr cryptauthv2::TargetService kTestTargetServices[] = {
+      cryptauthv2::TargetService::ENROLLMENT,
+      cryptauthv2::TargetService::DEVICE_SYNC};
+
+  for (auto status_in : kTestTargetServices) {
+    cryptauthv2::TargetService status_out;
+
+    chromeos::device_sync::mojom::CryptAuthService serialized_status =
+        mojo::EnumTraits<chromeos::device_sync::mojom::CryptAuthService,
+                         cryptauthv2::TargetService>::ToMojom(status_in);
+    ASSERT_TRUE((mojo::EnumTraits<
+                 chromeos::device_sync::mojom::CryptAuthService,
+                 cryptauthv2::TargetService>::FromMojom(serialized_status,
+                                                        &status_out)));
+    EXPECT_EQ(status_in, status_out);
   }
 }

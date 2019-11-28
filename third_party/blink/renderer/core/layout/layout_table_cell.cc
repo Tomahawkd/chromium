@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/html/html_table_cell_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/collapsed_border_value.h"
+#include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
 #include "third_party/blink/renderer/core/layout/layout_analyzer.h"
 #include "third_party/blink/renderer/core/layout/layout_object_factory.h"
 #include "third_party/blink/renderer/core/layout/layout_table_col.h"
@@ -39,13 +40,11 @@
 #include "third_party/blink/renderer/core/paint/table_cell_paint_invalidator.h"
 #include "third_party/blink/renderer/core/paint/table_cell_painter.h"
 #include "third_party/blink/renderer/platform/geometry/float_quad.h"
-#include "third_party/blink/renderer/platform/transforms/transform_state.h"
 
 namespace blink {
 
-using namespace html_names;
-
-struct SameSizeAsLayoutTableCell : public LayoutBlockFlow {
+struct SameSizeAsLayoutTableCell : public LayoutBlockFlow,
+                                   public LayoutNGTableCellInterface {
   unsigned bitfields;
   int paddings[2];
   void* pointer1;
@@ -139,7 +138,7 @@ void LayoutTableCell::ColSpanOrRowSpanChanged() {
 
 Length LayoutTableCell::LogicalWidthFromColumns(
     LayoutTableCol* first_col_for_this_cell,
-    Length width_from_style) const {
+    const Length& width_from_style) const {
   DCHECK(first_col_for_this_cell);
   DCHECK_EQ(first_col_for_this_cell,
             Table()
@@ -150,7 +149,7 @@ Length LayoutTableCell::LogicalWidthFromColumns(
   unsigned col_span_count = ColSpan();
   int col_width_sum = 0;
   for (unsigned i = 1; i <= col_span_count; i++) {
-    Length col_width = table_col->StyleRef().LogicalWidth();
+    const Length& col_width = table_col->StyleRef().LogicalWidth();
 
     // Percentage value should be returned only for colSpan == 1.
     // Otherwise we return original width for the cell.
@@ -171,11 +170,11 @@ Length LayoutTableCell::LogicalWidthFromColumns(
   // Column widths specified on <col> apply to the border box of the cell, see
   // bug 8126.
   // FIXME: Why is border/padding ignored in the negative width case?
-  if (col_width_sum > 0)
-    return Length(
-        std::max(0, col_width_sum - BorderAndPaddingLogicalWidth().Ceil()),
-        kFixed);
-  return Length(col_width_sum, kFixed);
+  if (col_width_sum > 0) {
+    return Length::Fixed(
+        std::max(0, col_width_sum - BorderAndPaddingLogicalWidth().Ceil()));
+  }
+  return Length::Fixed(col_width_sum);
 }
 
 void LayoutTableCell::ComputePreferredLogicalWidths() {
@@ -202,7 +201,7 @@ void LayoutTableCell::ComputePreferredLogicalWidths() {
     // See if nowrap was set.
     Length w = StyleOrColLogicalWidth();
     const AtomicString& nowrap =
-        ToElement(GetNode())->getAttribute(kNowrapAttr);
+        To<Element>(GetNode())->FastGetAttribute(html_names::kNowrapAttr);
     if (!nowrap.IsNull() && w.IsFixed()) {
       // Nowrap is set, but we didn't actually use it because of the fixed width
       // set on the cell. Even so, it is a WinIE/Moz trait to make the minwidth
@@ -212,24 +211,6 @@ void LayoutTableCell::ComputePreferredLogicalWidths() {
           std::max(LayoutUnit(w.Value()), min_preferred_logical_width_);
     }
   }
-}
-
-void LayoutTableCell::AddLayerHitTestRects(
-    LayerHitTestRects& layer_rects,
-    const PaintLayer* current_layer,
-    const LayoutPoint& layer_offset,
-    TouchAction supported_fast_actions,
-    const LayoutRect& container_rect,
-    TouchAction container_whitelisted_touch_action) const {
-  LayoutPoint adjusted_layer_offset = layer_offset;
-  // LayoutTableCell's location includes the offset of it's containing
-  // LayoutTableRow, so we need to subtract that again here (as for
-  // LayoutTableCell::offsetFromContainer.
-  if (Parent())
-    adjusted_layer_offset -= ParentBox()->LocationOffset();
-  LayoutBox::AddLayerHitTestRects(
-      layer_rects, current_layer, adjusted_layer_offset, supported_fast_actions,
-      container_rect, container_whitelisted_touch_action);
 }
 
 void LayoutTableCell::ComputeIntrinsicPadding(int collapsed_height,
@@ -354,15 +335,15 @@ void LayoutTableCell::SetOverrideLogicalHeightFromRowHeight(
   SetOverrideLogicalHeight(row_height);
 }
 
-LayoutSize LayoutTableCell::OffsetFromContainerInternal(
+PhysicalOffset LayoutTableCell::OffsetFromContainerInternal(
     const LayoutObject* o,
     bool ignore_scroll_offset) const {
   DCHECK_EQ(o, Container());
 
-  LayoutSize offset =
+  PhysicalOffset offset =
       LayoutBlockFlow::OffsetFromContainerInternal(o, ignore_scroll_offset);
   if (Parent())
-    offset -= ParentBox()->PhysicalLocationOffset();
+    offset -= ParentBox()->PhysicalLocation();
 
   return offset;
 }
@@ -383,10 +364,8 @@ void LayoutTableCell::SetIsSpanningCollapsedColumn(
 }
 
 void LayoutTableCell::ComputeVisualOverflow(
-    const LayoutRect& previous_visual_overflow_rect,
     bool recompute_floats) {
-  LayoutBlockFlow::ComputeVisualOverflow(previous_visual_overflow_rect,
-                                         recompute_floats);
+  LayoutBlockFlow::ComputeVisualOverflow(recompute_floats);
 
   UpdateCollapsedBorderValues();
   if (!collapsed_border_values_)
@@ -401,7 +380,7 @@ void LayoutTableCell::ComputeVisualOverflow(
   unsigned top = CollapsedBorderHalfTop(true);
   unsigned bottom = CollapsedBorderHalfBottom(true);
 
-  // TODO(wangxianzhu): The following looks incorrect for vertical direction.
+  // TODO(layout-ng): The following looks incorrect for vertical direction.
   // This cell's borders may be lengthened to match the widths of orthogonal
   // borders of adjacent cells. Expand visual overflow to cover the lengthened
   // parts.
@@ -460,6 +439,9 @@ void LayoutTableCell::StyleDidChange(StyleDifference diff,
   LayoutBlockFlow::StyleDidChange(diff, old_style);
   SetHasBoxDecorationBackground(true);
 
+  if (Row() && Section() && Table() && Table()->ShouldCollapseBorders())
+    SetHasNonCollapsedBorderDecoration(false);
+
   if (!old_style)
     return;
 
@@ -491,14 +473,14 @@ void LayoutTableCell::StyleDidChange(StyleDifference diff,
   if (LayoutTableBoxComponent::DoCellsHaveDirtyWidth(*this, *table, diff,
                                                      *old_style)) {
     if (PreviousCell()) {
-      // TODO(dgrogan) Add a layout test showing that setChildNeedsLayout is
-      // needed instead of setNeedsLayout.
+      // TODO(dgrogan) Add a web test showing that SetChildNeedsLayout is
+      // needed instead of SetNeedsLayout.
       PreviousCell()->SetChildNeedsLayout();
       PreviousCell()->SetPreferredLogicalWidthsDirty(kMarkOnlyThis);
     }
     if (NextCell()) {
-      // TODO(dgrogan) Add a layout test showing that setChildNeedsLayout is
-      // needed instead of setNeedsLayout.
+      // TODO(dgrogan) Add a web test showing that SetChildNeedsLayout is
+      // needed instead of SetNeedsLayout.
       NextCell()->SetChildNeedsLayout();
       NextCell()->SetPreferredLogicalWidthsDirty(kMarkOnlyThis);
     }
@@ -1077,6 +1059,8 @@ void LayoutTableCell::UpdateCollapsedBorderValues() const {
     }
   } else {
     Table()->InvalidateCollapsedBordersForAllCellsIfNeeded();
+    if (Section())
+      Section()->RecalcCellsIfNeeded();
     if (collapsed_border_values_valid_)
       return;
 
@@ -1114,13 +1098,13 @@ void LayoutTableCell::UpdateCollapsedBorderValues() const {
 
 void LayoutTableCell::PaintBoxDecorationBackground(
     const PaintInfo& paint_info,
-    const LayoutPoint& paint_offset) const {
+    const PhysicalOffset& paint_offset) const {
   TableCellPainter(*this).PaintBoxDecorationBackground(paint_info,
                                                        paint_offset);
 }
 
 void LayoutTableCell::PaintMask(const PaintInfo& paint_info,
-                                const LayoutPoint& paint_offset) const {
+                                const PhysicalOffset& paint_offset) const {
   TableCellPainter(*this).PaintMask(paint_info, paint_offset);
 }
 
@@ -1129,6 +1113,11 @@ void LayoutTableCell::ScrollbarsChanged(bool horizontal_scrollbar_changed,
                                         ScrollbarChangeContext context) {
   LayoutBlock::ScrollbarsChanged(horizontal_scrollbar_changed,
                                  vertical_scrollbar_changed);
+
+  // The intrinsic-padding adjustment for scrollbars is directly handled by NG.
+  if (IsLayoutNGObject())
+    return;
+
   if (context != kLayout)
     return;
 
@@ -1163,9 +1152,10 @@ void LayoutTableCell::ScrollbarsChanged(bool horizontal_scrollbar_changed,
 
 LayoutTableCell* LayoutTableCell::CreateAnonymous(
     Document* document,
-    scoped_refptr<ComputedStyle> style) {
+    scoped_refptr<ComputedStyle> style,
+    LegacyLayout legacy) {
   LayoutTableCell* layout_object =
-      LayoutObjectFactory::CreateTableCell(*document, *style);
+      LayoutObjectFactory::CreateTableCell(*document, *style, legacy);
   layout_object->SetDocumentForAnonymous(document);
   layout_object->SetStyle(std::move(style));
   return layout_object;
@@ -1176,39 +1166,21 @@ LayoutTableCell* LayoutTableCell::CreateAnonymousWithParent(
   scoped_refptr<ComputedStyle> new_style =
       ComputedStyle::CreateAnonymousStyleWithDisplay(parent->StyleRef(),
                                                      EDisplay::kTableCell);
+  LegacyLayout legacy =
+      parent->ForceLegacyLayout() ? LegacyLayout::kForce : LegacyLayout::kAuto;
   LayoutTableCell* new_cell = LayoutTableCell::CreateAnonymous(
-      &parent->GetDocument(), std::move(new_style));
+      &parent->GetDocument(), std::move(new_style), legacy);
   return new_cell;
 }
 
 bool LayoutTableCell::BackgroundIsKnownToBeOpaqueInRect(
-    const LayoutRect& local_rect) const {
+    const PhysicalRect& local_rect) const {
   // If this object has layer, the area of collapsed borders should be
   // transparent to expose the collapsed borders painted on the underlying
   // layer.
   if (HasLayer() && Table()->ShouldCollapseBorders())
     return false;
   return LayoutBlockFlow::BackgroundIsKnownToBeOpaqueInRect(local_rect);
-}
-
-// TODO(loonybear): Deliberately dump the "inner" box of table cells, since that
-// is what current results reflect.  We'd like to clean up the results to dump
-// both the outer box and the intrinsic padding so that both bits of information
-// are captured by the results.
-LayoutRect LayoutTableCell::DebugRect() const {
-  LayoutRect rect = LayoutRect(
-      Location().X(), Location().Y() + IntrinsicPaddingBefore(), Size().Width(),
-      Size().Height() - IntrinsicPaddingBefore() - IntrinsicPaddingAfter());
-
-  LayoutBlock* cb = ContainingBlock();
-  if (cb)
-    cb->AdjustChildDebugRect(rect);
-
-  return rect;
-}
-
-void LayoutTableCell::AdjustChildDebugRect(LayoutRect& r) const {
-  r.Move(0, -IntrinsicPaddingBefore());
 }
 
 bool LayoutTableCell::HasLineIfEmpty() const {

@@ -55,6 +55,46 @@ TEST(ContextCacheControllerTest, ScopedVisibilityMulti) {
   cache_controller.ClientBecameNotVisible(std::move(visibility_2));
 }
 
+// Check that resources aren't freed during shutdown until the
+// ContextCacheController is also deleted.
+TEST(ContextCacheControllerTest, ScopedVisibilityDuringShutdown) {
+  StrictMock<MockContextSupport> context_support;
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
+  std::unique_ptr<ContextCacheController> cache_controller =
+      std::make_unique<ContextCacheController>(&context_support, task_runner);
+
+  EXPECT_CALL(context_support, SetAggressivelyFreeResources(false));
+  std::unique_ptr<ContextCacheController::ScopedVisibility> visibility =
+      cache_controller->ClientBecameVisible();
+  Mock::VerifyAndClearExpectations(&context_support);
+
+  cache_controller->ClientBecameNotVisibleDuringShutdown(std::move(visibility));
+
+  EXPECT_CALL(context_support, SetAggressivelyFreeResources(true));
+  cache_controller.reset();
+}
+
+// Check that multiple clients can shutdown successfully.
+TEST(ContextCacheControllerTest, ScopedVisibilityDuringShutdownMulti) {
+  StrictMock<MockContextSupport> context_support;
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
+  std::unique_ptr<ContextCacheController> cache_controller =
+      std::make_unique<ContextCacheController>(&context_support, task_runner);
+
+  EXPECT_CALL(context_support, SetAggressivelyFreeResources(false));
+  auto visibility_1 = cache_controller->ClientBecameVisible();
+  Mock::VerifyAndClearExpectations(&context_support);
+  auto visibility_2 = cache_controller->ClientBecameVisible();
+
+  cache_controller->ClientBecameNotVisibleDuringShutdown(
+      std::move(visibility_1));
+  cache_controller->ClientBecameNotVisibleDuringShutdown(
+      std::move(visibility_2));
+
+  EXPECT_CALL(context_support, SetAggressivelyFreeResources(true));
+  cache_controller.reset();
+}
+
 TEST(ContextCacheControllerTest, ScopedBusyWhileVisible) {
   StrictMock<MockContextSupport> context_support;
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
@@ -136,7 +176,7 @@ TEST(ContextCacheControllerTest, CheckSkiaResourcePurgeAPI) {
     std::vector<uint8_t> image_data(image_info.computeMinByteSize());
     SkPixmap pixmap(image_info, image_data.data(), image_info.minRowBytes());
     auto image = SkImage::MakeRasterCopy(pixmap);
-    auto image_gpu = image->makeTextureImage(gr_context, nullptr);
+    auto image_gpu = image->makeTextureImage(gr_context);
     gr_context->flush();
   }
 

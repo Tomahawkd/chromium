@@ -33,9 +33,7 @@ class HTMLMarqueeElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  void Trace(blink::Visitor*) override;
-
-  static HTMLMarqueeElement* Create(Document&);
+  void Trace(Visitor*) override;
 
   explicit HTMLMarqueeElement(Document&);
 

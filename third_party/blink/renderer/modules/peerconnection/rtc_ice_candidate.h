@@ -31,9 +31,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_ICE_CANDIDATE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_ICE_CANDIDATE_H_
 
-#include "third_party/blink/public/platform/web_rtc_ice_candidate.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/peerconnection/rtc_ice_candidate_platform.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -51,23 +51,31 @@ class MODULES_EXPORT RTCIceCandidate final : public ScriptWrappable {
   static RTCIceCandidate* Create(ExecutionContext*,
                                  const RTCIceCandidateInit*,
                                  ExceptionState&);
-  static RTCIceCandidate* Create(scoped_refptr<WebRTCICECandidate>);
+  static RTCIceCandidate* Create(scoped_refptr<RTCIceCandidatePlatform>);
 
-  explicit RTCIceCandidate(scoped_refptr<WebRTCICECandidate>);
+  explicit RTCIceCandidate(scoped_refptr<RTCIceCandidatePlatform>);
 
   String candidate() const;
-  void setCandidate(String);
   String sdpMid() const;
-  void setSdpMid(String);
-  unsigned short sdpMLineIndex() const;
-  void setSdpMLineIndex(unsigned short);
+  uint16_t sdpMLineIndex(bool& is_null) const;
+  String foundation() const;
+  String component() const;
+  uint32_t priority(bool& is_null) const;
+  String address() const;
+  String protocol() const;
+  uint16_t port(bool& is_null) const;
+  String type() const;
+  String tcpType() const;
+  String relatedAddress() const;
+  uint16_t relatedPort(bool& is_null) const;
+  String usernameFragment() const;
 
   ScriptValue toJSONForBinding(ScriptState*);
 
-  scoped_refptr<WebRTCICECandidate> WebCandidate() const;
+  scoped_refptr<RTCIceCandidatePlatform> PlatformCandidate() const;
 
  private:
-  scoped_refptr<WebRTCICECandidate> web_candidate_;
+  scoped_refptr<RTCIceCandidatePlatform> platform_candidate_;
 };
 
 }  // namespace blink

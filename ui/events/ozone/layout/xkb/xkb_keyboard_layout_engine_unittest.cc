@@ -7,13 +7,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
-#include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
+#include "ui/events/ozone/layout/scoped_keyboard_layout_engine.h"
 
 namespace ui {
 
@@ -65,11 +65,14 @@ class VkTestXkbKeyboardLayoutEngine : public XkbKeyboardLayoutEngine {
     static const int kTestFlags[] = {EF_SHIFT_DOWN, EF_ALTGR_DOWN,
                                      EF_MOD3_DOWN};
     xkb_flag_map_.clear();
-    xkb_flag_map_.resize(arraysize(kTestFlags));
-    for (size_t i = 0; i < arraysize(kTestFlags); ++i) {
+    xkb_flag_map_.resize(base::size(kTestFlags));
+    for (size_t i = 0; i < base::size(kTestFlags); ++i) {
       XkbFlagMapEntry e = {kTestFlags[i], kTestFlags[i]};
       xkb_flag_map_.push_back(e);
     }
+
+    shift_mod_mask_ = EF_SHIFT_DOWN;
+    altgr_mod_mask_ = EF_ALTGR_DOWN;
   }
   ~VkTestXkbKeyboardLayoutEngine() override {}
 
@@ -147,20 +150,14 @@ class VkTestXkbKeyboardLayoutEngine : public XkbKeyboardLayoutEngine {
 
 class XkbLayoutEngineVkTest : public testing::Test {
  public:
-  XkbLayoutEngineVkTest() {}
+  XkbLayoutEngineVkTest()
+      : layout_engine_(std::make_unique<VkTestXkbKeyboardLayoutEngine>(
+            keycode_converter_)) {}
   ~XkbLayoutEngineVkTest() override {}
-
-  void SetUp() override {
-    KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
-        std::make_unique<VkTestXkbKeyboardLayoutEngine>(keycode_converter_));
-    layout_engine_ = static_cast<VkTestXkbKeyboardLayoutEngine*>(
-        KeyboardLayoutEngineManager::GetKeyboardLayoutEngine());
-  }
-  void TearDown() override {}
 
  protected:
   VkTestXkbKeyCodeConverter keycode_converter_;
-  VkTestXkbKeyboardLayoutEngine* layout_engine_;
+  std::unique_ptr<VkTestXkbKeyboardLayoutEngine> layout_engine_;
 };
 
 TEST_F(XkbLayoutEngineVkTest, KeyboardCodeForPrintable) {
@@ -767,7 +764,7 @@ TEST_F(XkbLayoutEngineVkTest, KeyboardCodeForPrintable) {
       /* 296 */ {{'0', ')', '-', DomCode::NONE}, VKEY_0},
   };
 
-  for (size_t i = 0; i < arraysize(kVkeyTestCase); ++i) {
+  for (size_t i = 0; i < base::size(kVkeyTestCase); ++i) {
     SCOPED_TRACE(i);
     const auto& e = kVkeyTestCase[i];
     layout_engine_->SetEntry(&e.test);
@@ -896,7 +893,7 @@ TEST_F(XkbLayoutEngineVkTest, XkbRuleNamesForLayoutName) {
       /* 50 */ {"ge", "ge", ""},
       /* 51 */ {"mn", "mn", ""},
       /* 52 */ {"ie", "ie", ""}};
-  for (size_t i = 0; i < arraysize(kVkeyTestCase); ++i) {
+  for (size_t i = 0; i < base::size(kVkeyTestCase); ++i) {
     SCOPED_TRACE(i);
     const VkTestXkbKeyboardLayoutEngine::RuleNames* e = &kVkeyTestCase[i];
     std::string layout_id;

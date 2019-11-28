@@ -25,8 +25,8 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/download/public/common/mock_download_item.h"
 #include "content/public/browser/download_item_utils.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_download_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -129,10 +129,10 @@ class DownloadItemNotificationTest : public testing::Test {
         download_notification_manager_->items_.at(id).get();
     NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(
         NotificationHandler::Type::TRANSIENT,
-        *download_item_notification_->notification_);
+        *download_item_notification_->notification_, /*metadata=*/nullptr);
   }
 
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   std::unique_ptr<TestingProfileManager> profile_manager_;
   Profile* profile_;
@@ -178,7 +178,7 @@ TEST_F(DownloadItemNotificationTest, PauseAndResumeNotification) {
   download_item_->NotifyObserversDownloadUpdated();
 
   // Resumes and makes sure the DownloadItem::Resume() is called.
-  EXPECT_CALL(*download_item_, Resume()).Times(1);
+  EXPECT_CALL(*download_item_, Resume(true)).Times(1);
   EXPECT_CALL(*download_item_, IsPaused()).WillRepeatedly(Return(false));
   download_item_notification_->Click(0, base::nullopt);
   download_item_->NotifyObserversDownloadUpdated();

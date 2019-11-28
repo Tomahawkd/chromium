@@ -4,10 +4,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import os
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
-
 from blinkbuild.name_style_converter import NameStyleConverter
 import media_feature_symbol
 import json5_generator
@@ -34,7 +30,7 @@ class MakeMediaFeaturesWriter(json5_generator.Writer):
         self._template_context = {
             'entries': self.json5_file.name_dictionaries,
             'input_files': self._input_files,
-            'header_guard': self.make_header_guard(self._relative_output_dir + 'media_festures.h')
+            'header_guard': self.make_header_guard(self._relative_output_dir + 'media_features.h')
         }
 
     @template_expander.use_jinja('core/css/templates/media_features.h.tmpl', filters=filters)

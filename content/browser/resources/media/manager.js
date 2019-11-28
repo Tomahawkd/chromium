@@ -21,6 +21,7 @@ var Manager = (function() {
     var copyAllPlayerButton = $('copy-all-player-button');
     var copyAllAudioButton = $('copy-all-audio-button');
     var hidePlayersButton = $('hide-players-button');
+    var devtoolsNoticeWindow = $('devtools-notice-window');
 
     // In tests we may not have these buttons.
     if (copyAllPlayerButton) {
@@ -38,6 +39,9 @@ var Manager = (function() {
     }
     if (hidePlayersButton) {
       hidePlayersButton.onclick = this.hidePlayers_.bind(this);
+    }
+    if (devtoolsNoticeWindow) {
+      devtoolsNoticeWindow.onclick = this.hideNoticeWindow_;
     }
   }
 
@@ -67,8 +71,9 @@ var Manager = (function() {
      * @param componentData The actual component data dictionary.
      */
     updateAudioComponent: function(componentType, componentId, componentData) {
-      if (!(componentType in this.audioComponents_))
+      if (!(componentType in this.audioComponents_)) {
         this.audioComponents_[componentType] = {};
+      }
       if (!(componentId in this.audioComponents_[componentType])) {
         this.audioComponents_[componentType][componentId] = componentData;
       } else {
@@ -122,6 +127,10 @@ var Manager = (function() {
       util.object.forEach(this.players_, function(playerInfo, id) {
         this.removePlayer(id);
       }, this);
+    },
+
+    hideNoticeWindow_: function() {
+      this.style.display = 'none';
     },
 
     updatePlayerInfoNoRecord: function(id, timestamp, key, value) {

@@ -7,7 +7,9 @@
 #include <memory>
 
 #include "ash/highlighter/highlighter_gesture_util.h"
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/timer/timer.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkTypes.h"
 #include "ui/aura/window.h"
@@ -74,8 +76,7 @@ HighlighterView::HighlighterView(base::TimeDelta presentation_delay,
     : FastInkView(container, PresentationCallback()),
       points_(base::TimeDelta()),
       predicted_points_(base::TimeDelta()),
-      presentation_delay_(presentation_delay),
-      weak_ptr_factory_(this) {}
+      presentation_delay_(presentation_delay) {}
 
 HighlighterView::~HighlighterView() = default;
 

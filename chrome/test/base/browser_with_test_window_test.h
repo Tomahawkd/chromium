@@ -5,13 +5,17 @@
 #ifndef CHROME_TEST_BASE_BROWSER_WITH_TEST_WINDOW_TEST_H_
 #define CHROME_TEST_BASE_BROWSER_WITH_TEST_WINDOW_TEST_H_
 
+#include <memory>
+
+#include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_renderer_host.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(TOOLKIT_VIEWS)
@@ -20,7 +24,7 @@
 #include "ash/test/ash_test_views_delegate.h"
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
-#include "chrome/test/base/ash_test_environment_chrome.h"
+#include "chromeos/tpm/stub_install_attributes.h"
 #else
 #include "ui/views/test/scoped_views_test_helper.h"
 #endif
@@ -34,9 +38,8 @@ class GURL;
 
 #if defined(TOOLKIT_VIEWS)
 namespace views {
-class MusClient;
 class TestViewsDelegate;
-}
+}  // namespace views
 #endif
 
 namespace content {
@@ -69,26 +72,36 @@ class TestingProfileManager;
 // for creating the various objects of this class.
 class BrowserWithTestWindowTest : public testing::Test {
  public:
-  // Creates a BrowserWithTestWindowTest for which the initial window will be
-  // a tabbed browser created on the native desktop, which is not a hosted app.
-  BrowserWithTestWindowTest();
+  // Trait which requests construction of a hosted app.
+  struct HostedApp {};
 
-  // Creates a BrowserWithTestWindowTest for which the initial window will be
-  // the specified type.
-  BrowserWithTestWindowTest(Browser::Type browser_type, bool hosted_app);
+  struct ValidTraits {
+    explicit ValidTraits(content::BrowserTaskEnvironment::ValidTraits);
+    explicit ValidTraits(HostedApp);
+    explicit ValidTraits(Browser::Type);
 
-  // Creates a BrowserWithTestWindowTest with the specified options for the
-  // TestBrowserThreadBundle.
-  explicit BrowserWithTestWindowTest(
-      content::TestBrowserThreadBundle::Options thread_bundle_options);
+    // TODO(alexclarke): Make content::BrowserTaskEnvironment::ValidTraits
+    // imply this.
+    explicit ValidTraits(base::test::TaskEnvironment::ValidTraits);
+  };
 
-  // Creates a BrowserWithTestWindowTest for which the initial window will be
-  // the specified type and with the specified options for the
-  // TestBrowserThreadBundle.
-  BrowserWithTestWindowTest(
-      Browser::Type browser_type,
-      bool hosted_app,
-      content::TestBrowserThreadBundle::Options thread_bundle_options);
+  // Creates a BrowserWithTestWindowTest with zero or more traits. By default
+  // the initial window will be a tabbed browser created on the native desktop,
+  // which is not a hosted app.
+  template <
+      typename... TaskEnvironmentTraits,
+      class CheckArgumentsAreValid = std::enable_if_t<
+          base::trait_helpers::AreValidTraits<ValidTraits,
+                                              TaskEnvironmentTraits...>::value>>
+  NOINLINE explicit BrowserWithTestWindowTest(TaskEnvironmentTraits... traits)
+      : BrowserWithTestWindowTest(
+            std::make_unique<content::BrowserTaskEnvironment>(
+                base::trait_helpers::Exclude<HostedApp, Browser::Type>::Filter(
+                    traits)...),
+            base::trait_helpers::GetEnum<Browser::Type, Browser::TYPE_NORMAL>(
+                traits...),
+            base::trait_helpers::HasTrait<HostedApp,
+                                          TaskEnvironmentTraits...>()) {}
 
   ~BrowserWithTestWindowTest() override;
 
@@ -99,12 +112,8 @@ class BrowserWithTestWindowTest : public testing::Test {
   BrowserWindow* window() const { return window_.get(); }
 
   Browser* browser() const { return browser_.get(); }
-  void set_browser(Browser* browser) {
-    browser_.reset(browser);
-  }
-  Browser* release_browser() WARN_UNUSED_RESULT {
-    return browser_.release();
-  }
+  void set_browser(Browser* browser) { browser_.reset(browser); }
+  Browser* release_browser() WARN_UNUSED_RESULT { return browser_.release(); }
 
   TestingProfile* profile() const { return profile_; }
 
@@ -112,7 +121,13 @@ class BrowserWithTestWindowTest : public testing::Test {
 
   TestingProfileManager* profile_manager() { return profile_manager_.get(); }
 
-  content::TestBrowserThreadBundle* thread_bundle() { return &thread_bundle_; }
+  content::BrowserTaskEnvironment* task_environment() {
+    return task_environment_.get();
+  }
+
+  network::TestURLLoaderFactory* test_url_loader_factory() {
+    return &test_url_loader_factory_;
+  }
 
   BrowserWindow* release_browser_window() WARN_UNUSED_RESULT {
     return window_.release();
@@ -148,7 +163,8 @@ class BrowserWithTestWindowTest : public testing::Test {
                                            const GURL& url,
                                            const base::string16& title);
 
-  // Creates the profile used by this test. The caller owns the return value.
+  // Creates the profile used by this test. The caller doesn't own the return
+  // value.
   virtual TestingProfile* CreateProfile();
 
   // Returns a vector of testing factories to be used when creating the profile.
@@ -156,16 +172,16 @@ class BrowserWithTestWindowTest : public testing::Test {
   // method is overridden.
   virtual TestingProfile::TestingFactories GetTestingFactories();
 
-  // Creates the BrowserWindow used by this test. The caller owns the return
-  // value. Can return NULL to use the default window created by Browser.
-  virtual BrowserWindow* CreateBrowserWindow();
+  // Creates the BrowserWindow used by this test. Can return NULL to use the
+  // default window created by Browser.
+  virtual std::unique_ptr<BrowserWindow> CreateBrowserWindow();
 
   // Creates the browser given |profile|, |browser_type|, |hosted_app|, and
-  // |browser_window|. The caller owns the return value.
-  virtual Browser* CreateBrowser(Profile* profile,
-                                 Browser::Type browser_type,
-                                 bool hosted_app,
-                                 BrowserWindow* browser_window);
+  // |browser_window|.
+  virtual std::unique_ptr<Browser> CreateBrowser(Profile* profile,
+                                                 Browser::Type browser_type,
+                                                 bool hosted_app,
+                                                 BrowserWindow* browser_window);
 
 #if defined(TOOLKIT_VIEWS)
   views::TestViewsDelegate* test_views_delegate() {
@@ -177,9 +193,21 @@ class BrowserWithTestWindowTest : public testing::Test {
   }
 #endif
 
+#if defined(OS_CHROMEOS)
+  chromeos::ScopedCrosSettingsTestHelper* GetCrosSettingsHelper();
+  chromeos::StubInstallAttributes* GetInstallAttributes();
+#endif
+
  private:
+  // The template constructor has to be in the header but it delegates to this
+  // constructor to initialize all other members out-of-line.
+  BrowserWithTestWindowTest(
+      std::unique_ptr<content::BrowserTaskEnvironment> task_environment,
+      Browser::Type browser_type,
+      bool hosted_app);
+
   // We need to create a MessageLoop, otherwise a bunch of things fails.
-  content::TestBrowserThreadBundle thread_bundle_;
+  std::unique_ptr<content::BrowserTaskEnvironment> task_environment_;
 
 #if defined(OS_CHROMEOS)
   chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
@@ -188,14 +216,16 @@ class BrowserWithTestWindowTest : public testing::Test {
 
   TestingProfile* profile_;
 
+  // test_url_loader_factory_ is declared before profile_manager_
+  // to guarantee it outlives any profiles that might use it.
+  network::TestURLLoaderFactory test_url_loader_factory_;
+
   std::unique_ptr<TestingProfileManager> profile_manager_;
   std::unique_ptr<BrowserWindow> window_;  // Usually a TestBrowserWindow.
   std::unique_ptr<Browser> browser_;
 
 #if defined(OS_CHROMEOS)
-  AshTestEnvironmentChrome ash_test_environment_;
   ash::AshTestHelper ash_test_helper_;
-  std::unique_ptr<views::MusClient> mus_client_;
 #elif defined(TOOLKIT_VIEWS)
   std::unique_ptr<views::ScopedViewsTestHelper> views_test_helper_;
 #endif
@@ -208,10 +238,10 @@ class BrowserWithTestWindowTest : public testing::Test {
 #endif
 
   // The type of browser to create (tabbed or popup).
-  Browser::Type browser_type_;
+  const Browser::Type browser_type_;
 
   // Whether the browser is part of a hosted app.
-  bool hosted_app_;
+  const bool hosted_app_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserWithTestWindowTest);
 };

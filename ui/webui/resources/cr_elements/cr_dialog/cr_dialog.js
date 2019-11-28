@@ -15,12 +15,14 @@
  *
  * Note that <cr-dialog> wrapper itself always has 0x0 dimensions, and
  * specifying width/height on <cr-dialog> directly will have no effect on the
- * internal native <dialog>. Instead use the --cr-dialog-native mixin to specify
+ * internal native <dialog>. Instead use cr-dialog::part(dialog) to specify
  * width/height (as well as other available mixins to style other parts of the
  * dialog contents).
  */
 Polymer({
   is: 'cr-dialog',
+
+  behaviors: [CrContainerShadowBehavior],
 
   properties: {
     open: {
@@ -99,22 +101,24 @@ Polymer({
     // If the active history entry changes (i.e. user clicks back button),
     // all open dialogs should be cancelled.
     window.addEventListener('popstate', function() {
-      if (!this.ignorePopstate && this.$.dialog.open)
+      if (!this.ignorePopstate && this.$.dialog.open) {
         this.cancel();
+      }
     }.bind(this));
 
-    if (!this.ignoreEnterKey)
+    if (!this.ignoreEnterKey) {
       this.addEventListener('keypress', this.onKeypress_.bind(this));
+    }
   },
 
   /** @override */
   attached: function() {
     const mutationObserverCallback = function() {
       if (this.$.dialog.open) {
-        this.addIntersectionObserver_();
+        this.enableShadowBehavior(true);
         this.addKeydownListener_();
       } else {
-        this.removeIntersectionObserver_();
+        this.enableShadowBehavior(false);
         this.removeKeydownListener_();
       }
     }.bind(this);
@@ -128,13 +132,13 @@ Polymer({
 
     // In some cases dialog already has the 'open' attribute by this point.
     mutationObserverCallback();
-    if (this.showOnAttach)
+    if (this.showOnAttach) {
       this.showModal();
+    }
   },
 
   /** @override */
   detached: function() {
-    this.removeIntersectionObserver_();
     this.removeKeydownListener_();
     if (this.mutationObserver_) {
       this.mutationObserver_.disconnect();
@@ -143,53 +147,10 @@ Polymer({
   },
 
   /** @private */
-  addIntersectionObserver_: function() {
-    if (this.intersectionObserver_)
-      return;
-
-    const bodyContainer = this.$$('.body-container');
-
-    const bottomMarker = this.$.bodyBottomMarker;
-    const topMarker = this.$.bodyTopMarker;
-
-    const callback = function(entries) {
-      // In some rare cases, there could be more than one entry per observed
-      // element, in which case the last entry's result stands.
-      for (let i = 0; i < entries.length; i++) {
-        const target = entries[i].target;
-        assert(target == bottomMarker || target == topMarker);
-
-        const classToToggle =
-            target == bottomMarker ? 'bottom-scrollable' : 'top-scrollable';
-
-        bodyContainer.classList.toggle(
-            classToToggle, entries[i].intersectionRatio == 0);
-      }
-    };
-
-    this.intersectionObserver_ = new IntersectionObserver(
-        callback,
-        /** @type {IntersectionObserverInit} */ ({
-          root: bodyContainer,
-          rootMargin: '1px 0px',
-          threshold: 0,
-        }));
-    this.intersectionObserver_.observe(bottomMarker);
-    this.intersectionObserver_.observe(topMarker);
-  },
-
-  /** @private */
-  removeIntersectionObserver_: function() {
-    if (this.intersectionObserver_) {
-      this.intersectionObserver_.disconnect();
-      this.intersectionObserver_ = null;
-    }
-  },
-
-  /** @private */
   addKeydownListener_: function() {
-    if (!this.consumeKeydownEvent)
+    if (!this.consumeKeydownEvent) {
       return;
+    }
 
     this.boundKeydown_ = this.boundKeydown_ || this.onKeydown_.bind(this);
 
@@ -203,8 +164,9 @@ Polymer({
 
   /** @private */
   removeKeydownListener_: function() {
-    if (!this.boundKeydown_)
+    if (!this.boundKeydown_) {
       return;
+    }
 
     this.removeEventListener('keydown', this.boundKeydown_);
     document.body.removeEventListener('keydown', this.boundKeydown_);
@@ -232,6 +194,15 @@ Polymer({
   },
 
   /**
+   * Set the title of the dialog for a11y reader.
+   * @param {string} title Title of the dialog.
+   */
+  setTitleAriaLabel: function(title) {
+    this.$.dialog.removeAttribute('aria-labelledby');
+    this.$.dialog.setAttribute('aria-label', title);
+  },
+
+  /**
    * @private
    * @param {Event} e
    */
@@ -247,8 +218,9 @@ Polymer({
    */
   onNativeDialogClose_: function(e) {
     // Ignore any 'close' events not fired directly by the <dialog> element.
-    if (e.target !== this.getNative())
+    if (e.target !== this.getNative()) {
       return;
+    }
 
     // TODO(dpapad): This is necessary to make the code work both for Polymer 1
     // and Polymer 2. Remove once migration to Polymer 2 is completed.
@@ -265,8 +237,9 @@ Polymer({
    */
   onNativeDialogCancel_: function(e) {
     // Ignore any 'cancel' events not fired directly by the <dialog> element.
-    if (e.target !== this.getNative())
+    if (e.target !== this.getNative()) {
       return;
+    }
 
     if (this.noCancel) {
       e.preventDefault();
@@ -289,12 +262,7 @@ Polymer({
    * @return {!HTMLDialogElement}
    */
   getNative: function() {
-    return this.$.dialog;
-  },
-
-  /** @return {!PaperIconButtonElement} */
-  getCloseButton: function() {
-    return this.$.close;
+    return /** @type {!HTMLDialogElement} */ (this.$.dialog);
   },
 
   /**
@@ -302,13 +270,21 @@ Polymer({
    * @private
    */
   onKeypress_: function(e) {
-    if (e.key != 'Enter')
+    if (e.key != 'Enter') {
       return;
+    }
 
-    // Accept Enter keys from either the dialog, or a child input element.
-    if (e.target != this && e.target.tagName != 'CR-INPUT')
+    // Accept Enter keys from either the dialog itself, or a child cr-input,
+    // considering that the event may have been retargeted, for example if the
+    // cr-input is nested inside another element. Also exclude inputs of type
+    // 'search', since hitting 'Enter' on a search field most likely intends to
+    // trigger searching.
+    const accept = e.target === this ||
+        e.composedPath().some(
+            el => el.tagName == 'CR-INPUT' && el.type != 'search');
+    if (!accept) {
       return;
-
+    }
     const actionButton =
         this.querySelector('.action-button:not([disabled]):not([hidden])');
     if (actionButton) {
@@ -324,11 +300,13 @@ Polymer({
   onKeydown_: function(e) {
     assert(this.consumeKeydownEvent);
 
-    if (!this.getNative().open)
+    if (!this.getNative().open) {
       return;
+    }
 
-    if (this.ignoreEnterKey && e.key == 'Enter')
+    if (this.ignoreEnterKey && e.key == 'Enter') {
       return;
+    }
 
     // Stop propagation to behave modally.
     e.stopPropagation();
@@ -338,8 +316,9 @@ Polymer({
   onPointerdown_: function(e) {
     // Only show pulse animation if user left-clicked outside of the dialog
     // contents.
-    if (e.button != 0 || e.composedPath()[0].tagName !== 'DIALOG')
+    if (e.button != 0 || e.composedPath()[0].tagName !== 'DIALOG') {
       return;
+    }
 
     this.$.dialog.animate(
         [
@@ -348,7 +327,7 @@ Polymer({
           {transform: 'scale(1.02)', offset: 0.6},
           {transform: 'scale(1)', offset: 1},
         ],
-        /** @type {!KeyframeEffectOptions} */ ({
+        /** @type {!KeyframeAnimationOptions} */ ({
           duration: 180,
           easing: 'ease-in-out',
           iterations: 1,
@@ -357,5 +336,9 @@ Polymer({
     // Prevent any text from being selected within the dialog when clicking in
     // the backdrop area.
     e.preventDefault();
+  },
+
+  focus() {
+    this.$$('.title-container').focus();
   },
 });

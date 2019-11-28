@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/values.h"
@@ -19,6 +20,7 @@
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/version_info/version_info.h"
@@ -57,10 +59,12 @@
 #include "chrome/browser/ui/ash/wallpaper_controller_client.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/login/scoped_test_public_session_login_state.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
+#include "chromeos/login/login_state/scoped_test_public_session_login_state.h"
 #include "components/account_id/account_id.h"
-#include "components/browser_sync/browser_sync_switches.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #endif
 
@@ -180,7 +184,8 @@ class ActiveTabTest : public ChromeRenderViewHostTestHarness {
     bool script =
         permissions_data->CanAccessPage(url, tab_id, nullptr) &&
         permissions_data->CanRunContentScriptOnPage(url, tab_id, nullptr);
-    bool capture = permissions_data->CanCaptureVisiblePage(url, tab_id, NULL);
+    bool capture = permissions_data->CanCaptureVisiblePage(
+        url, tab_id, NULL, extensions::CaptureRequirement::kActiveTabOrAllUrls);
     switch (feature) {
       case PERMITTED_SCRIPT_ONLY:
         return script && !capture;
@@ -345,8 +350,8 @@ TEST_F(ActiveTabTest, GrantToSinglePage) {
 TEST_F(ActiveTabTest, CapturingPagesWithActiveTab) {
   std::vector<GURL> test_urls = {
       GURL("https://example.com"),
-      GURL("chrome://version"),
-      GURL("chrome://newtab"),
+      GURL(chrome::kChromeUIVersionURL),
+      GURL(chrome::kChromeUINewTabURL),
       GURL("http://[2607:f8b0:4005:805::200e]"),
       ExtensionsClient::Get()->GetWebstoreBaseURL(),
       extension->GetResourceURL("test.html"),
@@ -361,15 +366,18 @@ TEST_F(ActiveTabTest, CapturingPagesWithActiveTab) {
     EXPECT_EQ(url, web_contents()->GetLastCommittedURL());
     // By default, there should be no access.
     EXPECT_FALSE(extension->permissions_data()->CanCaptureVisiblePage(
-        url, tab_id(), nullptr /*error*/));
+        url, tab_id(), nullptr /*error*/,
+        extensions::CaptureRequirement::kActiveTabOrAllUrls));
     // Granting permission should allow page capture.
     active_tab_permission_granter()->GrantIfRequested(extension.get());
     EXPECT_TRUE(extension->permissions_data()->CanCaptureVisiblePage(
-        url, tab_id(), nullptr /*error*/));
+        url, tab_id(), nullptr /*error*/,
+        extensions::CaptureRequirement::kActiveTabOrAllUrls));
     // Navigating away should revoke access.
     NavigateAndCommit(kAboutBlank);
     EXPECT_FALSE(extension->permissions_data()->CanCaptureVisiblePage(
-        url, tab_id(), nullptr /*error*/));
+        url, tab_id(), nullptr /*error*/,
+        extensions::CaptureRequirement::kActiveTabOrAllUrls));
   }
 }
 
@@ -454,7 +462,7 @@ TEST_F(ActiveTabTest, SameDocumentNavigations) {
 }
 
 TEST_F(ActiveTabTest, ChromeUrlGrants) {
-  GURL internal("chrome://version");
+  GURL internal(chrome::kChromeUIVersionURL);
   NavigateAndCommit(internal);
   active_tab_permission_granter()->GrantIfRequested(
       extension_with_tab_capture.get());
@@ -524,6 +532,9 @@ class ActiveTabManagedSessionTest : public ActiveTabTest {
     // Necessary because no ProfileManager instance exists in this test.
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         chromeos::switches::kIgnoreUserProfileMappingForTests);
+    // Necessary to skip cryptohome/profile sanity check in
+    // ChromeUserManagerImpl for fake user login.
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kTestType);
 
     // Setup, login a public account user.
     const std::string user_id = "public@account.user";
@@ -538,8 +549,7 @@ class ActiveTabManagedSessionTest : public ActiveTabTest {
         TestingBrowserProcess::GetGlobal());
     wallpaper_controller_client_ =
         std::make_unique<WallpaperControllerClient>();
-    wallpaper_controller_client_->InitForTesting(
-        test_wallpaper_controller_.CreateInterfacePtr());
+    wallpaper_controller_client_->InitForTesting(&test_wallpaper_controller_);
     g_browser_process->local_state()->SetString(
         "PublicAccountPendingDataRemoval", user_email);
     user_manager::UserManager::Get()->UserLoggedIn(account_id, user_id_hash,
@@ -705,11 +715,13 @@ TEST_F(ActiveTabWithServiceTest, FileURLs) {
   EXPECT_NE(extension_misc::kUnknownTabId, tab_id);
 
   EXPECT_FALSE(extension->permissions_data()->CanCaptureVisiblePage(
-      web_contents->GetLastCommittedURL(), tab_id, nullptr));
+      web_contents->GetLastCommittedURL(), tab_id, nullptr,
+      extensions::CaptureRequirement::kActiveTabOrAllUrls));
 
   permission_granter->GrantIfRequested(extension.get());
   EXPECT_FALSE(extension->permissions_data()->CanCaptureVisiblePage(
-      web_contents->GetLastCommittedURL(), tab_id, nullptr));
+      web_contents->GetLastCommittedURL(), tab_id, nullptr,
+      extensions::CaptureRequirement::kActiveTabOrAllUrls));
 
   permission_granter->RevokeForTesting();
   TestExtensionRegistryObserver observer(registry(), id);
@@ -719,10 +731,12 @@ TEST_F(ActiveTabWithServiceTest, FileURLs) {
   ASSERT_TRUE(extension);
 
   EXPECT_FALSE(extension->permissions_data()->CanCaptureVisiblePage(
-      web_contents->GetLastCommittedURL(), tab_id, nullptr));
+      web_contents->GetLastCommittedURL(), tab_id, nullptr,
+      extensions::CaptureRequirement::kActiveTabOrAllUrls));
   permission_granter->GrantIfRequested(extension.get());
   EXPECT_TRUE(extension->permissions_data()->CanCaptureVisiblePage(
-      web_contents->GetLastCommittedURL(), tab_id, nullptr));
+      web_contents->GetLastCommittedURL(), tab_id, nullptr,
+      extensions::CaptureRequirement::kActiveTabOrAllUrls));
 }
 
 }  // namespace

@@ -24,13 +24,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_ELEMENT_RESOLVE_CONTEXT_H_
 
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 
 namespace blink {
 
 class ContainerNode;
-class Document;
 class Element;
 class ComputedStyle;
 
@@ -40,14 +38,14 @@ class CORE_EXPORT ElementResolveContext {
   STACK_ALLOCATED();
 
  public:
-  explicit ElementResolveContext(const Document&);
-
   explicit ElementResolveContext(Element&);
 
-  Element* GetElement() const { return element_; }
+  Element& GetElement() const { return *element_; }
   const ContainerNode* ParentNode() const { return parent_node_; }
   const ContainerNode* LayoutParent() const { return layout_parent_; }
-  const ComputedStyle* RootElementStyle() const { return root_element_style_; }
+  const ComputedStyle* RootElementStyle() const {
+    return root_element_style_.get();
+  }
   const ComputedStyle* ParentStyle() const {
     return ParentNode() && ParentNode()->IsElementNode()
                ? ParentNode()->GetComputedStyle()
@@ -65,7 +63,7 @@ class CORE_EXPORT ElementResolveContext {
   Member<Element> element_;
   Member<ContainerNode> parent_node_;
   Member<ContainerNode> layout_parent_;
-  const ComputedStyle* root_element_style_;
+  scoped_refptr<const ComputedStyle> root_element_style_;
   EInsideLink element_link_state_;
   bool distributed_to_insertion_point_;
 };

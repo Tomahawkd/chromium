@@ -15,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
 #include "chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.h"
 #include "chrome/browser/vr/assets_load_status.h"
@@ -27,10 +28,10 @@
 #include "chrome/browser/vr/ui_initial_state.h"
 #include "chrome/browser/vr/ui_unsupported_mode.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "device/vr/android/gvr/cardboard_gamepad_data_provider.h"
-#include "device/vr/android/gvr/gvr_gamepad_data_provider.h"
+#include "device/vr/public/cpp/session_mode.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_device.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/geolocation_config.mojom.h"
 #include "third_party/gvr-android-sdk/src/libraries/headers/vr/gvr/capi/include/gvr_types.h"
 
@@ -63,9 +64,7 @@ struct AutocompleteRequest;
 
 // The native instance of the Java VrShell. This class is not threadsafe and
 // must only be used on the UI thread.
-class VrShell : device::GvrGamepadDataProvider,
-                device::CardboardGamepadDataProvider,
-                VoiceResultDelegate,
+class VrShell : VoiceResultDelegate,
                 public ChromeLocationBarModelDelegate,
                 public PageInfoUI {
  public:
@@ -117,10 +116,11 @@ class VrShell : device::GvrGamepadDataProvider,
   void OnLoadProgressChanged(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj,
                              double progress);
-  void OnTabListCreated(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& obj,
-                        jobjectArray tabs,
-                        jobjectArray incognito_tabs);
+  void OnTabListCreated(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& obj,
+      const base::android::JavaRef<jobjectArray>& tabs,
+      const base::android::JavaRef<jobjectArray>& incognito_tabs);
   void OnTabUpdated(JNIEnv* env,
                     const base::android::JavaParamRef<jobject>& obj,
                     jboolean incognito,
@@ -145,7 +145,6 @@ class VrShell : device::GvrGamepadDataProvider,
   void OpenFeedback();
   void CloseHostedDialog();
   void ToggleCardboardGamepad(bool enabled);
-  void ToggleGvrGamepad(bool enabled);
   void SetHistoryButtonsEnabled(JNIEnv* env,
                                 const base::android::JavaParamRef<jobject>& obj,
                                 jboolean can_go_back,
@@ -196,7 +195,11 @@ class VrShell : device::GvrGamepadDataProvider,
   void ExitFullscreen();
   void LogUnsupportedModeUserMetric(UiUnsupportedMode mode);
   void RecordVrStartAction(VrStartAction action);
-  void RecordPresentationStartAction(PresentationStartAction action);
+  // TODO(https://crbug.com/965744): Rename below method to better reflect its
+  // purpose (recording a start of immersive VR session).
+  void RecordPresentationStartAction(
+      PresentationStartAction action,
+      const device::mojom::XRRuntimeSessionOptions& options);
   void OnUnsupportedMode(UiUnsupportedMode mode);
   void OnExitVrPromptResult(UiUnsupportedMode reason,
                             ExitVrPromptChoice choice);
@@ -205,7 +208,12 @@ class VrShell : device::GvrGamepadDataProvider,
   void StartAutocomplete(const AutocompleteRequest& request);
   void StopAutocomplete();
   void ShowPageInfo();
-  bool HasAudioPermission();
+  bool HasRecordAudioPermission() const;
+  bool CanRequestRecordAudioPermission() const;
+  void RequestRecordAudioPermissionResult(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& object,
+      jboolean can_record_audio);
 
   void ClearFocusedElement();
   void ProcessContentGesture(std::unique_ptr<InputEvent> event, int content_id);
@@ -244,14 +252,6 @@ class VrShell : device::GvrGamepadDataProvider,
       device::mojom::VRDisplayInfoPtr display_info,
       device::mojom::XRRuntimeSessionOptionsPtr options);
 
-  // device::GvrGamepadDataProvider implementation.
-  void UpdateGamepadData(device::GvrGamepadData) override;
-  void RegisterGvrGamepadDataFetcher(device::GvrGamepadDataFetcher*) override;
-
-  // device::CardboardGamepadDataProvider implementation.
-  void RegisterCardboardGamepadDataFetcher(
-      device::CardboardGamepadDataFetcher*) override;
-
   // ChromeLocationBarModelDelegate implementation.
   content::WebContents* GetActiveWebContents() const override;
   bool ShouldDisplayURL() const override;
@@ -267,6 +267,7 @@ class VrShell : device::GvrGamepadDataProvider,
   void SetPermissionInfo(const PermissionInfoList& permission_info_list,
                          ChosenObjectInfoList chosen_object_info_list) override;
   void SetIdentityInfo(const IdentityInfo& identity_info) override;
+  void SetPageFeatureInfo(const PageFeatureInfo& info) override;
 
   void AcceptDoffPromptForTesting(
       JNIEnv* env,
@@ -326,7 +327,6 @@ class VrShell : device::GvrGamepadDataProvider,
   std::unique_ptr<PageInfo> CreatePageInfo();
 
   bool webvr_mode_ = false;
-  bool web_vr_autopresentation_expected_ = false;
 
   content::WebContents* web_contents_ = nullptr;
   bool web_contents_is_native_page_ = false;
@@ -356,7 +356,7 @@ class VrShell : device::GvrGamepadDataProvider,
 
   bool reprojected_rendering_;
 
-  device::mojom::GeolocationConfigPtr geolocation_config_;
+  mojo::Remote<device::mojom::GeolocationConfig> geolocation_config_;
 
   base::CancelableClosure poll_capturing_state_task_;
   CapturingStateModel active_capturing_;
@@ -364,15 +364,9 @@ class VrShell : device::GvrGamepadDataProvider,
   CapturingStateModel potential_capturing_;
 
   // Are we currently providing a gamepad factory to the gamepad manager?
-  bool gvr_gamepad_source_active_ = false;
   bool cardboard_gamepad_source_active_ = false;
   bool pending_cardboard_trigger_ = false;
 
-  // Registered fetchers, must remain alive for UpdateGamepadData calls.
-  // That's ok since the fetcher is only destroyed from VrShell's destructor.
-  device::GvrGamepadDataFetcher* gvr_gamepad_data_fetcher_ = nullptr;
-  device::CardboardGamepadDataFetcher* cardboard_gamepad_data_fetcher_ =
-      nullptr;
   int64_t cardboard_gamepad_timer_ = 0;
 
   // Content id
@@ -395,7 +389,7 @@ class VrShell : device::GvrGamepadDataProvider,
   std::set<int> regular_tab_ids_;
   std::set<int> incognito_tab_ids_;
 
-  base::WeakPtrFactory<VrShell> weak_ptr_factory_;
+  base::WeakPtrFactory<VrShell> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VrShell);
 };

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/files/file_path.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_util.h"
-#include "storage/browser/fileapi/file_system_url.h"
+
+#include "base/files/file_path.h"
+#include "storage/browser/file_system/file_system_url.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -66,7 +67,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrl) {
 
   EXPECT_TRUE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(kDocumentsProviderMountPointPath)
               .Append(FILE_PATH_LITERAL("cats/root/home/calico.jpg"))),
       &authority, &root_document_id, &path));
@@ -85,7 +86,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlEmptyPath) {
   // Should accept a path pointing to a root directory.
   EXPECT_TRUE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(kDocumentsProviderMountPointPath)
               .Append(FILE_PATH_LITERAL("cats/root"))),
       &authority, &root_document_id, &path));
@@ -104,7 +105,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlEmptyPathSlash) {
   // Should accept a path pointing to a root directory.
   EXPECT_TRUE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(kDocumentsProviderMountPointPath)
               .Append(FILE_PATH_LITERAL("cats/root/"))),
       &authority, &root_document_id, &path));
@@ -121,7 +122,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlInvalidType) {
   // Not storage::kFileSystemTypeArcDocumentsProvider.
   EXPECT_FALSE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcContent,
+          url::Origin(), storage::kFileSystemTypeArcContent,
           base::FilePath(kDocumentsProviderMountPointPath)
               .Append(FILE_PATH_LITERAL("cats/root/home/calico.jpg"))),
       &authority, &root_document_id, &path));
@@ -135,7 +136,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlInvalidPath) {
   // root_document_id part is missing.
   EXPECT_FALSE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(kDocumentsProviderMountPointPath)
               .Append(FILE_PATH_LITERAL("root-missing"))),
       &authority, &root_document_id, &path));
@@ -143,7 +144,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlInvalidPath) {
   // Leading / is missing.
   EXPECT_FALSE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(FILE_PATH_LITERAL(
               "special/arc-documents-provider/cats/root/home/calico.jpg"))),
       &authority, &root_document_id, &path));
@@ -151,7 +152,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlInvalidPath) {
   // Not under /special.
   EXPECT_FALSE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(FILE_PATH_LITERAL(
               "/invalid/arc-documents-provider/cats/root/home/calico.jpg"))),
       &authority, &root_document_id, &path));
@@ -159,7 +160,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlInvalidPath) {
   // Not under /special/arc-documents-provider.
   EXPECT_FALSE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(FILE_PATH_LITERAL(
               "/special/something-else/cats/root/home/calico.jpg"))),
       &authority, &root_document_id, &path));
@@ -172,7 +173,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlUnescape) {
 
   EXPECT_TRUE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(
               "/special/arc-documents-provider/cats/ro%2Fot/home/calico.jpg")),
       &authority, &root_document_id, &path));
@@ -188,7 +189,7 @@ TEST(ArcDocumentsProviderUtilTest, ParseDocumentsProviderUrlUtf8) {
 
   EXPECT_TRUE(ParseDocumentsProviderUrl(
       storage::FileSystemURL::CreateForTest(
-          GURL(), storage::kFileSystemTypeArcDocumentsProvider,
+          url::Origin(), storage::kFileSystemTypeArcDocumentsProvider,
           base::FilePath(
               "/special/arc-documents-provider/cats/root/home/みけねこ.jpg")),
       &authority, &root_document_id, &path));

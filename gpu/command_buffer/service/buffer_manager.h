@@ -11,10 +11,9 @@
 
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
-#include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -447,7 +446,7 @@ class GPU_GLES2_EXPORT BufferManager
   scoped_refptr<FeatureInfo> feature_info_;
 
   // Info for each buffer in the system.
-  typedef base::hash_map<GLuint, scoped_refptr<Buffer> > BufferMap;
+  typedef std::unordered_map<GLuint, scoped_refptr<Buffer>> BufferMap;
   BufferMap buffers_;
 
   // The maximum size of buffers.

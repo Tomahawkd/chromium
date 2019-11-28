@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "net/log/test_net_log.h"
+#include "net/log/test_net_log_util.h"
 #include "net/spdy/spdy_test_util_common.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,23 +27,22 @@ class HeaderCoalescerTest : public ::testing::Test {
   void ExpectEntry(base::StringPiece expected_header_name,
                    base::StringPiece expected_header_value,
                    base::StringPiece expected_error_message) {
-    TestNetLogEntry::List entry_list;
-    net_log_.GetEntries(&entry_list);
+    auto entry_list = net_log_.GetEntries();
     ASSERT_EQ(1u, entry_list.size());
     EXPECT_EQ(entry_list[0].type,
               NetLogEventType::HTTP2_SESSION_RECV_INVALID_HEADER);
     EXPECT_EQ(entry_list[0].source.id, net_log_.bound().source().id);
     std::string value;
-    EXPECT_TRUE(entry_list[0].GetStringValue("header_name", &value));
-    EXPECT_EQ(expected_header_name, value);
-    EXPECT_TRUE(entry_list[0].GetStringValue("header_value", &value));
-    EXPECT_EQ(expected_header_value, value);
-    EXPECT_TRUE(entry_list[0].GetStringValue("error", &value));
-    EXPECT_EQ(expected_error_message, value);
+    EXPECT_EQ(expected_header_name,
+              GetStringValueFromParams(entry_list[0], "header_name"));
+    EXPECT_EQ(expected_header_value,
+              GetStringValueFromParams(entry_list[0], "header_value"));
+    EXPECT_EQ(expected_error_message,
+              GetStringValueFromParams(entry_list[0], "error"));
   }
 
  protected:
-  BoundTestNetLog net_log_;
+  RecordingBoundTestNetLog net_log_;
   HeaderCoalescer header_coalescer_;
 };
 
@@ -101,7 +101,8 @@ TEST_F(HeaderCoalescerTest, HeaderNameNotValid) {
   base::StringPiece header_name("\x1\x7F\x80\xFF");
   header_coalescer_.OnHeader(header_name, "foo");
   EXPECT_TRUE(header_coalescer_.error_seen());
-  ExpectEntry("%01%7F%80%FF", "foo", "Invalid character in header name.");
+  ExpectEntry("%ESCAPED:\xE2\x80\x8B \x1\x7F%80%FF", "foo",
+              "Invalid character in header name.");
 }
 
 // RFC 7540 Section 8.1.2.6. Uppercase in header name is invalid.
@@ -139,19 +140,19 @@ TEST_F(HeaderCoalescerTest, HeaderValueValid) {
 TEST_F(HeaderCoalescerTest, HeaderValueContainsLF) {
   header_coalescer_.OnHeader("foo", "bar\nbaz");
   EXPECT_TRUE(header_coalescer_.error_seen());
-  ExpectEntry("foo", "bar%0Abaz", "Invalid character 0x0A in header value.");
+  ExpectEntry("foo", "bar\nbaz", "Invalid character 0x0A in header value.");
 }
 
 TEST_F(HeaderCoalescerTest, HeaderValueContainsCR) {
   header_coalescer_.OnHeader("foo", "bar\rbaz");
   EXPECT_TRUE(header_coalescer_.error_seen());
-  ExpectEntry("foo", "bar%0Dbaz", "Invalid character 0x0D in header value.");
+  ExpectEntry("foo", "bar\rbaz", "Invalid character 0x0D in header value.");
 }
 
 TEST_F(HeaderCoalescerTest, HeaderValueContains0x7f) {
   header_coalescer_.OnHeader("foo", "bar\x7f baz");
   EXPECT_TRUE(header_coalescer_.error_seen());
-  ExpectEntry("foo", "bar%7F%20baz", "Invalid character 0x7F in header value.");
+  ExpectEntry("foo", "bar\x7F baz", "Invalid character 0x7F in header value.");
 }
 
 }  // namespace test

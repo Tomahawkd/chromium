@@ -82,6 +82,7 @@ const whitelistedExtensionIds = [
   'A3E3DE9E9F16B41D4A2FAD106BD6CA76B94A0C94',  // http://crbug.com/908458
   'C2ABD68C33A5B485971C9638B80D6A2E9CBA78C4',  // http://crbug.com/908458
   'B41E7F08E1179CC03CBD1F49E57CF353A40ADE07',  // http://crbug.com/908458
+  'A948368FC53BE437A55FEB414106E207925482F5',  // ChromeOS Files App.
 ];
 
 /**
@@ -165,7 +166,6 @@ class FeedbackRequest {
       this.onSystemInfoReadyCallback_ = this.sendReportNow;
       return;
     }
-
     this.sendReportNow();
   }
 
@@ -185,17 +185,22 @@ class FeedbackRequest {
         this.feedbackInfo_, function(result, landingPageType) {
           if (result == chrome.feedbackPrivate.Status.SUCCESS) {
             console.log('Feedback: Report sent for request with ID ' + ID);
-            if (FLOW != chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
+            if (FLOW != chrome.feedbackPrivate.FeedbackFlow.LOGIN &&
+                landingPageType !=
+                    chrome.feedbackPrivate.LandingPageType.NO_LANDING_PAGE) {
               const landingPage = landingPageType ==
                       chrome.feedbackPrivate.LandingPageType.NORMAL ?
                   FEEDBACK_LANDING_PAGE :
                   FEEDBACK_LANDING_PAGE_TECHSTOP;
-              openUrlInAppWindow(landingPage);
+              window.open(landingPage, '_blank');
             }
           } else {
             console.log(
                 'Feedback: Report for request with ID ' + ID +
                 ' will be sent later.');
+          }
+          if (FLOW == chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
+            chrome.feedbackPrivate.loginFeedbackComplete();
           }
         });
   }
@@ -205,8 +210,13 @@ class FeedbackRequest {
    * FeedbackRequest instance is closed.
    */
   onWindowClosed() {
-    if (!this.reportIsBeingSent_)
+    if (!this.reportIsBeingSent_) {
       this.isRequestCanceled_ = true;
+      if (this.feedbackInfo_.flow ==
+          chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
+        chrome.feedbackPrivate.loginFeedbackComplete();
+      }
+    }
   }
 }
 
@@ -230,8 +240,9 @@ function senderWhitelisted(id, startFeedbackCallback, feedbackInfo) {
           hashString += n < 0x10 ? '0' : '';
           hashString += n.toString(16);
         }
-        if (whitelistedExtensionIds.indexOf(hashString.toUpperCase()) != -1)
+        if (whitelistedExtensionIds.indexOf(hashString.toUpperCase()) != -1) {
           startFeedbackCallback(feedbackInfo);
+        }
       });
 }
 
@@ -243,8 +254,9 @@ function senderWhitelisted(id, startFeedbackCallback, feedbackInfo) {
  * @param {function(Object)} sendResponse Callback for sending a response.
  */
 function feedbackReadyHandler(request, sender, sendResponse) {
-  if (request.ready)
+  if (request.ready) {
     chrome.runtime.sendMessage({sentFromEventPage: true});
+  }
 }
 
 /**
@@ -254,8 +266,9 @@ function feedbackReadyHandler(request, sender, sendResponse) {
  * @param {function(Object)} sendResponse Callback for sending a response.
  */
 function requestFeedbackHandler(request, sender, sendResponse) {
-  if (request.requestFeedback)
+  if (request.requestFeedback) {
     senderWhitelisted(sender.id, startFeedbackUI, request.feedbackInfo);
+  }
 }
 
 /**

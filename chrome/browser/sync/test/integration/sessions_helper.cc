@@ -37,6 +37,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "url/gurl.h"
 
@@ -53,7 +54,7 @@ bool SessionsSyncBridgeHasTabWithURL(int browser_index, const GURL& url) {
     return false;
   }
 
-  if (local_session->windows.size() == 0) {
+  if (local_session->windows.empty()) {
     DVLOG(1) << "Empty windows vector";
     return false;
   }
@@ -62,13 +63,13 @@ bool SessionsSyncBridgeHasTabWithURL(int browser_index, const GURL& url) {
   sessions::SerializedNavigationEntry nav;
   for (auto it = local_session->windows.begin();
        it != local_session->windows.end(); ++it) {
-    if (it->second->wrapped_window.tabs.size() == 0) {
+    if (it->second->wrapped_window.tabs.empty()) {
       DVLOG(1) << "Empty tabs vector";
       continue;
     }
     for (auto tab_it = it->second->wrapped_window.tabs.begin();
          tab_it != it->second->wrapped_window.tabs.end(); ++tab_it) {
-      if ((*tab_it)->navigations.size() == 0) {
+      if ((*tab_it)->navigations.empty()) {
         DVLOG(1) << "Empty navigations vector";
         continue;
       }
@@ -182,21 +183,25 @@ void NavigateTab(int browser_index, const GURL& url) {
 }
 
 void NavigateTabBack(int browser_index) {
-  test()
-      ->GetBrowser(browser_index)
-      ->tab_strip_model()
-      ->GetWebContentsAt(0)
-      ->GetController()
-      .GoBack();
+  content::WebContents* web_contents =
+      test()->GetBrowser(browser_index)->tab_strip_model()->GetWebContentsAt(0);
+  content::TestNavigationObserver observer(web_contents);
+  web_contents->GetController().GoBack();
+  observer.WaitForNavigationFinished();
 }
 
 void NavigateTabForward(int browser_index) {
-  test()
-      ->GetBrowser(browser_index)
-      ->tab_strip_model()
-      ->GetWebContentsAt(0)
-      ->GetController()
-      .GoForward();
+  content::WebContents* web_contents =
+      test()->GetBrowser(browser_index)->tab_strip_model()->GetWebContentsAt(0);
+  content::TestNavigationObserver observer(web_contents);
+  web_contents->GetController().GoForward();
+  observer.WaitForNavigationFinished();
+}
+
+bool ExecJs(int browser_index, int tab_index, const std::string& script) {
+  return content::ExecJs(
+      test()->GetBrowser(browser_index)->tab_strip_model()->GetWebContentsAt(0),
+      script);
 }
 
 bool WaitForTabsToLoad(int browser_index, const std::vector<GURL>& urls) {
@@ -312,10 +317,7 @@ bool GetSessionData(int browser_index, SyncedSessionVector* sessions) {
 
 bool CompareSyncedSessions(const sync_sessions::SyncedSession* lhs,
                            const sync_sessions::SyncedSession* rhs) {
-  if (!lhs ||
-      !rhs ||
-      lhs->windows.size() < 1 ||
-      rhs->windows.size() < 1) {
+  if (!lhs || !rhs || lhs->windows.empty() || rhs->windows.empty()) {
     // Catchall for uncomparable data.
     return false;
   }
@@ -460,10 +462,7 @@ ForeignSessionsMatchChecker::ForeignSessionsMatchChecker(
       browser_index_(browser_index),
       windows_(windows) {}
 
-bool ForeignSessionsMatchChecker::IsExitConditionSatisfied() {
+bool ForeignSessionsMatchChecker::IsExitConditionSatisfied(std::ostream* os) {
+  *os << "Waiting for matching foreign sessions";
   return sessions_helper::CheckForeignSessionsAgainst(browser_index_, windows_);
-}
-
-std::string ForeignSessionsMatchChecker::GetDebugMessage() const {
-  return "Waiting for matching foreign sessions";
 }

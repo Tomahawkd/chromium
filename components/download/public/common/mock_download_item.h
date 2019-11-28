@@ -12,11 +12,15 @@
 
 #include "base/callback.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/time/time.h"
+#include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_source.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace download {
 
@@ -42,7 +46,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_METHOD0(ValidateDangerousDownload, void());
   MOCK_METHOD2(StealDangerousDownload, void(bool, const AcquireFileCallback&));
   MOCK_METHOD0(Pause, void());
-  MOCK_METHOD0(Resume, void());
+  MOCK_METHOD1(Resume, void(bool));
   MOCK_METHOD1(Cancel, void(bool));
   MOCK_METHOD0(Remove, void());
   MOCK_METHOD0(OpenDownload, void());
@@ -52,10 +56,12 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetState, DownloadState());
   MOCK_CONST_METHOD0(GetLastReason, DownloadInterruptReason());
   MOCK_CONST_METHOD0(IsPaused, bool());
+  MOCK_CONST_METHOD0(AllowMetered, bool());
   MOCK_CONST_METHOD0(IsTemporary, bool());
   MOCK_CONST_METHOD0(CanResume, bool());
   MOCK_CONST_METHOD0(IsDone, bool());
   MOCK_CONST_METHOD0(GetBytesWasted, int64_t());
+  MOCK_CONST_METHOD0(GetAutoResumeCount, int32_t());
   MOCK_CONST_METHOD0(GetURL, const GURL&());
   MOCK_CONST_METHOD0(GetUrlChain, const std::vector<GURL>&());
   MOCK_CONST_METHOD0(GetOriginalUrl, const GURL&());
@@ -63,6 +69,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetSiteUrl, const GURL&());
   MOCK_CONST_METHOD0(GetTabUrl, const GURL&());
   MOCK_CONST_METHOD0(GetTabReferrerUrl, const GURL&());
+  MOCK_CONST_METHOD0(GetRequestInitiator, const base::Optional<url::Origin>&());
   MOCK_CONST_METHOD0(GetSuggestedFilename, std::string());
   MOCK_CONST_METHOD0(GetContentDisposition, std::string());
   MOCK_CONST_METHOD0(GetResponseHeaders,
@@ -76,6 +83,7 @@ class MockDownloadItem : public DownloadItem {
   MOCK_CONST_METHOD0(GetLastModifiedTime, const std::string&());
   MOCK_CONST_METHOD0(GetETag, const std::string&());
   MOCK_CONST_METHOD0(IsSavePackageDownload, bool());
+  MOCK_CONST_METHOD0(GetDownloadSource, DownloadSource());
   MOCK_CONST_METHOD0(GetFullPath, const base::FilePath&());
   MOCK_CONST_METHOD0(GetTargetFilePath, const base::FilePath&());
   MOCK_CONST_METHOD0(GetForcedFilePath, const base::FilePath&());
@@ -117,6 +125,8 @@ class MockDownloadItem : public DownloadItem {
   MOCK_METHOD1(SetDisplayName, void(const base::FilePath&));
   MOCK_CONST_METHOD1(DebugString, std::string(bool));
   MOCK_METHOD1(SimulateErrorForTesting, void(DownloadInterruptReason));
+  MOCK_METHOD2(Rename, void(const base::FilePath&, RenameDownloadCallback));
+  MOCK_METHOD1(OnAsyncScanningCompleted, void(DownloadDangerType));
 
  private:
   base::ObserverList<Observer>::Unchecked observers_;

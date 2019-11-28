@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "components/arc/common/accessibility_helper.mojom.h"
+#include "components/arc/mojom/accessibility_helper.mojom.h"
 
 namespace arc {
 
@@ -17,20 +17,11 @@ class FakeAccessibilityHelperInstance
   FakeAccessibilityHelperInstance();
   ~FakeAccessibilityHelperInstance() override;
 
-  void InitDeprecated(mojom::AccessibilityHelperHostPtr host_ptr) override;
   void Init(mojom::AccessibilityHelperHostPtr host_ptr,
             InitCallback callback) override;
-  void PerformActionDeprecated(int32_t id,
-                               mojom::AccessibilityActionType action) override;
   void SetFilter(mojom::AccessibilityFilterType filter_type) override;
-  void PerformActionDeprecated2(
-      mojom::AccessibilityActionDataPtr action_data_ptr) override;
   void PerformAction(mojom::AccessibilityActionDataPtr action_data_ptr,
                      PerformActionCallback callback) override;
-  void SetNativeChromeVoxArcSupportDeprecated(
-      const std::string& package_name,
-      bool enabled,
-      SetNativeChromeVoxArcSupportDeprecatedCallback callback) override;
   void SetNativeChromeVoxArcSupportForFocusedWindow(
       bool enabled,
       SetNativeChromeVoxArcSupportForFocusedWindowCallback callback) override;
@@ -40,6 +31,8 @@ class FakeAccessibilityHelperInstance
   bool explore_by_touch_enabled() { return explore_by_touch_enabled_; }
   void RefreshWithExtraData(mojom::AccessibilityActionDataPtr action_data_ptr,
                             RefreshWithExtraDataCallback callback) override;
+
+  void SetCaptionStyle(mojom::CaptionStylePtr style_ptr) override;
 
  private:
   mojom::AccessibilityFilterType filter_type_ =

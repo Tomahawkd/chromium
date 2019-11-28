@@ -7,7 +7,6 @@
 
 #include "base/callback_forward.h"
 #include "base/optional.h"
-#include "chromeos/chromeos_export.h"
 
 namespace chromeos {
 namespace system {
@@ -50,6 +49,10 @@ class TouchpadSettings {
   bool GetNaturalScroll() const;
   bool IsNaturalScrollSet() const;
 
+  void SetAcceleration(bool enabled);
+  bool GetAcceleration() const;
+  bool IsAccelerationSet() const;
+
   // Updates |this| with |settings|. If at least one setting was updated returns
   // true.
   bool Update(const TouchpadSettings& settings);
@@ -64,6 +67,7 @@ class TouchpadSettings {
   base::Optional<bool> three_finger_click_;
   base::Optional<bool> tap_dragging_;
   base::Optional<bool> natural_scroll_;
+  base::Optional<bool> acceleration_;
 };
 
 // Auxiliary class used to update several mouse settings at a time. User
@@ -90,6 +94,10 @@ class MouseSettings {
   bool GetReverseScroll() const;
   bool IsReverseScrollSet() const;
 
+  void SetAcceleration(bool enabled);
+  bool GetAcceleration() const;
+  bool IsAccelerationSet() const;
+
   // Updates |this| with |settings|. If at least one setting was updated returns
   // true.
   bool Update(const MouseSettings& settings);
@@ -102,10 +110,11 @@ class MouseSettings {
   base::Optional<int> sensitivity_;
   base::Optional<bool> primary_button_right_;
   base::Optional<bool> reverse_scroll_;
+  base::Optional<bool> acceleration_;
 };
 
 // Interface for configuring input device settings.
-class CHROMEOS_EXPORT InputDeviceSettings {
+class InputDeviceSettings {
  public:
   using DeviceExistsCallback = base::OnceCallback<void(bool)>;
 
@@ -171,6 +180,12 @@ class CHROMEOS_EXPORT InputDeviceSettings {
 
   // Turns mouse reverse scrolling on/off.
   virtual void SetMouseReverseScroll(bool enabled) = 0;
+
+  // Turns mouse acceleration on/off.
+  virtual void SetMouseAcceleration(bool enabled) = 0;
+
+  // Turns touchpad acceleration on/off.
+  virtual void SetTouchpadAcceleration(bool enabled) = 0;
 
   // Reapplies previously set touchpad settings.
   virtual void ReapplyTouchpadSettings() = 0;

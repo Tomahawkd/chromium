@@ -7,7 +7,7 @@
 #import <objc/runtime.h>
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #import "content/browser/renderer_host/render_widget_host_view_mac.h"
 
@@ -116,7 +116,7 @@ const char* const kEditCommands[] = {
 // RenderWidgetHostViewMacEditCommandHelper::AddEditingSelectorsToClass().
 //
 // self - the object we're attached to; it must implement the
-// RenderWidgetHostNSViewClientOwner protocol.
+// RenderWidgetHostNSViewHostOwner protocol.
 // _cmd - the selector that fired.
 // sender - the id of the object that sent the message.
 //
@@ -129,8 +129,7 @@ const char* const kEditCommands[] = {
 // The WebFrame is in the Chrome glue layer and forwards the message to WebCore.
 void EditCommandImp(id self, SEL _cmd, id sender) {
   // Make sure |self| is the right type.
-  DCHECK(
-      [self conformsToProtocol:@protocol(RenderWidgetHostNSViewClientOwner)]);
+  DCHECK([self conformsToProtocol:@protocol(RenderWidgetHostNSViewHostOwner)]);
 
   // SEL -> command name string.
   NSString* command_name_ns =
@@ -138,10 +137,10 @@ void EditCommandImp(id self, SEL _cmd, id sender) {
   std::string command([command_name_ns UTF8String]);
 
   // Forward the edit command string down the pipeline.
-  mojom::RenderWidgetHostNSViewClient* client = [(
-      id<RenderWidgetHostNSViewClientOwner>)self renderWidgetHostNSViewClient];
-  DCHECK(client);
-  client->ExecuteEditCommand(command);
+  remote_cocoa::mojom::RenderWidgetHostNSViewHost* host =
+      [(id<RenderWidgetHostNSViewHostOwner>)self renderWidgetHostNSViewHost];
+  DCHECK(host);
+  host->ExecuteEditCommand(command);
 }
 
 }  // namespace
@@ -181,7 +180,7 @@ NSString* RenderWidgetHostViewMacEditCommandHelper::CommandNameForSelector(
 
 RenderWidgetHostViewMacEditCommandHelper::
     RenderWidgetHostViewMacEditCommandHelper() {
-  for (size_t i = 0; i < arraysize(kEditCommands); ++i) {
+  for (size_t i = 0; i < base::size(kEditCommands); ++i) {
     edit_command_set_.insert(kEditCommands[i]);
   }
 }
@@ -192,7 +191,7 @@ RenderWidgetHostViewMacEditCommandHelper::
 // Dynamically adds Selectors to the aformentioned class.
 void RenderWidgetHostViewMacEditCommandHelper::AddEditingSelectorsToClass(
     Class klass) {
-  for (size_t i = 0; i < arraysize(kEditCommands); ++i) {
+  for (size_t i = 0; i < base::size(kEditCommands); ++i) {
     // Append trailing ':' to command name to get selector name.
     NSString* sel_str = [NSString stringWithFormat: @"%s:", kEditCommands[i]];
 
@@ -208,7 +207,7 @@ void RenderWidgetHostViewMacEditCommandHelper::AddEditingSelectorsToClass(
 
 bool RenderWidgetHostViewMacEditCommandHelper::IsMenuItemEnabled(
     SEL item_action,
-    id<RenderWidgetHostNSViewClientOwner> owner) {
+    id<RenderWidgetHostNSViewHostOwner> owner) {
   const char* selector_name = sel_getName(item_action);
   // TODO(jeremy): The final form of this function will check state
   // associated with the Browser.
@@ -228,7 +227,7 @@ bool RenderWidgetHostViewMacEditCommandHelper::IsMenuItemEnabled(
 }
 
 NSArray* RenderWidgetHostViewMacEditCommandHelper::GetEditSelectorNames() {
-  size_t num_edit_commands = arraysize(kEditCommands);
+  size_t num_edit_commands = base::size(kEditCommands);
   NSMutableArray* ret = [NSMutableArray arrayWithCapacity:num_edit_commands];
 
   for (size_t i = 0; i < num_edit_commands; ++i) {

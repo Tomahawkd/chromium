@@ -11,7 +11,7 @@
         height: 150px;
         width: 300px;
         -webkit-box-shadow: 0 0 20px black;
-        transform: translateZ(0);
+        will-change: transform;
     }
     
     .overlay {
@@ -22,7 +22,9 @@
       left: 5px;
       background-color: rgba(0, 0, 0, 0.2);
     }
-    
+    .composited {
+      will-change: transform;
+    }
   </style>
   <script type="text/javascript" charset="utf-8">
     if (window.testRunner) {

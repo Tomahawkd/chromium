@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "chrome/browser/profile_resetter/brandcoded_default_settings.h"
 #include "chrome/browser/profiles/profile.h"
@@ -25,7 +26,7 @@ void ProfileResetterMockObject::RunLoop() {
   EXPECT_CALL(*this, Callback());
   runner_ = new content::MessageLoopRunner;
   runner_->Run();
-  runner_ = NULL;
+  runner_.reset();
 }
 
 void ProfileResetterMockObject::StopLoop() {
@@ -63,9 +64,8 @@ std::unique_ptr<KeyedService> CreateTemplateURLServiceForTesting(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
   return std::make_unique<TemplateURLService>(
-      profile->GetPrefs(), std::make_unique<UIThreadSearchTermsData>(profile),
+      profile->GetPrefs(), std::make_unique<UIThreadSearchTermsData>(),
       WebDataServiceFactory::GetKeywordWebDataForProfile(
           profile, ServiceAccessType::EXPLICIT_ACCESS),
-      std::unique_ptr<TemplateURLServiceClient>(), nullptr, nullptr,
-      base::Closure());
+      nullptr, nullptr, base::Closure());
 }

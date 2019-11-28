@@ -20,16 +20,17 @@
 #include "base/command_line.h"
 #include "base/containers/circular_deque.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/shared_memory.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/scoped_generic.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/time/time.h"
 #include "components/exo/wayland/clients/client_base.h"
 #include "components/exo/wayland/clients/client_helper.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkFont.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/GrContext.h"
@@ -317,8 +318,10 @@ int RectsClient::Run(const ClientBase::InitParams& params,
   wp_presentation_feedback_listener feedback_listener = {
       FeedbackSyncOutput, FeedbackPresented, FeedbackDiscarded};
 
+  SkFont font;
+  font.setSize(32);
+  font.setEdging(SkFont::Edging::kAlias);
   SkPaint text_paint;
-  text_paint.setTextSize(32.0f);
   text_paint.setColor(SK_ColorWHITE);
   text_paint.setStyle(SkPaint::kFill_Style);
 
@@ -362,7 +365,7 @@ int RectsClient::Run(const ClientBase::InitParams& params,
           }
 
           // Set FPS counter text in case it's being shown.
-          fps_counter_text = base::UintToString(
+          fps_counter_text = base::NumberToString(
               std::round(benchmark_frames / benchmark_interval.InSecondsF()));
 
           benchmark_start_time = wall_time_start;
@@ -398,7 +401,9 @@ int RectsClient::Run(const ClientBase::InitParams& params,
                                        (event_time_msec & 0xff0000) >> 16));
           canvas->drawIRect(rect, paint);
           std::string text = base::NumberToString(event_time.InMicroseconds());
-          canvas->drawText(text.c_str(), text.length(), 8, y + 32, text_paint);
+          canvas->drawSimpleText(text.c_str(), text.length(),
+                                 SkTextEncoding::kUTF8, 8, y + 32, font,
+                                 text_paint);
           frame->event_times.push_back(event_times.motion_timestamps.back());
           event_times.motion_timestamps.pop_back();
           y += h;
@@ -419,7 +424,7 @@ int RectsClient::Run(const ClientBase::InitParams& params,
                                    SK_ColorRED,  SK_ColorYELLOW,
                                    SK_ColorCYAN, SK_ColorMAGENTA};
         SkPaint paint;
-        paint.setColor(SkColorSetA(kColors[i % arraysize(kColors)], 0xA0));
+        paint.setColor(SkColorSetA(kColors[i % base::size(kColors)], 0xA0));
         canvas->rotate(rotation / num_rects);
         canvas->drawIRect(rect, paint);
       }
@@ -427,8 +432,9 @@ int RectsClient::Run(const ClientBase::InitParams& params,
 
       // Draw FPS counter.
       if (show_fps_counter) {
-        canvas->drawText(fps_counter_text.c_str(), fps_counter_text.length(),
-                         size_.width() - 48, 32, text_paint);
+        canvas->drawSimpleText(fps_counter_text.c_str(),
+                               fps_counter_text.length(), SkTextEncoding::kUTF8,
+                               size_.width() - 48, 32, font, text_paint);
       }
       GrContext* gr_context = gr_context_.get();
       if (gr_context) {
@@ -566,7 +572,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  base::MessageLoopForUI message_loop;
+  base::SingleThreadTaskExecutor main_task_executor(base::MessagePumpType::UI);
   exo::wayland::clients::RectsClient client;
   return client.Run(params, max_frames_pending, num_rects, num_benchmark_runs,
                     base::TimeDelta::FromMilliseconds(benchmark_interval_ms),

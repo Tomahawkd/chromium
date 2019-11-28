@@ -50,37 +50,6 @@ var NetInternalsTest = (function() {
     setUp: function() {
       testing.Test.prototype.setUp.call(this);
 
-      // Enforce accessibility auditing, but suppress some false positives.
-      this.accessibilityIssuesAreErrors = true;
-      // False positive because the background color highlights and then
-      // fades out with a transition when there's an error.
-      this.accessibilityAuditConfig.ignoreSelectors(
-          'lowContrastElements', '#hsts-view-query-output span');
-      // False positives for unknown reason.
-      this.accessibilityAuditConfig.ignoreSelectors(
-          'focusableElementNotVisibleAndNotAriaHidden',
-          '#domain-security-policy-view-tab-content *');
-
-      // TODO(aboxhall): enable when this bug is fixed:
-      // https://github.com/GoogleChrome/accessibility-developer-tools/issues/69
-      this.accessibilityAuditConfig.auditRulesToIgnore.push(
-          'focusableElementNotVisibleAndNotAriaHidden');
-
-      var controlsWithoutLabelSelectors = [
-        '#hsts-view-add-input',
-        '#hsts-view-delete-input',
-        '#hsts-view-query-input',
-      ];
-
-      // Enable when failure is resolved.
-      // AX_TEXT_01: http://crbug.com/559203
-      this.accessibilityAuditConfig.ignoreSelectors(
-          'controlsWithoutLabel', controlsWithoutLabelSelectors);
-
-      // Enable when warning is resolved.
-      // AX_HTML_01: http://crbug.com/559204
-      this.accessibilityAuditConfig.ignoreSelectors('humanLangMissing', 'html');
-
       // Wrap g_browser.receive around a test function so that assert and expect
       // functions can be called from observers.
       g_browser.receive = this.continueTest(
@@ -130,8 +99,9 @@ var NetInternalsTest = (function() {
    * @return {node} The tbody node, or null.
    */
   NetInternalsTest.getTbodyDescendent = function(ancestorId) {
-    if ($(ancestorId).nodeName == 'TBODY')
+    if ($(ancestorId).nodeName == 'TBODY') {
       return $(ancestorId);
+    }
     // The tbody element of the first styled table in |parentId|.
     return document.querySelector('#' + ancestorId + ' tbody');
   };
@@ -146,12 +116,14 @@ var NetInternalsTest = (function() {
   NetInternalsTest.getTbodyNumRows = function(ancestorId) {
     // The tbody element of the first styled table in |parentId|.
     var tbody = NetInternalsTest.getTbodyDescendent(ancestorId);
-    if (!tbody)
+    if (!tbody) {
       return -1;
+    }
     var visibleChildren = 0;
     for (var i = 0; i < tbody.children.length; ++i) {
-      if (NetInternalsTest.nodeIsVisible(tbody.children[i]))
+      if (NetInternalsTest.nodeIsVisible(tbody.children[i])) {
         ++visibleChildren;
+      }
     }
     return visibleChildren;
   };
@@ -182,8 +154,9 @@ var NetInternalsTest = (function() {
     var currentChild = tbody.children[0];
     while (currentChild) {
       if (NetInternalsTest.nodeIsVisible(currentChild)) {
-        if (row == 0)
+        if (row == 0) {
           return currentChild.children[column].innerText;
+        }
         --row;
       }
       currentChild = currentChild.nextElementSibling;
@@ -331,8 +304,9 @@ var NetInternalsTest = (function() {
       expectEquals(
           tabVisibilityState[hash], NetInternalsTest.tabLinkIsVisible(tabId),
           tabId + ' visibility state is unexpected.');
-      if (tourTabs && tabVisibilityState[hash])
+      if (tourTabs && tabVisibilityState[hash]) {
         NetInternalsTest.switchToView(hash);
+      }
       tabCount++;
     }
 
@@ -340,8 +314,9 @@ var NetInternalsTest = (function() {
     var tabSwitcher = MainView.getInstance().tabSwitcher();
     var tabIdToView = tabSwitcher.getAllTabViews();
     var expectedTabCount = 0;
-    for (tabId in tabIdToView)
+    for (tabId in tabIdToView) {
       expectedTabCount++;
+    }
     expectEquals(tabCount, expectedTabCount);
   };
 
@@ -409,8 +384,9 @@ var NetInternalsTest = (function() {
         nextTask.start.apply(nextTask, argArray);
       } else {
         this.isRunning_ = false;
-        if (this.endTestWhenDone_)
+        if (this.endTestWhenDone_) {
           testDone();
+        }
       }
     }
   };

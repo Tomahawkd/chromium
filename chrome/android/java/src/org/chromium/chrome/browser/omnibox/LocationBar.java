@@ -9,7 +9,11 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 
+import androidx.annotation.IntDef;
+
+import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.WindowDelegate;
+import org.chromium.chrome.browser.ntp.FakeboxDelegate;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.omnibox.UrlBar.UrlBarDelegate;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -19,10 +23,50 @@ import org.chromium.chrome.browser.toolbar.top.Toolbar;
 import org.chromium.chrome.browser.toolbar.top.ToolbarActionModeCallback;
 import org.chromium.ui.base.WindowAndroid;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+
 /**
  * Container that holds the {@link UrlBar} and SSL state related with the current {@link Tab}.
  */
-public interface LocationBar extends UrlBarDelegate {
+public interface LocationBar extends UrlBarDelegate, FakeboxDelegate {
+    /** A means of tracking which mechanism is being used to focus the omnibox. */
+    @IntDef({OmniboxFocusReason.OMNIBOX_TAP, OmniboxFocusReason.OMNIBOX_LONG_PRESS,
+            OmniboxFocusReason.FAKE_BOX_TAP, OmniboxFocusReason.FAKE_BOX_LONG_PRESS,
+            OmniboxFocusReason.ACCELERATOR_TAP, OmniboxFocusReason.TAB_SWITCHER_OMNIBOX_TAP,
+            OmniboxFocusReason.TASKS_SURFACE_FAKE_BOX_TAP,
+            OmniboxFocusReason.TASKS_SURFACE_FAKE_BOX_LONG_PRESS,
+            OmniboxFocusReason.DEFAULT_WITH_HARDWARE_KEYBOARD, OmniboxFocusReason.SEARCH_QUERY,
+            OmniboxFocusReason.LAUNCH_NEW_INCOGNITO_TAB, OmniboxFocusReason.MENU_OR_KEYBOARD_ACTION,
+            OmniboxFocusReason.UNFOCUS})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface OmniboxFocusReason {
+        int OMNIBOX_TAP = 0;
+        int OMNIBOX_LONG_PRESS = 1;
+        int FAKE_BOX_TAP = 2;
+        int FAKE_BOX_LONG_PRESS = 3;
+        int ACCELERATOR_TAP = 4;
+        // TAB_SWITCHER_OMNIBOX_TAP has not been used anymore, keep it for record for now.
+        int TAB_SWITCHER_OMNIBOX_TAP = 5;
+        int TASKS_SURFACE_FAKE_BOX_TAP = 6;
+        int TASKS_SURFACE_FAKE_BOX_LONG_PRESS = 7;
+        int DEFAULT_WITH_HARDWARE_KEYBOARD = 8;
+        int SEARCH_QUERY = 9;
+        int LAUNCH_NEW_INCOGNITO_TAB = 10;
+        int MENU_OR_KEYBOARD_ACTION = 11;
+        int UNFOCUS = 12;
+        int NUM_ENTRIES = 13;
+    }
+
+    /**
+     * Cleanup resources when this goes out of scope.
+     */
+    void destroy();
+
+    /**
+     * Handle all necessary tasks that can be delayed until initialization completes.
+     */
+    default void onDeferredStartup() {}
 
     /**
      * Handles native dependent initialization for this class.
@@ -38,6 +82,12 @@ public interface LocationBar extends UrlBarDelegate {
      * Called to set the autocomplete profile to a new profile.
      */
     void setAutocompleteProfile(Profile profile);
+
+    /**
+     * Specify whether location bar should present icons when focused.
+     * @param showIcon True if we should show the icons when the url is focused.
+     */
+    void setShowIconsWhenUrlFocused(boolean showIcon);
 
     /**
      * Call to force the UI to update the state of various buttons based on whether or not the
@@ -85,27 +135,10 @@ public interface LocationBar extends UrlBarDelegate {
      * Initialize controls that will act as hooks to various functions.
      * @param windowDelegate {@link WindowDelegate} that will provide {@link Window} related info.
      * @param windowAndroid {@link WindowAndroid} that is used by the owning {@link Activity}.
+     * @param provider An {@link ActivityTabProvider} to access the activity's current tab.
      */
-    void initializeControls(WindowDelegate windowDelegate, WindowAndroid windowAndroid);
-
-    /**
-     * Adds a URL focus change listener that will be notified when the URL gains or loses focus.
-     * @param listener The listener to be registered.
-     */
-    default void addUrlFocusChangeListener(UrlFocusChangeListener listener) {}
-
-    /**
-     * Removes a URL focus change listener that was previously added.
-     * @param listener The listener to be removed.
-     */
-    default void removeUrlFocusChangeListener(UrlFocusChangeListener listener) {}
-
-    /**
-     * Signal a {@link UrlBar} focus change request.
-     * @param shouldBeFocused Whether the focus should be requested or cleared. True requests focus
-     *        and False clears focus.
-     */
-    void setUrlBarFocus(boolean shouldBeFocused);
+    void initializeControls(WindowDelegate windowDelegate, WindowAndroid windowAndroid,
+            ActivityTabProvider provider);
 
     /**
      * Triggers the cursor to be visible in the UrlBar without triggering any of the focus animation
@@ -114,11 +147,6 @@ public interface LocationBar extends UrlBarDelegate {
      * Only applies to devices with a hardware keyboard attached.
      */
     void showUrlBarCursorWithoutFocusAnimations();
-
-    /**
-     * @return Whether the UrlBar currently has focus.
-     */
-    boolean isUrlBarFocused();
 
     /**
      * Selects all of the editable text in the UrlBar.
@@ -134,7 +162,7 @@ public interface LocationBar extends UrlBarDelegate {
     /**
      * Updates the security icon displayed in the LocationBar.
      */
-    void updateSecurityIcon();
+    void updateStatusIcon();
 
     /**
      * @return The {@link ViewGroup} that this container holds.
@@ -178,5 +206,16 @@ public interface LocationBar extends UrlBarDelegate {
      *
      * @param unfocusedWidth The unfocused location bar width.
      */
-    void setUnfocusedWidth(float unfocusedWidth);
+    void setUnfocusedWidth(int unfocusedWidth);
+
+    /**
+     * Called when the default search engine changes.
+     * @param shouldShowSearchEngineLogo True if the search engine should be shown. Prefer to call
+     *                                   {@link SearchEngineLogoUtils#shouldShowSearchEngineLogo}.
+     * @param isSearchEngineGoogle True if the current search engine is Google.
+     * @param searchEngineUrl The url for the current search engine's logo, usually just a base url
+     *                        that we use to fetch the favicon.
+     */
+    void updateSearchEngineStatusIcon(boolean shouldShowSearchEngineLogo,
+            boolean isSearchEngineGoogle, String searchEngineUrl);
 }

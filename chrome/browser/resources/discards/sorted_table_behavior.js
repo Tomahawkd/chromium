@@ -7,7 +7,7 @@
  *
  * @polymerBehavior
  */
-const SortedTableBehavior = {
+export const SortedTableBehavior = {
   properties: {
     /**
      * The current sort key, used for computing the appropriate sort function.
@@ -43,7 +43,7 @@ const SortedTableBehavior = {
    */
   onSortClick: function(e) {
     // Remove the presentation style on the old sort header.
-    let oldElement = this.$$('.sort-column, .sort-column-reverse');
+    const oldElement = this.$$('.sort-column, .sort-column-reverse');
     if (oldElement) {
       oldElement.classList.remove('sort-column');
       oldElement.classList.remove('sort-column-reverse');

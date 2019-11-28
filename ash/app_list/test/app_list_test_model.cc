@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "ash/public/cpp/app_list/app_list_config.h"
-#include "ash/public/cpp/app_list/app_list_constants.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,7 +18,7 @@
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/gfx/image/image_skia.h"
 
-namespace app_list {
+namespace ash {
 namespace test {
 
 gfx::ImageSkia CreateImageSkia(int width, int height) {
@@ -38,7 +37,8 @@ AppListTestModel::AppListTestItem::AppListTestItem(const std::string& id,
                                                    AppListTestModel* model)
     : AppListItem(id), model_(model) {
   const int icon_dimension = AppListConfig::instance().grid_icon_dimension();
-  SetIcon(CreateImageSkia(icon_dimension, icon_dimension));
+  SetIcon(ash::AppListConfigType::kShared,
+          CreateImageSkia(icon_dimension, icon_dimension));
 }
 
 AppListTestModel::AppListTestItem::~AppListTestItem() = default;
@@ -47,15 +47,13 @@ void AppListTestModel::AppListTestItem::Activate(int event_flags) {
   model_->ItemActivated(this);
 }
 
-ui::MenuModel* AppListTestModel::AppListTestItem::GetContextMenuModel() {
-  if (menu_model_)
-    return menu_model_.get();
-
-  menu_model_ = std::make_unique<ui::SimpleMenuModel>(
+std::unique_ptr<ui::SimpleMenuModel>
+AppListTestModel::AppListTestItem::CreateContextMenuModel() {
+  auto menu_model = std::make_unique<ui::SimpleMenuModel>(
       nullptr /*no SimpleMenuModelDelegate for tests*/);
-  menu_model_->AddItem(0, base::ASCIIToUTF16("0"));
-  menu_model_->AddItem(1, base::ASCIIToUTF16("1"));
-  return menu_model_.get();
+  menu_model->AddItem(0, base::ASCIIToUTF16("0"));
+  menu_model->AddItem(1, base::ASCIIToUTF16("1"));
+  return menu_model;
 }
 
 const char* AppListTestModel::AppListTestItem::GetItemType() const {
@@ -173,4 +171,4 @@ void AppListTestModel::ItemActivated(AppListTestItem* item) {
 }
 
 }  // namespace test
-}  // namespace app_list
+}  // namespace ash

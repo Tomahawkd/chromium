@@ -24,7 +24,6 @@
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-#include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/browser_about_handler.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
@@ -36,10 +35,12 @@
 #include "chrome/browser/predictors/loading_predictor_factory.h"
 #include "chrome/browser/prerender/prerender_field_trial.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
+#include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -47,7 +48,6 @@
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_edit_controller.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_navigation_observer.h"
-#include "chrome/browser/ui/omnibox/query_in_omnibox_factory.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/search/instant_types.h"
@@ -58,12 +58,15 @@
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/location_bar_model.h"
+#include "components/omnibox/browser/omnibox_controller_emitter.h"
 #include "components/omnibox/browser/search_provider.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/translate/core/browser/translate_manager.h"
+#include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -76,7 +79,7 @@
 #include "ui/gfx/vector_icon_types.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
 #include "chrome/browser/feature_engagement/new_tab/new_tab_tracker.h"
 #include "chrome/browser/feature_engagement/new_tab/new_tab_tracker_factory.h"
 #endif
@@ -174,31 +177,12 @@ gfx::Image ChromeOmniboxClient::GetFavicon() const {
       ->GetFavicon();
 }
 
-bool ChromeOmniboxClient::IsInstantNTP() const {
-  return search::IsInstantNTP(controller_->GetWebContents());
-}
-
-bool ChromeOmniboxClient::IsSearchResultsPage() const {
-  Profile* profile = Profile::FromBrowserContext(
-      controller_->GetWebContents()->GetBrowserContext());
-  return TemplateURLServiceFactory::GetForProfile(profile)->
-      IsSearchResultsPageFromDefaultSearchProvider(GetURL());
-}
-
 bool ChromeOmniboxClient::IsLoading() const {
   return controller_->GetWebContents()->IsLoading();
 }
 
 bool ChromeOmniboxClient::IsPasteAndGoEnabled() const {
   return controller_->command_updater()->IsCommandEnabled(IDC_OPEN_CURRENT_URL);
-}
-
-bool ChromeOmniboxClient::IsNewTabPage(const GURL& url) const {
-  return url.spec() == chrome::kChromeUINewTabURL;
-}
-
-bool ChromeOmniboxClient::IsHomePage(const GURL& url) const {
-  return url.spec() == profile_->GetPrefs()->GetString(prefs::kHomePage);
 }
 
 bool ChromeOmniboxClient::IsDefaultSearchProviderEnabled() const {
@@ -219,21 +203,21 @@ bookmarks::BookmarkModel* ChromeOmniboxClient::GetBookmarkModel() {
   return BookmarkModelFactory::GetForBrowserContext(profile_);
 }
 
+OmniboxControllerEmitter* ChromeOmniboxClient::GetOmniboxControllerEmitter() {
+  return OmniboxControllerEmitter::GetForBrowserContext(profile_);
+}
+
 TemplateURLService* ChromeOmniboxClient::GetTemplateURLService() {
   return TemplateURLServiceFactory::GetForProfile(profile_);
 }
 
-const AutocompleteSchemeClassifier&
-    ChromeOmniboxClient::GetSchemeClassifier() const {
+const AutocompleteSchemeClassifier& ChromeOmniboxClient::GetSchemeClassifier()
+    const {
   return scheme_classifier_;
 }
 
 AutocompleteClassifier* ChromeOmniboxClient::GetAutocompleteClassifier() {
   return AutocompleteClassifierFactory::GetForProfile(profile_);
-}
-
-QueryInOmnibox* ChromeOmniboxClient::GetQueryInOmnibox() {
-  return QueryInOmniboxFactory::GetForProfile(profile_);
 }
 
 gfx::Image ChromeOmniboxClient::GetIconIfExtensionMatch(
@@ -339,9 +323,9 @@ void ChromeOmniboxClient::OnResultChanged(
       continue;
     }
     // TODO(jdonnelly, rhalavati): Create a helper function with Callback to
-    // create annotation and pass it to image_service, merging this annotation
-    // and the one in
-    // chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
+    // create annotation and pass it to image_service, merging the annotations
+    // in omnibox_page_handler.cc, chrome_omnibox_client.cc,
+    // and chrome_autocomplete_provider_client.cc.
     constexpr net::NetworkTrafficAnnotationTag traffic_annotation =
         net::DefineNetworkTrafficAnnotation("omnibox_result_change", R"(
           semantics {
@@ -402,6 +386,16 @@ gfx::Image ChromeOmniboxClient::GetFaviconForDefaultSearchProvider(
     return gfx::Image();
 
   return favicon_cache_.GetFaviconForIconUrl(default_provider->favicon_url(),
+                                             std::move(on_favicon_fetched));
+}
+
+gfx::Image ChromeOmniboxClient::GetFaviconForKeywordSearchProvider(
+    const TemplateURL* template_url,
+    FaviconFetchedCallback on_favicon_fetched) {
+  if (!template_url)
+    return gfx::Image();
+
+  return favicon_cache_.GetFaviconForIconUrl(template_url->favicon_url(),
                                              std::move(on_favicon_fetched));
 }
 
@@ -470,7 +464,7 @@ void ChromeOmniboxClient::OnURLOpenedFromOmnibox(OmniboxLog* log) {
 // We could go further to try to analyze the difference between the previous
 // and current URLs, but users edit URLs rarely enough that this is a
 // reasonable approximation.
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
   if (controller_->GetLocationBarModel()->ShouldDisplayURL()) {
     feature_engagement::NewTabTrackerFactory::GetInstance()
         ->GetForProfile(profile_)
@@ -483,7 +477,8 @@ void ChromeOmniboxClient::OnURLOpenedFromOmnibox(OmniboxLog* log) {
 }
 
 void ChromeOmniboxClient::OnBookmarkLaunched() {
-  RecordBookmarkLaunch(nullptr, BOOKMARK_LAUNCH_LOCATION_OMNIBOX);
+  RecordBookmarkLaunch(BOOKMARK_LAUNCH_LOCATION_OMNIBOX,
+                       ProfileMetrics::GetBrowserProfileType(profile_));
 }
 
 void ChromeOmniboxClient::DiscardNonCommittedNavigations() {
@@ -533,10 +528,15 @@ void ChromeOmniboxClient::OpenUpdateChromeDialog() {
 void ChromeOmniboxClient::DoPrerender(
     const AutocompleteMatch& match) {
   content::WebContents* web_contents = controller_->GetWebContents();
+
+  // Don't prerender when DevTools is open in this tab.
+  if (content::DevToolsAgentHost::IsDebuggerAttached(web_contents))
+    return;
+
   gfx::Rect container_bounds = web_contents->GetContainerBounds();
 
-  predictors::AutocompleteActionPredictorFactory::GetForProfile(profile_)->
-      StartPrerendering(
+  predictors::AutocompleteActionPredictorFactory::GetForProfile(profile_)
+      ->StartPrerendering(
           match.destination_url,
           web_contents->GetController().GetDefaultSessionStorageNamespace(),
           container_bounds.size());

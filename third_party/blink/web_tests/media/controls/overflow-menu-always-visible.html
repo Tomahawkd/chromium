@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <title>Overflow menu always visible</title>
+<script src="../../resources/run-after-layout-and-paint.js"></script>
 <script src="../media-controls.js"></script>
 <style>
   .container {
@@ -11,7 +12,7 @@
     width: 60px;
   }
 </style>
-<video controls muted></video>
+<video controls muted preload="auto"></video>
 <script>
   if (window.testRunner)
     testRunner.waitUntilDone();
@@ -30,7 +31,7 @@
     // :hover sometimes applying.
     overflowMenu(video).style = 'pointer-events: none;';
 
-    testRunner.layoutAndPaintAsyncThen(() => {
+    runAfterLayoutAndPaint(() => {
       testRunner.notifyDone();
     });
   });

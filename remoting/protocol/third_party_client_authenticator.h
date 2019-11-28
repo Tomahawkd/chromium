@@ -37,9 +37,9 @@ class ThirdPartyClientAuthenticator : public ThirdPartyAuthenticatorBase {
 
  protected:
   // ThirdPartyAuthenticator implementation.
-  void ProcessTokenMessage(const buzz::XmlElement* message,
+  void ProcessTokenMessage(const jingle_xmpp::XmlElement* message,
                            const base::Closure& resume_callback) override;
-  void AddTokenElements(buzz::XmlElement* message) override;
+  void AddTokenElements(jingle_xmpp::XmlElement* message) override;
 
  private:
   void OnThirdPartyTokenFetched(const base::Closure& resume_callback,
@@ -50,7 +50,7 @@ class ThirdPartyClientAuthenticator : public ThirdPartyAuthenticatorBase {
   FetchThirdPartyTokenCallback fetch_token_callback_;
   std::string token_;
 
-  base::WeakPtrFactory<ThirdPartyClientAuthenticator> weak_factory_;
+  base::WeakPtrFactory<ThirdPartyClientAuthenticator> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ThirdPartyClientAuthenticator);
 };

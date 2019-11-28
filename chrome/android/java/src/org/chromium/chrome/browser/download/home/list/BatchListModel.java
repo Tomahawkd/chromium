@@ -4,11 +4,12 @@
 
 package org.chromium.chrome.browser.download.home.list;
 
-import android.support.annotation.Nullable;
 import android.support.v7.util.BatchingListUpdateCallback;
 import android.support.v7.util.ListUpdateCallback;
 
-import org.chromium.chrome.browser.modelutil.ListModel;
+import androidx.annotation.Nullable;
+
+import org.chromium.ui.modelutil.ListModel;
 
 /**
  * Helper class to batch updates to ListModel before notifying observers.

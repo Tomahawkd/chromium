@@ -139,7 +139,7 @@ ppapi::host::PpapiHost* RendererPpapiHostImpl::GetPpapiHost() {
 }
 
 RenderFrame* RendererPpapiHostImpl::GetRenderFrameForInstance(
-    PP_Instance instance) const {
+    PP_Instance instance) {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
     return nullptr;
@@ -150,7 +150,7 @@ RenderFrame* RendererPpapiHostImpl::GetRenderFrameForInstance(
 }
 
 RenderView* RendererPpapiHostImpl::GetRenderViewForInstance(
-    PP_Instance instance) const {
+    PP_Instance instance) {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
     return nullptr;
@@ -160,24 +160,24 @@ RenderView* RendererPpapiHostImpl::GetRenderViewForInstance(
   return instance_object->render_frame()->render_view();
 }
 
-bool RendererPpapiHostImpl::IsValidInstance(PP_Instance instance) const {
+bool RendererPpapiHostImpl::IsValidInstance(PP_Instance instance) {
   return !!GetAndValidateInstance(instance);
 }
 
 PepperPluginInstance* RendererPpapiHostImpl::GetPluginInstance(
-    PP_Instance instance) const {
+    PP_Instance instance) {
   return GetAndValidateInstance(instance);
 }
 
 blink::WebPluginContainer* RendererPpapiHostImpl::GetContainerForInstance(
-    PP_Instance instance) const {
+    PP_Instance instance) {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
     return nullptr;
   return instance_object->container();
 }
 
-bool RendererPpapiHostImpl::HasUserGesture(PP_Instance instance) const {
+bool RendererPpapiHostImpl::HasUserGesture(PP_Instance instance) {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
     return false;
@@ -185,10 +185,10 @@ bool RendererPpapiHostImpl::HasUserGesture(PP_Instance instance) const {
   if (instance_object->module()->permissions().HasPermission(
           ppapi::PERMISSION_BYPASS_USER_GESTURE))
     return true;
-  return instance_object->IsProcessingUserGesture();
+  return instance_object->HasTransientUserActivation();
 }
 
-int RendererPpapiHostImpl::GetRoutingIDForWidget(PP_Instance instance) const {
+int RendererPpapiHostImpl::GetRoutingIDForWidget(PP_Instance instance) {
   PepperPluginInstanceImpl* plugin_instance = GetAndValidateInstance(instance);
   if (!plugin_instance)
     return 0;
@@ -201,7 +201,7 @@ int RendererPpapiHostImpl::GetRoutingIDForWidget(PP_Instance instance) const {
 
 gfx::Point RendererPpapiHostImpl::PluginPointToRenderFrame(
     PP_Instance instance,
-    const gfx::Point& pt) const {
+    const gfx::Point& pt) {
   PepperPluginInstanceImpl* plugin_instance = GetAndValidateInstance(instance);
   if (!plugin_instance || plugin_instance->flash_fullscreen()) {
     // Flash fullscreen is special in that it renders into its own separate,
@@ -227,16 +227,6 @@ IPC::PlatformFileForTransit RendererPpapiHostImpl::ShareHandleWithRemote(
   return dispatcher_->ShareHandleWithRemote(handle, should_close_source);
 }
 
-base::SharedMemoryHandle
-RendererPpapiHostImpl::ShareSharedMemoryHandleWithRemote(
-    const base::SharedMemoryHandle& handle) {
-  if (!dispatcher_) {
-    DCHECK(is_running_in_process_);
-    return base::SharedMemory::DuplicateHandle(handle);
-  }
-  return dispatcher_->ShareSharedMemoryHandleWithRemote(handle);
-}
-
 base::UnsafeSharedMemoryRegion
 RendererPpapiHostImpl::ShareUnsafeSharedMemoryRegionWithRemote(
     const base::UnsafeSharedMemoryRegion& region) {
@@ -257,11 +247,11 @@ RendererPpapiHostImpl::ShareReadOnlySharedMemoryRegionWithRemote(
   return dispatcher_->ShareReadOnlySharedMemoryRegionWithRemote(region);
 }
 
-bool RendererPpapiHostImpl::IsRunningInProcess() const {
+bool RendererPpapiHostImpl::IsRunningInProcess() {
   return is_running_in_process_;
 }
 
-std::string RendererPpapiHostImpl::GetPluginName() const {
+std::string RendererPpapiHostImpl::GetPluginName() {
   return module_->name();
 }
 
@@ -272,7 +262,7 @@ void RendererPpapiHostImpl::SetToExternalPluginHost() {
 void RendererPpapiHostImpl::CreateBrowserResourceHosts(
     PP_Instance instance,
     const std::vector<IPC::Message>& nested_msgs,
-    base::OnceCallback<void(const std::vector<int>&)> callback) const {
+    base::OnceCallback<void(const std::vector<int>&)> callback) {
   RenderFrame* render_frame = GetRenderFrameForInstance(instance);
   PepperBrowserConnection* browser_connection =
       PepperBrowserConnection::Get(render_frame);
@@ -286,7 +276,7 @@ void RendererPpapiHostImpl::CreateBrowserResourceHosts(
   }
 }
 
-GURL RendererPpapiHostImpl::GetDocumentURL(PP_Instance pp_instance) const {
+GURL RendererPpapiHostImpl::GetDocumentURL(PP_Instance pp_instance) {
   PepperPluginInstanceImpl* instance = GetAndValidateInstance(pp_instance);
   if (!instance)
     return GURL();

@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/input/mouse_wheel_phase_handler.h"
 
+#include "base/bind.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
@@ -31,11 +32,19 @@ void MouseWheelPhaseHandler::AddPhaseIfNeededAndScheduleEndEvent(
 
   if (has_phase) {
     if (mouse_wheel_event.phase == blink::WebMouseWheelEvent::kPhaseEnded) {
-      // Don't send the wheel end event immediately, start a timer instead to
-      // see whether momentum phase of the scrolling starts or not.
-      ScheduleMouseWheelEndDispatching(
-          should_route_event,
-          kMaximumTimeBetweenPhaseEndedAndMomentumPhaseBegan);
+      // If the momentum_phase is anything other than blocked, don't send the
+      // wheel end event immediately, start a timer instead to see whether
+      // momentum phase of the scrolling starts or not. If momentum_phase is
+      // blocked, that means that momentum scrolling events are not coming
+      // next (i.e. preparing for a pinch, maybe), so end immediately.
+      if (mouse_wheel_event.momentum_phase ==
+          blink::WebMouseWheelEvent::kPhaseBlocked) {
+        SendSyntheticWheelEventWithPhaseEnded(should_route_event);
+      } else {
+        ScheduleMouseWheelEndDispatching(
+            should_route_event,
+            max_time_between_phase_ended_and_momentum_phase_began());
+      }
     } else if (mouse_wheel_event.phase ==
                blink::WebMouseWheelEvent::kPhaseBegan) {
       // A new scrolling sequence has started, send the pending wheel end
@@ -120,7 +129,8 @@ void MouseWheelPhaseHandler::ResetTouchpadScrollSequence() {
   touchpad_scroll_phase_state_ = TOUCHPAD_SCROLL_STATE_UNKNOWN;
 }
 
-void MouseWheelPhaseHandler::SendWheelEndForTouchpadScrollingIfNeeded() {
+void MouseWheelPhaseHandler::SendWheelEndForTouchpadScrollingIfNeeded(
+    bool should_route_event) {
   if (touchpad_scroll_phase_state_ == TOUCHPAD_SCROLL_IN_PROGRESS) {
     RenderWidgetHostImpl* widget_host = host_view_->host();
     if (!widget_host) {
@@ -128,8 +138,6 @@ void MouseWheelPhaseHandler::SendWheelEndForTouchpadScrollingIfNeeded() {
       return;
     }
 
-    bool should_route_event = widget_host->delegate() &&
-                              widget_host->delegate()->GetInputEventRouter();
     TRACE_EVENT_INSTANT0("input", "MouseWheelPhaseHandler Sent touchpad end",
                          TRACE_EVENT_SCOPE_THREAD);
     SendSyntheticWheelEventWithPhaseEnded(should_route_event);

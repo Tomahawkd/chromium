@@ -117,29 +117,28 @@ void PpapiCommandBufferProxy::SetGetBuffer(int32_t transfer_buffer_id) {
 }
 
 scoped_refptr<gpu::Buffer> PpapiCommandBufferProxy::CreateTransferBuffer(
-    size_t size,
+    uint32_t size,
     int32_t* id) {
   *id = -1;
 
   if (last_state_.error != gpu::error::kNoError)
-    return NULL;
+    return nullptr;
 
   // Assuming we are in the renderer process, the service is responsible for
   // duplicating the handle. This might not be true for NaCl.
   ppapi::proxy::SerializedHandle handle(
       ppapi::proxy::SerializedHandle::SHARED_MEMORY_REGION);
   if (!Send(new PpapiHostMsg_PPBGraphics3D_CreateTransferBuffer(
-          ppapi::API_ID_PPB_GRAPHICS_3D, resource_,
-          base::checked_cast<uint32_t>(size), id, &handle))) {
+          ppapi::API_ID_PPB_GRAPHICS_3D, resource_, size, id, &handle))) {
     if (last_state_.error == gpu::error::kNoError)
       last_state_.error = gpu::error::kLostContext;
-    return NULL;
+    return nullptr;
   }
 
   if (*id <= 0 || !handle.is_shmem_region()) {
     if (last_state_.error == gpu::error::kNoError)
       last_state_.error = gpu::error::kOutOfBounds;
-    return NULL;
+    return nullptr;
   }
 
   base::UnsafeSharedMemoryRegion shared_memory_region =
@@ -148,11 +147,12 @@ scoped_refptr<gpu::Buffer> PpapiCommandBufferProxy::CreateTransferBuffer(
 
   base::WritableSharedMemoryMapping shared_memory_mapping =
       shared_memory_region.Map();
-  if (!shared_memory_mapping.IsValid()) {
+  if (!shared_memory_mapping.IsValid() ||
+      (shared_memory_mapping.size() > UINT32_MAX)) {
     if (last_state_.error == gpu::error::kNoError)
       last_state_.error = gpu::error::kOutOfBounds;
     *id = -1;
-    return NULL;
+    return nullptr;
   }
 
   return gpu::MakeBufferFromSharedMemory(std::move(shared_memory_region),
@@ -171,7 +171,7 @@ void PpapiCommandBufferProxy::DestroyTransferBuffer(int32_t id) {
 }
 
 void PpapiCommandBufferProxy::SetLock(base::Lock*) {
-  NOTIMPLEMENTED();
+  NOTREACHED();
 }
 
 void PpapiCommandBufferProxy::EnsureWorkVisible() {
@@ -206,23 +206,29 @@ uint64_t PpapiCommandBufferProxy::GenerateFenceSyncRelease() {
 }
 
 bool PpapiCommandBufferProxy::IsFenceSyncReleased(uint64_t release) {
-  NOTIMPLEMENTED();
+  NOTREACHED();
   return false;
 }
 
 void PpapiCommandBufferProxy::SignalSyncToken(const gpu::SyncToken& sync_token,
                                               base::OnceClosure callback) {
-  NOTIMPLEMENTED();
+  NOTREACHED();
 }
 
-void PpapiCommandBufferProxy::WaitSyncTokenHint(
-    const gpu::SyncToken& sync_token) {
-  // TODO(sunnyps): Forward sync token dependency hints to the renderer.
+// Pepper plugin does not expose or call WaitSyncTokenCHROMIUM.
+void PpapiCommandBufferProxy::WaitSyncToken(const gpu::SyncToken& sync_token) {
+  NOTREACHED();
 }
 
 bool PpapiCommandBufferProxy::CanWaitUnverifiedSyncToken(
     const gpu::SyncToken& sync_token) {
+  NOTREACHED();
   return false;
+}
+
+void PpapiCommandBufferProxy::SetDisplayTransform(
+    gfx::OverlayTransform transform) {
+  NOTREACHED();
 }
 
 void PpapiCommandBufferProxy::SignalQuery(uint32_t query,
@@ -232,13 +238,13 @@ void PpapiCommandBufferProxy::SignalQuery(uint32_t query,
 
 void PpapiCommandBufferProxy::CreateGpuFence(uint32_t gpu_fence_id,
                                              ClientGpuFence source) {
-  NOTIMPLEMENTED();
+  NOTREACHED();
 }
 
 void PpapiCommandBufferProxy::GetGpuFence(
     uint32_t gpu_fence_id,
     base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)> callback) {
-  NOTIMPLEMENTED();
+  NOTREACHED();
 }
 
 void PpapiCommandBufferProxy::SetGpuControlClient(gpu::GpuControlClient*) {

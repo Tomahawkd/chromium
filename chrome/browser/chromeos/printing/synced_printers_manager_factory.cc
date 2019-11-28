@@ -7,14 +7,15 @@
 #include <memory>
 #include <utility>
 
-#include "base/debug/dump_without_crashing.h"
+#include "base/bind.h"
 #include "chrome/browser/chromeos/printing/printers_sync_bridge.h"
+#include "chrome/browser/chromeos/printing/synced_printers_manager.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/model_type_store_service_factory.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "chrome/common/channel_info.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/model/model_type_store_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -52,7 +53,7 @@ SyncedPrintersManagerFactory::SyncedPrintersManagerFactory()
   DependsOn(ModelTypeStoreServiceFactory::GetInstance());
 }
 
-SyncedPrintersManagerFactory::~SyncedPrintersManagerFactory() {}
+SyncedPrintersManagerFactory::~SyncedPrintersManagerFactory() = default;
 
 SyncedPrintersManager* SyncedPrintersManagerFactory::BuildServiceInstanceFor(
     content::BrowserContext* browser_context) const {
@@ -63,8 +64,9 @@ SyncedPrintersManager* SyncedPrintersManagerFactory::BuildServiceInstanceFor(
 
   std::unique_ptr<PrintersSyncBridge> sync_bridge =
       std::make_unique<PrintersSyncBridge>(
-          std::move(store_factory), base::BindRepeating(base::IgnoreResult(
-                                        &base::debug::DumpWithoutCrashing)));
+          std::move(store_factory),
+          base::BindRepeating(&syncer::ReportUnrecoverableError,
+                              chrome::GetChannel()));
 
   return SyncedPrintersManager::Create(profile, std::move(sync_bridge))
       .release();

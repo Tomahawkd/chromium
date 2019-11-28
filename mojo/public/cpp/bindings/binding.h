@@ -11,7 +11,6 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/connection_error_callback.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_ptr_info.h"
@@ -22,7 +21,7 @@
 
 namespace mojo {
 
-class MessageReceiver;
+class MessageFilter;
 
 // Represents the binding of an interface implementation to a message pipe.
 // When the |Binding| object is destroyed, the binding between the message pipe
@@ -62,10 +61,10 @@ class MessageReceiver;
 // bound to a message pipe, it may be bound or destroyed on any sequence.
 //
 // When you bind this class to a message pipe, optionally you can specify a
-// base::SingleThreadTaskRunner. This task runner must belong to the same
-// thread. It will be used to dispatch incoming method calls and connection
+// base::SequencedTaskRunner. This task runner must belong to the same
+// sequence. It will be used to dispatch incoming method calls and connection
 // error notification. It is useful when you attach multiple task runners to a
-// single thread for the purposes of task scheduling. Please note that
+// sequence for the purposes of task scheduling. Please note that
 // incoming synchrounous method calls may not be run from this task runner, when
 // they reenter outgoing synchrounous calls on the same thread.
 template <typename Interface,
@@ -84,7 +83,7 @@ class Binding {
   // |impl|, which must outlive the binding.
   Binding(ImplPointerType impl,
           InterfaceRequest<Interface> request,
-          scoped_refptr<base::SingleThreadTaskRunner> runner = nullptr)
+          scoped_refptr<base::SequencedTaskRunner> runner = nullptr)
       : Binding(std::move(impl)) {
     Bind(std::move(request), std::move(runner));
   }
@@ -97,16 +96,17 @@ class Binding {
   // implementation by removing the message pipe endpoint from |request| and
   // binding it to the previously specified implementation.
   void Bind(InterfaceRequest<Interface> request,
-            scoped_refptr<base::SingleThreadTaskRunner> runner = nullptr) {
-    internal_state_.Bind(request.PassMessagePipe(), std::move(runner));
+            scoped_refptr<base::SequencedTaskRunner> runner = nullptr) {
+    internal_state_.Bind(request.internal_state(), std::move(runner));
   }
 
-  // Adds a message filter to be notified of each incoming message before
+  // Sets a message filter to be notified of each incoming message before
   // dispatch. If a filter returns |false| from Accept(), the message is not
-  // dispatched and the pipe is closed. Filters cannot be removed.
-  void AddFilter(std::unique_ptr<MessageReceiver> filter) {
+  // dispatched and the pipe is closed. Filters cannot be removed once added
+  // and only one can be set.
+  void SetFilter(std::unique_ptr<MessageFilter> filter) {
     DCHECK(is_bound());
-    internal_state_.AddFilter(std::move(filter));
+    internal_state_.SetFilter(std::move(filter));
   }
 
   // Whether there are any associated interfaces running on the pipe currently.
@@ -238,6 +238,18 @@ class Binding {
   ImplPointerType SwapImplForTesting(ImplPointerType new_impl) {
     return internal_state_.SwapImplForTesting(new_impl);
   }
+
+  // DO NOT INTRODUCE NEW USES OF THIS METHOD.
+  //
+  // Allows this Binding to dispatch multiple messages within the extent of a
+  // single scheduled task. Normally every incoming message is dispatched by a
+  // dedicated task on the Binding's SequencedTaskRunner, and this is preferred.
+  // Allowing a Binding to do batch dispatch can cause it to starve its sequence
+  // for long periods of time when spammed with messages.
+  //
+  // This will be removed and exists only temporarily to support some edge cases
+  // where an unintended dependency on batch dispatch remains in production.
+  void EnableBatchDispatch() { internal_state_.EnableBatchDispatch(); }
 
   // DO NOT USE. Exposed only for internal use and for testing.
   internal::BindingState<Interface, ImplRefTraits>* internal_state() {

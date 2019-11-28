@@ -6,6 +6,7 @@
 
 #include <unordered_set>
 
+#include "base/strings/utf_string_conversions.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
@@ -59,21 +60,22 @@ class TextInputManagerTester::InternalObserver
   }
 
   void set_update_text_input_state_called_callback(
-      const base::Closure& callback) {
-    update_text_input_state_callback_ = callback;
+      base::RepeatingClosure callback) {
+    update_text_input_state_callback_ = std::move(callback);
   }
 
-  void set_on_selection_bounds_changed_callback(const base::Closure& callback) {
-    on_selection_bounds_changed_callback_ = callback;
+  void set_on_selection_bounds_changed_callback(
+      base::RepeatingClosure callback) {
+    on_selection_bounds_changed_callback_ = std::move(callback);
   }
 
   void set_on_ime_composition_range_changed_callback(
-      const base::Closure& callback) {
-    on_ime_composition_range_changed_callback_ = callback;
+      base::RepeatingClosure callback) {
+    on_ime_composition_range_changed_callback_ = std::move(callback);
   }
 
-  void set_on_text_selection_changed_callback(const base::Closure& callback) {
-    on_text_selection_changed_callback_ = callback;
+  void set_on_text_selection_changed_callback(base::RepeatingClosure callback) {
+    on_text_selection_changed_callback_ = std::move(callback);
   }
 
   const gfx::Range* last_composition_range() const {
@@ -137,10 +139,10 @@ class TextInputManagerTester::InternalObserver
   RenderWidgetHostViewBase* updated_view_;
   bool text_input_state_changed_;
   std::unique_ptr<gfx::Range> last_composition_range_;
-  base::Closure update_text_input_state_callback_;
-  base::Closure on_selection_bounds_changed_callback_;
-  base::Closure on_ime_composition_range_changed_callback_;
-  base::Closure on_text_selection_changed_callback_;
+  base::RepeatingClosure update_text_input_state_callback_;
+  base::RepeatingClosure on_selection_bounds_changed_callback_;
+  base::RepeatingClosure on_ime_composition_range_changed_callback_;
+  base::RepeatingClosure on_text_selection_changed_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(InternalObserver);
 };
@@ -330,23 +332,23 @@ TextInputManagerTester::TextInputManagerTester(WebContents* web_contents)
 TextInputManagerTester::~TextInputManagerTester() {}
 
 void TextInputManagerTester::SetUpdateTextInputStateCalledCallback(
-    const base::Closure& callback) {
-  observer_->set_update_text_input_state_called_callback(callback);
+    base::RepeatingClosure callback) {
+  observer_->set_update_text_input_state_called_callback(std::move(callback));
 }
 
 void TextInputManagerTester::SetOnSelectionBoundsChangedCallback(
-    const base::Closure& callback) {
-  observer_->set_on_selection_bounds_changed_callback(callback);
+    base::RepeatingClosure callback) {
+  observer_->set_on_selection_bounds_changed_callback(std::move(callback));
 }
 
 void TextInputManagerTester::SetOnImeCompositionRangeChangedCallback(
-    const base::Closure& callback) {
-  observer_->set_on_ime_composition_range_changed_callback(callback);
+    base::RepeatingClosure callback) {
+  observer_->set_on_ime_composition_range_changed_callback(std::move(callback));
 }
 
 void TextInputManagerTester::SetOnTextSelectionChangedCallback(
-    const base::Closure& callback) {
-  observer_->set_on_text_selection_changed_callback(callback);
+    base::RepeatingClosure callback) {
+  observer_->set_on_text_selection_changed_callback(std::move(callback));
 }
 
 bool TextInputManagerTester::GetTextInputType(ui::TextInputType* type) {
@@ -365,7 +367,7 @@ bool TextInputManagerTester::GetTextInputValue(std::string* value) {
       observer_->text_input_manager()->GetTextInputState();
   if (!state)
     return false;
-  *value = state->value;
+  *value = base::UTF16ToUTF8(state->value);
   return true;
 }
 

@@ -3,11 +3,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from writers import template_writer
+from writers import gpo_editor_writer
 import re
 
 NEWLINE = '\r\n'
-POLICY_LIST_URL = '''https://www.chromium.org/administrators/policy-list-3'''
+POLICY_LIST_URL = '''https://cloud.google.com/docs/chrome-enterprise/policies/?policy='''
 
 
 def GetWriter(config):
@@ -15,7 +15,7 @@ def GetWriter(config):
   See the constructor of TemplateWriter for description of
   arguments.
   '''
-  return AdmWriter(['win'], config)
+  return AdmWriter(['win', 'win7'], config)
 
 
 class IndentedStringBuilder:
@@ -60,7 +60,7 @@ class IndentedStringBuilder:
     return NEWLINE.join(self.lines)
 
 
-class AdmWriter(template_writer.TemplateWriter):
+class AdmWriter(gpo_editor_writer.GpoEditorWriter):
   '''Class for generating policy templates in Windows ADM format.
   It is used by PolicyTemplateGenerator to write ADM files.
   '''
@@ -93,9 +93,11 @@ class AdmWriter(template_writer.TemplateWriter):
       line = '%s="%s"' % (name, value)
       self.strings.AddLine(line)
 
-  def _WriteSupported(self, builder):
+  def _WriteSupported(self, builder, is_win7_only):
     builder.AddLine('#if version >= 4', 1)
-    builder.AddLine('SUPPORTED !!SUPPORTED_WIN7')
+    key = 'win_supported_os_win7' if is_win7_only else 'win_supported_os'
+    supported_on_text = self.config[key]
+    builder.AddLine('SUPPORTED !!' + supported_on_text)
     builder.AddLine('#endif', -1)
 
   def _WritePart(self, policy, key_name, builder):
@@ -122,7 +124,15 @@ class AdmWriter(template_writer.TemplateWriter):
       builder.AddLine('VALUENAME "%s"' % policy['name'])
     if policy['type'] == 'int':
       # The default max for NUMERIC values is 9999 which is too small for us.
-      builder.AddLine('MIN 0 MAX 2000000000')
+      max = '2000000000'
+      min = '0'
+      if self.PolicyHasRestrictions(policy):
+        schema = policy['schema']
+        if 'minimum' in schema:
+          min = schema['minimum']
+        if 'maximum' in schema:
+          max = schema['maximum']
+      builder.AddLine('MIN ' + str(min) + ' MAX ' + max)
     if policy['type'] in ('string', 'dict', 'external'):
       # The default max for EDITTEXT values is 1023, which is too small for
       # big JSON blobs and other string policies.
@@ -140,11 +150,17 @@ class AdmWriter(template_writer.TemplateWriter):
       builder.AddLine('END ITEMLIST', -1)
     builder.AddLine('END PART', -1)
 
+  def PolicyHasRestrictions(self, policy):
+    if 'schema' in policy:
+      return any(keyword in policy['schema'] \
+        for keyword in ['minimum', 'maximum'])
+    return False
+
   def _WritePolicy(self, policy, key_name, builder):
     policy_name = self._Escape(policy['name'] + '_Policy')
     self._AddGuiString(policy_name, policy['caption'])
     builder.AddLine('POLICY !!%s' % policy_name, 1)
-    self._WriteSupported(builder)
+    self._WriteSupported(builder, self.IsPolicyOnWin7Only(policy))
     policy_explain_name = self._Escape(policy['name'] + '_Explain')
     policy_explain = self._GetPolicyExplanation(policy)
     self._AddGuiString(policy_explain_name, policy_explain)
@@ -165,18 +181,17 @@ class AdmWriter(template_writer.TemplateWriter):
     Includes a link to the relevant documentation on chromium.org.
     '''
     policy_desc = policy.get('desc')
-    reference_url = POLICY_LIST_URL + '#' + policy['name']
-    reference_link_text = self._GetLocalizedMessage('reference_link')
+    reference_url = POLICY_LIST_URL + policy['name']
+    reference_link_text = self.GetLocalizedMessage('reference_link')
     reference_link_text = reference_link_text.replace('$6', reference_url)
 
     if policy_desc is not None:
-      return policy_desc + '\n\n' + reference_link_text
+      policy_desc += '\n\n'
+      if not policy.get('deprecated', False):
+        policy_desc += reference_link_text
+      return policy_desc
     else:
       return reference_link_text
-
-  def _GetLocalizedMessage(self, msg_id):
-    '''Returns the localized message of the given message ID.'''
-    return self.messages['doc_' + msg_id]['text']
 
   def WriteComment(self, comment):
     self.lines.AddLine('; ' + comment)
@@ -236,6 +251,8 @@ class AdmWriter(template_writer.TemplateWriter):
       self.WriteComment(self.config['build'] + ' version: ' + \
           self._GetChromiumVersionString())
     self._AddGuiString(self.config['win_supported_os'],
+                       self.messages['win_supported_all']['text'])
+    self._AddGuiString(self.config['win_supported_os_win7'],
                        self.messages['win_supported_win7']['text'])
     categories = self.winconfig['mandatory_category_path'] + \
                  self.winconfig['recommended_category_path']
@@ -285,7 +302,7 @@ class AdmWriter(template_writer.TemplateWriter):
     # String buffer for building the recommended policies of the ADM file.
     self.recommended_policies = IndentedStringBuilder()
     # Shortcut to platform-specific ADMX/ADM specific configuration.
-    assert len(self.platforms) == 1
+    assert len(self.platforms) == 2
     self.winconfig = self.config['win_config'][self.platforms[0]]
 
   def GetTemplateText(self):

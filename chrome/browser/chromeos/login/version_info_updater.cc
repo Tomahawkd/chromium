@@ -8,12 +8,13 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/grit/chromium_strings.h"
@@ -32,11 +33,9 @@ namespace chromeos {
 namespace {
 
 const char* const kReportingFlags[] = {
-  chromeos::kReportDeviceVersionInfo,
-  chromeos::kReportDeviceActivityTimes,
-  chromeos::kReportDeviceBootMode,
-  chromeos::kReportDeviceLocation,
-};
+    chromeos::kReportDeviceVersionInfo, chromeos::kReportDeviceActivityTimes,
+    chromeos::kReportDeviceBootMode, chromeos::kReportDeviceLocation,
+    chromeos::kDeviceLoginScreenSystemInfoEnforced};
 
 // Strings used to generate the serial number part of the version string.
 const char kSerialNumberPrefix[] = "SN:";
@@ -50,9 +49,7 @@ const char kBluetoothDeviceNamePrefix[] = "Bluetooth device name: ";
 // VersionInfoUpdater public:
 
 VersionInfoUpdater::VersionInfoUpdater(Delegate* delegate)
-    : cros_settings_(chromeos::CrosSettings::Get()),
-      delegate_(delegate),
-      weak_pointer_factory_(this) {}
+    : cros_settings_(chromeos::CrosSettings::Get()), delegate_(delegate) {}
 
 VersionInfoUpdater::~VersionInfoUpdater() {
   policy::BrowserPolicyConnectorChromeOS* connector =
@@ -65,15 +62,17 @@ VersionInfoUpdater::~VersionInfoUpdater() {
 
 void VersionInfoUpdater::StartUpdate(bool is_official_build) {
   if (base::SysInfo::IsRunningOnChromeOS()) {
-    base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+    base::PostTaskAndReplyWithResult(
+        FROM_HERE,
+        {base::ThreadPool(), base::MayBlock(),
+         base::TaskPriority::USER_VISIBLE},
         base::Bind(&version_loader::GetVersion,
                    is_official_build ? version_loader::VERSION_SHORT_WITH_DATE
                                      : version_loader::VERSION_FULL),
         base::Bind(&VersionInfoUpdater::OnVersion,
                    weak_pointer_factory_.GetWeakPtr()));
   } else {
-    UpdateVersionLabel();
+    OnVersion("linux-chromeos");
   }
 
   policy::BrowserPolicyConnectorChromeOS* connector =
@@ -91,14 +90,29 @@ void VersionInfoUpdater::StartUpdate(bool is_official_build) {
   // Watch for changes to the reporting flags.
   base::Closure callback = base::Bind(&VersionInfoUpdater::UpdateEnterpriseInfo,
                                       base::Unretained(this));
-  for (unsigned int i = 0; i < arraysize(kReportingFlags); ++i) {
+  for (unsigned int i = 0; i < base::size(kReportingFlags); ++i) {
     subscriptions_.push_back(
         cros_settings_->AddSettingsObserver(kReportingFlags[i], callback));
   }
 
   // Update device bluetooth info.
-  device::BluetoothAdapterFactory::GetAdapter(base::Bind(
+  device::BluetoothAdapterFactory::GetAdapter(base::BindOnce(
       &VersionInfoUpdater::OnGetAdapter, weak_pointer_factory_.GetWeakPtr()));
+
+  // Get ADB sideloading status.
+  chromeos::SessionManagerClient* client =
+      chromeos::SessionManagerClient::Get();
+  client->QueryAdbSideload(base::Bind(&VersionInfoUpdater::OnQueryAdbSideload,
+                                      weak_pointer_factory_.GetWeakPtr()));
+}
+
+base::Optional<bool> VersionInfoUpdater::IsSystemInfoEnforced() const {
+  bool is_system_info_enforced = false;
+  if (cros_settings_->GetBoolean(chromeos::kDeviceLoginScreenSystemInfoEnforced,
+                                 &is_system_info_enforced)) {
+    return is_system_info_enforced;
+  }
+  return base::nullopt;
 }
 
 void VersionInfoUpdater::UpdateVersionLabel() {
@@ -112,10 +126,6 @@ void VersionInfoUpdater::UpdateVersionLabel() {
       l10n_util::GetStringUTF16(IDS_PRODUCT_NAME),
       base::UTF8ToUTF16(version_info::GetVersionNumber()),
       base::UTF8ToUTF16(version_text_), base::UTF8ToUTF16(serial_number_text_));
-
-  // Workaround over incorrect width calculation in old fonts.
-  // TODO(glotov): remove the following line when new fonts are used.
-  label_text += ' ';
 
   if (delegate_)
     delegate_->OnOSVersionLabelTextUpdated(label_text);
@@ -169,6 +179,19 @@ void VersionInfoUpdater::OnStoreLoaded(policy::CloudPolicyStore* store) {
 
 void VersionInfoUpdater::OnStoreError(policy::CloudPolicyStore* store) {
   UpdateEnterpriseInfo();
+}
+
+void VersionInfoUpdater::OnQueryAdbSideload(
+    SessionManagerClient::AdbSideloadResponseCode response_code,
+    bool enabled) {
+  if (response_code != SessionManagerClient::AdbSideloadResponseCode::SUCCESS) {
+    LOG(WARNING) << "Failed to query adb sideload status";
+    // Pretend to be enabled to show warning at login screen conservatively.
+    enabled = true;
+  }
+
+  if (delegate_)
+    delegate_->OnAdbSideloadStatusUpdated(enabled);
 }
 
 }  // namespace chromeos

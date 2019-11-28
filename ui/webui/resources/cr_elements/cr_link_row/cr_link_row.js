@@ -8,20 +8,15 @@
  * button (taking up the whole 'row'). The name link comes from the intended use
  * of this element to take the user to another page in the app or to an external
  * page (somewhat like an HTML link).
- * Note: the ripple handling was taken from Polymer v1 paper-icon-button-light.
  */
 Polymer({
   is: 'cr-link-row',
-
-  behaviors: [Polymer.PaperRippleBehavior],
 
   properties: {
     startIcon: {
       type: String,
       value: '',
     },
-
-    iconClass: String,
 
     label: {
       type: String,
@@ -38,34 +33,53 @@ Polymer({
       type: Boolean,
       reflectToAttribute: true,
     },
+
+    external: {
+      type: Boolean,
+      value: false,
+    },
+
+    usingSlottedLabel: {
+      type: Boolean,
+      value: false,
+    },
+
+    roleDescription: String,
+
+    /** @private */
+    hideLabelWrapper_: {
+      type: Boolean,
+      computed: 'computeHideLabelWrapper_(label, usingSlottedLabel)',
+    },
   },
 
-  listeners: {
-    'down': '_rippleDown',
-    'up': '_rippleUp',
-    'focus': '_rippleDown',
-    'blur': '_rippleUp',
+  /** @type {boolean} */
+  get noink() {
+    return this.$.icon.noink;
+  },
+
+  /** @type {boolean} */
+  set noink(value) {
+    this.$.icon.noink = value;
   },
 
   focus: function() {
-    // Forward focus to the button wrapper.
-    this.$$('button').focus();
+    this.$.icon.focus();
   },
 
-  _rippleDown: function() {
-    this.getRipple().uiDownAction();
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeHideLabelWrapper_: function() {
+    return !(this.label || this.usingSlottedLabel);
   },
 
-  _rippleUp: function() {
-    this.getRipple().uiUpAction();
-  },
-
-  _createRipple: function() {
-    this._rippleContainer = this.$.icon;
-    const ripple = Polymer.PaperRippleBehavior._createRipple();
-    ripple.id = 'ink';
-    ripple.setAttribute('recenters', '');
-    ripple.classList.add('circle');
-    return ripple;
+  /**
+   * @return {string}
+   * @private
+   */
+  getIcon_: function() {
+    return this.external ? 'cr:open-in-new' : 'cr:arrow-right';
   },
 });

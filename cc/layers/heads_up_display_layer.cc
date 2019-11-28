@@ -46,8 +46,10 @@ void HeadsUpDisplayLayer::UpdateLocationAndSize(
     // FPS meter), use a fixed size.
     constexpr int kDefaultHUDSize = 256;
     bounds.SetSize(kDefaultHUDSize, kDefaultHUDSize);
-    matrix.Translate(device_viewport_in_layout_pixels.width() - kDefaultHUDSize,
-                     0.0);
+    // Put the HUD on the top-left side instead of the top-right side because
+    // the HUD sometimes can be drawn on out of the screen when it works on
+    // embedded devices.
+    matrix.Translate(0.0, 0.0);
   }
 
   SetBounds(bounds);
@@ -63,6 +65,15 @@ std::unique_ptr<LayerImpl> HeadsUpDisplayLayer::CreateLayerImpl(
   return HeadsUpDisplayLayerImpl::Create(tree_impl, id());
 }
 
+const std::vector<gfx::Rect>& HeadsUpDisplayLayer::LayoutShiftRects() const {
+  return layout_shift_rects_;
+}
+
+void HeadsUpDisplayLayer::SetLayoutShiftRects(
+    const std::vector<gfx::Rect>& rects) {
+  layout_shift_rects_ = rects;
+}
+
 void HeadsUpDisplayLayer::PushPropertiesTo(LayerImpl* layer) {
   Layer::PushPropertiesTo(layer);
   TRACE_EVENT0("cc", "HeadsUpDisplayLayer::PushPropertiesTo");
@@ -70,6 +81,8 @@ void HeadsUpDisplayLayer::PushPropertiesTo(LayerImpl* layer) {
       static_cast<HeadsUpDisplayLayerImpl*>(layer);
 
   layer_impl->SetHUDTypeface(typeface_);
+  layer_impl->SetLayoutShiftRects(layout_shift_rects_);
+  layout_shift_rects_.clear();
 }
 
 }  // namespace cc

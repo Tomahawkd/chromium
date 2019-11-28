@@ -61,7 +61,7 @@
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/public/web/web_associated_url_loader_client.h"
 #include "third_party/blink/public/web/web_plugin.h"
-#include "third_party/blink/public/web/web_user_gesture_token.h"
+#include "ui/accessibility/ax_mode.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
@@ -107,7 +107,6 @@ namespace content {
 class FullscreenContainer;
 class MessageChannel;
 class PepperAudioController;
-class PepperCompositorHost;
 class PepperGraphics2DHost;
 class PluginInstanceThrottlerImpl;
 class PluginModule;
@@ -272,12 +271,12 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   void StopFind();
 
   bool SupportsPrintInterface();
-  bool IsPrintScalingDisabled();
   int PrintBegin(const blink::WebPrintParams& print_params);
   void PrintPage(int page_number, cc::PaintCanvas* canvas);
   void PrintEnd();
   bool GetPrintPresetOptionsFromDocument(
       blink::WebPrintPresetOptions* preset_options);
+  bool IsPdfPlugin();
 
   bool CanRotateView();
   void RotateView(blink::WebPlugin::RotationType type);
@@ -330,10 +329,10 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool flash_fullscreen() const { return flash_fullscreen_; }
 
   // Switches between fullscreen and normal mode. The transition is
-  // asynchronous. WebKit will trigger corresponding VewChanged calls.
-  // Returns true on success, false on failure (e.g. trying to enter fullscreen
-  // when not processing a user gesture or trying to set fullscreen when
-  // already in fullscreen mode).
+  // asynchronous. WebKit will trigger corresponding ViewChanged calls.  Returns
+  // true on success, false on failure (e.g. trying to enter fullscreen without
+  // user activation or trying to set fullscreen when already in fullscreen
+  // mode).
   bool SetFullscreen(bool fullscreen);
 
   // Send the message on to the plugin.
@@ -345,12 +344,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool HandleBlockingMessage(ppapi::ScopedPPVar message,
                              ppapi::ScopedPPVar* result);
 
-  // Returns true if the plugin is processing a user gesture.
-  bool IsProcessingUserGesture() const;
-
-  // Returns the user gesture token to use for creating a WebScopedUserGesture,
-  // if IsProcessingUserGesture returned true.
-  blink::WebUserGestureToken CurrentUserGestureToken();
+  // Returns true if the plugin has transient user activation.
+  bool HasTransientUserActivation() const;
 
   // A mouse lock request was pending and this reports success or failure.
   void OnLockMouseACK(bool succeeded);
@@ -385,7 +380,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // PluginInstance implementation
   RenderFrame* GetRenderFrame() override;
   blink::WebPluginContainer* GetContainer() override;
-  v8::Isolate* GetIsolate() const override;
+  v8::Isolate* GetIsolate() override;
   ppapi::VarTracker* GetVarTracker() override;
   const GURL& GetPluginURL() override;
   base::FilePath GetModulePath() override;
@@ -421,6 +416,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool CanRedo() override;
   void Undo() override;
   void Redo() override;
+  void HandleAccessibilityAction(
+      const PP_PdfAccessibilityActionData& action_data) override;
 
   // PPB_Instance_API implementation.
   PP_Bool BindGraphics(PP_Instance instance, PP_Resource device) override;
@@ -511,7 +508,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
       std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
 
   // RenderFrameObserver
-  void AccessibilityModeChanged() override;
+  void AccessibilityModeChanged(const ui::AXMode& mode) override;
   void OnDestruct() override;
 
   // PluginInstanceThrottler::Observer
@@ -656,7 +653,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool SetFullscreenCommon(bool fullscreen) const;
 
   bool IsMouseLocked();
-  bool LockMouse();
+  bool LockMouse(bool request_unadjusted_movement);
   MouseLockDispatcher* GetMouseLockDispatcher();
   MouseLockDispatcher::LockTarget* GetOrCreateLockTargetAdapter();
   void UnSetAndDeleteLockTargetAdapter();
@@ -691,6 +688,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // Whether a given viz::TransferableResource is in use by |texture_layer_|.
   bool IsTextureInUse(const viz::TransferableResource& resource) const;
 
+  void HandleAccessibilityChange();
+
   RenderFrameImpl* render_frame_;
   scoped_refptr<PluginModule> module_;
   std::unique_ptr<ppapi::PPP_Instance_Combined> instance_interface_;
@@ -708,7 +707,6 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   // NULL until we have been initialized.
   blink::WebPluginContainer* container_;
-  scoped_refptr<cc::Layer> compositor_layer_;
   scoped_refptr<cc::TextureLayer> texture_layer_;
   bool layer_bound_to_fullscreen_;
   bool layer_is_hardware_;
@@ -746,10 +744,9 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // same as the default values.
   bool sent_initial_did_change_view_;
 
-  // The current device context for painting in 2D, 3D or compositor.
+  // The current device context for painting in 2D or 3D.
   scoped_refptr<PPB_Graphics3D_Impl> bound_graphics_3d_;
   PepperGraphics2DHost* bound_graphics_2d_platform_;
-  PepperCompositorHost* bound_compositor_;
 
   // We track two types of focus, one from WebKit, which is the focus among
   // all elements of the page, one one from the browser, which is whether the
@@ -874,10 +871,10 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   scoped_refptr<ppapi::TrackedCallback> lock_mouse_callback_;
 
-  // Track pending user gestures so out-of-process plugins can respond to
-  // a user gesture after it has been processed.
-  PP_TimeTicks pending_user_gesture_;
-  blink::WebUserGestureToken pending_user_gesture_token_;
+  // Last mouse position from mouse event, used for calculating movements. Null
+  // means no mouse event received yet. This value is updated by
+  // |CreateInputEventData|.
+  std::unique_ptr<gfx::PointF> last_mouse_position_;
 
   // We store the arguments so we can re-send them if we are reset to talk to
   // NaCl via the IPC NaCl proxy.
@@ -922,6 +919,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   std::vector<MailboxRefCount> texture_ref_counts_;
 
   bool initialized_;
+  bool created_in_process_instance_;
 
   // The controller for all active audios of this pepper instance.
   std::unique_ptr<PepperAudioController> audio_controller_;
@@ -931,8 +929,9 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // already a weak ptr pending (HasWeakPtrs is true), code should update the
   // view_data_ but not send updates. This also allows us to cancel scheduled
   // view change events.
-  base::WeakPtrFactory<PepperPluginInstanceImpl> view_change_weak_ptr_factory_;
-  base::WeakPtrFactory<PepperPluginInstanceImpl> weak_factory_;
+  base::WeakPtrFactory<PepperPluginInstanceImpl> view_change_weak_ptr_factory_{
+      this};
+  base::WeakPtrFactory<PepperPluginInstanceImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PepperPluginInstanceImpl);
 };

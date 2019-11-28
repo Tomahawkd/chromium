@@ -25,20 +25,23 @@
 
 #include "third_party/blink/renderer/core/loader/appcache/application_cache.h"
 
+#include "third_party/blink/public/mojom/appcache/appcache.mojom-blink.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/hosts_using_features.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/loader/appcache/application_cache_host_for_frame.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
 ApplicationCache::ApplicationCache(LocalFrame* frame) : DOMWindowClient(frame) {
-  ApplicationCacheHost* cache_host = GetApplicationCacheHost();
+  ApplicationCacheHostForFrame* cache_host = GetApplicationCacheHost();
   if (cache_host)
     cache_host->SetApplicationCache(this);
 }
@@ -48,23 +51,46 @@ void ApplicationCache::Trace(blink::Visitor* visitor) {
   DOMWindowClient::Trace(visitor);
 }
 
-ApplicationCacheHost* ApplicationCache::GetApplicationCacheHost() const {
+ApplicationCacheHostForFrame* ApplicationCache::GetApplicationCacheHost()
+    const {
   if (!GetFrame() || !GetFrame()->Loader().GetDocumentLoader())
     return nullptr;
   return GetFrame()->Loader().GetDocumentLoader()->GetApplicationCacheHost();
 }
 
-unsigned short ApplicationCache::status() const {
+uint16_t ApplicationCache::status() const {
+  // Application Cache status numeric values are specified in the HTML5 spec.
+  static_assert(static_cast<uint16_t>(
+                    mojom::AppCacheStatus::APPCACHE_STATUS_UNCACHED) == 0,
+                "");
+  static_assert(
+      static_cast<uint16_t>(mojom::AppCacheStatus::APPCACHE_STATUS_IDLE) == 1,
+      "");
+  static_assert(static_cast<uint16_t>(
+                    mojom::AppCacheStatus::APPCACHE_STATUS_CHECKING) == 2,
+                "");
+  static_assert(static_cast<uint16_t>(
+                    mojom::AppCacheStatus::APPCACHE_STATUS_DOWNLOADING) == 3,
+                "");
+  static_assert(static_cast<uint16_t>(
+                    mojom::AppCacheStatus::APPCACHE_STATUS_UPDATE_READY) == 4,
+                "");
+  static_assert(static_cast<uint16_t>(
+                    mojom::AppCacheStatus::APPCACHE_STATUS_OBSOLETE) == 5,
+                "");
+
   RecordAPIUseType();
-  ApplicationCacheHost* cache_host = GetApplicationCacheHost();
-  if (!cache_host)
-    return ApplicationCacheHost::kUncached;
-  return cache_host->GetStatus();
+  ApplicationCacheHostForFrame* cache_host = GetApplicationCacheHost();
+  if (!cache_host) {
+    return static_cast<uint16_t>(
+        mojom::AppCacheStatus::APPCACHE_STATUS_UNCACHED);
+  }
+  return static_cast<uint16_t>(cache_host->GetStatus());
 }
 
 void ApplicationCache::update(ExceptionState& exception_state) {
   RecordAPIUseType();
-  ApplicationCacheHost* cache_host = GetApplicationCacheHost();
+  ApplicationCacheHostForFrame* cache_host = GetApplicationCacheHost();
   if (!cache_host || !cache_host->Update()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
@@ -74,7 +100,7 @@ void ApplicationCache::update(ExceptionState& exception_state) {
 
 void ApplicationCache::swapCache(ExceptionState& exception_state) {
   RecordAPIUseType();
-  ApplicationCacheHost* cache_host = GetApplicationCacheHost();
+  ApplicationCacheHostForFrame* cache_host = GetApplicationCacheHost();
   if (!cache_host || !cache_host->SwapCache()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
@@ -83,7 +109,7 @@ void ApplicationCache::swapCache(ExceptionState& exception_state) {
 }
 
 void ApplicationCache::abort() {
-  ApplicationCacheHost* cache_host = GetApplicationCacheHost();
+  ApplicationCacheHostForFrame* cache_host = GetApplicationCacheHost();
   if (cache_host)
     cache_host->Abort();
 }
@@ -96,24 +122,23 @@ ExecutionContext* ApplicationCache::GetExecutionContext() const {
   return GetFrame() ? GetFrame()->GetDocument() : nullptr;
 }
 
-const AtomicString& ApplicationCache::ToEventType(
-    ApplicationCacheHost::EventID id) {
+const AtomicString& ApplicationCache::ToEventType(mojom::AppCacheEventID id) {
   switch (id) {
-    case ApplicationCacheHost::kCheckingEvent:
+    case mojom::AppCacheEventID::APPCACHE_CHECKING_EVENT:
       return event_type_names::kChecking;
-    case ApplicationCacheHost::kErrorEvent:
+    case mojom::AppCacheEventID::APPCACHE_ERROR_EVENT:
       return event_type_names::kError;
-    case ApplicationCacheHost::kNoupdateEvent:
+    case mojom::AppCacheEventID::APPCACHE_NO_UPDATE_EVENT:
       return event_type_names::kNoupdate;
-    case ApplicationCacheHost::kDownloadingEvent:
+    case mojom::AppCacheEventID::APPCACHE_DOWNLOADING_EVENT:
       return event_type_names::kDownloading;
-    case ApplicationCacheHost::kProgressEvent:
+    case mojom::AppCacheEventID::APPCACHE_PROGRESS_EVENT:
       return event_type_names::kProgress;
-    case ApplicationCacheHost::kUpdatereadyEvent:
+    case mojom::AppCacheEventID::APPCACHE_UPDATE_READY_EVENT:
       return event_type_names::kUpdateready;
-    case ApplicationCacheHost::kCachedEvent:
+    case mojom::AppCacheEventID::APPCACHE_CACHED_EVENT:
       return event_type_names::kCached;
-    case ApplicationCacheHost::kObsoleteEvent:
+    case mojom::AppCacheEventID::APPCACHE_OBSOLETE_EVENT:
       return event_type_names::kObsolete;
   }
   NOTREACHED();
@@ -130,7 +155,8 @@ void ApplicationCache::RecordAPIUseType() const {
     return;
 
   if (document->IsSecureContext()) {
-    UseCounter::Count(document, WebFeature::kApplicationCacheAPISecureOrigin);
+    Deprecation::CountDeprecation(document,
+                                  WebFeature::kApplicationCacheAPISecureOrigin);
   } else {
     Deprecation::CountDeprecation(
         document, WebFeature::kApplicationCacheAPIInsecureOrigin);

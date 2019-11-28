@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -29,7 +30,7 @@
 #include "components/sync/protocol/sync.pb.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/url_formatter/url_formatter.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::ASCIIToUTF16;
@@ -243,7 +244,7 @@ class TemplateURLServiceSyncTest : public testing::Test {
       syncer::SyncChangeList changes);
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   // We keep two TemplateURLServices to test syncing between them.
   std::unique_ptr<TemplateURLServiceTestUtil> test_util_a_;
   std::unique_ptr<TemplateURLServiceTestUtil> test_util_b_;
@@ -587,7 +588,7 @@ TEST_F(TemplateURLServiceSyncTest, IsLocalTemplateURLBetter) {
     {100, 100, false, false, false},
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     TemplateURL* local_turl = model()->Add(CreateTestTemplateURL(
         ASCIIToUTF16("localkey"), "www.local.com", "localguid",
         test_cases[i].local_time, true, test_cases[i].local_created_by_policy));
@@ -2098,7 +2099,6 @@ TEST_F(TemplateURLServiceSyncTest, PreSyncUpdates) {
 TEST_F(TemplateURLServiceSyncTest, SyncBaseURLs) {
   // Verify that bringing in a remote TemplateURL that uses Google base URLs
   // causes it to get a local keyword that matches the local base URL.
-  test_util_a_->SetGoogleBaseURL(GURL("http://google.com/"));
   syncer::SyncDataList initial_data;
   std::unique_ptr<TemplateURL> turl(
       CreateTestTemplateURL(ASCIIToUTF16("google.co.uk"),
@@ -2120,16 +2120,6 @@ TEST_F(TemplateURLServiceSyncTest, SyncBaseURLs) {
   ProcessAndExpectNotify(changes, 1);
   EXPECT_EQ(ASCIIToUTF16("google.com"), synced_turl->keyword());
   EXPECT_EQ(0U, processor()->change_list_size());
-
-  // A local change to the Google base URL should update the keyword and
-  // generate a sync change.
-  test_util_a_->SetGoogleBaseURL(GURL("http://google.co.in/"));
-  EXPECT_EQ(ASCIIToUTF16("google.co.in"), synced_turl->keyword());
-  EXPECT_EQ(1U, processor()->change_list_size());
-  ASSERT_TRUE(processor()->contains_guid("guid"));
-  syncer::SyncChange change(processor()->change_for_guid("guid"));
-  EXPECT_EQ(syncer::SyncChange::ACTION_UPDATE, change.change_type());
-  EXPECT_EQ("google.co.in", GetKeyword(change.sync_data()));
 }
 
 TEST_F(TemplateURLServiceSyncTest, MergeInSyncTemplateURL) {
@@ -2183,7 +2173,7 @@ TEST_F(TemplateURLServiceSyncTest, MergeInSyncTemplateURL) {
     {NEITHER, SYNC, NEITHER, NEITHER, BOTH, false, {1, 0, 0}},
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     // Assert all the valid states of ExpectedTemplateURLs.
     ASSERT_FALSE(test_cases[i].conflict_winner == BOTH);
     ASSERT_FALSE(test_cases[i].synced_at_start == NEITHER);

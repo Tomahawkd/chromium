@@ -30,26 +30,22 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 
+#include "base/macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
-#include "third_party/blink/renderer/platform/instance_counters.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
 namespace {
 
-class PromiseAllHandler final
-    : public GarbageCollectedFinalized<PromiseAllHandler> {
-  WTF_MAKE_NONCOPYABLE(PromiseAllHandler);
-
+class PromiseAllHandler final : public GarbageCollected<PromiseAllHandler> {
  public:
   static ScriptPromise All(ScriptState* script_state,
-                           const Vector<ScriptPromise>& promises) {
+                           const HeapVector<ScriptPromise>& promises) {
     if (promises.IsEmpty())
       return ScriptPromise::Cast(script_state,
                                  v8::Array::New(script_state->GetIsolate()));
@@ -57,7 +53,8 @@ class PromiseAllHandler final
         ->resolver_.Promise();
   }
 
-  PromiseAllHandler(ScriptState* script_state, Vector<ScriptPromise> promises)
+  PromiseAllHandler(ScriptState* script_state,
+                    HeapVector<ScriptPromise> promises)
       : number_of_pending_promises_(promises.size()), resolver_(script_state) {
     DCHECK(!promises.IsEmpty());
     values_.resize(promises.size());
@@ -67,7 +64,10 @@ class PromiseAllHandler final
     }
   }
 
-  virtual void Trace(blink::Visitor* visitor) {}
+  virtual void Trace(blink::Visitor* visitor) {
+    visitor->Trace(resolver_);
+    visitor->Trace(values_);
+  }
 
  private:
   class AdapterFunction : public ScriptFunction {
@@ -135,8 +135,7 @@ class PromiseAllHandler final
     if (--number_of_pending_promises_ > 0)
       return;
 
-    v8::Local<v8::Value> values =
-        ToV8(values_, value.GetContext()->Global(), value.GetIsolate());
+    v8::Local<v8::Value> values = ToV8(values_, resolver_.GetScriptState());
     MarkPromiseSettled();
     resolver_.Resolve(values);
   }
@@ -160,13 +159,16 @@ class PromiseAllHandler final
 
   // This is cleared when owners of this handler, that is, given promises are
   // settled.
-  Vector<ScriptValue> values_;
+  HeapVector<ScriptValue> values_;
+
+  DISALLOW_COPY_AND_ASSIGN(PromiseAllHandler);
 };
 
 }  // namespace
 
 ScriptPromise::InternalResolver::InternalResolver(ScriptState* script_state)
-    : resolver_(script_state,
+    : script_state_(script_state),
+      resolver_(script_state->GetIsolate(),
                 v8::Promise::Resolver::New(script_state->GetContext())) {
   // |resolver| can be empty when the thread is being terminated. We ignore such
   // errors.
@@ -181,7 +183,7 @@ v8::Local<v8::Promise> ScriptPromise::InternalResolver::V8Promise() const {
 ScriptPromise ScriptPromise::InternalResolver::Promise() const {
   if (resolver_.IsEmpty())
     return ScriptPromise();
-  return ScriptPromise(resolver_.GetScriptState(), V8Promise());
+  return ScriptPromise(script_state_, V8Promise());
 }
 
 void ScriptPromise::InternalResolver::Resolve(v8::Local<v8::Value> value) {
@@ -189,7 +191,7 @@ void ScriptPromise::InternalResolver::Resolve(v8::Local<v8::Value> value) {
     return;
   v8::Maybe<bool> result =
       resolver_.V8Value().As<v8::Promise::Resolver>()->Resolve(
-          resolver_.GetContext(), value);
+          script_state_->GetContext(), value);
   // |result| can be empty when the thread is being terminated. We ignore such
   // errors.
   ALLOW_UNUSED_LOCAL(result);
@@ -202,7 +204,7 @@ void ScriptPromise::InternalResolver::Reject(v8::Local<v8::Value> value) {
     return;
   v8::Maybe<bool> result =
       resolver_.V8Value().As<v8::Promise::Resolver>()->Reject(
-          resolver_.GetContext(), value);
+          script_state_->GetContext(), value);
   // |result| can be empty when the thread is being terminated. We ignore such
   // errors.
   ALLOW_UNUSED_LOCAL(result);
@@ -210,36 +212,24 @@ void ScriptPromise::InternalResolver::Reject(v8::Local<v8::Value> value) {
   Clear();
 }
 
-ScriptPromise::ScriptPromise() {
-  IncreaseInstanceCount();
-}
-
 ScriptPromise::ScriptPromise(ScriptState* script_state,
                              v8::Local<v8::Value> value)
     : script_state_(script_state) {
-  IncreaseInstanceCount();
-
   if (value.IsEmpty())
     return;
 
   if (!value->IsPromise()) {
-    promise_ = ScriptValue(script_state, v8::Local<v8::Value>());
+    promise_ = ScriptValue();
     V8ThrowException::ThrowTypeError(script_state->GetIsolate(),
                                      "the given value is not a Promise");
     return;
   }
-  promise_ = ScriptValue(script_state, value);
+  promise_ = ScriptValue(script_state->GetIsolate(), value);
 }
 
 ScriptPromise::ScriptPromise(const ScriptPromise& other) {
-  IncreaseInstanceCount();
-
   this->script_state_ = other.script_state_;
   this->promise_ = other.promise_;
-}
-
-ScriptPromise::~ScriptPromise() {
-  DecreaseInstanceCount();
 }
 
 ScriptPromise ScriptPromise::Then(v8::Local<v8::Function> on_fulfilled,
@@ -247,24 +237,32 @@ ScriptPromise ScriptPromise::Then(v8::Local<v8::Function> on_fulfilled,
   if (promise_.IsEmpty())
     return ScriptPromise();
 
-  v8::Local<v8::Object> promise = promise_.V8Value().As<v8::Object>();
+  v8::Local<v8::Promise> promise = promise_.V8Value().As<v8::Promise>();
 
-  DCHECK(promise->IsPromise());
-  // Return this Promise if no handlers are given.
-  // In fact it is not the exact bahavior of Promise.prototype.then
-  // but that is not a problem in this case.
-  v8::Local<v8::Promise> result_promise = promise.As<v8::Promise>();
-  if (!on_fulfilled.IsEmpty()) {
-    if (!result_promise->Then(script_state_->GetContext(), on_fulfilled)
-             .ToLocal(&result_promise))
+  if (on_fulfilled.IsEmpty() && on_rejected.IsEmpty())
+    return *this;
+
+  v8::Local<v8::Promise> result_promise;
+  if (on_rejected.IsEmpty()) {
+    if (!promise->Then(script_state_->GetContext(), on_fulfilled)
+             .ToLocal(&result_promise)) {
       return ScriptPromise();
-  }
-  if (!on_rejected.IsEmpty()) {
-    if (!result_promise->Catch(script_state_->GetContext(), on_rejected)
-             .ToLocal(&result_promise))
-      return ScriptPromise();
+    }
+    return ScriptPromise(script_state_, result_promise);
   }
 
+  if (on_fulfilled.IsEmpty()) {
+    if (!promise->Catch(script_state_->GetContext(), on_rejected)
+             .ToLocal(&result_promise)) {
+      return ScriptPromise();
+    }
+    return ScriptPromise(script_state_, result_promise);
+  }
+
+  if (!promise->Then(script_state_->GetContext(), on_fulfilled, on_rejected)
+           .ToLocal(&result_promise)) {
+    return ScriptPromise();
+  }
   return ScriptPromise(script_state_, result_promise);
 }
 
@@ -342,16 +340,8 @@ void ScriptPromise::MarkAsHandled() {
 }
 
 ScriptPromise ScriptPromise::All(ScriptState* script_state,
-                                 const Vector<ScriptPromise>& promises) {
+                                 const HeapVector<ScriptPromise>& promises) {
   return PromiseAllHandler::All(script_state, promises);
-}
-
-void ScriptPromise::IncreaseInstanceCount() {
-  InstanceCounters::IncrementCounter(InstanceCounters::kScriptPromiseCounter);
-}
-
-void ScriptPromise::DecreaseInstanceCount() {
-  InstanceCounters::DecrementCounter(InstanceCounters::kScriptPromiseCounter);
 }
 
 }  // namespace blink

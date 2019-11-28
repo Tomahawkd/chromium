@@ -23,6 +23,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_delegate.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -143,7 +144,10 @@ class ToolbarActionErrorTestObserver
 }  // namespace
 
 ToolbarActionsBarUnitTest::ToolbarActionsBarUnitTest()
-    : toolbar_model_(nullptr) {}
+    : toolbar_model_(nullptr) {
+  // The ToolbarActionsBar is not used when kExtensionsToolbarMenu is enabled.
+  feature_list_.InitAndDisableFeature(features::kExtensionsToolbarMenu);
+}
 
 ToolbarActionsBarUnitTest::~ToolbarActionsBarUnitTest() {}
 
@@ -172,7 +176,7 @@ void ToolbarActionsBarUnitTest::SetUp() {
   browser_action_test_util_ = BrowserActionTestUtil::Create(browser(), false);
 
   overflow_browser_action_test_util_ =
-      browser_action_test_util_->CreateOverflowBar();
+      browser_action_test_util_->CreateOverflowBar(browser());
 }
 
 void ToolbarActionsBarUnitTest::TearDown() {
@@ -187,7 +191,8 @@ void ToolbarActionsBarUnitTest::TearDown() {
 
 void ToolbarActionsBarUnitTest::ActivateTab(int index) {
   ASSERT_NE(nullptr, browser()->tab_strip_model()->GetWebContentsAt(index));
-  browser()->tab_strip_model()->ActivateTabAt(index, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      index, {TabStripModel::GestureType::kOther});
 }
 
 scoped_refptr<const extensions::Extension>
@@ -234,11 +239,9 @@ testing::AssertionResult ToolbarActionsBarUnitTest::VerifyToolbarOrder(
           "overflow bar error:\n" << overflow_bar_error;
 }
 
-// Note: First argument is optional and intentionally left blank.
-// (it's a prefix for the generated test cases)
-INSTANTIATE_TEST_CASE_P(,
-                        ToolbarActionsBarUnitTest,
-                        testing::Values(false, true));
+INSTANTIATE_TEST_SUITE_P(All,
+                         ToolbarActionsBarUnitTest,
+                         testing::Values(false, true));
 
 TEST_P(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   // Add three extensions to the profile; this is the easiest way to have
@@ -255,7 +258,8 @@ TEST_P(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   EXPECT_EQ(3u, toolbar_actions_bar()->GetIconCount());
   const gfx::Size view_size = toolbar_actions_bar()->GetViewSize();
   // Check the widths.
-  int expected_width = 3 * view_size.width();
+  int expected_width =
+      3 * view_size.width() + 2 * GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
   EXPECT_EQ(expected_width, toolbar_actions_bar()->GetFullSize().width());
   // Since all icons are showing, the current width should be the max width.
   int maximum_width = expected_width;
@@ -271,7 +275,8 @@ TEST_P(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   EXPECT_EQ(2u, toolbar_actions_bar()->GetIconCount());
 
   // The current width should now be enough for two icons.
-  expected_width = 2 * view_size.width();
+  expected_width =
+      2 * view_size.width() + GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
   EXPECT_EQ(expected_width, toolbar_actions_bar()->GetFullSize().width());
   // The maximum and minimum widths should have remained constant (since we have
   // the same number of actions).
@@ -328,7 +333,7 @@ TEST_P(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
 
   // If we resize by enough to include a new icon, width and icon count should
   // both increase.
-  width += view_size.width();
+  width += view_size.width() + GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
   toolbar_actions_bar()->OnResizeComplete(width);
   EXPECT_EQ(width, toolbar_actions_bar()->GetFullSize().width());
   EXPECT_EQ(2u, toolbar_actions_bar()->GetIconCount());
@@ -336,7 +341,7 @@ TEST_P(ToolbarActionsBarUnitTest, BasicToolbarActionsBarTest) {
   // If we shrink the bar so that a full icon can't fit, it should resize to
   // hide that icon.
   toolbar_actions_bar()->OnResizeComplete(width - 1);
-  width -= view_size.width();
+  width -= view_size.width() + GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
   EXPECT_EQ(width, toolbar_actions_bar()->GetFullSize().width());
   EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
 }
@@ -442,8 +447,11 @@ TEST_P(ToolbarActionsBarUnitTest, TestHighlightMode) {
 // Test the bounds calculation for different indices.
 TEST_P(ToolbarActionsBarUnitTest, TestActionFrameBounds) {
   const auto size = toolbar_actions_bar()->GetViewSize();
-  const auto icon_rect = [size](int x, int y) {
-    return gfx::Rect(gfx::Point(x * size.width(), y * size.height()), size);
+  const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
+  const auto icon_rect = [size, element_padding](int x, int y) {
+    return gfx::Rect(gfx::Point(x * (element_padding + size.width()),
+                                y * (element_padding + size.height())),
+                     size);
   };
 
   constexpr int kIconsPerOverflowRow = 3;
@@ -456,8 +464,11 @@ TEST_P(ToolbarActionsBarUnitTest, TestActionFrameBounds) {
                           ActionType::BROWSER_ACTION);
   }
   toolbar_model()->SetVisibleIconCount(kNumExtensions);
-  const int icon_width = toolbar_actions_bar()->GetViewSize().width();
-  overflow_bar()->SetOverflowRowWidth(icon_width * kIconsPerOverflowRow);
+  const int overflow_width =
+      kIconsPerOverflowRow *
+          (toolbar_actions_bar()->GetViewSize().width() + element_padding) -
+      element_padding;
+  overflow_bar()->SetOverflowRowWidth(overflow_width);
   EXPECT_EQ(kIconsPerOverflowRow,
             overflow_bar()->platform_settings().icons_per_overflow_menu_row);
 

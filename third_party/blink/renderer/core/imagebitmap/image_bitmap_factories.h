@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/image_bitmap_source.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader_client.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -46,6 +47,7 @@
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
+#include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
@@ -59,7 +61,7 @@ class ImageBitmapSource;
 class ImageBitmapOptions;
 
 class ImageBitmapFactories final
-    : public GarbageCollectedFinalized<ImageBitmapFactories>,
+    : public GarbageCollected<ImageBitmapFactories>,
       public Supplement<LocalDOMWindow>,
       public Supplement<WorkerGlobalScope>,
       public NameClient {
@@ -100,9 +102,11 @@ class ImageBitmapFactories final
   }
 
  private:
-  class ImageBitmapLoader final
-      : public GarbageCollectedFinalized<ImageBitmapLoader>,
-        public FileReaderLoaderClient {
+  class ImageBitmapLoader final : public GarbageCollected<ImageBitmapLoader>,
+                                  public ContextLifecycleObserver,
+                                  public FileReaderLoaderClient {
+    USING_GARBAGE_COLLECTED_MIXIN(ImageBitmapLoader);
+
    public:
     static ImageBitmapLoader* Create(ImageBitmapFactories& factory,
                                      base::Optional<IntRect> crop_rect,
@@ -120,11 +124,13 @@ class ImageBitmapFactories final
     void LoadBlobAsync(Blob*);
     ScriptPromise Promise() { return resolver_->Promise(); }
 
-    void Trace(blink::Visitor*);
+    void Trace(blink::Visitor*) override;
 
-    ~ImageBitmapLoader() override = default;
+    ~ImageBitmapLoader() override;
 
    private:
+    SEQUENCE_CHECKER(sequence_checker_);
+
     enum ImageBitmapRejectionReason {
       kUndecodableImageBitmapRejectionReason,
       kAllocationFailureImageBitmapRejectionReason,
@@ -132,13 +138,11 @@ class ImageBitmapFactories final
 
     void RejectPromise(ImageBitmapRejectionReason);
 
-    void ScheduleAsyncImageBitmapDecoding(DOMArrayBuffer*);
-    void DecodeImageOnDecoderThread(
-        scoped_refptr<base::SingleThreadTaskRunner>,
-        DOMArrayBuffer*,
-        const String& premultiply_alpha_option,
-        const String& color_space_conversion_option);
+    void ScheduleAsyncImageBitmapDecoding(ArrayBufferContents);
     void ResolvePromiseOnOriginalThread(sk_sp<SkImage>);
+
+    // ContextLifecycleObserver
+    void ContextDestroyed(ExecutionContext*) override;
 
     // FileReaderLoaderClient
     void DidStartLoading() override {}

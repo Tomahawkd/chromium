@@ -7,29 +7,45 @@
 
 #include <memory>
 
+#include "base/component_export.h"
 #include "base/macros.h"
+#include "base/optional.h"
+#include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/views/controls/button/image_button.h"
+
+namespace gfx {
+struct VectorIcon;
+}  // namespace gfx
+
+namespace views {
+class ImageButton;
+}  // namespace views
 
 namespace ash {
 
-// Enumeration of Assistant button ID. These values are persisted to logs.
-// Entries should not be renumbered and numeric values should never be reused.
-// Only append to this enum is allowed if more buttons will be added.
-enum class AssistantButtonId {
-  kBack = 1,
-  kClose = 2,
-  kMinimize = 3,
-  kKeyboardInputToggle = 4,
-  kVoiceInputToggle = 5,
-  kSettings = 6,
-  kMaxValue = kSettings,
-};
+class AssistantButtonListener;
+enum class AssistantButtonId;
 
-class AssistantButton : public views::ImageButton,
-                        public views::ButtonListener {
+class COMPONENT_EXPORT(ASSISTANT_UI) AssistantButton
+    : public views::ImageButton,
+      public views::ButtonListener {
  public:
-  AssistantButton(views::ButtonListener* listener, AssistantButtonId button_id);
+  AssistantButton(AssistantButtonListener* listener,
+                  AssistantButtonId button_id);
   ~AssistantButton() override;
+
+  // Creates a button with the default Assistant styles.
+  static AssistantButton* Create(AssistantButtonListener* listener,
+                                 const gfx::VectorIcon& icon,
+                                 int size_in_dip,
+                                 int icon_size_in_dip,
+                                 int accessible_name_id,
+                                 AssistantButtonId button_id,
+                                 base::Optional<int> tooltip_id = base::nullopt,
+                                 SkColor icon_color = gfx::kGoogleGrey700);
+
+  AssistantButtonId GetAssistantButtonId() const { return id_; }
 
   // views::Button:
   const char* GetClassName() const override;
@@ -44,7 +60,8 @@ class AssistantButton : public views::ImageButton,
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
  private:
-  views::ButtonListener* listener_;
+  AssistantButtonListener* listener_;
+  const AssistantButtonId id_;
 
   DISALLOW_COPY_AND_ASSIGN(AssistantButton);
 };

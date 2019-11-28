@@ -19,24 +19,26 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   static blink::BlinkFuzzerTestSupport test_support;
 
   blink::CommaDelimitedHeaderSet set;
-  double delay;
+  base::TimeDelta delay;
   String url;
   blink::ResourceResponse response;
   wtf_size_t end;
-  String report_url;
-  String failure_reason;
-  unsigned failure_position = 0;
 
   std::string terminated(reinterpret_cast<const char*>(data), size);
+
+  // There are no guarantees regarding the string capacity, but we are doing our
+  // best to make it |size + 1|.
+  terminated.shrink_to_fit();
+
   blink::IsValidHTTPToken(terminated.c_str());
   blink::ParseCacheControlDirectives(terminated.c_str(), AtomicString());
   blink::ParseCommaDelimitedHeader(terminated.c_str(), set);
   blink::ParseHTTPRefresh(terminated.c_str(), nullptr, delay, url);
-  blink::ParseMultipartHeadersFromBody(terminated.c_str(), terminated.size(),
-                                       &response, &end);
+
+  // Intentionally pass raw data as the API does not require trailing \0.
+  blink::ParseMultipartHeadersFromBody(reinterpret_cast<const char*>(data),
+                                       size, &response, &end);
   blink::ParseServerTimingHeader(terminated.c_str());
   blink::ParseContentTypeOptionsHeader(terminated.c_str());
-  blink::ParseXSSProtectionHeader(terminated.c_str(), failure_reason,
-                                  failure_position, report_url);
   return 0;
 }

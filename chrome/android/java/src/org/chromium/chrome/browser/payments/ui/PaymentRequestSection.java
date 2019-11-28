@@ -6,12 +6,9 @@ package org.chromium.chrome.browser.payments.ui;
 
 import android.content.Context;
 import android.content.res.Resources;
-import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
-import android.support.annotation.Nullable;
 import android.support.v4.view.MarginLayoutParamsCompat;
-import android.support.v4.view.animation.LinearOutSlowInInterpolator;
 import android.support.v7.widget.GridLayout;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
@@ -33,12 +30,17 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.TextView;
 
+import androidx.annotation.ColorInt;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.widget.DualControlLayout;
-import org.chromium.chrome.browser.widget.TintedDrawable;
+import org.chromium.chrome.browser.ui.widget.DualControlLayout;
+import org.chromium.chrome.browser.ui.widget.TintedDrawable;
+import org.chromium.chrome.browser.ui.widget.animation.Interpolators;
 import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
+import org.chromium.ui.HorizontalListDividerDrawable;
 import org.chromium.ui.UiUtils;
 
 import java.util.ArrayList;
@@ -117,13 +119,13 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
     public static final int EDIT_BUTTON_ADD = 2;
 
     /** Normal mode: White background, displays the item assuming the user accepts it as is. */
-    static final int DISPLAY_MODE_NORMAL = 3;
+    public static final int DISPLAY_MODE_NORMAL = 3;
 
     /** Editable mode: White background, displays the item with an edit chevron. */
-    static final int DISPLAY_MODE_EXPANDABLE = 4;
+    public static final int DISPLAY_MODE_EXPANDABLE = 4;
 
     /** Focused mode: Gray background, more padding, no edit chevron. */
-    static final int DISPLAY_MODE_FOCUSED = 5;
+    public static final int DISPLAY_MODE_FOCUSED = 5;
 
     /** Checking mode: Gray background, spinner overlay hides everything except the title. */
     public static final int DISPLAY_MODE_CHECKING = 6;
@@ -136,6 +138,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
     protected int mDisplayMode = DISPLAY_MODE_NORMAL;
 
     private final int mVerticalSpacing;
+    private final @ColorInt int mUnfocusedBackgroundColor;
     private final int mFocusedBackgroundColor;
     private final LinearLayout mMainSection;
     private final ImageView mLogoView;
@@ -164,6 +167,8 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         setGravity(Gravity.CENTER_VERTICAL);
 
         // Set the styling of the view.
+        mUnfocusedBackgroundColor =
+                ApiCompatibilityUtils.getColor(getResources(), R.color.payment_request_bg);
         mFocusedBackgroundColor = ApiCompatibilityUtils.getColor(
                 getResources(), R.color.payments_section_edit_background);
         mLargeSpacing =
@@ -270,6 +275,25 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
     }
 
     /**
+     * Changes the appearance of the title.
+     *
+     * @param resId @see android.widget.TextView#setTextAppearance(int id).
+     */
+    protected void setTitleAppearance(int resId) {
+        ApiCompatibilityUtils.setTextAppearance(mTitleView, resId);
+    }
+
+    /**
+     * Changes the appearance of the summary.
+     *
+     * @param resId @see android.widget.TextView#setTextAppearance(int id).
+     */
+    protected void setSummaryAppearance(int leftResId, int rightResId) {
+        ApiCompatibilityUtils.setTextAppearance(mSummaryLeftTextView, leftResId);
+        ApiCompatibilityUtils.setTextAppearance(mSummaryRightTextView, rightResId);
+    }
+
+    /**
      * Sets how the summary text should be displayed.
      *
      * @param leftTruncate      How to truncate the left summary text.  Set to null to clear.
@@ -342,18 +366,20 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         // The title is always displayed for the row at the top of the main section.
         mTitleView = new TextView(getContext());
         mTitleView.setText(sectionName);
-        ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.BlueLink2);
+        ApiCompatibilityUtils.setTextAppearance(mTitleView, R.style.TextAppearance_BlueLink2);
         mainSectionLayout.addView(
                 mTitleView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
 
         // Create the two TextViews for showing the summary text.
         mSummaryLeftTextView = new TextView(getContext());
         mSummaryLeftTextView.setId(R.id.payments_left_summary_label);
-        ApiCompatibilityUtils.setTextAppearance(mSummaryLeftTextView, R.style.BlackTitle1);
+        ApiCompatibilityUtils.setTextAppearance(
+                mSummaryLeftTextView, R.style.TextAppearance_BlackTitle1);
 
         mSummaryRightTextView = new TextView(getContext());
-        ApiCompatibilityUtils.setTextAppearance(mSummaryRightTextView, R.style.BlackTitle1);
-        ApiCompatibilityUtils.setTextAlignment(mSummaryRightTextView, TEXT_ALIGNMENT_TEXT_END);
+        ApiCompatibilityUtils.setTextAppearance(
+                mSummaryRightTextView, R.style.TextAppearance_BlackTitle1);
+        mSummaryRightTextView.setTextAlignment(TEXT_ALIGNMENT_TEXT_END);
 
         // The main TextView sucks up all the available space.
         LinearLayout.LayoutParams leftLayoutParams = new LinearLayout.LayoutParams(
@@ -433,7 +459,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
         boolean isExpanded =
                 mDisplayMode == DISPLAY_MODE_FOCUSED || mDisplayMode == DISPLAY_MODE_CHECKING;
-        setBackgroundColor(isExpanded ? mFocusedBackgroundColor : Color.WHITE);
+        setBackgroundColor(isExpanded ? mFocusedBackgroundColor : mUnfocusedBackgroundColor);
 
         // Update whether the logo is displayed.
         if (mLogoView != null) {
@@ -512,13 +538,15 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
          */
         private TextView mUpdatedView;
 
+        private final List<TextView> mLineItemAmountsForTest = new ArrayList<>();
+
         /** The runnable used to fade out the mUpdatedView. */
         private Runnable mFadeOutRunnable = new Runnable() {
             @Override
             public void run() {
                 Animation out = new AlphaAnimation(mUpdatedView.getAlpha(), 0.0f);
                 out.setDuration(UPDATE_TEXT_ANIMATION_DURATION_MS);
-                out.setInterpolator(new LinearOutSlowInInterpolator());
+                out.setInterpolator(Interpolators.LINEAR_OUT_SLOW_IN_INTERPOLATOR);
                 out.setFillAfter(true);
                 mUpdatedView.startAnimation(out);
             }
@@ -575,12 +603,13 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
             // Create the view and set the text appearance and layout parameters.
             mUpdatedView = new TextView(context);
-            ApiCompatibilityUtils.setTextAppearance(mUpdatedView, R.style.BlackTitle1);
+            ApiCompatibilityUtils.setTextAppearance(
+                    mUpdatedView, R.style.TextAppearance_BlackTitle1);
             LinearLayout.LayoutParams updatedLayoutParams = new LinearLayout.LayoutParams(
                     LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-            ApiCompatibilityUtils.setTextAlignment(mUpdatedView, TEXT_ALIGNMENT_TEXT_END);
+            mUpdatedView.setTextAlignment(TEXT_ALIGNMENT_TEXT_END);
             mUpdatedView.setTextColor(ApiCompatibilityUtils.getColor(
-                    context.getResources(), R.color.google_green_700));
+                    context.getResources(), R.color.google_green_600));
             MarginLayoutParamsCompat.setMarginStart(updatedLayoutParams,
                     context.getResources().getDimensionPixelSize(
                             R.dimen.editor_dialog_section_small_spacing));
@@ -614,6 +643,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             setSummaryText(cart.getTotal().getLabel(), totalPrice);
 
             mBreakdownLayout.removeAllViews();
+            mLineItemAmountsForTest.clear();
             if (cart.getContents() == null) return;
 
             int maximumDescriptionWidthPx =
@@ -643,6 +673,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                             ? R.style.TextAppearance_PaymentsUiSectionPendingTextEndAligned
                             : R.style.TextAppearance_PaymentsUiSectionDescriptiveTextEndAligned);
                 amount.setText(createValueString(item.getCurrency(), item.getPrice(), false));
+                mLineItemAmountsForTest.add(amount);
 
                 // Each item is represented by a row in the GridLayout.
                 GridLayout.LayoutParams descriptionParams = new GridLayout.LayoutParams(
@@ -686,7 +717,7 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
             // to avoid restarting a previous or current fade in animation.
             Animation in = new AlphaAnimation(mUpdatedView.getAlpha(), 1.0f);
             in.setDuration(UPDATE_TEXT_ANIMATION_DURATION_MS);
-            in.setInterpolator(new LinearOutSlowInInterpolator());
+            in.setInterpolator(Interpolators.LINEAR_OUT_SLOW_IN_INTERPOLATOR);
             in.setFillAfter(true);
             mUpdatedView.startAnimation(in);
 
@@ -743,6 +774,21 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
 
             mBreakdownLayout.setVisibility(mDisplayMode == DISPLAY_MODE_FOCUSED ? VISIBLE : GONE);
             super.updateControlLayout();
+        }
+
+        /**
+         * Returns the line item amount at the specified |index|. Returns null if there is no amount
+         * at that index.
+         */
+        @VisibleForTesting
+        public TextView getLineItemAmountForTest(int index) {
+            return mLineItemAmountsForTest.get(index);
+        }
+
+        /** @return The number of line items. */
+        @VisibleForTesting
+        public int getNumberOfLineItemsForTest() {
+            return mLineItemAmountsForTest.size();
         }
     }
 
@@ -950,12 +996,15 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                     columnStart = 0;
                     columnSpan = 4;
 
-                    ApiCompatibilityUtils.setTextAppearance(labelView, R.style.BlackBody);
+                    ApiCompatibilityUtils.setTextAppearance(
+                            labelView, R.style.TextAppearance_BlackBody);
+                    labelView.setId(R.id.payments_description_label);
                 } else if (mRowType == OPTION_ROW_TYPE_WARNING) {
                     // Warnings use three columns.
                     columnSpan = 3;
                     ApiCompatibilityUtils.setTextAppearance(
                             labelView, R.style.TextAppearance_PaymentsUiSectionWarningText);
+                    labelView.setId(R.id.payments_warning_label);
                 }
 
                 // The label spans two columns if no option or edit icon, or spans three columns if
@@ -1289,17 +1338,17 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
                 // Section summary should be displayed as descriptive text style.
                 if (!mSummaryInDescriptiveText) {
                     ApiCompatibilityUtils.setTextAppearance(
-                            getSummaryLeftTextView(), R.style.BlackBody);
+                            getSummaryLeftTextView(), R.style.TextAppearance_BlackBody);
                     mSummaryInDescriptiveText = true;
                 }
                 SectionUiUtils.showSectionSummaryInTextViewInSingeLine(
                         getContext(), mSectionInformation, getSummaryLeftTextView());
             } else {
                 setLogoDrawable(selectedItem.getDrawableIcon());
-                // Selected item summary should be displayed as R.style.BlackTitle1.
+                // Selected item summary should be displayed as R.style.TextAppearance_BlackTitle1.
                 if (mSummaryInDescriptiveText) {
                     ApiCompatibilityUtils.setTextAppearance(
-                            getSummaryLeftTextView(), R.style.BlackTitle1);
+                            getSummaryLeftTextView(), R.style.TextAppearance_BlackTitle1);
                     mSummaryInDescriptiveText = false;
                 }
                 // Split summary in DISPLAY_MODE_NORMAL if caller specified. The first part is
@@ -1466,11 +1515,10 @@ public abstract class PaymentRequestSection extends LinearLayout implements View
         public SectionSeparator(ViewGroup parent, int index) {
             super(parent.getContext());
             Resources resources = parent.getContext().getResources();
-            setBackgroundColor(ApiCompatibilityUtils.getColor(
-                    resources, R.color.payments_section_separator));
+            setBackground(HorizontalListDividerDrawable.create(getContext()));
             LinearLayout.LayoutParams params =
                     new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,
-                            resources.getDimensionPixelSize(R.dimen.separator_height));
+                            resources.getDimensionPixelSize(R.dimen.divider_height));
 
             int margin =
                     resources.getDimensionPixelSize(R.dimen.editor_dialog_section_large_spacing);

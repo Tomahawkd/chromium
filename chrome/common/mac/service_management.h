@@ -8,8 +8,27 @@
 #include <string>
 #include <vector>
 
+#include "base/optional.h"
+
 namespace mac {
 namespace services {
+
+struct JobInfo {
+  JobInfo();
+  JobInfo(const JobInfo& other);
+  ~JobInfo();
+
+  std::string program;
+  base::Optional<int> pid;
+};
+
+struct JobCheckinInfo {
+  JobCheckinInfo();
+  JobCheckinInfo(const JobCheckinInfo& info);
+  ~JobCheckinInfo();
+
+  std::string program;
+};
 
 struct JobOptions {
   JobOptions();
@@ -28,12 +47,10 @@ struct JobOptions {
   std::string executable_path;
   std::vector<std::string> arguments;
 
-  // See launchd.plist(5) "Sockets" for details about the meaning of these two
-  // fields. The socket_key field corresponds to a top-level key in the socket
-  // dictionary; the socket_name field corresponds to a pathname to a Unix
-  // domain socket (the SockPathName member in the Sockets dictionary).
-  std::string socket_name;
-  std::string socket_key;
+  // See launchd.plist(5) "MachServices" for details about this field. The
+  // mach_service_ field corresponds to a key in the MachServices dictionary,
+  // whose value will be YES.
+  std::string mach_service_name;
 
   // Whether to run this job immediately once it is loaded.
   bool run_at_load;
@@ -43,6 +60,8 @@ struct JobOptions {
   // not run in system sessions).
   bool auto_launch;
 };
+
+bool GetJobInfo(const std::string& label, JobInfo* info);
 
 bool SubmitJob(const JobOptions& options);
 bool RemoveJob(const std::string& label);

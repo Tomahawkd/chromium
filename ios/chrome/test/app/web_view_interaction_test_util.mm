@@ -4,7 +4,7 @@
 
 #import "ios/chrome/test/app/web_view_interaction_test_util.h"
 
-#import "ios/chrome/test/app/chrome_test_util.h"
+#import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -15,6 +15,11 @@ namespace chrome_test_util {
 
 bool TapWebViewElementWithId(const std::string& element_id) {
   return web::test::TapWebViewElementWithId(GetCurrentWebState(), element_id);
+}
+
+bool TapWebViewElementWithIdInIframe(const std::string& element_id) {
+  return web::test::TapWebViewElementWithIdInIframe(GetCurrentWebState(),
+                                                    element_id);
 }
 
 bool TapWebViewElementWithId(const std::string& element_id,

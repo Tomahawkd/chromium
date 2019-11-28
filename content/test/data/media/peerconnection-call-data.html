@@ -240,7 +240,7 @@
   }
 
   function createConnection(constraints, remoteView) {
-    var pc = new RTCPeerConnection(null, constraints);
+    var pc = new RTCPeerConnection({sdpSemantics:'plan-b'}, constraints);
     pc.onaddstream = function(event) {
       onRemoteStream(event, remoteView);
     }
@@ -254,7 +254,12 @@
   }
 
   function negotiate() {
-    negotiateBetween(gFirstConnection, gSecondConnection);
+    Promise.all([
+      waitForConnectionToStabilizeIfNeeded(gFirstConnection),
+      waitForConnectionToStabilizeIfNeeded(gSecondConnection),
+    ]).then(() => {
+      negotiateBetween(gFirstConnection, gSecondConnection);
+    });
   }
 
   function onRemoteStream(e, target) {

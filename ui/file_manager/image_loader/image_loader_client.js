@@ -22,7 +22,12 @@ function ImageLoaderClient() {
   /**
    * LRU cache for images.
    * @type {!LRUCache.<{
-   *     data: string, width:number, height:number, timestamp: ?number}>}
+   *   timestamp: ?number,
+   *   width: number,
+   *   height: number,
+   *   ifd: ?string,
+   *   data: string
+   * }>}
    * @private
    */
   this.cache_ = new LRUCache(ImageLoaderClient.CACHE_MEMORY_LIMIT);
@@ -40,8 +45,9 @@ ImageLoaderClient.EXTENSION_ID = 'pmfjbimdmchhbnneeidfognadeopoehp';
  * @return {ImageLoaderClient} Client instance.
  */
 ImageLoaderClient.getInstance = function() {
-  if (!ImageLoaderClient.instance_)
+  if (!ImageLoaderClient.instance_) {
     ImageLoaderClient.instance_ = new ImageLoaderClient();
+  }
   return ImageLoaderClient.instance_;
 };
 
@@ -119,6 +125,7 @@ ImageLoaderClient.prototype.load = function(request, callback) {
         callback(new LoadImageResponse(LoadImageResponseStatus.SUCCESS, null, {
           width: cachedValue.width,
           height: cachedValue.height,
+          ifd: cachedValue.ifd,
           data: cachedValue.data,
         }));
         return null;
@@ -142,8 +149,9 @@ ImageLoaderClient.prototype.load = function(request, callback) {
     // Save to cache.
     if (cacheKey && request.cache) {
       const value = LoadImageResponse.cacheValue(result, request.timestamp);
-      if (value)
+      if (value) {
         this.cache_.put(cacheKey, value, value.data.length);
+      }
     }
     callback(result);
   }.bind(this));

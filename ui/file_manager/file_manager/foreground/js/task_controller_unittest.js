@@ -16,7 +16,7 @@ window.metrics = {
  * Mock chrome APIs.
  * @type {!Object}
  */
-var mockChrome;
+let mockChrome;
 
 // Set up test components.
 function setUp() {
@@ -30,9 +30,6 @@ function setUp() {
       hasSwitch: function(name, callback) {
         callback(false);
       },
-    },
-    fileManagerPrivate: {
-        // Test cases set this object as needed.
     },
     runtime: {
       id: 'test-extension-id',
@@ -51,6 +48,7 @@ function setUp() {
     },
   };
 
+  setupFileManagerPrivate();
   installMockChrome(mockChrome);
 
   // Install cr.ui <command> elements on the page.
@@ -58,6 +56,7 @@ function setUp() {
     '<command id="default-task">',
     '<command id="open-with">',
     '<command id="more-actions">',
+    '<command id="show-submenu">',
   ].join('');
 
   // Initialize cr.ui.Command with the <command>s.
@@ -70,14 +69,14 @@ function setUp() {
  * @return {!TaskController}
  */
 function createTaskController(fileSelectionHandler) {
-  var taskController = new TaskController(
+  const taskController = new TaskController(
       DialogType.FULL_PAGE,
       /** @type {!VolumeManager} */ ({
         getLocationInfo: function(entry) {
           return VolumeManagerCommon.RootType.DRIVE;
         },
         getDriveConnectionState: function() {
-          return VolumeManagerCommon.DriveConnectionType.ONLINE;
+          return 'ONLINE';
         },
         getVolumeInfo: function() {
           return {
@@ -93,6 +92,7 @@ function createTaskController(fileSelectionHandler) {
         fileContextMenu: {
           defaultActionMenuItem: document.createElement('div'),
         },
+        shareSubMenu: document.createElement('div'),
         speakA11yMessage: text => {},
       }),
       new MockMetadataModel({}),
@@ -101,46 +101,26 @@ function createTaskController(fileSelectionHandler) {
       }),
       fileSelectionHandler,
       /** @type {!MetadataUpdateController} */ ({}),
-      /** @type {!NamingController} */ ({}),
-      createCrostiniForTest());
+      /** @type {!NamingController} */ ({}), createCrostiniForTest());
 
   return taskController;
 }
-
-/**
- * Mock FileSelectionHandler.
- * @constructor
- * @extends {FileSelectionHandler}
- */
-function MockFileSelectionHandler() {
-  this.computeAdditionalCallback = function() {};
-  this.selection = /** @type {!FileSelection} */ ({});
-  this.updateSelection([], []);
-}
-
-MockFileSelectionHandler.prototype = /** @struct */ {
-  __proto__: cr.EventTarget.prototype,
-};
-
-MockFileSelectionHandler.prototype.updateSelection = function(
-    entries, mimeTypes) {
-  this.selection = /** @type {!FileSelection} */ ({
-    entries: entries,
-    mimeTypes: mimeTypes,
-    computeAdditional: (metadataModel) => {
-      this.computeAdditionalCallback();
-      return new Promise((resolve) => {
-        resolve();
-      });
-    },
-  });
-};
 
 /**
  * Setup test case fileManagerPrivate.
  */
 function setupFileManagerPrivate() {
   mockChrome.fileManagerPrivate = {
+    DriveConnectionStateType: {
+      ONLINE: 'ONLINE',
+      OFFLINE: 'OFFLINE',
+      METERED: 'METERED',
+    },
+    DriveOfflineReason: {
+      NOT_READY: 'NOT_READY',
+      NO_NETWORK: 'NO_NETWORK',
+      NO_SERVICE: 'NO_SERVICE',
+    },
     getFileTaskCalledCount_: 0,
     getFileTasks: function(entries, callback) {
       mockChrome.fileManagerPrivate.getFileTaskCalledCount_++;
@@ -166,20 +146,20 @@ function setupFileManagerPrivate() {
  * Tests that executeEntryTask() runs the expected task.
  */
 function testExecuteEntryTask(callback) {
-  setupFileManagerPrivate();
+  const selectionHandler = new FakeFileSelectionHandler();
 
-  var selectionHandler = new MockFileSelectionHandler();
-  var fileSystem = new MockFileSystem('volumeId');
-  fileSystem.entries['/test.png'] = new MockFileEntry(fileSystem, '/test.png');
-  var taskController = createTaskController(selectionHandler);
+  const fileSystem = new MockFileSystem('volumeId');
+  fileSystem.entries['/test.png'] =
+      MockFileEntry.create(fileSystem, '/test.png');
+  const taskController = createTaskController(selectionHandler);
 
-  var testEntry = /** @type {FileEntry} */ (fileSystem.entries['/test.png']);
+  const testEntry = /** @type {FileEntry} */ (fileSystem.entries['/test.png']);
   taskController.executeEntryTask(testEntry);
 
   reportPromise(
-      new Promise(function(resolve) {
+      new Promise(resolve => {
         mockChrome.fileManagerPrivate.executeTask = resolve;
-      }).then(function(taskId) {
+      }).then(taskId => {
         assertEquals('handler-extension-id|file|play', taskId);
       }),
       callback);
@@ -190,33 +170,32 @@ function testExecuteEntryTask(callback) {
  * multiple times when the selected entries are not changed.
  */
 function testGetFileTasksShouldNotBeCalledMultipleTimes(callback) {
-  setupFileManagerPrivate();
+  const selectionHandler = new FakeFileSelectionHandler();
 
-  var selectionHandler = new MockFileSelectionHandler();
-  var fileSystem = new MockFileSystem('volumeId');
+  const fileSystem = new MockFileSystem('volumeId');
   selectionHandler.updateSelection(
-      [new MockFileEntry(fileSystem, '/test.png')], ['image/png']);
-  var taskController = createTaskController(selectionHandler);
+      [MockFileEntry.create(fileSystem, '/test.png')], ['image/png']);
+  const taskController = createTaskController(selectionHandler);
 
   assert(mockChrome.fileManagerPrivate.getFileTaskCalledCount_ === 0);
 
   taskController.getFileTasks()
-      .then(function(tasks) {
+      .then(tasks => {
         assert(mockChrome.fileManagerPrivate.getFileTaskCalledCount_ === 1);
         assert(util.isSameEntries(
             tasks.entries, selectionHandler.selection.entries));
         // Make oldSelection.entries !== newSelection.entries
         selectionHandler.updateSelection(
-            [new MockFileEntry(fileSystem, '/test.png')], ['image/png']);
+            [MockFileEntry.create(fileSystem, '/test.png')], ['image/png']);
         return taskController.getFileTasks();
       })
-      .then(function(tasks) {
+      .then(tasks => {
         assert(mockChrome.fileManagerPrivate.getFileTaskCalledCount_ === 1);
         assert(util.isSameEntries(
             tasks.entries, selectionHandler.selection.entries));
         callback();
       })
-      .catch(function(error) {
+      .catch(error => {
         assertNotReached(error.toString());
         callback();
       });
@@ -228,28 +207,28 @@ function testGetFileTasksShouldNotBeCalledMultipleTimes(callback) {
  * called.
  */
 function testGetFileTasksShouldNotReturnObsoletePromise(callback) {
-  setupFileManagerPrivate();
+  const selectionHandler = new FakeFileSelectionHandler();
 
-  var selectionHandler = new MockFileSelectionHandler();
-  var fileSystem = new MockFileSystem('volumeId');
+  const fileSystem = new MockFileSystem('volumeId');
   selectionHandler.updateSelection(
-      [new MockFileEntry(fileSystem, '/test.png')], ['image/png']);
-  var taskController = createTaskController(selectionHandler);
+      [MockFileEntry.create(fileSystem, '/test.png')], ['image/png']);
+  const taskController = createTaskController(selectionHandler);
 
   taskController.getFileTasks()
-      .then(function(tasks) {
+      .then(tasks => {
         assert(util.isSameEntries(
             tasks.entries, selectionHandler.selection.entries));
         selectionHandler.updateSelection(
-            [new MockFileEntry(fileSystem, '/testtest.jpg')], ['image/jpeg']);
+            [MockFileEntry.create(fileSystem, '/testtest.jpg')],
+            ['image/jpeg']);
         return taskController.getFileTasks();
       })
-      .then(function(tasks) {
+      .then(tasks => {
         assert(util.isSameEntries(
             tasks.entries, selectionHandler.selection.entries));
         callback();
       })
-      .catch(function(error) {
+      .catch(error => {
         assertNotReached(error.toString());
         callback();
       });
@@ -260,38 +239,37 @@ function testGetFileTasksShouldNotReturnObsoletePromise(callback) {
  * the getFileTasks() promise to reject.
  */
 function testGetFileTasksShouldNotCacheRejectedPromise(callback) {
-  setupFileManagerPrivate();
+  const selectionHandler = new FakeFileSelectionHandler();
 
-  var selectionHandler = new MockFileSelectionHandler();
-  var fileSystem = new MockFileSystem('volumeId');
+  const fileSystem = new MockFileSystem('volumeId');
   selectionHandler.updateSelection(
-      [new MockFileEntry(fileSystem, '/test.png')], ['image/png']);
-  var taskController = createTaskController(selectionHandler);
+      [MockFileEntry.create(fileSystem, '/test.png')], ['image/png']);
+  const taskController = createTaskController(selectionHandler);
 
   // Setup the selection handler computeAdditionalCallback to change the file
   // selection during the getFileTasks() call.
-  selectionHandler.computeAdditionalCallback = function() {
+  selectionHandler.computeAdditionalCallback = () => {
     selectionHandler.updateSelection(
-        [new MockFileEntry(fileSystem, '/test.png')], ['image/png']);
+        [MockFileEntry.create(fileSystem, '/test.png')], ['image/png']);
   };
 
   taskController.getFileTasks().then(
-      function(tasks) {
+      tasks => {
         assertNotReached('Fail: getFileTasks promise should be rejected');
         callback();
       },
-      function() {
+      () => {
         // Clears the selection handler computeAdditionalCallback so that the
         // promise won't be rejected during the getFileTasks() call.
-        selectionHandler.computeAdditionalCallback = function() {};
+        selectionHandler.computeAdditionalCallback = () => {};
 
         taskController.getFileTasks().then(
-            function(tasks) {
+            tasks => {
               assert(util.isSameEntries(
                   tasks.entries, selectionHandler.selection.entries));
               callback();
             },
-            function() {
+            () => {
               assertNotReached('Fail: getFileTasks promise was rejected');
               callback();
             });

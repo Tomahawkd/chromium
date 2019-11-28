@@ -51,9 +51,10 @@
 #define SYS_read __NR_read
 #endif
 
-#if !defined(OS_CHROMEOS)
+#if defined(OS_ANDROID)
 #include "components/crash/content/app/crashpad.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"  // nogncheck
+#include "third_party/crashpad/crashpad/util/posix/signals.h"      // nogncheck
 #endif
 
 using content::BrowserThread;
@@ -117,9 +118,9 @@ CrashHandlerHostLinux::CrashHandlerHostLinux(const std::string& process_type,
       upload_(upload),
 #endif
       fd_watch_controller_(FROM_HERE),
-      shutting_down_(false),
-      blocking_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::USER_VISIBLE})) {
+      blocking_task_runner_(
+          base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock(),
+                                           base::TaskPriority::USER_VISIBLE})) {
   int fds[2];
   // We use SOCK_SEQPACKET rather than SOCK_DGRAM to prevent the process from
   // sending datagrams to other sockets on the system. The sandbox may prevent
@@ -136,7 +137,7 @@ CrashHandlerHostLinux::CrashHandlerHostLinux(const std::string& process_type,
   process_socket_ = fds[0];
   browser_socket_ = fds[1];
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&CrashHandlerHostLinux::Init, base::Unretained(this)));
 }
@@ -411,7 +412,8 @@ void CrashHandlerHostLinux::FindCrashingThreadAndDump(
 void CrashHandlerHostLinux::WriteDumpFile(BreakpadInfo* info,
                                           std::unique_ptr<char[]> crash_context,
                                           pid_t crashing_pid) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // Set |info->distro| here because base::GetLinuxDistro() needs to run on a
   // blocking sequence.
@@ -491,19 +493,17 @@ void CrashHandlerHostLinux::WillDestroyCurrentMessageLoop() {
 
   // If we are quitting and there are crash dumps in the queue, turn them into
   // no-ops.
-  shutting_down_ = true;
+  shutting_down_.Set();
   uploader_thread_->Stop();
 }
 
 bool CrashHandlerHostLinux::IsShuttingDown() const {
-  return shutting_down_;
+  return shutting_down_.IsSet();
 }
 
 }  // namespace breakpad
 
-#endif  // !defined(OS_ANDROID)
-
-#if !defined(OS_CHROMEOS)
+#else  // !OS_ANDROID
 
 namespace crashpad {
 
@@ -526,7 +526,7 @@ CrashHandlerHost* CrashHandlerHost::Get() {
 }
 
 int CrashHandlerHost::GetDeathSignalSocket() {
-  static bool initialized = base::PostTaskWithTraits(
+  static bool initialized = base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&CrashHandlerHost::Init, base::Unretained(this)));
   DCHECK(initialized);
@@ -618,15 +618,13 @@ bool CrashHandlerHost::ReceiveClientMessage(int client_fd,
     return false;
   }
 
-  NotifyCrashSignalObservers(child_pid, signo);
+  if (signo != crashpad::Signals::kSimulatedSigno) {
+    NotifyCrashSignalObservers(child_pid, signo);
+  }
 
-#if defined(OS_ANDROID)
   if (!request_dump) {
     return false;
   }
-#else
-  DCHECK(request_dump);
-#endif
 
   handler_fd->reset(child_fd.release());
   return true;
@@ -663,4 +661,4 @@ void CrashHandlerHost::WillDestroyCurrentMessageLoop() {
 
 }  // namespace crashpad
 
-#endif  // !defined(OS_CHROMEOS)
+#endif  // !OS_ANDROID

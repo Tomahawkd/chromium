@@ -4,6 +4,8 @@
 
 #include "ui/ozone/platform/scenic/scenic_window_canvas.h"
 
+#include <memory>
+
 #include "base/fuchsia/fuchsia_logging.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/writable_shared_memory_region.h"
@@ -66,21 +68,8 @@ void ScenicWindowCanvas::Frame::CopyDirtyRegionFrom(const Frame& frame) {
   dirty_region.setEmpty();
 }
 
-ScenicWindowCanvas::ScenicWindowCanvas(fuchsia::ui::scenic::Scenic* scenic,
-                                       ScenicWindow* window)
-    : window_(window),
-      scenic_session_(scenic),
-      parent_(&scenic_session_),
-      material_(&scenic_session_) {
-  scenic::ShapeNode shape(&scenic_session_);
-  shape.SetShape(scenic::Rectangle(&scenic_session_, 1.f, 1.f));
-  shape.SetMaterial(material_);
-
-  zx::eventpair export_token;
-  parent_.BindAsRequest(&export_token);
-  parent_.AddChild(shape);
-  window_->ExportRenderingEntity(std::move(export_token));
-}
+ScenicWindowCanvas::ScenicWindowCanvas(ScenicSurface* scenic_surface)
+    : scenic_surface_(scenic_surface) {}
 
 ScenicWindowCanvas::~ScenicWindowCanvas() = default;
 
@@ -90,7 +79,7 @@ void ScenicWindowCanvas::ResizeCanvas(const gfx::Size& viewport_size) {
 
   // Allocate new buffers with the new size.
   for (int i = 0; i < kNumBuffers; ++i) {
-    frames_[i].Initialize(viewport_size_, &scenic_session_);
+    frames_[i].Initialize(viewport_size_, scenic_surface_->scenic_session());
   }
 }
 
@@ -151,7 +140,8 @@ void ScenicWindowCanvas::PresentCanvas(const gfx::Rect& damage) {
       viewport_size_.width() * SkColorTypeBytesPerPixel(kN32_SkColorType);
   scenic::Image image(*frames_[current_frame_].scenic_memory, 0,
                       std::move(info));
-  material_.SetTexture(image);
+  // TODO(spang): Consider using ImagePipe for consistency with vulkan path.
+  scenic_surface_->SetTextureToImage(image);
 
   // Create release fence for the current buffer or reset it if it already
   // exists.
@@ -165,16 +155,19 @@ void ScenicWindowCanvas::PresentCanvas(const gfx::Rect& damage) {
     ZX_CHECK(status == ZX_OK, status);
   }
 
-  // Add release-fence for the Present() call below. The fence is used in
+  // Add release-fence for the Present2() call below. The fence is used in
   // GetCanvas() to ensure that we reuse the buffer only after it's released
   // from scenic.
   zx::event release_fence_dup;
   auto status = frames_[current_frame_].release_fence.duplicate(
       ZX_RIGHT_SAME_RIGHTS, &release_fence_dup);
   ZX_CHECK(status == ZX_OK, status);
-  scenic_session_.EnqueueReleaseFence(std::move(release_fence_dup));
-  scenic_session_.Present(/*presentation_time=*/0,
-                          [](fuchsia::images::PresentationInfo info) {});
+  scenic_surface_->scenic_session()->EnqueueReleaseFence(
+      std::move(release_fence_dup));
+  scenic_surface_->scenic_session()->Present2(
+      /*requested_presentation_time=*/0,
+      /*requested_prediction_span=*/0,
+      [](fuchsia::scenic::scheduling::FuturePresentationTimes info) {});
 
   // Move to the next buffer.
   current_frame_ = (current_frame_ + 1) % kNumBuffers;
@@ -182,7 +175,8 @@ void ScenicWindowCanvas::PresentCanvas(const gfx::Rect& damage) {
 
 std::unique_ptr<gfx::VSyncProvider> ScenicWindowCanvas::CreateVSyncProvider() {
   // TODO(crbug.com/829980): Implement VSyncProvider. It can be implemented by
-  // observing PresentationInfo returned from scenic::Session::Present().
+  // observing FuturePresentationTimes returned from
+  // scenic::Session::Present2().
   return nullptr;
 }
 

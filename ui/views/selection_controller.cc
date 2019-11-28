@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "base/numerics/ranges.h"
+#include "build/build_config.h"
 #include "ui/events/event.h"
 #include "ui/gfx/render_text.h"
 #include "ui/views/metrics.h"
@@ -39,6 +41,7 @@ bool SelectionController::OnMousePressed(
     return true;
 
   if (event.IsOnlyLeftMouseButton()) {
+    first_drag_location_ = event.location();
     if (delegate_->SupportsDrag())
       delegate_->SetTextBeingDragged(false);
 
@@ -113,7 +116,7 @@ bool SelectionController::OnMouseDragged(const ui::MouseEvent& event) {
     SelectThroughLastDragLocation();
   } else if (!drag_selection_timer_.IsRunning()) {
     // Select through the edge of the visible text, then start the scroll timer.
-    last_drag_location_.set_x(std::min(std::max(0, x), width));
+    last_drag_location_.set_x(base::ClampToRange(x, 0, width));
     SelectThroughLastDragLocation();
 
     drag_selection_timer_.Start(
@@ -206,7 +209,10 @@ void SelectionController::SelectThroughLastDragLocation() {
 
   delegate_->OnBeforePointerAction();
 
-  render_text->MoveCursorToPoint(last_drag_location_, true);
+  // Note that |first_drag_location_| is only used when
+  // RenderText::kDragToEndIfOutsideVerticalBounds, which is platform-specific.
+  render_text->MoveCursorToPoint(last_drag_location_, true,
+                                 first_drag_location_);
 
   if (aggregated_clicks_ == 1) {
     render_text->SelectWord();

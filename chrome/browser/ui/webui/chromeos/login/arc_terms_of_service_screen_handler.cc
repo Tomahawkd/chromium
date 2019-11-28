@@ -5,13 +5,12 @@
 #include "chrome/browser/ui/webui/chromeos/login/arc_terms_of_service_screen_handler.h"
 
 #include "base/command_line.h"
+#include "base/hash/sha1.h"
 #include "base/i18n/timezone.h"
-#include "base/sha1.h"
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/arc/optin/arc_optin_preference_handler.h"
 #include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen.h"
-#include "chrome/browser/chromeos/login/screens/arc_terms_of_service_screen_view_observer.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -19,8 +18,9 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/ui/webui/chromeos/login/gaia_screen_handler.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -28,10 +28,10 @@
 #include "components/consent_auditor/consent_auditor.h"
 #include "components/login/localized_values_builder.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "services/identity/public/cpp/identity_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using ArcBackupAndRestoreConsent =
@@ -43,19 +43,16 @@ using ArcPlayTermsOfServiceConsent =
 
 using sync_pb::UserConsentTypes;
 
-namespace {
-
-const char kJsScreenPath[] = "login.ArcTermsOfServiceScreen";
-
-}  // namespace
-
 namespace chromeos {
 
-ArcTermsOfServiceScreenHandler::ArcTermsOfServiceScreenHandler()
-    : BaseScreenHandler(kScreenId),
+constexpr StaticOobeScreenId ArcTermsOfServiceScreenView::kScreenId;
+
+ArcTermsOfServiceScreenHandler::ArcTermsOfServiceScreenHandler(
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container),
       is_child_account_(
           user_manager::UserManager::Get()->IsLoggedInAsChildUser()) {
-  set_call_js_prefix(kJsScreenPath);
+  set_user_acted_method_path("login.ArcTermsOfServiceScreen.userActed");
 }
 
 ArcTermsOfServiceScreenHandler::~ArcTermsOfServiceScreenHandler() {
@@ -87,13 +84,13 @@ void ArcTermsOfServiceScreenHandler::MaybeLoadPlayStoreToS(
   if (!ignore_network_state && !default_network)
     return;
   const std::string country_code = base::CountryCodeForCurrentTimezone();
-  CallJSWithPrefix("loadPlayStoreToS", country_code);
+  CallJS("login.ArcTermsOfServiceScreen.loadPlayStoreToS", country_code);
 }
 
 void ArcTermsOfServiceScreenHandler::OnCurrentScreenChanged(
-    OobeScreen current_screen,
-    OobeScreen new_screen) {
-  if (new_screen != OobeScreen::SCREEN_GAIA_SIGNIN)
+    OobeScreenId current_screen,
+    OobeScreenId new_screen) {
+  if (new_screen != GaiaView::kScreenId)
     return;
 
   MaybeLoadPlayStoreToS(false);
@@ -138,6 +135,7 @@ void ArcTermsOfServiceScreenHandler::DeclareLocalizedValues(
   builder->Add("arcTextReviewSettings", IDS_ARC_REVIEW_SETTINGS);
   builder->Add("arcTextMetricsManagedEnabled",
                IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_ENABLED);
+  builder->Add("arcTextMetricsDemoApps", IDS_ARC_OOBE_TERMS_DIALOG_DEMO_APPS);
   builder->Add("arcAcceptAndContinueGoogleServiceConfirmation",
                IDS_ARC_OPT_IN_ACCEPT_AND_CONTINUE_GOOGLE_SERVICE_CONFIRMATION);
   builder->Add("arcLearnMoreStatistics",
@@ -192,20 +190,22 @@ void ArcTermsOfServiceScreenHandler::OnMetricsModeChanged(bool enabled,
                            : IDS_ARC_OOBE_TERMS_DIALOG_METRICS_MANAGED_DISABLED;
     }
   }
-  CallJSWithPrefix("setMetricsMode", l10n_util::GetStringUTF16(message_id),
-                   true);
+  CallJS("login.ArcTermsOfServiceScreen.setMetricsMode",
+         l10n_util::GetStringUTF16(message_id), true);
 }
 
 void ArcTermsOfServiceScreenHandler::OnBackupAndRestoreModeChanged(
     bool enabled, bool managed) {
   backup_restore_managed_ = managed;
-  CallJSWithPrefix("setBackupAndRestoreMode", enabled, managed);
+  CallJS("login.ArcTermsOfServiceScreen.setBackupAndRestoreMode", enabled,
+         managed);
 }
 
 void ArcTermsOfServiceScreenHandler::OnLocationServicesModeChanged(
     bool enabled, bool managed) {
   location_services_managed_ = managed;
-  CallJSWithPrefix("setLocationServicesMode", enabled, managed);
+  CallJS("login.ArcTermsOfServiceScreen.setLocationServicesMode", enabled,
+         managed);
 }
 
 void ArcTermsOfServiceScreenHandler::AddObserver(
@@ -269,7 +269,7 @@ void ArcTermsOfServiceScreenHandler::DoShow() {
   Profile* profile = ProfileManager::GetActiveUserProfile();
   CHECK(profile);
 
-  CallJSWithPrefix("clearDemoMode");
+  CallJS("login.ArcTermsOfServiceScreen.clearDemoMode");
 
   // Enable ARC to match ArcSessionManager logic. ArcSessionManager expects that
   // ARC is enabled (prefs::kArcEnabled = true) on showing Terms of Service. If
@@ -279,8 +279,9 @@ void ArcTermsOfServiceScreenHandler::DoShow() {
 
   // Hide the Skip button if the ToS screen can not be skipped during OOBE.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kEnableArcOobeOptinNoSkip)) {
-    CallJSWithPrefix("hideSkipButton");
+          chromeos::switches::kEnableArcOobeOptinNoSkip) ||
+      arc::IsArcPlayStoreEnabledPreferenceManagedForProfile(profile)) {
+    CallJS("login.ArcTermsOfServiceScreen.hideSkipButton");
   }
 
   action_taken_ = false;
@@ -288,20 +289,20 @@ void ArcTermsOfServiceScreenHandler::DoShow() {
   ShowScreen(kScreenId);
 
   arc_managed_ = arc::IsArcPlayStoreEnabledPreferenceManagedForProfile(profile);
-  CallJSWithPrefix("setArcManaged", arc_managed_);
+  CallJS("login.ArcTermsOfServiceScreen.setArcManaged", arc_managed_);
 
   MaybeLoadPlayStoreToS(true);
   StartNetworkAndTimeZoneObserving();
 
-  pref_handler_.reset(new arc::ArcOptInPreferenceHandler(
-      this, profile->GetPrefs()));
+  pref_handler_ = std::make_unique<arc::ArcOptInPreferenceHandler>(
+      this, profile->GetPrefs());
   pref_handler_->Start();
 }
 
 void ArcTermsOfServiceScreenHandler::DoShowForDemoModeSetup() {
   DCHECK(arc::IsArcDemoModeSetupFlow());
 
-  CallJSWithPrefix("setupForDemoMode");
+  CallJS("login.ArcTermsOfServiceScreen.setupForDemoMode");
   action_taken_ = false;
   ShowScreen(kScreenId);
   MaybeLoadPlayStoreToS(true);
@@ -317,7 +318,7 @@ bool ArcTermsOfServiceScreenHandler::NeedDispatchEventOnAction() {
 
 void ArcTermsOfServiceScreenHandler::RecordConsents(
     const std::string& tos_content,
-    bool record_tos_content,
+    bool record_tos_consent,
     bool tos_accepted,
     bool record_backup_consent,
     bool backup_accepted,
@@ -328,14 +329,14 @@ void ArcTermsOfServiceScreenHandler::RecordConsents(
       ConsentAuditorFactory::GetForProfile(profile);
   auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
   DCHECK(identity_manager->HasPrimaryAccount());
-  const std::string account_id = identity_manager->GetPrimaryAccountId();
+  const CoreAccountId account_id = identity_manager->GetPrimaryAccountId();
 
   ArcPlayTermsOfServiceConsent play_consent;
   play_consent.set_status(tos_accepted ? UserConsentTypes::GIVEN
                                        : UserConsentTypes::NOT_GIVEN);
   play_consent.set_confirmation_grd_id(IDS_ARC_OOBE_TERMS_BUTTON_ACCEPT);
   play_consent.set_consent_flow(ArcPlayTermsOfServiceConsent::SETUP);
-  if (record_tos_content) {
+  if (record_tos_consent) {
     play_consent.set_play_terms_of_service_text_length(tos_content.length());
     play_consent.set_play_terms_of_service_hash(
         base::SHA1HashString(tos_content));

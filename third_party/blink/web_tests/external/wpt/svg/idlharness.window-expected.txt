@@ -1,7 +1,47 @@
 This is a testharness.js-based test.
-Found 1600 tests; 1477 PASS, 123 FAIL, 0 TIMEOUT, 0 NOTRUN.
+Found 1612 tests; 1491 PASS, 121 FAIL, 0 TIMEOUT, 0 NOTRUN.
 PASS idl_test setup
+PASS idl_test validation
 PASS Partial interface Document: original interface defined
+PASS Partial interface Document: member names are unique
+PASS Partial interface Document[2]: member names are unique
+PASS Partial interface Document[3]: member names are unique
+PASS Partial interface Document[4]: member names are unique
+PASS SVGElement includes GlobalEventHandlers: member names are unique
+PASS SVGElement includes DocumentAndElementEventHandlers: member names are unique
+PASS SVGElement includes SVGElementInstance: member names are unique
+PASS SVGElement includes HTMLOrSVGElement: member names are unique
+PASS SVGElement includes ElementCSSInlineStyle: member names are unique
+PASS SVGGraphicsElement includes SVGTests: member names are unique
+PASS SVGSVGElement includes SVGFitToViewBox: member names are unique
+PASS SVGSVGElement includes WindowEventHandlers: member names are unique
+PASS SVGSymbolElement includes SVGFitToViewBox: member names are unique
+PASS SVGUseElement includes SVGURIReference: member names are unique
+PASS SVGStyleElement includes LinkStyle: member names are unique
+PASS SVGPolylineElement includes SVGAnimatedPoints: member names are unique
+PASS SVGPolygonElement includes SVGAnimatedPoints: member names are unique
+PASS SVGTextPathElement includes SVGURIReference: member names are unique
+PASS SVGImageElement includes SVGURIReference: member names are unique
+PASS SVGMarkerElement includes SVGFitToViewBox: member names are unique
+PASS SVGGradientElement includes SVGURIReference: member names are unique
+PASS SVGPatternElement includes SVGFitToViewBox: member names are unique
+PASS SVGPatternElement includes SVGURIReference: member names are unique
+PASS SVGScriptElement includes SVGURIReference: member names are unique
+PASS SVGAElement includes SVGURIReference: member names are unique
+FAIL SVGAElement includes HTMLHyperlinkElementUtils: member names are unique assert_true: member href is unique expected true got false
+PASS SVGViewElement includes SVGFitToViewBox: member names are unique
+PASS Element includes Animatable: member names are unique
+PASS Element includes ParentNode: member names are unique
+PASS Element includes NonDocumentTypeChildNode: member names are unique
+PASS Element includes ChildNode: member names are unique
+PASS Element includes Slotable: member names are unique
+PASS Document includes GlobalEventHandlers: member names are unique
+PASS Document includes DocumentAndElementEventHandlers: member names are unique
+PASS Document includes NonElementParentNode: member names are unique
+PASS Document includes ParentNode: member names are unique
+PASS Document includes XPathEvaluatorBase: member names are unique
+PASS DocumentFragment includes NonElementParentNode: member names are unique
+PASS DocumentFragment includes ParentNode: member names are unique
 PASS SVGElement interface: existence and properties of interface object
 PASS SVGElement interface object length
 PASS SVGElement interface object name
@@ -373,7 +413,7 @@ PASS SVGSVGElement interface: operation createSVGPoint()
 PASS SVGSVGElement interface: operation createSVGMatrix()
 PASS SVGSVGElement interface: operation createSVGRect()
 PASS SVGSVGElement interface: operation createSVGTransform()
-PASS SVGSVGElement interface: operation createSVGTransformFromMatrix(DOMMatrixReadOnly)
+FAIL SVGSVGElement interface: operation createSVGTransformFromMatrix(DOMMatrix2DInit) assert_equals: property has wrong .length expected 0 but got 1
 PASS SVGSVGElement interface: operation getElementById(DOMString)
 PASS SVGSVGElement interface: operation suspendRedraw(unsigned long)
 PASS SVGSVGElement interface: operation unsuspendRedraw(unsigned long)
@@ -381,13 +421,6 @@ PASS SVGSVGElement interface: operation unsuspendRedrawAll()
 PASS SVGSVGElement interface: operation forceRedraw()
 PASS SVGSVGElement interface: attribute viewBox
 PASS SVGSVGElement interface: attribute preserveAspectRatio
-PASS SVGSVGElement interface: constant SVG_ZOOMANDPAN_UNKNOWN on interface object
-PASS SVGSVGElement interface: constant SVG_ZOOMANDPAN_UNKNOWN on interface prototype object
-PASS SVGSVGElement interface: constant SVG_ZOOMANDPAN_DISABLE on interface object
-PASS SVGSVGElement interface: constant SVG_ZOOMANDPAN_DISABLE on interface prototype object
-PASS SVGSVGElement interface: constant SVG_ZOOMANDPAN_MAGNIFY on interface object
-PASS SVGSVGElement interface: constant SVG_ZOOMANDPAN_MAGNIFY on interface prototype object
-PASS SVGSVGElement interface: attribute zoomAndPan
 PASS SVGSVGElement must be primary interface of objects.svg
 PASS Stringification of objects.svg
 PASS SVGSVGElement interface: objects.svg must inherit property "x" with the proper type
@@ -412,8 +445,8 @@ PASS SVGSVGElement interface: objects.svg must inherit property "createSVGPoint(
 PASS SVGSVGElement interface: objects.svg must inherit property "createSVGMatrix()" with the proper type
 PASS SVGSVGElement interface: objects.svg must inherit property "createSVGRect()" with the proper type
 PASS SVGSVGElement interface: objects.svg must inherit property "createSVGTransform()" with the proper type
-PASS SVGSVGElement interface: objects.svg must inherit property "createSVGTransformFromMatrix(DOMMatrixReadOnly)" with the proper type
-PASS SVGSVGElement interface: calling createSVGTransformFromMatrix(DOMMatrixReadOnly) on objects.svg with too few arguments must throw TypeError
+PASS SVGSVGElement interface: objects.svg must inherit property "createSVGTransformFromMatrix(DOMMatrix2DInit)" with the proper type
+PASS SVGSVGElement interface: calling createSVGTransformFromMatrix(DOMMatrix2DInit) on objects.svg with too few arguments must throw TypeError
 PASS SVGSVGElement interface: objects.svg must inherit property "getElementById(DOMString)" with the proper type
 PASS SVGSVGElement interface: calling getElementById(DOMString) on objects.svg with too few arguments must throw TypeError
 PASS SVGSVGElement interface: objects.svg must inherit property "suspendRedraw(unsigned long)" with the proper type
@@ -424,10 +457,6 @@ PASS SVGSVGElement interface: objects.svg must inherit property "unsuspendRedraw
 PASS SVGSVGElement interface: objects.svg must inherit property "forceRedraw()" with the proper type
 PASS SVGSVGElement interface: objects.svg must inherit property "viewBox" with the proper type
 PASS SVGSVGElement interface: objects.svg must inherit property "preserveAspectRatio" with the proper type
-PASS SVGSVGElement interface: objects.svg must inherit property "SVG_ZOOMANDPAN_UNKNOWN" with the proper type
-PASS SVGSVGElement interface: objects.svg must inherit property "SVG_ZOOMANDPAN_DISABLE" with the proper type
-PASS SVGSVGElement interface: objects.svg must inherit property "SVG_ZOOMANDPAN_MAGNIFY" with the proper type
-PASS SVGSVGElement interface: objects.svg must inherit property "zoomAndPan" with the proper type
 PASS SVGGraphicsElement interface: objects.svg must inherit property "transform" with the proper type
 PASS SVGGraphicsElement interface: objects.svg must inherit property "getBBox(SVGBoundingBoxOptions)" with the proper type
 PASS SVGGraphicsElement interface: calling getBBox(SVGBoundingBoxOptions) on objects.svg with too few arguments must throw TypeError
@@ -460,12 +489,6 @@ PASS SVGElement interface: objects.g must inherit property "ownerSVGElement" wit
 PASS SVGElement interface: objects.g must inherit property "viewportElement" with the proper type
 FAIL SVGElement interface: objects.g must inherit property "correspondingElement" with the proper type assert_inherits: property "correspondingElement" not found in prototype chain
 FAIL SVGElement interface: objects.g must inherit property "correspondingUseElement" with the proper type assert_inherits: property "correspondingUseElement" not found in prototype chain
-FAIL SVGUnknownElement interface: existence and properties of interface object assert_own_property: self does not have own property "SVGUnknownElement" expected property "SVGUnknownElement" missing
-FAIL SVGUnknownElement interface object length assert_own_property: self does not have own property "SVGUnknownElement" expected property "SVGUnknownElement" missing
-FAIL SVGUnknownElement interface object name assert_own_property: self does not have own property "SVGUnknownElement" expected property "SVGUnknownElement" missing
-FAIL SVGUnknownElement interface: existence and properties of interface prototype object assert_own_property: self does not have own property "SVGUnknownElement" expected property "SVGUnknownElement" missing
-FAIL SVGUnknownElement interface: existence and properties of interface prototype object's "constructor" property assert_own_property: self does not have own property "SVGUnknownElement" expected property "SVGUnknownElement" missing
-FAIL SVGUnknownElement interface: existence and properties of interface prototype object's @@unscopables property assert_own_property: self does not have own property "SVGUnknownElement" expected property "SVGUnknownElement" missing
 PASS SVGDefsElement interface: existence and properties of interface object
 PASS SVGDefsElement interface object length
 PASS SVGDefsElement interface object name
@@ -658,7 +681,7 @@ PASS SVGTransform interface: constant SVG_TRANSFORM_SKEWY on interface prototype
 PASS SVGTransform interface: attribute type
 PASS SVGTransform interface: attribute matrix
 PASS SVGTransform interface: attribute angle
-PASS SVGTransform interface: operation setMatrix(DOMMatrixReadOnly)
+FAIL SVGTransform interface: operation setMatrix(DOMMatrix2DInit) assert_equals: property has wrong .length expected 0 but got 1
 PASS SVGTransform interface: operation setTranslate(float, float)
 PASS SVGTransform interface: operation setScale(float, float)
 PASS SVGTransform interface: operation setRotate(float, float, float)
@@ -676,8 +699,8 @@ PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit prope
 PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit property "type" with the proper type
 FAIL SVGTransform interface: objects.svg.createSVGTransform() must inherit property "matrix" with the proper type Unrecognized type DOMMatrix
 PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit property "angle" with the proper type
-PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit property "setMatrix(DOMMatrixReadOnly)" with the proper type
-PASS SVGTransform interface: calling setMatrix(DOMMatrixReadOnly) on objects.svg.createSVGTransform() with too few arguments must throw TypeError
+PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit property "setMatrix(DOMMatrix2DInit)" with the proper type
+PASS SVGTransform interface: calling setMatrix(DOMMatrix2DInit) on objects.svg.createSVGTransform() with too few arguments must throw TypeError
 PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit property "setTranslate(float, float)" with the proper type
 PASS SVGTransform interface: calling setTranslate(float, float) on objects.svg.createSVGTransform() with too few arguments must throw TypeError
 PASS SVGTransform interface: objects.svg.createSVGTransform() must inherit property "setScale(float, float)" with the proper type
@@ -703,7 +726,7 @@ PASS SVGTransformList interface: operation insertItemBefore(SVGTransform, unsign
 PASS SVGTransformList interface: operation replaceItem(SVGTransform, unsigned long)
 PASS SVGTransformList interface: operation removeItem(unsigned long)
 PASS SVGTransformList interface: operation appendItem(SVGTransform)
-PASS SVGTransformList interface: operation createSVGTransformFromMatrix(DOMMatrixReadOnly)
+FAIL SVGTransformList interface: operation createSVGTransformFromMatrix(DOMMatrix2DInit) assert_equals: property has wrong .length expected 0 but got 1
 PASS SVGTransformList interface: operation consolidate()
 PASS SVGTransformList must be primary interface of objects.pattern.patternTransform.baseVal
 PASS Stringification of objects.pattern.patternTransform.baseVal
@@ -722,8 +745,8 @@ PASS SVGTransformList interface: objects.pattern.patternTransform.baseVal must i
 PASS SVGTransformList interface: calling removeItem(unsigned long) on objects.pattern.patternTransform.baseVal with too few arguments must throw TypeError
 PASS SVGTransformList interface: objects.pattern.patternTransform.baseVal must inherit property "appendItem(SVGTransform)" with the proper type
 PASS SVGTransformList interface: calling appendItem(SVGTransform) on objects.pattern.patternTransform.baseVal with too few arguments must throw TypeError
-PASS SVGTransformList interface: objects.pattern.patternTransform.baseVal must inherit property "createSVGTransformFromMatrix(DOMMatrixReadOnly)" with the proper type
-PASS SVGTransformList interface: calling createSVGTransformFromMatrix(DOMMatrixReadOnly) on objects.pattern.patternTransform.baseVal with too few arguments must throw TypeError
+PASS SVGTransformList interface: objects.pattern.patternTransform.baseVal must inherit property "createSVGTransformFromMatrix(DOMMatrix2DInit)" with the proper type
+PASS SVGTransformList interface: calling createSVGTransformFromMatrix(DOMMatrix2DInit) on objects.pattern.patternTransform.baseVal with too few arguments must throw TypeError
 PASS SVGTransformList interface: objects.pattern.patternTransform.baseVal must inherit property "consolidate()" with the proper type
 PASS SVGAnimatedTransformList interface: existence and properties of interface object
 PASS SVGAnimatedTransformList interface object length
@@ -1579,21 +1602,10 @@ PASS SVGViewElement interface: existence and properties of interface prototype o
 PASS SVGViewElement interface: existence and properties of interface prototype object's @@unscopables property
 PASS SVGViewElement interface: attribute viewBox
 PASS SVGViewElement interface: attribute preserveAspectRatio
-PASS SVGViewElement interface: constant SVG_ZOOMANDPAN_UNKNOWN on interface object
-PASS SVGViewElement interface: constant SVG_ZOOMANDPAN_UNKNOWN on interface prototype object
-PASS SVGViewElement interface: constant SVG_ZOOMANDPAN_DISABLE on interface object
-PASS SVGViewElement interface: constant SVG_ZOOMANDPAN_DISABLE on interface prototype object
-PASS SVGViewElement interface: constant SVG_ZOOMANDPAN_MAGNIFY on interface object
-PASS SVGViewElement interface: constant SVG_ZOOMANDPAN_MAGNIFY on interface prototype object
-PASS SVGViewElement interface: attribute zoomAndPan
 PASS SVGViewElement must be primary interface of objects.view
 PASS Stringification of objects.view
 PASS SVGViewElement interface: objects.view must inherit property "viewBox" with the proper type
 PASS SVGViewElement interface: objects.view must inherit property "preserveAspectRatio" with the proper type
-PASS SVGViewElement interface: objects.view must inherit property "SVG_ZOOMANDPAN_UNKNOWN" with the proper type
-PASS SVGViewElement interface: objects.view must inherit property "SVG_ZOOMANDPAN_DISABLE" with the proper type
-PASS SVGViewElement interface: objects.view must inherit property "SVG_ZOOMANDPAN_MAGNIFY" with the proper type
-PASS SVGViewElement interface: objects.view must inherit property "zoomAndPan" with the proper type
 PASS SVGElement interface: objects.view must inherit property "className" with the proper type
 PASS SVGElement interface: objects.view must inherit property "ownerSVGElement" with the proper type
 PASS SVGElement interface: objects.view must inherit property "viewportElement" with the proper type

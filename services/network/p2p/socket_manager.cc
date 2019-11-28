@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/task/post_task.h"
@@ -26,8 +26,8 @@
 #include "services/network/p2p/socket.h"
 #include "services/network/proxy_resolving_client_socket_factory.h"
 #include "services/network/public/cpp/p2p_param_traits.h"
-#include "third_party/webrtc/media/base/rtputils.h"
-#include "third_party/webrtc/media/base/turnutils.h"
+#include "third_party/webrtc/media/base/rtp_utils.h"
+#include "third_party/webrtc/media/base/turn_utils.h"
 
 namespace network {
 
@@ -144,24 +144,26 @@ class P2PSocketManager::DnsRequest {
 };
 
 P2PSocketManager::P2PSocketManager(
-    mojom::P2PTrustedSocketManagerClientPtr trusted_socket_manager_client,
-    mojom::P2PTrustedSocketManagerRequest trusted_socket_manager_request,
-    mojom::P2PSocketManagerRequest socket_manager_request,
+    mojo::PendingRemote<mojom::P2PTrustedSocketManagerClient>
+        trusted_socket_manager_client,
+    mojo::PendingReceiver<mojom::P2PTrustedSocketManager>
+        trusted_socket_manager_receiver,
+    mojo::PendingReceiver<mojom::P2PSocketManager> socket_manager_receiver,
     DeleteCallback delete_callback,
     net::URLRequestContext* url_request_context)
     : delete_callback_(std::move(delete_callback)),
       url_request_context_(url_request_context),
-      network_list_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::USER_VISIBLE})),
+      network_list_task_runner_(
+          base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock(),
+                                           base::TaskPriority::USER_VISIBLE})),
       trusted_socket_manager_client_(std::move(trusted_socket_manager_client)),
-      trusted_socket_manager_binding_(
+      trusted_socket_manager_receiver_(
           this,
-          std::move(trusted_socket_manager_request)),
-      socket_manager_binding_(this, std::move(socket_manager_request)),
-      weak_factory_(this) {
-  trusted_socket_manager_binding_.set_connection_error_handler(
+          std::move(trusted_socket_manager_receiver)),
+      socket_manager_receiver_(this, std::move(socket_manager_receiver)) {
+  trusted_socket_manager_receiver_.set_disconnect_handler(
       base::Bind(&P2PSocketManager::OnConnectionError, base::Unretained(this)));
-  socket_manager_binding_.set_connection_error_handler(
+  socket_manager_receiver_.set_disconnect_handler(
       base::Bind(&P2PSocketManager::OnConnectionError, base::Unretained(this)));
 }
 
@@ -258,10 +260,10 @@ void P2PSocketManager::SendNetworkList(
 }
 
 void P2PSocketManager::StartNetworkNotifications(
-    mojom::P2PNetworkNotificationClientPtr client) {
+    mojo::PendingRemote<mojom::P2PNetworkNotificationClient> client) {
   DCHECK(!network_notification_client_);
-  network_notification_client_ = std::move(client);
-  network_notification_client_.set_connection_error_handler(base::BindOnce(
+  network_notification_client_.Bind(std::move(client));
+  network_notification_client_.set_disconnect_handler(base::BindOnce(
       &P2PSocketManager::NetworkNotificationClientConnectionError,
       base::Unretained(this)));
 
@@ -287,12 +289,13 @@ void P2PSocketManager::GetHostAddress(
                  request_ptr, base::Passed(&callback)));
 }
 
-void P2PSocketManager::CreateSocket(P2PSocketType type,
-                                    const net::IPEndPoint& local_address,
-                                    const P2PPortRange& port_range,
-                                    const P2PHostAndIPEndPoint& remote_address,
-                                    mojom::P2PSocketClientPtr client,
-                                    mojom::P2PSocketRequest request) {
+void P2PSocketManager::CreateSocket(
+    P2PSocketType type,
+    const net::IPEndPoint& local_address,
+    const P2PPortRange& port_range,
+    const P2PHostAndIPEndPoint& remote_address,
+    mojo::PendingRemote<mojom::P2PSocketClient> client,
+    mojo::PendingReceiver<mojom::P2PSocket> receiver) {
   if (port_range.min_port > port_range.max_port ||
       (port_range.min_port == 0 && port_range.max_port != 0)) {
     trusted_socket_manager_client_->InvalidSocketPortRangeRequested();
@@ -308,10 +311,10 @@ void P2PSocketManager::CreateSocket(P2PSocketType type,
     LOG(ERROR) << "Too many sockets created";
     return;
   }
-  std::unique_ptr<P2PSocket> socket(
-      P2PSocket::Create(this, std::move(client), std::move(request), type,
+  std::unique_ptr<P2PSocket> socket =
+      P2PSocket::Create(this, std::move(client), std::move(receiver), type,
                         url_request_context_->net_log(),
-                        proxy_resolving_socket_factory_.get(), &throttler_));
+                        proxy_resolving_socket_factory_.get(), &throttler_);
 
   if (!socket)
     return;
@@ -373,11 +376,7 @@ void P2PSocketManager::OnAddressResolved(
     const net::IPAddressList& addresses) {
   std::move(callback).Run(addresses);
 
-  dns_requests_.erase(
-      std::find_if(dns_requests_.begin(), dns_requests_.end(),
-                   [request](const std::unique_ptr<DnsRequest>& ptr) {
-                     return ptr.get() == request;
-                   }));
+  dns_requests_.erase(dns_requests_.find(request));
 }
 
 void P2PSocketManager::OnConnectionError() {

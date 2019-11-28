@@ -45,10 +45,9 @@ class ColorInputType final : public InputType,
   USING_GARBAGE_COLLECTED_MIXIN(ColorInputType);
 
  public:
-  static InputType* Create(HTMLInputElement&);
   explicit ColorInputType(HTMLInputElement&);
   ~ColorInputType() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   using InputType::GetElement;
 
   // ColorChooserClient implementation.

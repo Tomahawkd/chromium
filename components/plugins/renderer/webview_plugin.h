@@ -126,8 +126,11 @@ class WebViewPlugin : public blink::WebPlugin,
   void OnDestruct() override {}
   void OnZoomLevelChanged() override;
 
+  void LoadHTML(const std::string& html_data, const GURL& url);
   void UpdatePluginForNewGeometry(const blink::WebRect& window_rect,
                                   const blink::WebRect& unobscured_rect);
+
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
 
   // Manages its own lifetime.
   Delegate* delegate_;
@@ -165,7 +168,7 @@ class WebViewPlugin : public blink::WebPlugin,
     bool CanHandleGestureEvent() override;
     bool CanUpdateLayout() override;
     blink::WebScreenInfo GetScreenInfo() override;
-    blink::WebWidgetClient* WidgetClient() override;
+    void DidInvalidateRect(const blink::WebRect&) override;
 
     // WebWidgetClient methods:
     void SetToolTipText(const blink::WebString&,
@@ -175,18 +178,15 @@ class WebViewPlugin : public blink::WebPlugin,
                        blink::WebDragOperationsMask,
                        const SkBitmap&,
                        const gfx::Point&) override;
-    void DidInvalidateRect(const blink::WebRect&) override;
     void DidChangeCursor(const blink::WebCursorInfo& cursor) override;
     void ScheduleAnimation() override;
-    std::unique_ptr<blink::WebURLLoaderFactory> CreateURLLoaderFactory()
-        override;
 
     // WebLocalFrameClient methods:
     void BindToFrame(blink::WebNavigationControl* frame) override;
     void DidClearWindowObject() override;
     void FrameDetached(DetachType) override;
-    void BeginNavigation(
-        std::unique_ptr<blink::WebNavigationInfo> info) override;
+    std::unique_ptr<blink::WebURLLoaderFactory> CreateURLLoaderFactory()
+        override;
 
    private:
     WebViewPlugin* plugin_;
@@ -198,7 +198,7 @@ class WebViewPlugin : public blink::WebPlugin,
   WebViewHelper web_view_helper_;
 
   // Should be invalidated when destroy() is called.
-  base::WeakPtrFactory<WebViewPlugin> weak_factory_;
+  base::WeakPtrFactory<WebViewPlugin> weak_factory_{this};
 };
 
 #endif  // COMPONENTS_PLUGINS_RENDERER_WEBVIEW_PLUGIN_H_

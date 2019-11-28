@@ -9,7 +9,10 @@
 Polymer({
   is: 'settings-clear-browsing-data-dialog',
 
-  behaviors: [WebUIListenerBehavior, settings.RouteObserverBehavior],
+  behaviors: [
+    WebUIListenerBehavior,
+    settings.RouteObserverBehavior,
+  ],
 
   properties: {
     /**
@@ -145,7 +148,16 @@ Polymer({
     dialogOpenedTime_: {
       type: Number,
       value: 0,
-    }
+    },
+
+    /** @private {Array<string>} */
+    tabsNames_: {
+      type: Array,
+      value: () =>
+          [loadTimeData.getString('basicPageTitle'),
+           loadTimeData.getString('advancedPageTitle'),
+],
+    },
   },
 
   listeners: {'settings-boolean-control-change': 'updateClearButtonState_'},
@@ -208,8 +220,9 @@ Polymer({
     // on-select-item-changed gets called with undefined during a tab change.
     // https://github.com/PolymerElements/iron-selector/issues/95
     const tab = this.$.tabs.selectedItem;
-    if (!tab)
+    if (!tab) {
       return;
+    }
     this.clearButtonDisabled_ = this.getSelectedDataTypes_(tab).length == 0;
   },
 
@@ -281,19 +294,6 @@ Polymer({
     return cookiesSummary;
   },
 
-
-  /**
-   * Choose a content/site settings label.
-   * @param {string} siteSettings
-   * @param {string} contentSettings
-   * @return {string}
-   * @private
-   */
-  siteSettingsLabel_: function(siteSettings, contentSettings) {
-    return loadTimeData.getBoolean('enableSiteSettings') ? siteSettings :
-                                                           contentSettings;
-  },
-
   /**
    * Updates the text of a browsing data counter corresponding to the given
    * preference.
@@ -318,8 +318,9 @@ Polymer({
     const checkboxes = tab.querySelectorAll('settings-checkbox');
     const dataTypes = [];
     checkboxes.forEach((checkbox) => {
-      if (checkbox.checked && !checkbox.hidden)
+      if (checkbox.checked && !checkbox.hidden) {
         dataTypes.push(checkbox.pref.key);
+      }
     });
     return dataTypes;
   },
@@ -347,8 +348,9 @@ Polymer({
           chrome.metricsPrivate.recordMediumTime(
               'History.ClearBrowsingData.TimeSpentInDialog',
               Date.now() - this.dialogOpenedTime_);
-          if (!shouldShowNotice)
+          if (!shouldShowNotice) {
             this.$.clearBrowsingDataDialog.close();
+          }
         });
   },
 

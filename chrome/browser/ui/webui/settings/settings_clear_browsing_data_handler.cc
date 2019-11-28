@@ -7,10 +7,11 @@
 #include <stddef.h>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_important_sites_util.h"
@@ -20,7 +21,6 @@
 #include "chrome/browser/history/web_history_service_factory.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/sync_ui_util.h"
 #include "chrome/common/channel_info.h"
@@ -31,14 +31,14 @@
 #include "components/feature_engagement/buildflags.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
-#include "services/identity/public/cpp/identity_manager.h"
 #include "ui/base/text/bytes_formatting.h"
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
 #include "chrome/browser/feature_engagement/incognito_window/incognito_window_tracker.h"
 #include "chrome/browser/feature_engagement/incognito_window/incognito_window_tracker_factory.h"
 #endif
@@ -57,7 +57,6 @@ const char* kCounterPrefsAdvanced[] = {
     browsing_data::prefs::kDeleteDownloadHistory,
     browsing_data::prefs::kDeleteFormData,
     browsing_data::prefs::kDeleteHostedAppsData,
-    browsing_data::prefs::kDeleteMediaLicenses,
     browsing_data::prefs::kDeletePasswords,
     browsing_data::prefs::kDeleteSiteSettings,
 };
@@ -77,8 +76,7 @@ ClearBrowsingDataHandler::ClearBrowsingDataHandler(content::WebUI* webui)
     : profile_(Profile::FromWebUI(webui)),
       sync_service_(ProfileSyncServiceFactory::GetForProfile(profile_)),
       sync_service_observer_(this),
-      show_history_deletion_dialog_(false),
-      weak_ptr_factory_(this) {}
+      show_history_deletion_dialog_(false) {}
 
 ClearBrowsingDataHandler::~ClearBrowsingDataHandler() {
 }
@@ -198,9 +196,6 @@ void ClearBrowsingDataHandler::HandleClearBrowsingData(
         remove_mask |=
             ChromeBrowsingDataRemoverDelegate::DATA_TYPE_CONTENT_SETTINGS;
         break;
-      case BrowsingDataType::MEDIA_LICENSES:
-        remove_mask |= content::BrowsingDataRemover::DATA_TYPE_MEDIA_LICENSES;
-        break;
       case BrowsingDataType::HOSTED_APPS_DATA:
         remove_mask |= site_data_mask;
         origin_mask |= content::BrowsingDataRemover::ORIGIN_TYPE_PROTECTED_WEB;
@@ -238,9 +233,8 @@ void ClearBrowsingDataHandler::HandleClearBrowsingData(
         BrowsingDataType::HISTORY,        BrowsingDataType::DOWNLOADS,
         BrowsingDataType::CACHE,          BrowsingDataType::COOKIES,
         BrowsingDataType::FORM_DATA,      BrowsingDataType::HOSTED_APPS_DATA,
-        BrowsingDataType::MEDIA_LICENSES,
     };
-    static size_t num_other_types = arraysize(other_types);
+    static size_t num_other_types = base::size(other_types);
     int checked_other_types =
         std::count_if(other_types, other_types + num_other_types,
                       [&data_types](BrowsingDataType type) {
@@ -251,13 +245,15 @@ void ClearBrowsingDataHandler::HandleClearBrowsingData(
         checked_other_types);
   }
 
-  // If Sync is running, prevent it from being paused during the operation.
-  // However, if Sync is in error, clearing cookies should pause it.
   std::unique_ptr<AccountReconcilor::ScopedSyncedDataDeletion>
       scoped_data_deletion;
-  sync_ui_util::MessageType sync_status = sync_ui_util::GetStatus(
-      profile_, sync_service_, *SigninManagerFactory::GetForProfile(profile_));
-  if (sync_status == sync_ui_util::SYNCED) {
+
+  // If Sync is running, prevent it from being paused during the operation.
+  // However, if Sync is in error, clearing cookies should pause it.
+  if (!profile_->IsGuestSession() &&
+      sync_ui_util::GetStatus(profile_) == sync_ui_util::SYNCED) {
+    // Settings can not be opened in incognito windows.
+    DCHECK(!profile_->IsOffTheRecord());
     scoped_data_deletion = AccountReconcilorFactory::GetForProfile(profile_)
                                ->GetScopedSyncDataDeletion();
   }
@@ -281,7 +277,7 @@ void ClearBrowsingDataHandler::HandleClearBrowsingData(
           content::BrowsingDataFilterBuilder::BLACKLIST),
       remover, std::move(callback));
 
-#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#if BUILDFLAG(ENABLE_LEGACY_DESKTOP_IN_PRODUCT_HELP)
   feature_engagement::IncognitoWindowTrackerFactory::GetInstance()
       ->GetForProfile(profile_)
       ->OnBrowsingDataCleared();
@@ -343,10 +339,10 @@ void ClearBrowsingDataHandler::OnStateChanged(syncer::SyncService* sync) {
 }
 
 void ClearBrowsingDataHandler::UpdateSyncState() {
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile_);
-  CallJavascriptFunction(
-      "cr.webUIListenerCallback", base::Value("update-sync-state"),
+  FireWebUIListener(
+      "update-sync-state",
       base::Value(identity_manager && identity_manager->HasPrimaryAccount()),
       base::Value(sync_service_ && sync_service_->IsSyncFeatureActive() &&
                   sync_service_->GetActiveDataTypes().Has(
@@ -389,9 +385,8 @@ void ClearBrowsingDataHandler::AddCounter(
 
 void ClearBrowsingDataHandler::UpdateCounterText(
     std::unique_ptr<browsing_data::BrowsingDataCounter::Result> result) {
-  CallJavascriptFunction(
-      "cr.webUIListenerCallback", base::Value("update-counter-text"),
-      base::Value(result->source()->GetPrefName()),
+  FireWebUIListener(
+      "update-counter-text", base::Value(result->source()->GetPrefName()),
       base::Value(browsing_data_counter_utils::GetChromeCounterTextFromResult(
           result.get(), profile_)));
 }

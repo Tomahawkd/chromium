@@ -9,9 +9,13 @@
 
 #include "base/macros.h"
 #include "base/optional.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/completion_once_callback.h"
 #include "net/dns/host_resolver.h"
+#include "net/dns/public/resolve_error_info.h"
 #include "services/network/public/mojom/host_resolver.mojom.h"
 
 namespace net {
@@ -34,23 +38,28 @@ class ResolveHostRequest : public mojom::ResolveHostHandle {
       net::NetLog* net_log);
   ~ResolveHostRequest() override;
 
-  int Start(mojom::ResolveHostHandleRequest control_handle_request,
-            mojom::ResolveHostClientPtr response_client,
-            net::CompletionOnceCallback callback);
+  int Start(
+      mojo::PendingReceiver<mojom::ResolveHostHandle> control_handle_request,
+      mojo::PendingRemote<mojom::ResolveHostClient> pending_response_client,
+      net::CompletionOnceCallback callback);
 
   // ResolveHostHandle overrides.
   void Cancel(int error) override;
 
  private:
   void OnComplete(int error);
+  net::ResolveErrorInfo GetResolveErrorInfo() const;
   const base::Optional<net::AddressList>& GetAddressResults() const;
+  void SignalNonAddressResults();
 
   std::unique_ptr<net::HostResolver::ResolveHostRequest> internal_request_;
 
-  mojo::Binding<mojom::ResolveHostHandle> control_handle_binding_{this};
-  mojom::ResolveHostClientPtr response_client_;
+  mojo::Receiver<mojom::ResolveHostHandle> control_handle_receiver_{this};
+  mojo::Remote<mojom::ResolveHostClient> response_client_;
   net::CompletionOnceCallback callback_;
   bool cancelled_ = false;
+  // Error info for a cancelled request.
+  net::ResolveErrorInfo resolve_error_info_;
 
   DISALLOW_COPY_AND_ASSIGN(ResolveHostRequest);
 };

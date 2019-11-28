@@ -4,18 +4,21 @@
 
 #include "chrome/browser/safe_browsing/safe_browsing_tab_observer.h"
 
+#include "base/bind.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/render_messages.h"
 #include "components/prefs/pref_service.h"
+#include "components/safe_browsing/buildflags.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 
-#if defined(SAFE_BROWSING_CSD)
+#if BUILDFLAG(SAFE_BROWSING_CSD)
 #include "chrome/browser/safe_browsing/client_side_detection_host.h"
 #include "chrome/common/chrome_render_frame.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
@@ -23,7 +26,7 @@
 
 namespace safe_browsing {
 
-#if !defined(SAFE_BROWSING_CSD)
+#if !BUILDFLAG(SAFE_BROWSING_CSD)
 // Provide a dummy implementation so that
 // std::unique_ptr<ClientSideDetectionHost>
 // has a concrete destructor to call. This is necessary because it is used
@@ -34,7 +37,7 @@ class ClientSideDetectionHost { };
 
 SafeBrowsingTabObserver::SafeBrowsingTabObserver(
     content::WebContents* web_contents) : web_contents_(web_contents) {
-#if defined(SAFE_BROWSING_CSD)
+#if BUILDFLAG(SAFE_BROWSING_CSD)
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   PrefService* prefs = profile->GetPrefs();
@@ -47,8 +50,8 @@ SafeBrowsingTabObserver::SafeBrowsingTabObserver(
 
     if (prefs->GetBoolean(prefs::kSafeBrowsingEnabled) &&
         g_browser_process->safe_browsing_detection_service()) {
-      safebrowsing_detection_host_.reset(
-          ClientSideDetectionHost::Create(web_contents));
+      safebrowsing_detection_host_ =
+          ClientSideDetectionHost::Create(web_contents);
     }
   }
 #endif
@@ -61,7 +64,7 @@ SafeBrowsingTabObserver::~SafeBrowsingTabObserver() {
 // Internal helpers
 
 void SafeBrowsingTabObserver::UpdateSafebrowsingDetectionHost() {
-#if defined(SAFE_BROWSING_CSD)
+#if BUILDFLAG(SAFE_BROWSING_CSD)
   Profile* profile =
       Profile::FromBrowserContext(web_contents_->GetBrowserContext());
   PrefService* prefs = profile->GetPrefs();
@@ -69,15 +72,15 @@ void SafeBrowsingTabObserver::UpdateSafebrowsingDetectionHost() {
   if (safe_browsing &&
       g_browser_process->safe_browsing_detection_service()) {
     if (!safebrowsing_detection_host_.get()) {
-      safebrowsing_detection_host_.reset(
-          ClientSideDetectionHost::Create(web_contents_));
+      safebrowsing_detection_host_ =
+          ClientSideDetectionHost::Create(web_contents_);
     }
   } else {
     safebrowsing_detection_host_.reset();
   }
 
   content::RenderFrameHost* rfh = web_contents_->GetMainFrame();
-  chrome::mojom::ChromeRenderFrameAssociatedPtr client;
+  mojo::AssociatedRemote<chrome::mojom::ChromeRenderFrame> client;
   rfh->GetRemoteAssociatedInterfaces()->GetInterface(&client);
   client->SetClientSidePhishingDetection(safe_browsing);
 #endif

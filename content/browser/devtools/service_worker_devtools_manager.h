@@ -11,12 +11,12 @@
 
 #include "base/containers/flat_set.h"
 #include "base/macros.h"
-#include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
+#include "base/no_destructor.h"
 #include "base/observer_list.h"
 #include "base/unguessable_token.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/web/devtools_agent.mojom.h"
+#include "third_party/blink/public/mojom/devtools/devtools_agent.mojom.h"
 #include "url/gurl.h"
 
 namespace network {
@@ -71,8 +71,8 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
   void WorkerReadyForInspection(
       int worker_process_id,
       int worker_route_id,
-      blink::mojom::DevToolsAgentHostAssociatedRequest host_request,
-      blink::mojom::DevToolsAgentAssociatedPtrInfo devtools_agent_ptr_info);
+      mojo::PendingRemote<blink::mojom::DevToolsAgent> agent_remote,
+      mojo::PendingReceiver<blink::mojom::DevToolsAgentHost> host_receiver);
   void WorkerVersionInstalled(int worker_process_id, int worker_route_id);
   void WorkerVersionDoomed(int worker_process_id, int worker_route_id);
   void WorkerDestroyed(int worker_process_id, int worker_route_id);
@@ -102,7 +102,7 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
   void AgentHostDestroyed(ServiceWorkerDevToolsAgentHost* agent_host);
 
  private:
-  friend struct base::DefaultSingletonTraits<ServiceWorkerDevToolsManager>;
+  friend class base::NoDestructor<ServiceWorkerDevToolsManager>;
   friend class ServiceWorkerDevToolsAgentHost;
 
   using WorkerId = std::pair<int, int>;

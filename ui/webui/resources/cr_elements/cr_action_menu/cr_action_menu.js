@@ -38,7 +38,7 @@ let ShowAtPositionConfig;
  * @enum {number}
  * @const
  */
-const AnchorAlignment = {
+/* #export */ const AnchorAlignment = {
   BEFORE_START: -2,
   AFTER_START: -1,
   CENTER: 0,
@@ -50,6 +50,10 @@ const AnchorAlignment = {
 const DROPDOWN_ITEM_CLASS = 'dropdown-item';
 
 (function() {
+
+/** @const {number} */
+const AFTER_END_OFFSET = 10;
+
 /**
  * Returns the point to start along the X or Y axis given a start and end
  * point to anchor to, the length of the target and the direction to anchor
@@ -85,10 +89,12 @@ function getStartPointWithAnchor(
       break;
   }
 
-  if (startPoint + menuLength > max)
+  if (startPoint + menuLength > max) {
     startPoint = end - menuLength;
-  if (startPoint < min)
+  }
+  if (startPoint < min) {
     startPoint = start;
+  }
 
   startPoint = Math.max(min, Math.min(startPoint, max - menuLength));
 
@@ -158,13 +164,14 @@ Polymer({
       value: false,
     },
 
-    ariaLabel: String,
+    /* Descriptor of the menu. Should be something along the lines of "menu" */
+    roleDescription: String,
   },
 
   listeners: {
     'keydown': 'onKeyDown_',
     'mouseover': 'onMouseover_',
-    'tap': 'onTap_',
+    'click': 'onClick_',
   },
 
   /** override */
@@ -177,7 +184,7 @@ Polymer({
    * @return {!HTMLDialogElement}
    */
   getDialog: function() {
-    return this.$.dialog;
+    return /** @type {!HTMLDialogElement} */ (this.$.dialog);
   },
 
   /** @private */
@@ -201,8 +208,9 @@ Polymer({
    */
   onNativeDialogClose_: function(e) {
     // Ignore any 'close' events not fired directly by the <dialog> element.
-    if (e.target !== this.$.dialog)
+    if (e.target !== this.$.dialog) {
       return;
+    }
 
     // TODO(dpapad): This is necessary to make the code work both for Polymer 1
     // and Polymer 2. Remove once migration to Polymer 2 is completed.
@@ -217,7 +225,7 @@ Polymer({
    * @param {!Event} e
    * @private
    */
-  onTap_: function(e) {
+  onClick_: function(e) {
     if (e.target == this) {
       this.close();
       e.stopPropagation();
@@ -230,29 +238,49 @@ Polymer({
    */
   onKeyDown_: function(e) {
     e.stopPropagation();
-
     if (e.key == 'Tab' || e.key == 'Escape') {
       this.close();
       e.preventDefault();
       return;
     }
 
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')
+    if (e.key != 'Enter' && e.key != 'ArrowUp' && e.key != 'ArrowDown') {
       return;
+    }
 
-    const nextOption = this.getNextOption_(e.key == 'ArrowDown' ? 1 : -1);
-    if (nextOption) {
-      if (!this.hasMousemoveListener_) {
-        this.hasMousemoveListener_ = true;
-        listenOnce(this, 'mousemove', e => {
-          this.onMouseover_(e);
-          this.hasMousemoveListener_ = false;
-        });
+    const query = '.dropdown-item:not([disabled]):not([hidden])';
+    const options = Array.from(this.querySelectorAll(query));
+    if (options.length == 0) {
+      return;
+    }
+
+    const focused = getDeepActiveElement();
+    const index = options.findIndex(
+        option => cr.ui.FocusRow.getFocusableElement(option) == focused);
+
+    if (e.key == 'Enter') {
+      // If a menu item has focus, don't change focus or close menu on 'Enter'.
+      if (index != -1) {
+        return;
       }
-      nextOption.focus();
+
+      if (cr.isWindows || cr.isMac) {
+        this.close();
+        e.preventDefault();
+        return;
+      }
     }
 
     e.preventDefault();
+    this.updateFocus_(options, index, e.key != 'ArrowUp');
+
+    if (!this.hasMousemoveListener_) {
+      this.hasMousemoveListener_ = true;
+      this.addEventListener('mousemove', e => {
+        this.onMouseover_(e);
+        this.hasMousemoveListener_ = false;
+      }, {once: true});
+    }
   },
 
   /**
@@ -260,53 +288,28 @@ Polymer({
    * @private
    */
   onMouseover_: function(e) {
-    // TODO(scottchen): Using "focus" to determine selected item might mess
-    // with screen readers in some edge cases.
-    let i = 0;
-    let target;
-    do {
-      target = e.path[i++];
-      if (target.classList && target.classList.contains('dropdown-item') &&
-          !target.disabled) {
-        target.focus();
-        return;
-      }
-    } while (this != target);
-
-    // The user moved the mouse off the options. Reset focus to the dialog.
-    this.$.dialog.focus();
+    const query = '.dropdown-item:not([disabled])';
+    const item = e.composedPath().find(el => el.matches && el.matches(query));
+    (item || this.$.wrapper).focus();
   },
 
   /**
-   * @param {number} step -1 for getting previous option (up), 1 for getting
-   *     next option (down).
-   * @return {?Element} The next focusable option, taking into account
-   *     disabled/hidden attributes, or null if no focusable option exists.
+   * @param {!Array<!HTMLElement>} options
+   * @param {number} focusedIndex
+   * @param {boolean} next
    * @private
    */
-  getNextOption_: function(step) {
-    // Using a counter to ensure no infinite loop occurs if all elements are
-    // hidden/disabled.
-    let counter = 0;
-    let nextOption = null;
-    const options = this.querySelectorAll('.dropdown-item');
+  updateFocus_: function(options, focusedIndex, next) {
     const numOptions = options.length;
-    let focusedIndex =
-        Array.prototype.indexOf.call(options, getDeepActiveElement());
-
-    // Handle case where nothing is focused and up is pressed.
-    if (focusedIndex === -1 && step === -1)
-      focusedIndex = 0;
-
-    do {
-      focusedIndex = (numOptions + focusedIndex + step) % numOptions;
-      nextOption = options[focusedIndex];
-      if (nextOption.disabled || nextOption.hidden)
-        nextOption = null;
-      counter++;
-    } while (!nextOption && counter < numOptions);
-
-    return nextOption;
+    assert(numOptions > 0);
+    let index;
+    if (focusedIndex == -1) {
+      index = next ? 0 : numOptions - 1;
+    } else {
+      const delta = next ? 1 : -1;
+      index = (numOptions + focusedIndex + delta) % numOptions;
+    }
+    options[index].focus();
   },
 
   close: function() {
@@ -335,16 +338,28 @@ Polymer({
     this.anchorElement_.scrollIntoViewIfNeeded();
 
     const rect = this.anchorElement_.getBoundingClientRect();
+
+    let height = rect.height;
+    if (opt_config &&
+        opt_config.anchorAlignmentY == AnchorAlignment.AFTER_END) {
+      // When an action menu is positioned after the end of an element, the
+      // action menu can appear too far away from the anchor element, typically
+      // because anchors tend to have padding. So we offset the height a bit
+      // so the menu shows up slightly closer to the content of anchor.
+      height -= AFTER_END_OFFSET;
+    }
+
     this.showAtPosition(/** @type {ShowAtPositionConfig} */ (Object.assign(
         {
           top: rect.top,
           left: rect.left,
-          height: rect.height,
+          height: height,
           width: rect.width,
           // Default to anchoring towards the left.
           anchorAlignmentX: AnchorAlignment.BEFORE_END,
         },
         opt_config)));
+    this.$.wrapper.focus();
   },
 
   /**
@@ -429,8 +444,9 @@ Polymer({
 
     // Flip the X anchor in RTL.
     const rtl = getComputedStyle(this).direction == 'rtl';
-    if (rtl)
+    if (rtl) {
       c.anchorAlignmentX *= -1;
+    }
 
     const offsetWidth = this.$.dialog.offsetWidth;
     const menuLeft = getStartPointWithAnchor(
@@ -455,8 +471,9 @@ Polymer({
    */
   addListeners_: function() {
     this.boundClose_ = this.boundClose_ || function() {
-      if (this.$.dialog.open)
+      if (this.$.dialog.open) {
         this.close();
+      }
     }.bind(this);
     window.addEventListener('resize', this.boundClose_);
     window.addEventListener('popstate', this.boundClose_);

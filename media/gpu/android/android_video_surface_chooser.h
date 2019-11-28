@@ -10,7 +10,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "media/base/android/android_overlay.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
 #include "media/gpu/media_gpu_export.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -57,6 +57,9 @@ class MEDIA_GPU_EXPORT AndroidVideoSurfaceChooser {
     // SurfaceControl where the TextureOwner can be promoted to an overlay
     // dynamically by the compositor.
     bool always_use_texture_owner = false;
+
+    // Is the video persistent (PIP)?
+    bool is_persistent_video = false;
   };
 
   // Notify the client that |overlay| is ready for use.  The client may get

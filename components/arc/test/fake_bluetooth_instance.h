@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "components/arc/common/bluetooth.mojom.h"
+#include "components/arc/mojom/bluetooth.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
 namespace device {
@@ -98,12 +98,6 @@ class FakeBluetoothInstance : public mojom::BluetoothInstance {
                         mojom::BluetoothGattStatus status) override;
   void OnGetGattDB(mojom::BluetoothAddressPtr remote_addr,
                    std::vector<mojom::BluetoothGattDBElementPtr> db) override;
-  void OnServicesRemoved(mojom::BluetoothAddressPtr remote_addr,
-                         uint16_t start_handle,
-                         uint16_t end_handle) override;
-  void OnServicesAdded(
-      mojom::BluetoothAddressPtr remote_addr,
-      std::vector<mojom::BluetoothGattDBElementPtr> db) override;
 
   void OnGattNotify(mojom::BluetoothAddressPtr remote_addr,
                     mojom::BluetoothGattServiceIDPtr service_id,

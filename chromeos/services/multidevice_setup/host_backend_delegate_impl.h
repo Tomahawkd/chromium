@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
+#include "base/timer/timer.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/services/device_sync/public/cpp/device_sync_client.h"
 #include "chromeos/services/multidevice_setup/host_backend_delegate.h"
@@ -89,7 +90,7 @@ class HostBackendDelegateImpl : public HostBackendDelegate,
   // The most-recent snapshot of the host on the back-end.
   base::Optional<multidevice::RemoteDeviceRef> host_from_last_sync_;
 
-  base::WeakPtrFactory<HostBackendDelegateImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<HostBackendDelegateImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HostBackendDelegateImpl);
 };

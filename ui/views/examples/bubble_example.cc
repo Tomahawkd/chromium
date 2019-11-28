@@ -4,7 +4,7 @@
 
 #include "ui/views/examples/bubble_example.h"
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
@@ -59,8 +59,8 @@ class ExampleBubble : public BubbleDialogDelegateView {
   int GetDialogButtons() const override { return ui::DIALOG_BUTTON_NONE; }
 
   void Init() override {
-    SetLayoutManager(
-        std::make_unique<BoxLayout>(BoxLayout::kVertical, gfx::Insets(50)));
+    SetLayoutManager(std::make_unique<BoxLayout>(
+        BoxLayout::Orientation::kVertical, gfx::Insets(50)));
     AddChildView(new Label(GetArrowName(arrow())));
   }
 
@@ -72,13 +72,11 @@ class ExampleBubble : public BubbleDialogDelegateView {
 
 BubbleExample::BubbleExample() : ExampleBase("Bubble") {}
 
-BubbleExample::~BubbleExample() {}
+BubbleExample::~BubbleExample() = default;
 
 void BubbleExample::CreateExampleView(View* container) {
-  PrintStatus("Click with optional modifiers: [Ctrl] for set_arrow(NONE), "
-     "[Alt] for set_arrow(FLOAT), or [Shift] to reverse the arrow iteration.");
-  container->SetLayoutManager(
-      std::make_unique<BoxLayout>(BoxLayout::kHorizontal, gfx::Insets(), 10));
+  container->SetLayoutManager(std::make_unique<BoxLayout>(
+      BoxLayout::Orientation::kHorizontal, gfx::Insets(), 10));
   no_shadow_ = new LabelButton(this, ASCIIToUTF16("No Shadow"));
   container->AddChildView(no_shadow_);
   no_shadow_opaque_ = new LabelButton(this, ASCIIToUTF16("Opaque Border"));
@@ -95,7 +93,7 @@ void BubbleExample::CreateExampleView(View* container) {
 
 void BubbleExample::ButtonPressed(Button* sender, const ui::Event& event) {
   static int arrow_index = 0, color_index = 0;
-  static const int count = arraysize(arrows);
+  static const int count = base::size(arrows);
   arrow_index = (arrow_index + count + (event.IsShiftDown() ? -1 : 1)) % count;
   BubbleBorder::Arrow arrow = arrows[arrow_index];
   if (event.IsControlDown())
@@ -104,7 +102,7 @@ void BubbleExample::ButtonPressed(Button* sender, const ui::Event& event) {
     arrow = BubbleBorder::FLOAT;
 
   ExampleBubble* bubble = new ExampleBubble(sender, arrow);
-  bubble->set_color(colors[(color_index++) % arraysize(colors)]);
+  bubble->set_color(colors[(color_index++) % base::size(colors)]);
 
   if (sender == no_shadow_)
     bubble->set_shadow(BubbleBorder::NO_SHADOW);
@@ -123,6 +121,8 @@ void BubbleExample::ButtonPressed(Button* sender, const ui::Event& event) {
   BubbleDialogDelegateView::CreateBubble(bubble);
 
   bubble->GetWidget()->Show();
+  PrintStatus("Click with optional modifiers: [Ctrl] for set_arrow(NONE), "
+     "[Alt] for set_arrow(FLOAT), or [Shift] to reverse the arrow iteration.");
 }
 
 }  // namespace examples

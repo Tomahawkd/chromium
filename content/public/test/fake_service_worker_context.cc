@@ -3,10 +3,14 @@
 // found in the LICENSE file.
 
 #include "content/public/test/fake_service_worker_context.h"
-#include "content/public/browser/service_worker_context_observer.h"
+
+#include <utility>
 
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/no_destructor.h"
+#include "content/public/browser/service_worker_context_observer.h"
+#include "third_party/blink/public/common/messaging/transferable_message.h"
 
 namespace content {
 
@@ -32,17 +36,19 @@ void FakeServiceWorkerContext::UnregisterServiceWorker(
     ResultCallback callback) {
   NOTREACHED();
 }
-bool FakeServiceWorkerContext::StartingExternalRequest(
+ServiceWorkerExternalRequestResult
+FakeServiceWorkerContext::StartingExternalRequest(
     int64_t service_worker_version_id,
     const std::string& request_uuid) {
   NOTREACHED();
-  return false;
+  return ServiceWorkerExternalRequestResult::kWorkerNotFound;
 }
-bool FakeServiceWorkerContext::FinishedExternalRequest(
+ServiceWorkerExternalRequestResult
+FakeServiceWorkerContext::FinishedExternalRequest(
     int64_t service_worker_version_id,
     const std::string& request_uuid) {
   NOTREACHED();
-  return false;
+  return ServiceWorkerExternalRequestResult::kWorkerNotFound;
 }
 void FakeServiceWorkerContext::CountExternalRequestsForTest(
     const GURL& url,
@@ -57,9 +63,12 @@ void FakeServiceWorkerContext::DeleteForOrigin(const GURL& origin,
                                                ResultCallback callback) {
   NOTREACHED();
 }
+void FakeServiceWorkerContext::PerformStorageCleanup(
+    base::OnceClosure callback) {
+  NOTREACHED();
+}
 void FakeServiceWorkerContext::CheckHasServiceWorker(
     const GURL& url,
-    const GURL& other_url,
     CheckHasServiceWorkerCallback callback) {
   NOTREACHED();
 }
@@ -79,11 +88,11 @@ void FakeServiceWorkerContext::StartServiceWorkerForNavigationHint(
   start_service_worker_for_navigation_hint_called_ = true;
 }
 
-void FakeServiceWorkerContext::StartServiceWorkerAndDispatchLongRunningMessage(
+void FakeServiceWorkerContext::StartServiceWorkerAndDispatchMessage(
     const GURL& scope,
     blink::TransferableMessage message,
     ResultCallback result_callback) {
-  start_service_worker_and_dispatch_long_running_message_calls_.push_back(
+  start_service_worker_and_dispatch_message_calls_.push_back(
       std::make_tuple(scope, std::move(message), std::move(result_callback)));
 }
 
@@ -94,6 +103,15 @@ void FakeServiceWorkerContext::StopAllServiceWorkersForOrigin(
 
 void FakeServiceWorkerContext::StopAllServiceWorkers(base::OnceClosure) {
   NOTREACHED();
+}
+
+const base::flat_map<int64_t, ServiceWorkerRunningInfo>&
+FakeServiceWorkerContext::GetRunningServiceWorkerInfos() {
+  NOTREACHED();
+  static const base::NoDestructor<
+      base::flat_map<int64_t, ServiceWorkerRunningInfo>>
+      empty_running_workers;
+  return *empty_running_workers;
 }
 
 void FakeServiceWorkerContext::NotifyObserversOnVersionActivated(

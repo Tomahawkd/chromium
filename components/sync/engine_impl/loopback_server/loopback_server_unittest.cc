@@ -4,7 +4,6 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "components/sync/base/cancelation_signal.h"
 #include "components/sync/engine_impl/loopback_server/loopback_connection_manager.h"
 #include "components/sync/engine_impl/syncer_proto_util.h"
 #include "components/sync/protocol/sync.pb.h"
@@ -72,8 +71,7 @@ class LoopbackServerTest : public testing::Test {
  public:
   void SetUp() override {
     base::CreateTemporaryFile(&persistent_file_);
-    lcm_ =
-        std::make_unique<LoopbackConnectionManager>(&signal_, persistent_file_);
+    lcm_ = std::make_unique<LoopbackConnectionManager>(persistent_file_);
   }
 
   static bool CallPostAndProcessHeaders(ServerConnectionManager* scm,
@@ -133,7 +131,6 @@ class LoopbackServerTest : public testing::Test {
     EXPECT_FALSE(response.has_commit());
   }
 
-  CancelationSignal signal_;
   base::FilePath persistent_file_;
   std::unique_ptr<LoopbackConnectionManager> lcm_;
 };
@@ -155,8 +152,8 @@ TEST_F(LoopbackServerTest, WrongBirthday) {
 TEST_F(LoopbackServerTest, GetUpdateCommand) {
   ClientToServerResponse response =
       GetUpdatesForType(EntitySpecifics::kBookmarkFieldNumber);
-  // Expect to see the three top-level folders in this update already.
-  EXPECT_EQ(3, response.get_updates().entries_size());
+  // Expect to see the four top-level folders in this update already.
+  EXPECT_EQ(4, response.get_updates().entries_size());
 }
 
 TEST_F(LoopbackServerTest, GetUpdateCommandShouldFilterByDataType) {
@@ -225,8 +222,7 @@ TEST_F(LoopbackServerTest, CommitBookmarkTombstoneFailure) {
 TEST_F(LoopbackServerTest, LoadSavedState) {
   std::string id = CommitVerifySuccess(NewBookmarkEntity(kUrl1, kBookmarkBar));
 
-  CancelationSignal signal;
-  LoopbackConnectionManager second_user(&signal, persistent_file_);
+  LoopbackConnectionManager second_user(persistent_file_);
 
   ClientToServerMessage get_updates_msg;
   SyncerProtoUtil::SetProtocolVersion(&get_updates_msg);
@@ -241,9 +237,17 @@ TEST_F(LoopbackServerTest, LoadSavedState) {
                                         &response));
   EXPECT_EQ(SyncEnums::SUCCESS, response.error_code());
   ASSERT_TRUE(response.has_get_updates());
-  // Expect to see the three top-level folders and the newly added bookmark!
-  EXPECT_EQ(4, response.get_updates().entries_size());
+  // Expect to see the four top-level folders and the newly added bookmark!
+  EXPECT_EQ(5, response.get_updates().entries_size());
   EXPECT_EQ(1U, ResponseToMap(response).count(id));
+
+  ClientToServerResponse response2;
+  EXPECT_TRUE(CallPostAndProcessHeaders(lcm_.get(), nullptr, get_updates_msg,
+                                        &response2));
+  EXPECT_EQ(SyncEnums::SUCCESS, response2.error_code());
+  ASSERT_TRUE(response2.has_get_updates());
+  ASSERT_TRUE(response2.has_store_birthday());
+  EXPECT_EQ(response2.store_birthday(), response.store_birthday());
 }
 
 TEST_F(LoopbackServerTest, CommitCommandUpdate) {
@@ -256,8 +260,8 @@ TEST_F(LoopbackServerTest, CommitCommandUpdate) {
   ClientToServerResponse response =
       GetUpdatesForType(EntitySpecifics::kBookmarkFieldNumber);
   ASSERT_TRUE(response.has_get_updates());
-  // Expect to see no fifth bookmark!
-  EXPECT_EQ(4, response.get_updates().entries_size());
+  // Expect to see no sixth bookmark!
+  EXPECT_EQ(5, response.get_updates().entries_size());
   EXPECT_EQ(kUrl2, ResponseToMap(response)[id].specifics().bookmark().url());
 }
 

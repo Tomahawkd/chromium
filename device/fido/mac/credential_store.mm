@@ -114,8 +114,8 @@ QueryKeychainItemsForProfile(const std::string& keychain_access_group,
       DLOG(ERROR) << "missing label";
       continue;
     }
-    base::Optional<std::string> opt_rp_id = CredentialMetadata::DecodeRpId(
-        metadata_secret, base::SysCFStringRefToUTF8(sec_attr_label));
+    base::Optional<std::string> opt_rp_id =
+        DecodeRpId(metadata_secret, base::SysCFStringRefToUTF8(sec_attr_label));
     if (!opt_rp_id) {
       DVLOG(1) << "key doesn't belong to this profile";
       continue;
@@ -198,26 +198,22 @@ TouchIdCredentialStore::~TouchIdCredentialStore() = default;
 
 bool TouchIdCredentialStore::DeleteCredentials(base::Time created_not_before,
                                                base::Time created_not_after) {
-  if (base::FeatureList::IsEnabled(device::kWebAuthTouchId)) {
-    // Touch ID uses macOS APIs available in 10.12.2 or newer. No need to check
-    // for credentials in lower OS versions.
-    if (__builtin_available(macos 10.12.2, *)) {
-      return DoDeleteWebAuthnCredentials(config_.keychain_access_group,
-                                         config_.metadata_secret,
-                                         created_not_before, created_not_after);
-    }
+  // Touch ID uses macOS APIs available in 10.12.2 or newer. No need to check
+  // for credentials in lower OS versions.
+  if (__builtin_available(macos 10.12.2, *)) {
+    return DoDeleteWebAuthnCredentials(config_.keychain_access_group,
+                                       config_.metadata_secret,
+                                       created_not_before, created_not_after);
   }
   return true;
 }
 
 size_t TouchIdCredentialStore::CountCredentials(base::Time created_not_before,
                                                 base::Time created_not_after) {
-  if (base::FeatureList::IsEnabled(device::kWebAuthTouchId)) {
-    if (__builtin_available(macos 10.12.2, *)) {
-      return DoCountWebAuthnCredentials(config_.keychain_access_group,
-                                        config_.metadata_secret,
-                                        created_not_before, created_not_after);
-    }
+  if (__builtin_available(macos 10.12.2, *)) {
+    return DoCountWebAuthnCredentials(config_.keychain_access_group,
+                                      config_.metadata_secret,
+                                      created_not_before, created_not_after);
   }
   return 0;
 }

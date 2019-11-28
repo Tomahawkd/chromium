@@ -38,12 +38,21 @@ float TextMetrics::GetFontBaseline(const TextBaseline& text_baseline,
   return 0;
 }
 
-void TextMetrics::Trace(blink::Visitor* visitor) {
+void TextMetrics::Trace(Visitor* visitor) {
   visitor->Trace(baselines_);
   ScriptWrappable::Trace(visitor);
 }
 
 TextMetrics::TextMetrics() : baselines_(Baselines::Create()) {}
+
+TextMetrics::TextMetrics(const Font& font,
+                         const TextDirection& direction,
+                         const TextBaseline& baseline,
+                         const TextAlign& align,
+                         const String& text)
+    : TextMetrics() {
+  Update(font, direction, baseline, align, text);
+}
 
 void TextMetrics::Update(const Font& font,
                          const TextDirection& direction,

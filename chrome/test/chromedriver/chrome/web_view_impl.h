@@ -24,6 +24,7 @@ class DebuggerTracker;
 struct DeviceMetrics;
 class DevToolsClient;
 class DomTracker;
+class DownloadDirectoryOverrideManager;
 class FrameTracker;
 class GeolocationOverrideManager;
 class MobileEmulationOverrideManager;
@@ -33,11 +34,13 @@ struct KeyEvent;
 struct MouseEvent;
 class PageLoadStrategy;
 class Status;
+class CastTracker;
 
 class WebViewImpl : public WebView {
  public:
   WebViewImpl(const std::string& id,
               const bool w3c_compliant,
+              const WebViewImpl* parent,
               const BrowserInfo* browser_info,
               std::unique_ptr<DevToolsClient> client,
               const DeviceMetrics* device_metrics,
@@ -58,13 +61,25 @@ class WebViewImpl : public WebView {
   Status Resume(const Timeout* timeout) override;
   Status SendCommand(const std::string& cmd,
                      const base::DictionaryValue& params) override;
+  Status SendCommandFromWebSocket(const std::string& cmd,
+                                  const base::DictionaryValue& params,
+                                  const int client_cmd_id) override;
   Status SendCommandAndGetResult(const std::string& cmd,
                                  const base::DictionaryValue& params,
                                  std::unique_ptr<base::Value>* value) override;
   Status TraverseHistory(int delta, const Timeout* timeout) override;
+  Status EvaluateScriptWithTimeout(const std::string& frame,
+                                   const std::string& expression,
+                                   const base::TimeDelta& timeout,
+                                   std::unique_ptr<base::Value>* result);
   Status EvaluateScript(const std::string& frame,
                         const std::string& expression,
                         std::unique_ptr<base::Value>* result) override;
+  Status CallFunctionWithTimeout(const std::string& frame,
+                                 const std::string& function,
+                                 const base::ListValue& args,
+                                 const base::TimeDelta& timeout,
+                                 std::unique_ptr<base::Value>* result);
   Status CallFunction(const std::string& frame,
                       const std::string& function,
                       const base::ListValue& args,
@@ -74,6 +89,11 @@ class WebViewImpl : public WebView {
                            const base::ListValue& args,
                            const base::TimeDelta& timeout,
                            std::unique_ptr<base::Value>* result) override;
+  Status CallUserSyncScript(const std::string& frame,
+                            const std::string& script,
+                            const base::ListValue& args,
+                            const base::TimeDelta& timeout,
+                            std::unique_ptr<base::Value>* result) override;
   Status CallUserAsyncFunction(const std::string& frame,
                                const std::string& function,
                                const base::ListValue& args,
@@ -84,10 +104,17 @@ class WebViewImpl : public WebView {
                             const base::ListValue& args,
                             std::string* out_frame) override;
   Status DispatchMouseEvents(const std::list<MouseEvent>& events,
-                             const std::string& frame) override;
-  Status DispatchTouchEvent(const TouchEvent& event) override;
-  Status DispatchTouchEvents(const std::list<TouchEvent>& events) override;
-  Status DispatchKeyEvents(const std::list<KeyEvent>& events) override;
+                             const std::string& frame,
+                             bool async_dispatch_events = false) override;
+  Status DispatchTouchEvent(const TouchEvent& event,
+                            bool async_dispatch_events = false) override;
+  Status DispatchTouchEvents(const std::list<TouchEvent>& events,
+                             bool async_dispatch_events = false) override;
+  Status DispatchTouchEventWithMultiPoints(
+      const std::list<TouchEvent>& events,
+      bool async_dispatch_events = false) override;
+  Status DispatchKeyEvents(const std::list<KeyEvent>& events,
+                           bool async_dispatch_events = false) override;
   Status GetCookies(std::unique_ptr<base::ListValue>* cookies,
                     const std::string& current_page_url) override;
   Status DeleteCookie(const std::string& name,
@@ -107,17 +134,20 @@ class WebViewImpl : public WebView {
                                    bool stop_load_on_timeout) override;
   Status IsPendingNavigation(const std::string& frame_id,
                              const Timeout* timeout,
-                             bool* is_pending) override;
+                             bool* is_pending) const override;
   JavaScriptDialogManager* GetJavaScriptDialogManager() override;
   Status OverrideGeolocation(const Geoposition& geoposition) override;
   Status OverrideNetworkConditions(
       const NetworkConditions& network_conditions) override;
+  Status OverrideDownloadDirectoryIfNeeded(
+      const std::string& download_directory) override;
   Status CaptureScreenshot(
       std::string* screenshot,
       const base::DictionaryValue& params) override;
   Status SetFileInputFiles(const std::string& frame,
                            const base::DictionaryValue& element,
-                           const std::vector<base::FilePath>& files) override;
+                           const std::vector<base::FilePath>& files,
+                           const bool append) override;
   Status TakeHeapSnapshot(std::unique_ptr<base::Value>* snapshot) override;
   Status StartProfile() override;
   Status EndProfile(std::unique_ptr<base::Value>* profile_data) override;
@@ -129,12 +159,13 @@ class WebViewImpl : public WebView {
                                  int y,
                                  int xoffset,
                                  int yoffset) override;
-  Status SynthesizePinchGesture(int x, int y, double scale_factor) override;
-  Status GetScreenOrientation(std::string* orientation) override;
-  Status SetScreenOrientation(std::string orientation) override;
-  Status DeleteScreenOrientation() override;
+  bool IsNonBlocking() const override;
   bool IsOOPIF(const std::string& frame_id) override;
   FrameTracker* GetFrameTracker() const override;
+  std::unique_ptr<base::Value> GetCastSinks() override;
+  std::unique_ptr<base::Value> GetCastIssueMessage() override;
+  void ClearNavigationState(const std::string& new_frame_id) override;
+
   const WebViewImpl* GetParent() const;
   bool Lock();
   void Unlock();
@@ -178,8 +209,11 @@ class WebViewImpl : public WebView {
   std::unique_ptr<GeolocationOverrideManager> geolocation_override_manager_;
   std::unique_ptr<NetworkConditionsOverrideManager>
       network_conditions_override_manager_;
+  std::unique_ptr<DownloadDirectoryOverrideManager>
+      download_directory_override_manager_;
   std::unique_ptr<HeapSnapshotTaker> heap_snapshot_taker_;
   std::unique_ptr<DebuggerTracker> debugger_;
+  std::unique_ptr<CastTracker> cast_tracker_;
 };
 
 // Responsible for locking a WebViewImpl and its associated data structure to
@@ -206,15 +240,18 @@ Status EvaluateScript(DevToolsClient* client,
                       int context_id,
                       const std::string& expression,
                       EvaluateScriptReturnType return_type,
+                      const base::TimeDelta& timeout,
                       std::unique_ptr<base::DictionaryValue>* result);
 Status EvaluateScriptAndGetObject(DevToolsClient* client,
                                   int context_id,
                                   const std::string& expression,
+                                  const base::TimeDelta& timeout,
                                   bool* got_object,
                                   std::string* object_id);
 Status EvaluateScriptAndGetValue(DevToolsClient* client,
                                  int context_id,
                                  const std::string& expression,
+                                 const base::TimeDelta& timeout,
                                  std::unique_ptr<base::Value>* result);
 Status ParseCallFunctionResult(const base::Value& temp_result,
                                std::unique_ptr<base::Value>* result);

@@ -17,7 +17,9 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_items_collection/core/offline_item.h"
+#include "components/offline_items_collection/core/update_delta.h"
 #include "content/public/browser/background_fetch_delegate.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/gfx/image/image.h"
 #include "url/origin.h"
 
@@ -52,11 +54,11 @@ class BackgroundFetchDelegateImpl
 
   // BackgroundFetchDelegate implementation:
   void GetIconDisplaySize(GetIconDisplaySizeCallback callback) override;
-  void GetPermissionForOrigin(
-      const url::Origin& origin,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-      GetPermissionForOriginCallback callback) override;
-  void CreateDownloadJob(std::unique_ptr<content::BackgroundFetchDescription>
+  void GetPermissionForOrigin(const url::Origin& origin,
+                              const content::WebContents::Getter& wc_getter,
+                              GetPermissionForOriginCallback callback) override;
+  void CreateDownloadJob(base::WeakPtr<Client> client,
+                         std::unique_ptr<content::BackgroundFetchDescription>
                              fetch_description) override;
   void DownloadUrl(const std::string& job_unique_id,
                    const std::string& guid,
@@ -79,7 +81,9 @@ class BackgroundFetchDelegateImpl
       const std::string& guid,
       std::unique_ptr<content::BackgroundFetchResponse> response);
 
-  void OnDownloadUpdated(const std::string& guid, uint64_t bytes_downloaded);
+  void OnDownloadUpdated(const std::string& guid,
+                         uint64_t bytes_uploaded,
+                         uint64_t bytes_downloaded);
 
   void OnDownloadFailed(const std::string& guid,
                         std::unique_ptr<content::BackgroundFetchResult> result);
@@ -100,9 +104,13 @@ class BackgroundFetchDelegateImpl
                    SingleItemCallback callback) override;
   void GetAllItems(MultipleItemCallback callback) override;
   void GetVisualsForItem(const offline_items_collection::ContentId& id,
+                         GetVisualsOptions options,
                          VisualsCallback callback) override;
   void GetShareInfoForItem(const offline_items_collection::ContentId& id,
                            ShareCallback callback) override;
+  void RenameItem(const offline_items_collection::ContentId& id,
+                  const std::string& name,
+                  RenameCallback callback) override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
 
@@ -123,13 +131,21 @@ class BackgroundFetchDelegateImpl
   void GetUploadData(const std::string& download_guid,
                      download::GetUploadDataCallback callback);
 
+  void set_ukm_event_recorded_for_testing(base::OnceClosure closure) {
+    ukm_event_recorded_for_testing_ = std::move(closure);
+  }
+
   base::WeakPtr<BackgroundFetchDelegateImpl> GetWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
   }
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(BackgroundFetchBrowserTest,
-                           FetchesRunToCompletionAndUpdateTitle_Fetched);
+  FRIEND_TEST_ALL_PREFIXES(BackgroundFetchBrowserTest, ClickEventIsDispatched);
+  FRIEND_TEST_ALL_PREFIXES(BackgroundFetchDelegateImplTest, RecordUkmEvent);
+  FRIEND_TEST_ALL_PREFIXES(BackgroundFetchDelegateImplTest,
+                           HistoryServiceIntegration);
+  FRIEND_TEST_ALL_PREFIXES(BackgroundFetchDelegateImplTest,
+                           HistoryServiceIntegrationUrlVsOrigin);
 
   struct JobDetails {
     // If a job is part of the |job_details_map_|, it will have one of these
@@ -139,11 +155,18 @@ class BackgroundFetchDelegateImpl
       kPendingWillStartDownloading,
       kStartedButPaused,
       kStartedAndDownloading,
+      // The job was aborted.
       kCancelled,
+      // All requests were processed (either succeeded or failed).
+      kDownloadsComplete,
+      // The appropriate completion event (success, fail, abort) has been
+      // dispatched.
+      kJobComplete,
     };
 
     JobDetails(JobDetails&&);
     JobDetails(
+        base::WeakPtr<Client> client,
         std::unique_ptr<content::BackgroundFetchDescription> fetch_description,
         const std::string& provider_namespace,
         bool is_off_the_record);
@@ -151,20 +174,49 @@ class BackgroundFetchDelegateImpl
 
     void UpdateOfflineItem();
     void MarkJobAsStarted();
+    void UpdateJobOnDownloadComplete(const std::string& download_guid);
 
-    enum class UploadData {
-      kAbsent,
-      kIncluded,
+    // Returns how many bytes have been processed by the Download Service so
+    // far.
+    uint64_t GetProcessedBytes() const;
+
+    // Returns the number of downloaded bytes, including for the in progress
+    // requests.
+    uint64_t GetDownloadedBytes() const;
+
+    void UpdateInProgressBytes(const std::string& download_guid,
+                               uint64_t bytes_uploaded,
+                               uint64_t bytes_downloaded);
+
+    struct RequestData {
+      enum class Status {
+        kAbsent,
+        kIncluded,
+      };
+
+      explicit RequestData(bool has_upload_data);
+      ~RequestData();
+
+      Status status = Status::kAbsent;
+
+      uint64_t body_size_bytes = 0u;
+      uint64_t in_progress_uploaded_bytes = 0u;
+      uint64_t in_progress_downloaded_bytes = 0u;
     };
+
+    // The client to report the Background Fetch updates to.
+    base::WeakPtr<Client> client;
 
     // Set of DownloadService GUIDs that are currently processed. They are
     // added by DownloadUrl and are removed when the fetch completes, fails,
-    // or is cancelled. The GUID maps to whether the fetch has upload data.
-    std::map<std::string, UploadData> current_fetch_guids;
+    // or is cancelled.
+    std::map<std::string, RequestData> current_fetch_guids;
 
     offline_items_collection::OfflineItem offline_item;
+    base::Optional<offline_items_collection::UpdateDelta> update_delta;
     State job_state;
     std::unique_ptr<content::BackgroundFetchDescription> fetch_description;
+    bool cancelled_from_ui = false;
 
     base::OnceClosure on_resume;
 
@@ -172,6 +224,9 @@ class BackgroundFetchDelegateImpl
     // Whether we should report progress of the job in terms of size of
     // downloads or in terms of the number of files being downloaded.
     bool ShouldReportProgressBySize();
+
+    // Returns the number of bytes processed by in-progress requests.
+    uint64_t GetInProgressBytes() const;
 
     DISALLOW_COPY_AND_ASSIGN(JobDetails);
   };
@@ -193,6 +248,23 @@ class BackgroundFetchDelegateImpl
   void DidGetPermissionFromDownloadRequestLimiter(
       GetPermissionForOriginCallback callback,
       bool has_permission);
+
+  void DidGetUploadData(const std::string& unique_id,
+                        const std::string& download_guid,
+                        download::GetUploadDataCallback callback,
+                        blink::mojom::SerializedBlobPtr blob);
+
+  // Returns the client for a given |job_unique_id|.
+  base::WeakPtr<Client> GetClient(const std::string& job_unique_id);
+
+  // Helper methods for recording BackgroundFetchDeletingRegistration UKM event.
+  // We check with UkmBackgroundRecorderService whether this event for |origin|
+  // can be recorded.
+  void RecordBackgroundFetchDeletingRegistrationUkmEvent(
+      const url::Origin& origin,
+      bool user_initiated_abort);
+  void DidGetBackgroundSourceId(bool user_initiated_abort,
+                                base::Optional<ukm::SourceId> source_id);
 
   // The profile this service is being created for.
   Profile* profile_;
@@ -217,7 +289,10 @@ class BackgroundFetchDelegateImpl
   // Set of Observers to be notified of any changes to the shown notifications.
   std::set<Observer*> observers_;
 
-  base::WeakPtrFactory<BackgroundFetchDelegateImpl> weak_ptr_factory_;
+  // Testing-only closure to inform tests when a UKM event has been recorded.
+  base::OnceClosure ukm_event_recorded_for_testing_;
+
+  base::WeakPtrFactory<BackgroundFetchDelegateImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundFetchDelegateImpl);
 };

@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "chromeos/services/multidevice_setup/multidevice_setup_initializer.h"
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/services/multidevice_setup/multidevice_setup_impl.h"
 #include "chromeos/services/multidevice_setup/public/cpp/android_sms_app_helper_delegate.h"
 #include "chromeos/services/multidevice_setup/public/cpp/android_sms_pairing_state_tracker.h"
@@ -44,15 +46,13 @@ MultiDeviceSetupInitializer::Factory::BuildInstance(
     device_sync::DeviceSyncClient* device_sync_client,
     AuthTokenValidator* auth_token_validator,
     OobeCompletionTracker* oobe_completion_tracker,
-    std::unique_ptr<AndroidSmsAppHelperDelegate>
-        android_sms_app_helper_delegate,
-    std::unique_ptr<AndroidSmsPairingStateTracker>
-        android_sms_pairing_state_tracker,
-    const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider) {
+    AndroidSmsAppHelperDelegate* android_sms_app_helper_delegate,
+    AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker,
+    const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider) {
   return base::WrapUnique(new MultiDeviceSetupInitializer(
       pref_service, device_sync_client, auth_token_validator,
-      oobe_completion_tracker, std::move(android_sms_app_helper_delegate),
-      std::move(android_sms_pairing_state_tracker), gcm_device_info_provider));
+      oobe_completion_tracker, android_sms_app_helper_delegate,
+      android_sms_pairing_state_tracker, gcm_device_info_provider));
 }
 
 MultiDeviceSetupInitializer::SetHostDeviceArgs::SetHostDeviceArgs(
@@ -75,19 +75,15 @@ MultiDeviceSetupInitializer::MultiDeviceSetupInitializer(
     device_sync::DeviceSyncClient* device_sync_client,
     AuthTokenValidator* auth_token_validator,
     OobeCompletionTracker* oobe_completion_tracker,
-    std::unique_ptr<AndroidSmsAppHelperDelegate>
-        android_sms_app_helper_delegate,
-    std::unique_ptr<AndroidSmsPairingStateTracker>
-        android_sms_pairing_state_tracker,
-    const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider)
+    AndroidSmsAppHelperDelegate* android_sms_app_helper_delegate,
+    AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker,
+    const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider)
     : pref_service_(pref_service),
       device_sync_client_(device_sync_client),
       auth_token_validator_(auth_token_validator),
       oobe_completion_tracker_(oobe_completion_tracker),
-      android_sms_app_helper_delegate_(
-          std::move(android_sms_app_helper_delegate)),
-      android_sms_pairing_state_tracker_(
-          std::move(android_sms_pairing_state_tracker)),
+      android_sms_app_helper_delegate_(android_sms_app_helper_delegate),
+      android_sms_pairing_state_tracker_(android_sms_pairing_state_tracker),
       gcm_device_info_provider_(gcm_device_info_provider) {
   // If |device_sync_client_| is null, this interface cannot perform its tasks.
   if (!device_sync_client_)
@@ -104,7 +100,7 @@ MultiDeviceSetupInitializer::MultiDeviceSetupInitializer(
 MultiDeviceSetupInitializer::~MultiDeviceSetupInitializer() = default;
 
 void MultiDeviceSetupInitializer::SetAccountStatusChangeDelegate(
-    mojom::AccountStatusChangeDelegatePtr delegate) {
+    mojo::PendingRemote<mojom::AccountStatusChangeDelegate> delegate) {
   if (multidevice_setup_impl_) {
     multidevice_setup_impl_->SetAccountStatusChangeDelegate(
         std::move(delegate));
@@ -115,7 +111,7 @@ void MultiDeviceSetupInitializer::SetAccountStatusChangeDelegate(
 }
 
 void MultiDeviceSetupInitializer::AddHostStatusObserver(
-    mojom::HostStatusObserverPtr observer) {
+    mojo::PendingRemote<mojom::HostStatusObserver> observer) {
   if (multidevice_setup_impl_) {
     multidevice_setup_impl_->AddHostStatusObserver(std::move(observer));
     return;
@@ -125,7 +121,7 @@ void MultiDeviceSetupInitializer::AddHostStatusObserver(
 }
 
 void MultiDeviceSetupInitializer::AddFeatureStateObserver(
-    mojom::FeatureStateObserverPtr observer) {
+    mojo::PendingRemote<mojom::FeatureStateObserver> observer) {
   if (multidevice_setup_impl_) {
     multidevice_setup_impl_->AddFeatureStateObserver(std::move(observer));
     return;
@@ -142,6 +138,16 @@ void MultiDeviceSetupInitializer::GetEligibleHostDevices(
   }
 
   pending_get_eligible_hosts_args_.push_back(std::move(callback));
+}
+
+void MultiDeviceSetupInitializer::GetEligibleActiveHostDevices(
+    GetEligibleActiveHostDevicesCallback callback) {
+  if (multidevice_setup_impl_) {
+    multidevice_setup_impl_->GetEligibleActiveHostDevices(std::move(callback));
+    return;
+  }
+
+  pending_get_eligible_active_hosts_args_.push_back(std::move(callback));
 }
 
 void MultiDeviceSetupInitializer::SetHostDevice(
@@ -272,8 +278,8 @@ void MultiDeviceSetupInitializer::InitializeImplementation() {
 
   multidevice_setup_impl_ = MultiDeviceSetupImpl::Factory::Get()->BuildInstance(
       pref_service_, device_sync_client_, auth_token_validator_,
-      oobe_completion_tracker_, std::move(android_sms_app_helper_delegate_),
-      std::move(android_sms_pairing_state_tracker_), gcm_device_info_provider_);
+      oobe_completion_tracker_, android_sms_app_helper_delegate_,
+      android_sms_pairing_state_tracker_, gcm_device_info_provider_);
 
   if (pending_delegate_) {
     multidevice_setup_impl_->SetAccountStatusChangeDelegate(
@@ -331,6 +337,12 @@ void MultiDeviceSetupInitializer::InitializeImplementation() {
         std::move(get_eligible_callback));
   }
   pending_get_eligible_hosts_args_.clear();
+
+  for (auto& get_eligible_callback : pending_get_eligible_active_hosts_args_) {
+    multidevice_setup_impl_->GetEligibleActiveHostDevices(
+        std::move(get_eligible_callback));
+  }
+  pending_get_eligible_active_hosts_args_.clear();
 
   for (auto& get_host_callback : pending_get_host_args_)
     multidevice_setup_impl_->GetHostStatus(std::move(get_host_callback));

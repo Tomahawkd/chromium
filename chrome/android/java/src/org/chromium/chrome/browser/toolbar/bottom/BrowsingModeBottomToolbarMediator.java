@@ -4,64 +4,41 @@
 
 package org.chromium.chrome.browser.toolbar.bottom;
 
-import android.content.res.ColorStateList;
-import android.content.res.Resources;
 import android.view.View;
+
+import androidx.annotation.ColorInt;
+import androidx.annotation.StringRes;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager.OverlayPanelManagerObserver;
-import org.chromium.chrome.browser.compositor.layouts.Layout;
-import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
+import org.chromium.chrome.browser.ThemeColorProvider;
+import org.chromium.chrome.browser.ThemeColorProvider.ThemeColorObserver;
 import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
-import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior.OverviewModeObserver;
-import org.chromium.chrome.browser.compositor.layouts.SceneChangeObserver;
-import org.chromium.chrome.browser.compositor.layouts.ToolbarSwipeLayout;
-import org.chromium.chrome.browser.compositor.layouts.eventfilter.EdgeSwipeHandler;
-import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
-import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager.FullscreenListener;
-import org.chromium.chrome.browser.toolbar.ThemeColorProvider;
-import org.chromium.chrome.browser.toolbar.ThemeColorProvider.ThemeColorObserver;
 import org.chromium.chrome.browser.widget.FeatureHighlightProvider;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
-import org.chromium.ui.KeyboardVisibilityDelegate;
-import org.chromium.ui.base.WindowAndroid;
-import org.chromium.ui.resources.ResourceManager;
 
 /**
  * This class is responsible for reacting to events from the outside world, interacting with other
  * coordinators, running most of the business logic associated with the browsing mode bottom
  * toolbar, and updating the model accordingly.
  */
-class BrowsingModeBottomToolbarMediator
-        implements FullscreenListener, KeyboardVisibilityDelegate.KeyboardVisibilityListener,
-                   OverlayPanelManagerObserver, OverviewModeObserver, SceneChangeObserver,
-                   ThemeColorObserver {
+class BrowsingModeBottomToolbarMediator implements ThemeColorObserver {
     /** The amount of time to show the Duet help bubble for. */
-    private static final int DUET_IPH_BUBBLE_SHOW_DURATION_MS = 6000;
+    private static final int DUET_IPH_BUBBLE_SHOW_DURATION_MS = 10000;
 
     /** The transparency fraction of the IPH bubble. */
     private static final float DUET_IPH_BUBBLE_ALPHA_FRACTION = 0.9f;
 
+    /** The transparency fraction of the IPH background. */
+    private static final float DUET_IPH_BACKGROUND_ALPHA_FRACTION = 0.3f;
+
     /** The model for the browsing mode bottom toolbar that holds all of its state. */
-    private BrowsingModeBottomToolbarModel mModel;
-
-    /** The previous height of the bottom toolbar. */
-    private int mBrowsingModeBottomToolbarHeightBeforeHide;
-
-    /** Whether the swipe layout is currently active. */
-    private boolean mIsInSwipeLayout;
-
-    /** The fullscreen manager to observe browser controls events. */
-    private final ChromeFullscreenManager mFullscreenManager;
+    private final BrowsingModeBottomToolbarModel mModel;
 
     /** The overview mode manager. */
     private OverviewModeBehavior mOverviewModeBehavior;
-
-    /** A {@link WindowAndroid} for watching keyboard visibility events. */
-    private WindowAndroid mWindowAndroid;
 
     /** A provider that notifies components when the theme color changes.*/
     private ThemeColorProvider mThemeColorProvider;
@@ -70,207 +47,89 @@ class BrowsingModeBottomToolbarMediator
      * Build a new mediator that handles events from outside the bottom toolbar.
      * @param model The {@link BrowsingModeBottomToolbarModel} that holds all the state for the
      *              browsing mode  bottom toolbar.
-     * @param fullscreenManager A {@link ChromeFullscreenManager} for events related to the browser
-     *                          controls.
-     * @param resources Android {@link Resources} to pull dimensions from.
      */
-    BrowsingModeBottomToolbarMediator(BrowsingModeBottomToolbarModel model,
-            ChromeFullscreenManager fullscreenManager, Resources resources) {
+    BrowsingModeBottomToolbarMediator(BrowsingModeBottomToolbarModel model) {
         mModel = model;
-        mFullscreenManager = fullscreenManager;
-        mFullscreenManager.addListener(this);
-
-        // Notify the fullscreen manager that the bottom controls now have a height.
-        fullscreenManager.setBottomControlsHeight(
-                resources.getDimensionPixelOffset(R.dimen.bottom_toolbar_height));
-        fullscreenManager.updateViewportSize();
-    }
-
-    /**
-     * @param swipeHandler The handler that controls the toolbar swipe behavior.
-     */
-    void setToolbarSwipeHandler(EdgeSwipeHandler swipeHandler) {
-        mModel.set(BrowsingModeBottomToolbarModel.TOOLBAR_SWIPE_HANDLER, swipeHandler);
     }
 
     void setThemeColorProvider(ThemeColorProvider themeColorProvider) {
         mThemeColorProvider = themeColorProvider;
-        mThemeColorProvider.addObserver(this);
-    }
-
-    void setResourceManager(ResourceManager resourceManager) {
-        mModel.set(BrowsingModeBottomToolbarModel.RESOURCE_MANAGER, resourceManager);
-    }
-
-    void setOverviewModeBehavior(OverviewModeBehavior overviewModeBehavior) {
-        mOverviewModeBehavior = overviewModeBehavior;
-        mOverviewModeBehavior.addOverviewModeObserver(this);
-    }
-
-    void setToolbarSwipeLayout(ToolbarSwipeLayout layout) {
-        mModel.set(BrowsingModeBottomToolbarModel.TOOLBAR_SWIPE_LAYOUT, layout);
-    }
-
-    void setWindowAndroid(WindowAndroid windowAndroid) {
-        assert mWindowAndroid == null : "#setWindowAndroid should only be called once per toolbar.";
-        // Watch for keyboard events so we can hide the bottom toolbar when the keyboard is showing.
-        mWindowAndroid = windowAndroid;
-        mWindowAndroid.getKeyboardDelegate().addKeyboardVisibilityListener(this);
-    }
-
-    void setLayoutManager(LayoutManager layoutManager) {
-        mModel.set(BrowsingModeBottomToolbarModel.LAYOUT_MANAGER, layoutManager);
-        layoutManager.addSceneChangeObserver(this);
-        layoutManager.getOverlayPanelManager().addObserver(this);
+        mThemeColorProvider.addThemeColorObserver(this);
     }
 
     /**
      * Maybe show the IPH bubble for Chrome Duet.
+     * @param feature A String identifying the feature.
      * @param activity An activity to attach the IPH to.
      * @param anchor The view to anchor the IPH to.
      * @param tracker A tracker for IPH.
+     * @param completeRunnable The Runnable to be called if the user tab on the view.
      */
-    void showIPH(ChromeActivity activity, View anchor, Tracker tracker) {
-        if (!tracker.shouldTriggerHelpUI(FeatureConstants.CHROME_DUET_FEATURE)) return;
-        int baseColor =
+    void showIPH(@FeatureConstants String feature, ChromeActivity activity, View anchor,
+            Tracker tracker, Runnable completeRunnable) {
+        if (!tracker.shouldTriggerHelpUI(feature) || !anchor.isEnabled()) return;
+        int innerBackgroundColor =
+                ApiCompatibilityUtils.getColor(anchor.getResources(), R.color.modern_primary_color);
+        int baseBubbleColor =
                 ApiCompatibilityUtils.getColor(anchor.getResources(), R.color.modern_blue_600);
 
         // Clear out the alpha and use custom transparency.
-        int finalColor =
-                (baseColor & 0x00FFFFFF) | ((int) (DUET_IPH_BUBBLE_ALPHA_FRACTION * 255) << 24);
+        int finalOuterColor =
+                applyCustomAlphaToColor(baseBubbleColor, DUET_IPH_BUBBLE_ALPHA_FRACTION);
+        int finalScrimColor =
+                applyCustomAlphaToColor(baseBubbleColor, DUET_IPH_BACKGROUND_ALPHA_FRACTION);
 
-        FeatureHighlightProvider.getInstance().buildForView(activity, anchor,
-                R.string.iph_duet_start_search, FeatureHighlightProvider.TextAlignment.CENTER,
-                R.style.WhiteTitle1, R.string.iph_duet_icons_moved,
-                FeatureHighlightProvider.TextAlignment.CENTER, R.style.WhiteBody, finalColor,
-                DUET_IPH_BUBBLE_SHOW_DURATION_MS);
+        @StringRes
+        int titleId = 0;
+        @StringRes
+        int descId = 0;
+        switch (feature) {
+            case FeatureConstants.CHROME_DUET_HOME_BUTTON_FEATURE:
+                titleId = R.string.iph_duet_home_button_title;
+                descId = R.string.iph_duet_home_button_description;
+                break;
+            case FeatureConstants.CHROME_DUET_SEARCH_FEATURE:
+                titleId = R.string.iph_duet_search_title;
+                descId = R.string.iph_duet_search_description;
+                break;
+            case FeatureConstants.CHROME_DUET_TAB_SWITCHER_FEATURE:
+                titleId = R.string.iph_duet_tab_switcher_title;
+                descId = R.string.iph_duet_tab_switcher_description;
+                break;
+            default:
+                assert false : "Unsupported FeatureConstants: " + feature;
+        }
+        FeatureHighlightProvider.getInstance().buildForView(activity, anchor, titleId,
+                FeatureHighlightProvider.TextAlignment.CENTER, R.style.TextAppearance_WhiteTitle1,
+                descId, FeatureHighlightProvider.TextAlignment.CENTER,
+                R.style.TextAppearance_WhiteBody, innerBackgroundColor, finalOuterColor,
+                finalScrimColor, DUET_IPH_BUBBLE_SHOW_DURATION_MS, completeRunnable);
 
-        anchor.postDelayed(() -> tracker.dismissed(FeatureConstants.CHROME_DUET_FEATURE),
-                DUET_IPH_BUBBLE_SHOW_DURATION_MS);
-    }
-
-    boolean isVisible() {
-        return mModel.get(BrowsingModeBottomToolbarModel.IS_VISIBLE);
+        anchor.postDelayed(() -> tracker.dismissed(feature), DUET_IPH_BUBBLE_SHOW_DURATION_MS);
     }
 
     /**
      * Clean up anything that needs to be when the bottom toolbar is destroyed.
      */
     void destroy() {
-        mFullscreenManager.removeListener(this);
-        if (mOverviewModeBehavior != null) {
-            mOverviewModeBehavior.removeOverviewModeObserver(this);
-            mOverviewModeBehavior = null;
-        }
-        if (mWindowAndroid != null) {
-            mWindowAndroid.getKeyboardDelegate().removeKeyboardVisibilityListener(this);
-            mWindowAndroid = null;
-        }
-        if (mModel.get(BrowsingModeBottomToolbarModel.LAYOUT_MANAGER) != null) {
-            LayoutManager manager = mModel.get(BrowsingModeBottomToolbarModel.LAYOUT_MANAGER);
-            manager.getOverlayPanelManager().removeObserver(this);
-            manager.removeSceneChangeObserver(this);
-        }
         if (mThemeColorProvider != null) {
-            mThemeColorProvider.removeObserver(this);
+            mThemeColorProvider.removeThemeColorObserver(this);
             mThemeColorProvider = null;
         }
     }
 
     @Override
-    public void onContentOffsetChanged(float offset) {}
-
-    @Override
-    public void onControlsOffsetChanged(float topOffset, float bottomOffset, boolean needsAnimate) {
-        mModel.set(BrowsingModeBottomToolbarModel.Y_OFFSET, (int) bottomOffset);
-        if (bottomOffset > 0 || mFullscreenManager.getBottomControlsHeight() == 0) {
-            mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, false);
-        } else {
-            tryShowingAndroidView();
-        }
-    }
-
-    @Override
-    public void onToggleOverlayVideoMode(boolean enabled) {}
-
-    @Override
-    public void onBottomControlsHeightChanged(int bottomControlsHeight) {}
-
-    @Override
-    public void onOverviewModeStartedShowing(boolean showToolbar) {
-        mModel.set(BrowsingModeBottomToolbarModel.IS_VISIBLE, false);
-        mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, false);
-    }
-
-    @Override
-    public void onOverviewModeFinishedShowing() {}
-
-    @Override
-    public void onOverviewModeStartedHiding(boolean showToolbar, boolean delayAnimation) {
-        mModel.set(BrowsingModeBottomToolbarModel.IS_VISIBLE, true);
-        mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, true);
-    }
-
-    @Override
-    public void onOverviewModeFinishedHiding() {}
-
-    @Override
-    public void onOverlayPanelShown() {
-        mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, false);
-    }
-
-    @Override
-    public void onOverlayPanelHidden() {
-        tryShowingAndroidView();
-    }
-
-    @Override
-    public void keyboardVisibilityChanged(boolean isShowing) {
-        // The toolbars are force shown when the keyboard is visible, so we can blindly set
-        // the bottom toolbar view to visible or invisible regardless of the previous state.
-        if (isShowing) {
-            mBrowsingModeBottomToolbarHeightBeforeHide =
-                    mFullscreenManager.getBottomControlsHeight();
-            mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, false);
-            mModel.set(BrowsingModeBottomToolbarModel.COMPOSITED_VIEW_VISIBLE, false);
-            mFullscreenManager.setBottomControlsHeight(0);
-        } else {
-            mFullscreenManager.setBottomControlsHeight(mBrowsingModeBottomToolbarHeightBeforeHide);
-            tryShowingAndroidView();
-            mModel.set(BrowsingModeBottomToolbarModel.Y_OFFSET,
-                    (int) mFullscreenManager.getBottomControlOffset());
-            mModel.set(BrowsingModeBottomToolbarModel.COMPOSITED_VIEW_VISIBLE, true);
-        }
-    }
-
-    @Override
-    public void onTabSelectionHinted(int tabId) {}
-
-    @Override
-    public void onSceneChange(Layout layout) {
-        if (layout instanceof ToolbarSwipeLayout) {
-            mIsInSwipeLayout = true;
-            mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, false);
-        } else if (mIsInSwipeLayout) {
-            // Only change to visible if leaving the swipe layout.
-            mIsInSwipeLayout = false;
-            mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, true);
-        }
-    }
-
-    @Override
-    public void onThemeColorChanged(ColorStateList tintList, int primaryColor) {
+    public void onThemeColorChanged(int primaryColor, boolean shouldAnimate) {
         mModel.set(BrowsingModeBottomToolbarModel.PRIMARY_COLOR, primaryColor);
     }
 
     /**
-     * Try showing the toolbar's Android view after it has been hidden. This accounts for cases
-     * where a browser signal would ordinarily re-show the view, but others still require it to be
-     * hidden.
+     * Set the alpha for the color.
+     * @param baseColor The color which alpha will apply to.
+     * @param alpha The desired alpha for the color. The value should between 0 to 1. 0 means total
+     *         transparency, 1 means total non-transparency.
      */
-    private void tryShowingAndroidView() {
-        if (mFullscreenManager.getBottomControlOffset() > 0) return;
-        if (mModel.get(BrowsingModeBottomToolbarModel.Y_OFFSET) != 0) return;
-        mModel.set(BrowsingModeBottomToolbarModel.ANDROID_VIEW_VISIBLE, true);
+    private @ColorInt int applyCustomAlphaToColor(@ColorInt int baseColor, float alpha) {
+        return (baseColor & 0x00FFFFFF) | ((int) (alpha * 255) << 24);
     }
 }

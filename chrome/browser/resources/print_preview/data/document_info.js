@@ -2,227 +2,198 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.define('print_preview', function() {
-  'use strict';
+import {WebUIListenerBehavior} from 'chrome://resources/js/web_ui_listener_behavior.m.js';
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-  class DocumentInfo extends cr.EventTarget {
-    /**
-     * Data model which contains information related to the document to print.
-     */
-    constructor() {
-      super();
+import {Coordinate2d} from './coordinate2d.js';
+import {CustomMarginsOrientation, Margins} from './margins.js';
+import {PrintableArea} from './printable_area.js';
+import {Size} from './size.js';
 
-      /**
-       * Whether the document is styled by CSS media styles.
-       * @private {boolean}
-       */
-      this.hasCssMediaStyles_ = false;
+/**
+ * @typedef {{
+ *   hasCssMediaStyles: boolean,
+ *   hasSelection: boolean,
+ *   isModifiable: boolean,
+ *   isFromArc: boolean,
+ *   isPdf: boolean,
+ *   isScalingDisabled: boolean,
+ *   fitToPageScaling: number,
+ *   pageCount: number,
+ *   title: string,
+ * }}
+ */
+export let DocumentSettings;
 
-      /**
-       * Whether the document has selected content.
-       * @private {boolean}
-       */
-      this.hasSelection_ = false;
+/**
+ * @typedef {{
+ *   marginTop: number,
+ *   marginLeft: number,
+ *   marginBottom: number,
+ *   marginRight: number,
+ *   contentWidth: number,
+ *   contentHeight: number,
+ *   printableAreaX: number,
+ *   printableAreaY: number,
+ *   printableAreaWidth: number,
+ *   printableAreaHeight: number,
+ * }}
+ */
+export let PageLayoutInfo;
 
-      /**
-       * Whether the document to print is modifiable (i.e. can be reflowed).
-       * @private {boolean}
-       */
-      this.isModifiable_ = true;
+Polymer({
+  is: 'print-preview-document-info',
 
-      /**
-       * Whether scaling of the document is prohibited.
-       * @private {boolean}
-       */
-      this.isScalingDisabled_ = false;
+  behaviors: [WebUIListenerBehavior],
 
-      /**
-       * Scaling required to fit to page.
-       * @private {number}
-       */
-      this.fitToPageScaling_ = 100;
+  properties: {
+    /** @type {!DocumentSettings} */
+    documentSettings: {
+      type: Object,
+      notify: true,
+      value: function() {
+        return {
+          hasCssMediaStyles: false,
+          hasSelection: false,
+          isModifiable: true,
+          isFromArc: false,
+          isPdf: false,
+          isScalingDisabled: false,
+          fitToPageScaling: 100,
+          pageCount: 0,
+          title: '',
+        };
+      },
+    },
 
-      /**
-       * Margins of the document in points.
-       * @private {print_preview.Margins}
-       */
-      this.margins_ = null;
+    inFlightRequestId: {
+      type: Number,
+      value: -1,
+    },
 
-      /**
-       * Number of pages in the document to print.
-       * @private {number}
-       */
-      this.pageCount_ = 0;
-
-      /**
-       * Size of the pages of the document in points. Actual page-related
-       * information won't be set until preview generation occurs, so use
-       * a default value until then. This way, the print ticket store will be
-       * valid even if no preview can be generated.
-       * @private {!print_preview.Size}
-       */
-      this.pageSize_ = new print_preview.Size(612, 792);  // 8.5"x11"
-
-      /**
-       * Printable area of the document in points.
-       * @private {!print_preview.PrintableArea}
-       */
-      this.printableArea_ = new print_preview.PrintableArea(
-          new print_preview.Coordinate2d(0, 0), this.pageSize_);
-
-      /**
-       * Title of document.
-       * @private {string}
-       */
-      this.title_ = '';
-
-      /**
-       * Whether this data model has been initialized.
-       * @private {boolean}
-       */
-      this.isInitialized_ = false;
-    }
-
-    /** @return {boolean} Whether the document is styled by CSS media styles. */
-    get hasCssMediaStyles() {
-      return this.hasCssMediaStyles_;
-    }
-
-    /** @return {boolean} Whether the document has selected content. */
-    get hasSelection() {
-      return this.hasSelection_;
-    }
+    /** @type {Margins} */
+    margins: {
+      type: Object,
+      notify: true,
+    },
 
     /**
-     * @return {boolean} Whether the document to print is modifiable (i.e. can
-     *     be reflowed).
+     * Size of the pages of the document in points. Actual page-related
+     * information won't be set until preview generation occurs, so use
+     * a default value until then.
+     * @type {!Size}
      */
-    get isModifiable() {
-      return this.isModifiable_;
-    }
-
-    /** @return {boolean} Whether scaling of the document is prohibited. */
-    get isScalingDisabled() {
-      return this.isScalingDisabled_;
-    }
-
-    /** @return {number} Scaling required to fit to page. */
-    get fitToPageScaling() {
-      return this.fitToPageScaling_;
-    }
-
-    /** @return {print_preview.Margins} Margins of the document in points. */
-    get margins() {
-      return this.margins_;
-    }
-
-    /** @return {number} Number of pages in the document to print. */
-    get pageCount() {
-      return this.pageCount_;
-    }
+    pageSize: {
+      type: Object,
+      notify: true,
+      value: function() {
+        return new Size(612, 792);
+      },
+    },
 
     /**
-     * @return {!print_preview.Size} Size of the pages of the document in
-     *     points.
+     * Printable area of the document in points.
+     * @type {!PrintableArea}
      */
-    get pageSize() {
-      return this.pageSize_;
-    }
-
-    /**
-     * @return {!print_preview.PrintableArea} Printable area of the document in
-     *     points.
-     */
-    get printableArea() {
-      return this.printableArea_;
-    }
-
-    /** @return {string} Title of document. */
-    get title() {
-      return this.title_;
-    }
-
-    /**
-     * Initializes the state of the data model and dispatches a CHANGE event.
-     * @param {boolean} isModifiable Whether the document is modifiable.
-     * @param {string} title Title of the document.
-     * @param {boolean} hasSelection Whether the document has user-selected
-     *     content.
-     */
-    init(isModifiable, title, hasSelection) {
-      this.isModifiable_ = isModifiable;
-      this.title_ = title;
-      this.hasSelection_ = hasSelection;
-      this.isInitialized_ = true;
-      cr.dispatchSimpleEvent(this, DocumentInfo.EventType.CHANGE);
-    }
-
-    /**
-     * Updates whether scaling is disabled for the document and dispatches a
-     * CHANGE event.
-     * @param {boolean} isScalingDisabled Whether scaling of the document is
-     *     prohibited.
-     */
-    updateIsScalingDisabled(isScalingDisabled) {
-      if (this.isInitialized_ && this.isScalingDisabled_ != isScalingDisabled) {
-        this.isScalingDisabled_ = isScalingDisabled;
-        cr.dispatchSimpleEvent(this, DocumentInfo.EventType.CHANGE);
-      }
-    }
-
-    /**
-     * Updates the total number of pages in the document and dispatches a CHANGE
-     * event.
-     * @param {number} pageCount Number of pages in the document.
-     */
-    updatePageCount(pageCount) {
-      if (this.isInitialized_ && this.pageCount_ != pageCount) {
-        this.pageCount_ = pageCount;
-        cr.dispatchSimpleEvent(this, DocumentInfo.EventType.CHANGE);
-      }
-    }
-
-    /**
-     * Updates the fit to page scaling. Does not dispatch a CHANGE event, since
-     * this is only called in tests and in the new print preview UI, which uses
-     * data bindings to notify UI elements of the change.
-     * @param {number} scaleFactor The fit to page scale factor.
-     */
-    updateFitToPageScaling(scaleFactor) {
-      this.fitToPageScaling_ = scaleFactor;
-    }
-
-    /**
-     * Updates information about each page and dispatches a CHANGE event.
-     * @param {!print_preview.PrintableArea} printableArea Printable area of the
-     *     document in points.
-     * @param {!print_preview.Size} pageSize Size of the pages of the document
-     *     in points.
-     * @param {boolean} hasCssMediaStyles Whether the document is styled by CSS
-     *     media styles.
-     * @param {print_preview.Margins} margins Margins of the document in points.
-     */
-    updatePageInfo(printableArea, pageSize, hasCssMediaStyles, margins) {
-      if (this.isInitialized_ &&
-          (!this.printableArea_.equals(printableArea) ||
-           !this.pageSize_.equals(pageSize) ||
-           this.hasCssMediaStyles_ != hasCssMediaStyles ||
-           this.margins_ == null || !this.margins_.equals(margins))) {
-        this.printableArea_ = printableArea;
-        this.pageSize_ = pageSize;
-        this.hasCssMediaStyles_ = hasCssMediaStyles;
-        this.margins_ = margins;
-        cr.dispatchSimpleEvent(this, DocumentInfo.EventType.CHANGE);
-      }
-    }
-  }
+    printableArea: {
+      type: Object,
+      notify: true,
+      value: function() {
+        return new PrintableArea(new Coordinate2d(0, 0), new Size(612, 792));
+      },
+    },
+  },
 
   /**
-   * Event types dispatched by this data model.
-   * @enum {string}
+   * Whether this data model has been initialized.
+   * @private {boolean}
    */
-  DocumentInfo.EventType = {CHANGE: 'print_preview.DocumentInfo.CHANGE'};
+  isInitialized_: false,
 
-  // Export
-  return {DocumentInfo: DocumentInfo};
+  /** @override */
+  attached: function() {
+    this.addWebUIListener(
+        'page-count-ready', this.onPageCountReady_.bind(this));
+    this.addWebUIListener(
+        'page-layout-ready', this.onPageLayoutReady_.bind(this));
+  },
+
+  /**
+   * Initializes the state of the data model.
+   * @param {boolean} isModifiable Whether the document is modifiable.
+   * @param {boolean} isFromArc Whether the document is from ARC.
+   * @param {boolean} isPdf Whether the document is PDF.
+   * @param {string} title Title of the document.
+   * @param {boolean} hasSelection Whether the document has user-selected
+   *     content.
+   */
+  init: function(isModifiable, isFromArc, isPdf, title, hasSelection) {
+    this.isInitialized_ = true;
+    this.set('documentSettings.isModifiable', isModifiable);
+    this.set('documentSettings.isFromArc', isFromArc);
+    // TODO(crbug.com/702995): Remove once Flash is deprecated.
+    this.set('documentSettings.isPdf', isPdf);
+    this.set('documentSettings.title', title);
+    this.set('documentSettings.hasSelection', hasSelection);
+  },
+
+  /**
+   * Updates whether scaling is disabled for the document.
+   * @param {boolean} isScalingDisabled Whether scaling of the document is
+   *     prohibited.
+   */
+  updateIsScalingDisabled: function(isScalingDisabled) {
+    if (this.isInitialized_) {
+      this.set('documentSettings.isScalingDisabled', isScalingDisabled);
+    }
+  },
+
+  /**
+   * Called when the page layout of the document is ready. Always occurs
+   * as a result of a preview request.
+   * @param {!PageLayoutInfo} pageLayout Layout information
+   *     about the document.
+   * @param {boolean} hasCustomPageSizeStyle Whether this document has a
+   *     custom page size or style to use.
+   * @private
+   */
+  onPageLayoutReady_: function(pageLayout, hasCustomPageSizeStyle) {
+    const origin =
+        new Coordinate2d(pageLayout.printableAreaX, pageLayout.printableAreaY);
+    const size =
+        new Size(pageLayout.printableAreaWidth, pageLayout.printableAreaHeight);
+
+    const margins = new Margins(
+        Math.round(pageLayout.marginTop), Math.round(pageLayout.marginRight),
+        Math.round(pageLayout.marginBottom), Math.round(pageLayout.marginLeft));
+
+    const o = CustomMarginsOrientation;
+    const pageSize = new Size(
+        pageLayout.contentWidth + margins.get(o.LEFT) + margins.get(o.RIGHT),
+        pageLayout.contentHeight + margins.get(o.TOP) + margins.get(o.BOTTOM));
+
+    if (this.isInitialized_) {
+      this.printableArea = new PrintableArea(origin, size);
+      this.pageSize = pageSize;
+      this.set('documentSettings.hasCssMediaStyles', hasCustomPageSizeStyle);
+      this.margins = margins;
+    }
+  },
+
+  /**
+   * Called when the document page count is received from the native layer.
+   * Always occurs as a result of a preview request.
+   * @param {number} pageCount The document's page count.
+   * @param {number} previewResponseId The request ID for this page count event.
+   * @param {number} fitToPageScaling The scaling required to fit the document
+   *     to page.
+   * @private
+   */
+  onPageCountReady_: function(pageCount, previewResponseId, fitToPageScaling) {
+    if (this.inFlightRequestId != previewResponseId || !this.isInitialized_) {
+      return;
+    }
+    this.set('documentSettings.pageCount', pageCount);
+    this.set('documentSettings.fitToPageScaling', fitToPageScaling);
+  },
 });

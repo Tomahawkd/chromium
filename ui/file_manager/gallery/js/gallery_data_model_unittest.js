@@ -18,7 +18,7 @@ function setUp() {
 
 function testSaveItemOverwrite(callback) {
   var item = new MockGalleryItem(
-      new MockFileEntry(fileSystem, '/test.jpg'), null, {}, null,
+      MockFileEntry.create(fileSystem, '/test.jpg'), null, {}, null,
       false /* isOriginal */);
 
   // Mocking the saveToFile method.
@@ -33,15 +33,18 @@ function testSaveItemOverwrite(callback) {
   };
   model.push(item);
   reportPromise(
-      model.saveItem({}, item, document.createElement('canvas'),
-          true /* overwrite */).
-          then(function() { assertEquals(1, model.length); }),
+      model
+          .saveItem(
+              {}, item, document.createElement('canvas'), true /* overwrite */)
+          .then(function() {
+            assertEquals(1, model.length);
+          }),
       callback);
 }
 
 function testSaveItemToNewFile(callback) {
   var item = new MockGalleryItem(
-      new MockFileEntry(fileSystem, '/test.webp'), null, {}, null,
+      MockFileEntry.create(fileSystem, '/test.webp'), null, {}, null,
       true /* isOriginal */);
 
   // Mocking the saveToFile method. In this case, Gallery saves to a new file
@@ -55,7 +58,7 @@ function testSaveItemToNewFile(callback) {
       overwrite,
       callback) {
     // Gallery item track new file.
-    item.entry_ = new MockFileEntry(fileSystem, '/test (1).png');
+    item.entry_ = MockFileEntry.create(fileSystem, '/test (1).png');
     item.original_ = false;
     callback(true);
   };

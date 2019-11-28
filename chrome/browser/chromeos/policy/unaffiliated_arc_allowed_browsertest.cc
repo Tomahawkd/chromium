@@ -9,8 +9,8 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/arc/session/arc_session_manager.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/policy/affiliation_test_helper.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
@@ -143,7 +143,7 @@ IN_PROC_BROWSER_TEST_P(UnaffiliatedArcAllowedTest, ProfileTest) {
       << "affiliated users.";
 }
 
-INSTANTIATE_TEST_CASE_P(Blub,
-                        UnaffiliatedArcAllowedTest,
-                        ::testing::Values(Params(true), Params(false)));
+INSTANTIATE_TEST_SUITE_P(Blub,
+                         UnaffiliatedArcAllowedTest,
+                         ::testing::Values(Params(true), Params(false)));
 }  // namespace policy

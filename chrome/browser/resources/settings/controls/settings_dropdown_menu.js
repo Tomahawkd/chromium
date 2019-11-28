@@ -34,15 +34,9 @@ Polymer({
   properties: {
     /**
      * List of options for the drop-down menu.
-     * @type {?DropdownMenuOptionList}
+     * @type {!DropdownMenuOptionList}
      */
-    menuOptions: {
-      type: Array,
-      // TODO(dpapad): This seems unnecessary in Polymer 2, since any
-      // bindings/observers will execute anyway, even if this is undefined.
-      // Consider removing once migration is done.
-      value: null,
-    },
+    menuOptions: Array,
 
     /** Whether the dropdown menu should be disabled. */
     disabled: {
@@ -51,8 +45,10 @@ Polymer({
       value: false,
     },
 
-    /** If this is a dictionary pref, this is the key for the item
-        we are interested in. */
+    /**
+       If this is a dictionary pref, this is the key for the item
+        we are interested in.
+     */
     prefKey: {
       type: String,
       value: null,
@@ -83,8 +79,9 @@ Polymer({
   onChange_: function() {
     const selected = this.$.dropdownMenu.value;
 
-    if (selected == this.notFoundValue_)
+    if (selected == this.notFoundValue_) {
       return;
+    }
 
     if (this.prefKey) {
       assert(this.pref);
@@ -92,8 +89,9 @@ Polymer({
     } else {
       const prefValue =
           Settings.PrefUtil.stringToPrefValue(selected, assert(this.pref));
-      if (prefValue !== undefined)
+      if (prefValue !== undefined) {
         this.set('pref.value', prefValue);
+      }
     }
 
     // settings-control-change only fires when the selection is changed to
@@ -111,8 +109,9 @@ Polymer({
       return;
     }
 
-    if (this.menuOptions === null || !this.menuOptions.length)
+    if (!this.menuOptions.length) {
       return;
+    }
 
     const prefValue = this.prefStringValue_();
     const option = this.menuOptions.find(function(menuItem) {
@@ -148,12 +147,14 @@ Polymer({
    * @private
    */
   showNotFoundValue_: function(menuOptions, prefValue) {
-    if (menuOptions === undefined || prefValue === undefined)
+    if (menuOptions === undefined || prefValue === undefined) {
       return false;
+    }
 
     // Don't show "Custom" before the options load.
-    if (menuOptions === null || menuOptions.length == 0)
+    if (menuOptions === null || menuOptions.length == 0) {
       return false;
+    }
 
     const option = menuOptions.find((menuItem) => {
       return menuItem.value == this.prefStringValue_();
@@ -167,6 +168,6 @@ Polymer({
    */
   shouldDisableMenu_: function() {
     return this.disabled || this.isPrefEnforced() ||
-        this.menuOptions === null || this.menuOptions.length == 0;
+        this.menuOptions === undefined || this.menuOptions.length == 0;
   },
 });

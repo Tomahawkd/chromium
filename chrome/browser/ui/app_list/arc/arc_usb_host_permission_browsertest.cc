@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/app_list/arc/arc_usb_host_permission_manager.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/arc/session/arc_session_manager.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
@@ -18,7 +19,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/arc/arc_util.h"
-#include "components/arc/common/app.mojom.h"
+#include "components/arc/mojom/app.mojom.h"
 #include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_app_instance.h"
 #include "components/user_manager/scoped_user_manager.h"
@@ -59,7 +60,7 @@ class ArcUsbHostPermissionTest : public InProcessBrowserTest {
     DCHECK(arc_app_list_pref_);
 
     base::RunLoop run_loop;
-    arc_app_list_pref_->SetDefaltAppsReadyCallback(run_loop.QuitClosure());
+    arc_app_list_pref_->SetDefaultAppsReadyCallback(run_loop.QuitClosure());
     run_loop.Run();
 
     app_instance_ = std::make_unique<arc::FakeAppInstance>(arc_app_list_pref_);

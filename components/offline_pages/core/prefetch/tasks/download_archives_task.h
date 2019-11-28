@@ -12,6 +12,10 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/offline_pages/task/task.h"
+#include "components/prefs/pref_service.h"
+#include "sql/database.h"
+
+class PrefService;
 
 namespace offline_pages {
 class PrefetchDownloader;
@@ -22,10 +26,7 @@ class PrefetchStore;
 class DownloadArchivesTask : public Task {
  public:
   // Maximum number of parallel downloads.
-  static const int kMaxConcurrentDownloads;
-
-  // Maximum number of parallel downloads when limitless prefetching is enabled.
-  static const int kMaxConcurrentDownloadsForLimitless;
+  static constexpr int kMaxConcurrentDownloads = 2;
 
   // Represents item to be downloaded as a result of running the task.
   struct DownloadItem {
@@ -42,7 +43,8 @@ class DownloadArchivesTask : public Task {
   using ItemsToDownload = std::vector<DownloadItem>;
 
   DownloadArchivesTask(PrefetchStore* prefetch_store,
-                       PrefetchDownloader* prefetch_downloader);
+                       PrefetchDownloader* prefetch_downloader,
+                       PrefService* prefs);
   ~DownloadArchivesTask() override;
 
   void Run() override;
@@ -56,7 +58,9 @@ class DownloadArchivesTask : public Task {
   // Prefetch downloader to request downloads from. Not owned.
   PrefetchDownloader* prefetch_downloader_;
 
-  base::WeakPtrFactory<DownloadArchivesTask> weak_ptr_factory_;
+  PrefService* prefs_;
+
+  base::WeakPtrFactory<DownloadArchivesTask> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DownloadArchivesTask);
 };

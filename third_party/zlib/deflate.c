@@ -215,13 +215,23 @@ local INLINE Pos insert_string_c(deflate_state *const s, const Pos str)
 
 local INLINE Pos insert_string(deflate_state *const s, const Pos str)
 {
+/* String dictionary insertion: faster symbol hashing has a positive impact
+ * on data compression speeds (around 20% on Intel and 36% on ARM Cortex big
+ * cores).
+ * A misfeature is that the generated compressed output will differ from
+ * vanilla zlib (even though it is still valid 'DEFLATE-d' content).
+ *
+ * We offer here a way to disable the optimization if there is the expectation
+ * that compressed content should match when compared to vanilla zlib.
+ */
+#if !defined(CHROMIUM_ZLIB_NO_CASTAGNOLI)
 #if defined(CRC32_ARMV8_CRC32)
     if (arm_cpu_enable_crc32)
         return insert_string_arm(s, str);
 #endif
     if (x86_cpu_enable_simd)
         return insert_string_sse(s, str);
-
+#endif
     return insert_string_c(s, str);
 }
 
@@ -297,7 +307,15 @@ int ZEXPORT deflateInit2_(strm, level, method, windowBits, memLevel, strategy,
     int wrap = 1;
     static const char my_version[] = ZLIB_VERSION;
 
+    // Needed to activate optimized insert_string() that helps compression
+    // for all wrapper formats (e.g. RAW, ZLIB, GZIP).
+    // Feature detection is not triggered while using RAW mode (i.e. we never
+    // call crc32() with a NULL buffer).
+#if defined(CRC32_ARMV8_CRC32)
+    arm_check_features();
+#elif defined(CRC32_SIMD_SSE42_PCLMUL)
     x86_check_features();
+#endif
 
     if (version == Z_NULL || version[0] != my_version[0] ||
         stream_size != sizeof(z_stream)) {
@@ -2274,7 +2292,7 @@ local INLINE Pos insert_string_sse(deflate_state *const s, const Pos str)
         val &= 0xFFFFFF;
 
 /* Windows clang should use inline asm */
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_IX86) || defined(_M_X64))
     h = _mm_crc32_u32(h, val);
 #elif defined(__i386__) || defined(__amd64__)
     __asm__ __volatile__ (

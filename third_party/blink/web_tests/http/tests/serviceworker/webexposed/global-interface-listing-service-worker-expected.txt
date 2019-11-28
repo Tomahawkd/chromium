@@ -18,10 +18,6 @@ interface BackgroundFetchEvent : ExtendableEvent
     attribute @@toStringTag
     getter registration
     method constructor
-interface BackgroundFetchFetch
-    attribute @@toStringTag
-    getter request
-    method constructor
 interface BackgroundFetchManager
     attribute @@toStringTag
     method constructor
@@ -54,6 +50,7 @@ interface BackgroundFetchUpdateUIEvent : BackgroundFetchEvent
     method constructor
     method updateUI
 interface BarcodeDetector
+    static method getSupportedFormats
     attribute @@toStringTag
     method constructor
     method detect
@@ -61,8 +58,11 @@ interface Blob
     attribute @@toStringTag
     getter size
     getter type
+    method arrayBuffer
     method constructor
     method slice
+    method stream
+    method text
 interface BroadcastChannel : EventTarget
     attribute @@toStringTag
     getter name
@@ -74,8 +74,10 @@ interface BroadcastChannel : EventTarget
     setter onmessage
     setter onmessageerror
 interface ByteLengthQueuingStrategy
+    attribute @@toStringTag
+    getter highWaterMark
+    getter size
     method constructor
-    method size
 interface CSSSkewX : CSSTransformComponent
     attribute @@toStringTag
     getter ax
@@ -124,6 +126,7 @@ interface Client
     attribute @@toStringTag
     getter frameType
     getter id
+    getter lifecycleState
     getter type
     getter url
     method constructor
@@ -141,18 +144,39 @@ interface CloseEvent : Event
     getter reason
     getter wasClean
     method constructor
+interface CompressionStream
+    attribute @@toStringTag
+    getter readable
+    getter writable
+    method constructor
+interface ContentIndex
+    attribute @@toStringTag
+    method add
+    method constructor
+    method delete
+    method getAll
+interface ContentIndexEvent : ExtendableEvent
+    attribute @@toStringTag
+    getter id
+    method constructor
 interface CookieStore : EventTarget
     attribute @@toStringTag
     method constructor
     method delete
     method get
     method getAll
-    method getChangeSubscriptions
     method set
-    method subscribeToChanges
-interface CountQueuingStrategy
+interface CookieStoreManager
+    attribute @@toStringTag
     method constructor
-    method size
+    method getSubscriptions
+    method subscribe
+    method unsubscribe
+interface CountQueuingStrategy
+    attribute @@toStringTag
+    getter highWaterMark
+    getter size
+    method constructor
 interface Crypto
     attribute @@toStringTag
     getter subtle
@@ -369,6 +393,37 @@ interface DOMStringList
     method constructor
     method contains
     method item
+interface DecompressionStream
+    attribute @@toStringTag
+    getter readable
+    getter writable
+    method constructor
+interface DetectedBarcode
+    attribute @@toStringTag
+    getter boundingBox
+    getter cornerPoints
+    getter format
+    getter rawValue
+    method constructor
+interface DetectedFace
+    attribute @@toStringTag
+    getter boundingBox
+    getter landmarks
+    method constructor
+interface DetectedText
+    attribute @@toStringTag
+    getter boundingBox
+    getter cornerPoints
+    getter rawValue
+    method constructor
+interface ErrorEvent : Event
+    attribute @@toStringTag
+    getter colno
+    getter error
+    getter filename
+    getter lineno
+    getter message
+    method constructor
 interface Event
     attribute @@toStringTag
     attribute AT_TARGET
@@ -446,6 +501,7 @@ interface FetchEvent : ExtendableEvent
     getter preloadResponse
     getter request
     getter resultingClientId
+    method addPerformanceEntry
     method constructor
     method respondWith
 interface File : Blob
@@ -487,6 +543,33 @@ interface FileReader : EventTarget
     setter onloadend
     setter onloadstart
     setter onprogress
+interface FileSystemDirectoryHandle : FileSystemHandle
+    static method getSystemDirectory
+    attribute @@toStringTag
+    method constructor
+    method getDirectory
+    method getEntries
+    method getFile
+    method removeEntry
+interface FileSystemFileHandle : FileSystemHandle
+    attribute @@toStringTag
+    method constructor
+    method createWriter
+    method getFile
+interface FileSystemHandle
+    attribute @@toStringTag
+    getter isDirectory
+    getter isFile
+    getter name
+    method constructor
+    method queryPermission
+    method requestPermission
+interface FileSystemWriter
+    attribute @@toStringTag
+    method close
+    method constructor
+    method truncate
+    method write
 interface FontFace
     attribute @@toStringTag
     getter display
@@ -541,6 +624,7 @@ interface IDBCursor
     getter direction
     getter key
     getter primaryKey
+    getter request
     getter source
     method advance
     method constructor
@@ -667,6 +751,7 @@ interface IDBRequest : EventTarget
 interface IDBTransaction : EventTarget
     attribute @@toStringTag
     getter db
+    getter durability
     getter error
     getter mode
     getter objectStoreNames
@@ -693,6 +778,11 @@ interface ImageBitmap
     getter width
     method close
     method constructor
+interface ImageBitmapRenderingContext
+    attribute @@toStringTag
+    getter canvas
+    method constructor
+    method transferFromImageBitmap
 interface ImageData
     attribute @@toStringTag
     getter data
@@ -714,6 +804,11 @@ interface LockManager
     method constructor
     method query
     method request
+interface MediaCapabilities
+    attribute @@toStringTag
+    method constructor
+    method decodingInfo
+    method encodingInfo
 interface MessageChannel
     attribute @@toStringTag
     getter port1
@@ -829,6 +924,7 @@ interface Notification : EventTarget
     getter onshow
     getter renotify
     getter requireInteraction
+    getter showTrigger
     getter silent
     getter tag
     getter timestamp
@@ -899,6 +995,7 @@ interface OffscreenCanvasRenderingContext2D
     method fillText
     method getImageData
     method getLineDash
+    method getTransform
     method isPointInPath
     method isPointInStroke
     method lineTo
@@ -966,19 +1063,22 @@ interface PaymentRequestEvent : ExtendableEvent
     getter instrumentKey
     getter methodData
     getter modifiers
+    getter paymentOptions
     getter paymentRequestId
     getter paymentRequestOrigin
+    getter shippingOptions
     getter topOrigin
     getter total
+    method changePaymentMethod
+    method changeShippingAddress
+    method changeShippingOption
     method constructor
     method openWindow
     method respondWith
 interface Performance : EventTarget
     attribute @@toStringTag
-    getter oneventtimingbufferfull
     getter onresourcetimingbufferfull
     getter timeOrigin
-    method clearEventTimings
     method clearMarks
     method clearMeasures
     method clearResourceTimings
@@ -988,11 +1088,11 @@ interface Performance : EventTarget
     method getEntriesByType
     method mark
     method measure
+    method measureMemory
     method now
-    method setEventTimingBufferMaxSize
+    method profile
     method setResourceTimingBufferSize
     method toJSON
-    setter oneventtimingbufferfull
     setter onresourcetimingbufferfull
 interface PerformanceEntry
     attribute @@toStringTag
@@ -1004,11 +1104,14 @@ interface PerformanceEntry
     method toJSON
 interface PerformanceMark : PerformanceEntry
     attribute @@toStringTag
+    getter detail
     method constructor
 interface PerformanceMeasure : PerformanceEntry
     attribute @@toStringTag
+    getter detail
     method constructor
 interface PerformanceObserver
+    static getter supportedEntryTypes
     attribute @@toStringTag
     method constructor
     method disconnect
@@ -1040,6 +1143,7 @@ interface PerformanceResourceTiming : PerformanceEntry
     getter serverTiming
     getter transferSize
     getter workerStart
+    getter workerTiming
     method constructor
     method toJSON
 interface PerformanceServerTiming
@@ -1049,6 +1153,16 @@ interface PerformanceServerTiming
     getter name
     method constructor
     method toJSON
+interface PeriodicSyncEvent : ExtendableEvent
+    attribute @@toStringTag
+    getter tag
+    method constructor
+interface PeriodicSyncManager
+    attribute @@toStringTag
+    method constructor
+    method getTags
+    method register
+    method unregister
 interface PermissionStatus : EventTarget
     attribute @@toStringTag
     getter onchange
@@ -1062,6 +1176,12 @@ interface Permissions
     method request
     method requestAll
     method revoke
+interface Profiler
+    attribute @@toStringTag
+    getter sampleInterval
+    getter stopped
+    method constructor
+    method stop
 interface PromiseRejectionEvent : Event
     attribute @@toStringTag
     getter promise
@@ -1094,10 +1214,19 @@ interface PushSubscription
     method getKey
     method toJSON
     method unsubscribe
+interface PushSubscriptionChangeEvent : ExtendableEvent
+    attribute @@toStringTag
+    getter newSubscription
+    getter oldSubscription
+    method constructor
 interface PushSubscriptionOptions
     attribute @@toStringTag
     getter applicationServerKey
     getter userVisibleOnly
+    method constructor
+interface QuicTransport
+    attribute @@toStringTag
+    method close
     method constructor
 interface ReadableStream
     attribute @@toStringTag
@@ -1108,6 +1237,13 @@ interface ReadableStream
     method pipeThrough
     method pipeTo
     method tee
+interface ReadableStreamDefaultReader
+    attribute @@toStringTag
+    getter closed
+    method cancel
+    method constructor
+    method read
+    method releaseLock
 interface Request
     attribute @@toStringTag
     getter bodyUsed
@@ -1152,6 +1288,35 @@ interface Response
     method formData
     method json
     method text
+interface ScreenManager
+    attribute @@toStringTag
+    method constructor
+    method getScreens
+interface SecurityPolicyViolationEvent : Event
+    attribute @@toStringTag
+    getter blockedURI
+    getter columnNumber
+    getter disposition
+    getter documentURI
+    getter effectiveDirective
+    getter lineNumber
+    getter originalPolicy
+    getter referrer
+    getter sample
+    getter sourceFile
+    getter statusCode
+    getter violatedDirective
+    method constructor
+interface ServiceWorker : EventTarget
+    attribute @@toStringTag
+    getter onerror
+    getter onstatechange
+    getter scriptURL
+    getter state
+    method constructor
+    method postMessage
+    setter onerror
+    setter onstatechange
 interface ServiceWorkerGlobalScope : WorkerGlobalScope
     attribute @@toStringTag
     method constructor
@@ -1159,10 +1324,13 @@ interface ServiceWorkerRegistration : EventTarget
     attribute @@toStringTag
     getter active
     getter backgroundFetch
+    getter cookies
+    getter index
     getter installing
     getter navigationPreload
     getter onupdatefound
     getter paymentManager
+    getter periodicSync
     getter pushManager
     getter scope
     getter sync
@@ -1228,11 +1396,30 @@ interface TextEncoder
     getter encoding
     method constructor
     method encode
+    method encodeInto
 interface TextEncoderStream
     attribute @@toStringTag
     getter encoding
     getter readable
     getter writable
+    method constructor
+interface TextMetrics
+    attribute @@toStringTag
+    getter actualBoundingBoxAscent
+    getter actualBoundingBoxDescent
+    getter actualBoundingBoxLeft
+    getter actualBoundingBoxRight
+    getter advances
+    getter emHeightAscent
+    getter emHeightDescent
+    getter fontBoundingBoxAscent
+    getter fontBoundingBoxDescent
+    getter width
+    method constructor
+    method getBaselines
+interface TimestampTrigger
+    attribute @@toStringTag
+    getter timestamp
     method constructor
 interface TransformStream
     attribute @@toStringTag
@@ -1242,6 +1429,9 @@ interface TransformStream
 interface TrustedTypePolicyFactory
     attribute @@toStringTag
     method constructor
+    method getAttributeType
+    method getPropertyType
+    method getTypeMapping
 interface URL
     attribute @@toStringTag
     getter hash
@@ -1285,15 +1475,23 @@ interface URLSearchParams
     method sort
     method toString
     method values
+interface UserActivation
+    attribute @@toStringTag
+    getter hasBeenActive
+    getter isActive
+    method constructor
 interface WebGL2ComputeRenderingContext
     attribute @@toStringTag
     attribute ACTIVE_ATOMIC_COUNTER_BUFFERS
     attribute ACTIVE_ATTRIBUTES
+    attribute ACTIVE_RESOURCES
     attribute ACTIVE_TEXTURE
     attribute ACTIVE_UNIFORMS
     attribute ACTIVE_UNIFORM_BLOCKS
+    attribute ACTIVE_VARIABLES
     attribute ALIASED_LINE_WIDTH_RANGE
     attribute ALIASED_POINT_SIZE_RANGE
+    attribute ALL_BARRIER_BITS
     attribute ALPHA
     attribute ALPHA_BITS
     attribute ALREADY_SIGNALED
@@ -1302,6 +1500,8 @@ interface WebGL2ComputeRenderingContext
     attribute ANY_SAMPLES_PASSED_CONSERVATIVE
     attribute ARRAY_BUFFER
     attribute ARRAY_BUFFER_BINDING
+    attribute ARRAY_SIZE
+    attribute ARRAY_STRIDE
     attribute ATOMIC_COUNTER_BARRIER_BIT
     attribute ATOMIC_COUNTER_BUFFER
     attribute ATOMIC_COUNTER_BUFFER_BINDING
@@ -1319,12 +1519,15 @@ interface WebGL2ComputeRenderingContext
     attribute BLEND_EQUATION_RGB
     attribute BLEND_SRC_ALPHA
     attribute BLEND_SRC_RGB
+    attribute BLOCK_INDEX
     attribute BLUE_BITS
     attribute BOOL
     attribute BOOL_VEC2
     attribute BOOL_VEC3
     attribute BOOL_VEC4
     attribute BROWSER_DEFAULT_WEBGL
+    attribute BUFFER_BINDING
+    attribute BUFFER_DATA_SIZE
     attribute BUFFER_SIZE
     attribute BUFFER_UPDATE_BARRIER_BIT
     attribute BUFFER_USAGE
@@ -1391,6 +1594,8 @@ interface WebGL2ComputeRenderingContext
     attribute DEPTH_STENCIL_ATTACHMENT
     attribute DEPTH_TEST
     attribute DEPTH_WRITEMASK
+    attribute DISPATCH_INDIRECT_BUFFER
+    attribute DISPATCH_INDIRECT_BUFFER_BINDING
     attribute DITHER
     attribute DONT_CARE
     attribute DRAW_BUFFER0
@@ -1411,6 +1616,8 @@ interface WebGL2ComputeRenderingContext
     attribute DRAW_BUFFER9
     attribute DRAW_FRAMEBUFFER
     attribute DRAW_FRAMEBUFFER_BINDING
+    attribute DRAW_INDIRECT_BUFFER
+    attribute DRAW_INDIRECT_BUFFER_BINDING
     attribute DST_ALPHA
     attribute DST_COLOR
     attribute DYNAMIC_COPY
@@ -1420,7 +1627,6 @@ interface WebGL2ComputeRenderingContext
     attribute ELEMENT_ARRAY_BUFFER
     attribute ELEMENT_ARRAY_BUFFER_BINDING
     attribute EQUAL
-    attribute FALSE
     attribute FASTEST
     attribute FLOAT
     attribute FLOAT_32_UNSIGNED_INT_24_8_REV
@@ -1494,6 +1700,7 @@ interface WebGL2ComputeRenderingContext
     attribute INVALID_OPERATION
     attribute INVALID_VALUE
     attribute INVERT
+    attribute IS_ROW_MAJOR
     attribute KEEP
     attribute LEQUAL
     attribute LESS
@@ -1505,10 +1712,12 @@ interface WebGL2ComputeRenderingContext
     attribute LINE_STRIP
     attribute LINE_WIDTH
     attribute LINK_STATUS
+    attribute LOCATION
     attribute LOW_FLOAT
     attribute LOW_INT
     attribute LUMINANCE
     attribute LUMINANCE_ALPHA
+    attribute MATRIX_STRIDE
     attribute MAX
     attribute MAX_3D_TEXTURE_SIZE
     attribute MAX_ARRAY_TEXTURE_LAYERS
@@ -1525,7 +1734,15 @@ interface WebGL2ComputeRenderingContext
     attribute MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS
     attribute MAX_COMPUTE_ATOMIC_COUNTERS
     attribute MAX_COMPUTE_ATOMIC_COUNTER_BUFFERS
+    attribute MAX_COMPUTE_IMAGE_UNIFORMS
     attribute MAX_COMPUTE_SHADER_STORAGE_BLOCKS
+    attribute MAX_COMPUTE_SHARED_MEMORY_SIZE
+    attribute MAX_COMPUTE_TEXTURE_IMAGE_UNITS
+    attribute MAX_COMPUTE_UNIFORM_BLOCKS
+    attribute MAX_COMPUTE_UNIFORM_COMPONENTS
+    attribute MAX_COMPUTE_WORK_GROUP_COUNT
+    attribute MAX_COMPUTE_WORK_GROUP_INVOCATIONS
+    attribute MAX_COMPUTE_WORK_GROUP_SIZE
     attribute MAX_CUBE_MAP_TEXTURE_SIZE
     attribute MAX_DRAW_BUFFERS
     attribute MAX_ELEMENTS_INDICES
@@ -1538,6 +1755,8 @@ interface WebGL2ComputeRenderingContext
     attribute MAX_FRAGMENT_UNIFORM_BLOCKS
     attribute MAX_FRAGMENT_UNIFORM_COMPONENTS
     attribute MAX_FRAGMENT_UNIFORM_VECTORS
+    attribute MAX_NAME_LENGTH
+    attribute MAX_NUM_ACTIVE_VARIABLES
     attribute MAX_PROGRAM_TEXEL_OFFSET
     attribute MAX_RENDERBUFFER_SIZE
     attribute MAX_SAMPLES
@@ -1569,6 +1788,7 @@ interface WebGL2ComputeRenderingContext
     attribute MIN
     attribute MIN_PROGRAM_TEXEL_OFFSET
     attribute MIRRORED_REPEAT
+    attribute NAME_LENGTH
     attribute NEAREST
     attribute NEAREST_MIPMAP_LINEAR
     attribute NEAREST_MIPMAP_NEAREST
@@ -1577,7 +1797,9 @@ interface WebGL2ComputeRenderingContext
     attribute NONE
     attribute NOTEQUAL
     attribute NO_ERROR
+    attribute NUM_ACTIVE_VARIABLES
     attribute OBJECT_TYPE
+    attribute OFFSET
     attribute ONE
     attribute ONE_MINUS_CONSTANT_ALPHA
     attribute ONE_MINUS_CONSTANT_COLOR
@@ -1599,6 +1821,8 @@ interface WebGL2ComputeRenderingContext
     attribute POLYGON_OFFSET_FACTOR
     attribute POLYGON_OFFSET_FILL
     attribute POLYGON_OFFSET_UNITS
+    attribute PROGRAM_INPUT
+    attribute PROGRAM_OUTPUT
     attribute QUERY_RESULT
     attribute QUERY_RESULT_AVAILABLE
     attribute R11F_G11F_B10F
@@ -1621,6 +1845,9 @@ interface WebGL2ComputeRenderingContext
     attribute RED
     attribute RED_BITS
     attribute RED_INTEGER
+    attribute REFERENCED_BY_COMPUTE_SHADER
+    attribute REFERENCED_BY_FRAGMENT_SHADER
+    attribute REFERENCED_BY_VERTEX_SHADER
     attribute RENDERBUFFER
     attribute RENDERBUFFER_ALPHA_SIZE
     attribute RENDERBUFFER_BINDING
@@ -1812,6 +2039,8 @@ interface WebGL2ComputeRenderingContext
     attribute TEXTURE_WRAP_T
     attribute TIMEOUT_EXPIRED
     attribute TIMEOUT_IGNORED
+    attribute TOP_LEVEL_ARRAY_SIZE
+    attribute TOP_LEVEL_ARRAY_STRIDE
     attribute TRANSFORM_FEEDBACK
     attribute TRANSFORM_FEEDBACK_ACTIVE
     attribute TRANSFORM_FEEDBACK_BARRIER_BIT
@@ -1823,13 +2052,16 @@ interface WebGL2ComputeRenderingContext
     attribute TRANSFORM_FEEDBACK_BUFFER_START
     attribute TRANSFORM_FEEDBACK_PAUSED
     attribute TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN
+    attribute TRANSFORM_FEEDBACK_VARYING
     attribute TRANSFORM_FEEDBACK_VARYINGS
     attribute TRIANGLES
     attribute TRIANGLE_FAN
     attribute TRIANGLE_STRIP
-    attribute TRUE
+    attribute TYPE
+    attribute UNIFORM
     attribute UNIFORM_ARRAY_STRIDE
     attribute UNIFORM_BARRIER_BIT
+    attribute UNIFORM_BLOCK
     attribute UNIFORM_BLOCK_ACTIVE_UNIFORMS
     attribute UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES
     attribute UNIFORM_BLOCK_BINDING
@@ -1972,10 +2204,13 @@ interface WebGL2ComputeRenderingContext
     method disable
     method disableVertexAttribArray
     method dispatchCompute
+    method dispatchComputeIndirect
     method drawArrays
+    method drawArraysIndirect
     method drawArraysInstanced
     method drawBuffers
     method drawElements
+    method drawElementsIndirect
     method drawElementsInstanced
     method drawRangeElements
     method enable
@@ -2008,7 +2243,12 @@ interface WebGL2ComputeRenderingContext
     method getInternalformatParameter
     method getParameter
     method getProgramInfoLog
+    method getProgramInterfaceParameter
     method getProgramParameter
+    method getProgramResource
+    method getProgramResourceIndex
+    method getProgramResourceLocation
+    method getProgramResourceName
     method getQuery
     method getQueryParameter
     method getRenderbufferParameter
@@ -2045,6 +2285,7 @@ interface WebGL2ComputeRenderingContext
     method isVertexArray
     method lineWidth
     method linkProgram
+    method makeXRCompatible
     method memoryBarrier
     method memoryBarrierByRegion
     method pauseTransformFeedback
@@ -2059,7 +2300,6 @@ interface WebGL2ComputeRenderingContext
     method samplerParameterf
     method samplerParameteri
     method scissor
-    method setCompatibleXRDevice
     method shaderSource
     method stencilFunc
     method stencilFuncSeparate
@@ -2838,6 +3078,7 @@ interface WebGL2RenderingContext
     method isVertexArray
     method lineWidth
     method linkProgram
+    method makeXRCompatible
     method pauseTransformFeedback
     method pixelStorei
     method polygonOffset
@@ -2850,7 +3091,6 @@ interface WebGL2RenderingContext
     method samplerParameterf
     method samplerParameteri
     method scissor
-    method setCompatibleXRDevice
     method shaderSource
     method stencilFunc
     method stencilFuncSeparate
@@ -3332,13 +3572,13 @@ interface WebGLRenderingContext
     method isTexture
     method lineWidth
     method linkProgram
+    method makeXRCompatible
     method pixelStorei
     method polygonOffset
     method readPixels
     method renderbufferStorage
     method sampleCoverage
     method scissor
-    method setCompatibleXRDevice
     method shaderSource
     method stencilFunc
     method stencilFuncSeparate
@@ -3432,6 +3672,13 @@ interface WebSocket : EventTarget
     setter onerror
     setter onmessage
     setter onopen
+interface WebSocketStream
+    attribute @@toStringTag
+    getter closed
+    getter connection
+    getter url
+    method close
+    method constructor
 interface WindowClient : Client
     attribute @@toStringTag
     getter focused
@@ -3441,6 +3688,7 @@ interface WindowClient : Client
     method navigate
 interface WorkerGlobalScope : EventTarget
     attribute @@toStringTag
+    getter addressSpace
     getter caches
     getter crypto
     getter fonts
@@ -3457,7 +3705,6 @@ interface WorkerGlobalScope : EventTarget
     getter self
     method atob
     method btoa
-    method cancelAnimationFrame
     method clearInterval
     method clearTimeout
     method constructor
@@ -3465,7 +3712,6 @@ interface WorkerGlobalScope : EventTarget
     method fetch
     method importScripts
     method queueMicrotask
-    method requestAnimationFrame
     method setInterval
     method setTimeout
     setter onerror
@@ -3498,14 +3744,17 @@ interface WorkerNavigator
     getter language
     getter languages
     getter locks
+    getter mediaCapabilities
     getter onLine
     getter permissions
     getter platform
     getter product
+    getter screen
     getter serial
     getter storage
     getter usb
     getter userAgent
+    getter wakeLock
     method constructor
 interface WritableStream
     attribute @@toStringTag
@@ -3513,11 +3762,20 @@ interface WritableStream
     method abort
     method constructor
     method getWriter
+interface WritableStreamDefaultWriter
+    attribute @@toStringTag
+    getter closed
+    getter desiredSize
+    getter ready
+    method abort
+    method close
+    method constructor
+    method releaseLock
+    method write
 [GLOBAL OBJECT]
     attribute console
     attribute globalThis
     attribute internals
-    getter TrustedTypes
     getter clients
     getter cookieStore
     getter onabortpayment
@@ -3527,6 +3785,7 @@ interface WritableStream
     getter onbackgroundfetchfail
     getter onbackgroundfetchsuccess
     getter oncanmakepayment
+    getter oncontentdelete
     getter oncookiechange
     getter onfetch
     getter oninstall
@@ -3534,10 +3793,13 @@ interface WritableStream
     getter onnotificationclick
     getter onnotificationclose
     getter onpaymentrequest
+    getter onperiodicsync
     getter onpush
+    getter onpushsubscriptionchange
     getter onsync
     getter registration
-    method fetch
+    getter serviceWorker
+    getter trustedTypes
     method gc
     method skipWaiting
     setter cookieStore
@@ -3548,6 +3810,7 @@ interface WritableStream
     setter onbackgroundfetchfail
     setter onbackgroundfetchsuccess
     setter oncanmakepayment
+    setter oncontentdelete
     setter oncookiechange
     setter onfetch
     setter oninstall
@@ -3555,7 +3818,9 @@ interface WritableStream
     setter onnotificationclick
     setter onnotificationclose
     setter onpaymentrequest
+    setter onperiodicsync
     setter onpush
+    setter onpushsubscriptionchange
     setter onsync
 PASS Verify the interface of ServiceWorkerGlobalScope
 PASS successfullyParsed is true

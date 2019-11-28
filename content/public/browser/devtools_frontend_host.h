@@ -5,11 +5,16 @@
 #ifndef CONTENT_PUBLIC_BROWSER_DEVTOOLS_FRONTEND_HOST_H_
 #define CONTENT_PUBLIC_BROWSER_DEVTOOLS_FRONTEND_HOST_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
-#include "base/strings/string_piece.h"
+#include "base/memory/scoped_refptr.h"
 #include "content/common/content_export.h"
+
+namespace base {
+class RefCountedMemory;
+}
 
 namespace content {
 
@@ -22,11 +27,12 @@ class RenderFrameHost;
 // Note: DevToolsFrontendHost is not supported on Android.
 class DevToolsFrontendHost {
  public:
-  using HandleMessageCallback = base::Callback<void(const std::string&)>;
+  using HandleMessageCallback =
+      base::RepeatingCallback<void(const std::string&)>;
 
   // Creates a new DevToolsFrontendHost for RenderFrameHost where DevTools
   // frontend is loaded.
-  CONTENT_EXPORT static DevToolsFrontendHost* Create(
+  CONTENT_EXPORT static std::unique_ptr<DevToolsFrontendHost> Create(
       RenderFrameHost* frontend_main_frame,
       const HandleMessageCallback& handle_message_callback);
 
@@ -38,9 +44,13 @@ class DevToolsFrontendHost {
 
   CONTENT_EXPORT virtual void BadMessageRecieved() {}
 
-  // Returns bundled DevTools frontend resource by |path|. Returns empty string
-  // if |path| does not correspond to any frontend resource.
-  CONTENT_EXPORT static base::StringPiece GetFrontendResource(
+  // Returns bundled DevTools frontend resource by |path|. Returns null if
+  // |path| does not correspond to any frontend resource.
+  CONTENT_EXPORT static scoped_refptr<base::RefCountedMemory>
+  GetFrontendResourceBytes(const std::string& path);
+
+  // Convenience wrapper to return GetFrontendResourceBytes() as a string.
+  CONTENT_EXPORT static std::string GetFrontendResource(
       const std::string& path);
 };
 

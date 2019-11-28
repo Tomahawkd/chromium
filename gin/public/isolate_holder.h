@@ -46,12 +46,6 @@ class GIN_EXPORT IsolateHolder {
     kAllowAtomicsWait
   };
 
-  // Indicates whether V8 works with stable or experimental v8 extras.
-  enum V8ExtrasMode {
-    kStableV8Extras,
-    kStableAndExperimentalV8Extras,
-  };
-
   // Indicates how the Isolate instance will be created.
   enum class IsolateCreationMode {
     kNormal,
@@ -86,17 +80,13 @@ class GIN_EXPORT IsolateHolder {
 
   // Should be invoked once before creating IsolateHolder instances to
   // initialize V8 and Gin. In case V8_USE_EXTERNAL_STARTUP_DATA is
-  // defined, V8's initial natives should be loaded (by calling
-  // V8Initializer::LoadV8NativesFromFD or
-  // V8Initializer::LoadV8Natives) before calling this method.  If the
-  // snapshot file is available, it should also be loaded (by calling
+  // defined and the snapshot file is available, it should be loaded (by calling
   // V8Initializer::LoadV8SnapshotFromFD or
   // V8Initializer::LoadV8Snapshot) before calling this method.
   // If the snapshot file contains customised contexts which have static
   // external references, |reference_table| needs to point an array of those
   // reference pointers. Otherwise, it can be nullptr.
   static void Initialize(ScriptMode mode,
-                         V8ExtrasMode v8_extras_mode,
                          v8::ArrayBuffer::Allocator* allocator,
                          const intptr_t* reference_table = nullptr);
 

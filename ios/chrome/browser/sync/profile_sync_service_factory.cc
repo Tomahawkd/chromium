@@ -6,16 +6,21 @@
 
 #include <utility>
 
-#include "base/memory/singleton.h"
+#include "base/bind.h"
+#include "base/feature_list.h"
+#include "base/no_destructor.h"
 #include "base/task/post_task.h"
 #include "base/time/time.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/network_time/network_time_tracker.h"
-#include "components/signin/core/browser/device_id_helper.h"
+#include "components/sync/driver/profile_sync_service.h"
 #include "components/sync/driver/startup_controller.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/driver/sync_service.h"
 #include "components/sync/driver/sync_util.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
@@ -34,18 +39,18 @@
 #include "ios/chrome/browser/signin/about_signin_internals_factory.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/sync/consent_auditor_factory.h"
+#include "ios/chrome/browser/sync/device_info_sync_service_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_sync_client.h"
+#include "ios/chrome/browser/sync/ios_user_event_service_factory.h"
 #include "ios/chrome/browser/sync/model_type_store_service_factory.h"
 #include "ios/chrome/browser/sync/session_sync_service_factory.h"
 #include "ios/chrome/browser/undo/bookmark_undo_service_factory.h"
-#include "ios/chrome/browser/web_data_service_factory.h"
+#include "ios/chrome/browser/webdata_services/web_data_service_factory.h"
 #include "ios/chrome/common/channel_info.h"
-#include "ios/web/public/web_task_traits.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
-
-using browser_sync::ProfileSyncService;
 
 namespace {
 
@@ -60,37 +65,53 @@ void UpdateNetworkTimeOnUIThread(base::Time network_time,
 void UpdateNetworkTime(const base::Time& network_time,
                        const base::TimeDelta& resolution,
                        const base::TimeDelta& latency) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {web::WebThread::UI},
-      base::Bind(&UpdateNetworkTimeOnUIThread, network_time, resolution,
-                 latency, base::TimeTicks::Now()));
+  base::PostTask(FROM_HERE, {web::WebThread::UI},
+                 base::BindOnce(&UpdateNetworkTimeOnUIThread, network_time,
+                                resolution, latency, base::TimeTicks::Now()));
 }
 
 }  // namespace
 
 // static
 ProfileSyncServiceFactory* ProfileSyncServiceFactory::GetInstance() {
-  return base::Singleton<ProfileSyncServiceFactory>::get();
+  static base::NoDestructor<ProfileSyncServiceFactory> instance;
+  return instance.get();
 }
 
 // static
-ProfileSyncService* ProfileSyncServiceFactory::GetForBrowserState(
+syncer::SyncService* ProfileSyncServiceFactory::GetForBrowserState(
     ios::ChromeBrowserState* browser_state) {
-  if (!ProfileSyncService::IsSyncAllowedByFlag())
+  if (!switches::IsSyncAllowedByFlag())
     return nullptr;
 
-  return static_cast<ProfileSyncService*>(
+  return static_cast<syncer::SyncService*>(
       GetInstance()->GetServiceForBrowserState(browser_state, true));
 }
 
 // static
-ProfileSyncService* ProfileSyncServiceFactory::GetForBrowserStateIfExists(
+syncer::SyncService* ProfileSyncServiceFactory::GetForBrowserStateIfExists(
     ios::ChromeBrowserState* browser_state) {
-  if (!ProfileSyncService::IsSyncAllowedByFlag())
+  if (!switches::IsSyncAllowedByFlag())
     return nullptr;
 
-  return static_cast<ProfileSyncService*>(
+  return static_cast<syncer::SyncService*>(
       GetInstance()->GetServiceForBrowserState(browser_state, false));
+}
+
+// static
+syncer::ProfileSyncService*
+ProfileSyncServiceFactory::GetAsProfileSyncServiceForBrowserState(
+    ios::ChromeBrowserState* browser_state) {
+  return static_cast<syncer::ProfileSyncService*>(
+      GetForBrowserState(browser_state));
+}
+
+// static
+syncer::ProfileSyncService*
+ProfileSyncServiceFactory::GetAsProfileSyncServiceForBrowserStateIfExists(
+    ios::ChromeBrowserState* browser_state) {
+  return static_cast<syncer::ProfileSyncService*>(
+      GetForBrowserStateIfExists(browser_state));
 }
 
 ProfileSyncServiceFactory::ProfileSyncServiceFactory()
@@ -102,6 +123,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   // destruction order.
   DependsOn(autofill::PersonalDataManagerFactory::GetInstance());
   DependsOn(ConsentAuditorFactory::GetInstance());
+  DependsOn(DeviceInfoSyncServiceFactory::GetInstance());
   DependsOn(ios::AboutSigninInternalsFactory::GetInstance());
   DependsOn(ios::BookmarkModelFactory::GetInstance());
   DependsOn(ios::BookmarkSyncServiceFactory::GetInstance());
@@ -116,6 +138,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(IOSChromeProfileInvalidationProviderFactory::GetInstance());
   DependsOn(
       IOSChromeDeprecatedProfileInvalidationProviderFactory::GetInstance());
+  DependsOn(IOSUserEventServiceFactory::GetInstance());
   DependsOn(ModelTypeStoreServiceFactory::GetInstance());
   DependsOn(ReadingListModelFactory::GetInstance());
   DependsOn(SessionSyncServiceFactory::GetInstance());
@@ -138,32 +161,30 @@ ProfileSyncServiceFactory::BuildServiceInstanceFor(
   // startup once bug has been fixed.
   ios::AboutSigninInternalsFactory::GetForBrowserState(browser_state);
 
-  ProfileSyncService::InitParams init_params;
+  syncer::ProfileSyncService::InitParams init_params;
   init_params.identity_manager =
       IdentityManagerFactory::GetForBrowserState(browser_state);
-  init_params.signin_scoped_device_id_callback = base::BindRepeating(
-      &signin::GetSigninScopedDeviceId, browser_state->GetPrefs());
-  init_params.start_behavior = ProfileSyncService::MANUAL_START;
+  init_params.start_behavior = syncer::ProfileSyncService::MANUAL_START;
   init_params.sync_client =
       std::make_unique<IOSChromeSyncClient>(browser_state);
   init_params.network_time_update_callback = base::Bind(&UpdateNetworkTime);
   init_params.url_loader_factory = browser_state->GetSharedURLLoaderFactory();
   init_params.network_connection_tracker =
       GetApplicationContext()->GetNetworkConnectionTracker();
-  init_params.debug_identifier = browser_state->GetDebugName();
   init_params.channel = ::GetChannel();
+  init_params.debug_identifier = browser_state->GetDebugName();
+  init_params.autofill_enable_account_wallet_storage =
+      base::FeatureList::IsEnabled(
+          autofill::features::kAutofillEnableAccountWalletStorage);
 
-  bool use_fcm_invalidations =
-      base::FeatureList::IsEnabled(invalidation::switches::kFCMInvalidations);
-  if (use_fcm_invalidations) {
-    auto* fcm_invalidation_provider =
-        IOSChromeProfileInvalidationProviderFactory::GetForBrowserState(
-            browser_state);
-    if (fcm_invalidation_provider) {
-      init_params.invalidations_identity_providers.push_back(
-          fcm_invalidation_provider->GetIdentityProvider());
-    }
+  auto* fcm_invalidation_provider =
+      IOSChromeProfileInvalidationProviderFactory::GetForBrowserState(
+          browser_state);
+  if (fcm_invalidation_provider) {
+    init_params.invalidations_identity_providers.push_back(
+        fcm_invalidation_provider->GetIdentityProvider());
   }
+
   // This code should stay here until all invalidation client are
   // migrated from deprecated invalidation  infructructure.
   // Since invalidations will work only if ProfileSyncService calls
@@ -176,7 +197,14 @@ ProfileSyncServiceFactory::BuildServiceInstanceFor(
         deprecated_invalidation_provider->GetIdentityProvider());
   }
 
-  auto pss = std::make_unique<ProfileSyncService>(std::move(init_params));
+  auto pss =
+      std::make_unique<syncer::ProfileSyncService>(std::move(init_params));
   pss->Initialize();
+
+  // Hook PSS into PersonalDataManager (a circular dependency).
+  autofill::PersonalDataManager* pdm =
+      autofill::PersonalDataManagerFactory::GetForBrowserState(browser_state);
+  pdm->OnSyncServiceInitialized(pss.get());
+
   return pss;
 }

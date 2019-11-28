@@ -6,6 +6,7 @@
 
 #include "components/viz/common/hit_test/aggregated_hit_test_region.h"
 #include "components/viz/service/surfaces/latest_local_surface_id_lookup_delegate.h"
+#include "components/viz/service/surfaces/surface.h"
 
 namespace viz {
 
@@ -14,18 +15,30 @@ namespace {
 // telemetry / UMA.
 constexpr uint32_t kMaxRegionsPerSurface = 1024;
 
-HitTestAsyncQueriedDebugRegion::HitTestAsyncQueriedDebugRegion() = default;
-HitTestAsyncQueriedDebugRegion::HitTestAsyncQueriedDebugRegion(
-    base::flat_set<FrameSinkId> regions)
-    : regions(std::move(regions)) {}
-HitTestAsyncQueriedDebugRegion::~HitTestAsyncQueriedDebugRegion() = default;
-
-HitTestAsyncQueriedDebugRegion::HitTestAsyncQueriedDebugRegion(
-    HitTestAsyncQueriedDebugRegion&&) = default;
-HitTestAsyncQueriedDebugRegion& HitTestAsyncQueriedDebugRegion::operator=(
-    HitTestAsyncQueriedDebugRegion&&) = default;
+// Whenever a hit test region is marked as kHitTestAsk there must be a reason
+// for async hit test and vice versa.
+bool FlagsAndAsyncReasonsMatch(uint32_t flags,
+                               uint32_t async_hit_test_reasons) {
+  if (flags & kHitTestAsk)
+    return async_hit_test_reasons != kNotAsyncHitTest;
+  return async_hit_test_reasons == kNotAsyncHitTest;
+}
 
 }  // namespace
+
+HitTestManager::HitTestAsyncQueriedDebugRegion::
+    HitTestAsyncQueriedDebugRegion() = default;
+HitTestManager::HitTestAsyncQueriedDebugRegion::HitTestAsyncQueriedDebugRegion(
+    base::flat_set<FrameSinkId> regions)
+    : regions(std::move(regions)) {}
+HitTestManager::HitTestAsyncQueriedDebugRegion::
+    ~HitTestAsyncQueriedDebugRegion() = default;
+
+HitTestManager::HitTestAsyncQueriedDebugRegion::HitTestAsyncQueriedDebugRegion(
+    HitTestAsyncQueriedDebugRegion&&) = default;
+HitTestManager::HitTestAsyncQueriedDebugRegion&
+HitTestManager::HitTestAsyncQueriedDebugRegion::operator=(
+    HitTestAsyncQueriedDebugRegion&&) = default;
 
 HitTestManager::HitTestManager(SurfaceManager* surface_manager)
     : surface_manager_(surface_manager) {}
@@ -37,7 +50,7 @@ bool HitTestManager::OnSurfaceDamaged(const SurfaceId& surface_id,
   return false;
 }
 
-void HitTestManager::OnSurfaceDiscarded(const SurfaceId& surface_id) {
+void HitTestManager::OnSurfaceDestroyed(const SurfaceId& surface_id) {
   hit_test_region_lists_.erase(surface_id);
 }
 
@@ -67,10 +80,24 @@ void HitTestManager::SubmitHitTestRegionList(
     const SurfaceId& surface_id,
     const uint64_t frame_index,
     base::Optional<HitTestRegionList> hit_test_region_list) {
-  if (!hit_test_region_list)
+  if (!hit_test_region_list) {
+    auto& frame_index_map = hit_test_region_lists_[surface_id];
+    if (!frame_index_map.empty()) {
+      // We will reuse the last submitted hit-test data.
+      uint64_t last_frame_index = frame_index_map.rbegin()->first;
+
+      HitTestRegionList last_hit_test_region_list =
+          std::move(frame_index_map[last_frame_index]);
+
+      frame_index_map[frame_index] = std::move(last_hit_test_region_list);
+      frame_index_map.erase(last_frame_index);
+    }
     return;
+  }
   if (!ValidateHitTestRegionList(surface_id, &*hit_test_region_list))
     return;
+  ++submit_hit_test_region_list_index_;
+
   // TODO(gklassen): Runtime validation that hit_test_region_list is valid.
   // TODO(gklassen): Inform FrameSink that the hit_test_region_list is invalid.
   // TODO(gklassen): FrameSink needs to inform the host of a difficult renderer.
@@ -139,6 +166,11 @@ bool HitTestManager::ValidateHitTestRegionList(
     HitTestRegionList* hit_test_region_list) {
   if (hit_test_region_list->regions.size() > kMaxRegionsPerSurface)
     return false;
+  if (!FlagsAndAsyncReasonsMatch(
+          hit_test_region_list->flags,
+          hit_test_region_list->async_hit_test_reasons)) {
+    return false;
+  }
   for (auto& region : hit_test_region_list->regions) {
     // TODO(gklassen): Ensure that |region->frame_sink_id| is a child of
     // |frame_sink_id|.
@@ -146,6 +178,8 @@ bool HitTestManager::ValidateHitTestRegionList(
       region.frame_sink_id = FrameSinkId(surface_id.frame_sink_id().client_id(),
                                          region.frame_sink_id.sink_id());
     }
+    if (!FlagsAndAsyncReasonsMatch(region.flags, region.async_hit_test_reasons))
+      return false;
   }
   return true;
 }

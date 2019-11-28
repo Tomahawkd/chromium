@@ -9,11 +9,14 @@
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/optional.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_source.h"
 #include "net/log/net_log.h"
+#include "services/network/host_resolver_mdns_listener.h"
+#include "services/network/public/cpp/host_resolver_mojom_traits.h"
 #include "services/network/resolve_host_request.h"
 
 namespace network {
@@ -33,42 +36,46 @@ ConvertOptionalParameters(
   parameters.dns_query_type = mojo_parameters->dns_query_type;
   parameters.initial_priority = mojo_parameters->initial_priority;
   parameters.source = mojo_parameters->source;
-  parameters.allow_cached_response = mojo_parameters->allow_cached_response;
+  parameters.cache_usage =
+      mojo_parameters->allow_cached_response
+          ? net::HostResolver::ResolveHostParameters::CacheUsage::ALLOWED
+          : net::HostResolver::ResolveHostParameters::CacheUsage::DISALLOWED;
   parameters.include_canonical_name = mojo_parameters->include_canonical_name;
   parameters.loopback_only = mojo_parameters->loopback_only;
   parameters.is_speculative = mojo_parameters->is_speculative;
+  parameters.secure_dns_mode_override = mojo::FromOptionalSecureDnsMode(
+      mojo_parameters->secure_dns_mode_override);
   return parameters;
 }
 }  // namespace
 
 HostResolver::HostResolver(
-    mojom::HostResolverRequest resolver_request,
+    mojo::PendingReceiver<mojom::HostResolver> resolver_receiver,
     ConnectionShutdownCallback connection_shutdown_callback,
     net::HostResolver* internal_resolver,
     net::NetLog* net_log)
-    : binding_(this, std::move(resolver_request)),
+    : receiver_(this, std::move(resolver_receiver)),
       connection_shutdown_callback_(std::move(connection_shutdown_callback)),
       internal_resolver_(internal_resolver),
       net_log_(net_log) {
-  binding_.set_connection_error_handler(
+  receiver_.set_disconnect_handler(
       base::BindOnce(&HostResolver::OnConnectionError, base::Unretained(this)));
 }
 
 HostResolver::HostResolver(net::HostResolver* internal_resolver,
                            net::NetLog* net_log)
-    : binding_(this),
+    : receiver_(this),
       internal_resolver_(internal_resolver),
       net_log_(net_log) {}
 
 HostResolver::~HostResolver() {
-  if (binding_)
-    binding_.Close();
+  receiver_.reset();
 }
 
 void HostResolver::ResolveHost(
     const net::HostPortPair& host,
     mojom::ResolveHostParametersPtr optional_parameters,
-    mojom::ResolveHostClientPtr response_client) {
+    mojo::PendingRemote<mojom::ResolveHostClient> response_client) {
 #if !BUILDFLAG(ENABLE_MDNS)
   // TODO(crbug.com/821021): Handle without crashing if we create restricted
   // HostResolvers for passing to untrusted processes.
@@ -83,12 +90,12 @@ void HostResolver::ResolveHost(
       internal_resolver_, host, ConvertOptionalParameters(optional_parameters),
       net_log_);
 
-  mojom::ResolveHostHandleRequest control_handle_request;
+  mojo::PendingReceiver<mojom::ResolveHostHandle> control_handle_receiver;
   if (optional_parameters)
-    control_handle_request = std::move(optional_parameters->control_handle);
+    control_handle_receiver = std::move(optional_parameters->control_handle);
 
   int rv = request->Start(
-      std::move(control_handle_request), std::move(response_client),
+      std::move(control_handle_receiver), std::move(response_client),
       base::BindOnce(&HostResolver::OnResolveHostComplete,
                      base::Unretained(this), request.get()));
   if (rv != net::ERR_IO_PENDING)
@@ -98,6 +105,29 @@ void HostResolver::ResolveHost(
   // shutdown.
   bool insertion_result = requests_.emplace(std::move(request)).second;
   DCHECK(insertion_result);
+}
+
+void HostResolver::MdnsListen(
+    const net::HostPortPair& host,
+    net::DnsQueryType query_type,
+    mojo::PendingRemote<mojom::MdnsListenClient> response_client,
+    MdnsListenCallback callback) {
+#if !BUILDFLAG(ENABLE_MDNS)
+  NOTREACHED();
+#endif  // !BUILDFLAG(ENABLE_MDNS)
+
+  auto listener = std::make_unique<HostResolverMdnsListener>(internal_resolver_,
+                                                             host, query_type);
+  int rv =
+      listener->Start(std::move(response_client),
+                      base::BindOnce(&HostResolver::OnMdnsListenerCancelled,
+                                     base::Unretained(this), listener.get()));
+  if (rv == net::OK) {
+    bool insertion_result = listeners_.emplace(std::move(listener)).second;
+    DCHECK(insertion_result);
+  }
+
+  std::move(callback).Run(rv);
 }
 
 size_t HostResolver::GetNumOutstandingRequestsForTesting() const {
@@ -116,6 +146,12 @@ void HostResolver::OnResolveHostComplete(ResolveHostRequest* request,
   auto found_request = requests_.find(request);
   DCHECK(found_request != requests_.end());
   requests_.erase(found_request);
+}
+
+void HostResolver::OnMdnsListenerCancelled(HostResolverMdnsListener* listener) {
+  auto found_listener = listeners_.find(listener);
+  DCHECK(found_listener != listeners_.end());
+  listeners_.erase(found_listener);
 }
 
 void HostResolver::OnConnectionError() {

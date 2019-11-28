@@ -19,6 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/sandboxed_unpacker.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/verifier_formats.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -92,8 +93,7 @@ KioskExternalUpdater::KioskExternalUpdater(
     const base::FilePath& crx_unpack_dir)
     : backend_task_runner_(backend_task_runner),
       crx_cache_dir_(crx_cache_dir),
-      crx_unpack_dir_(crx_unpack_dir),
-      weak_factory_(this) {
+      crx_unpack_dir_(crx_unpack_dir) {
   // Subscribe to DiskMountManager.
   DCHECK(disks::DiskMountManager::GetInstance());
   disks::DiskMountManager::GetInstance()->AddObserver(this);
@@ -273,7 +273,8 @@ void KioskExternalUpdater::ProcessParsedManifest(
       NOTREACHED();
     }
     update.external_crx = extensions::CRXFileInfo(
-        app_id, external_update_path_.AppendASCII(external_crx_str));
+        app_id, extensions::GetExternalVerifierFormat(),
+        external_update_path_.AppendASCII(external_crx_str));
     update.update_status = PENDING;
     external_updates_[app_id] = update;
   }

@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/base/ime/text_input_client.h"
 
 namespace ui {
@@ -24,7 +25,7 @@ class DummyTextInputClient : public TextInputClient {
 
   // Overriden from TextInputClient.
   void SetCompositionText(const CompositionText& composition) override;
-  void ConfirmCompositionText() override;
+  void ConfirmCompositionText(bool) override;
   void ClearCompositionText() override;
   void InsertText(const base::string16& text) override;
   void InsertChar(const KeyEvent& event) override;
@@ -40,8 +41,8 @@ class DummyTextInputClient : public TextInputClient {
   ui::TextInputClient::FocusReason GetFocusReason() const override;
   bool GetTextRange(gfx::Range* range) const override;
   bool GetCompositionTextRange(gfx::Range* range) const override;
-  bool GetSelectionRange(gfx::Range* range) const override;
-  bool SetSelectionRange(const gfx::Range& range) override;
+  bool GetEditableSelectionRange(gfx::Range* range) const override;
+  bool SetEditableSelectionRange(const gfx::Range& range) override;
   bool DeleteRange(const gfx::Range& range) override;
   bool GetTextFromRange(const gfx::Range& range,
                         base::string16* text) const override;
@@ -55,6 +56,19 @@ class DummyTextInputClient : public TextInputClient {
   ukm::SourceId GetClientSourceForMetrics() const override;
   bool ShouldDoLearning() override;
 
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
+  bool SetCompositionFromExistingText(
+      const gfx::Range& range,
+      const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+#endif
+
+#if defined(OS_WIN)
+  void SetActiveCompositionForAccessibility(
+      const gfx::Range& range,
+      const base::string16& active_composition_text,
+      bool is_composition_committed) override;
+#endif
+
   int insert_char_count() const { return insert_char_count_; }
   base::char16 last_insert_char() const { return last_insert_char_; }
   const std::vector<base::string16>& insert_text_history() const {
@@ -62,6 +76,9 @@ class DummyTextInputClient : public TextInputClient {
   }
   const std::vector<CompositionText>& composition_history() const {
     return composition_history_;
+  }
+  const std::vector<gfx::Range>& selection_history() const {
+    return selection_history_;
   }
 
   TextInputType text_input_type_;
@@ -74,6 +91,7 @@ class DummyTextInputClient : public TextInputClient {
   base::char16 last_insert_char_;
   std::vector<base::string16> insert_text_history_;
   std::vector<CompositionText> composition_history_;
+  std::vector<gfx::Range> selection_history_;
 };
 
 }  // namespace ui

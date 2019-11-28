@@ -29,6 +29,7 @@ bool Validators::QueryObjectParameterValidator::IsValid(
 bool Validators::QueryTargetValidator::IsValid(const GLenum value) const {
   switch (value) {
     case GL_COMMANDS_ISSUED_CHROMIUM:
+    case GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM:
     case GL_COMMANDS_COMPLETED_CHROMIUM:
       return true;
   }
@@ -54,7 +55,9 @@ static const GLenum valid_texture_min_filter_mode_table[] = {
 };
 
 static const GLenum valid_texture_parameter_table[] = {
-    GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER, GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_MAG_FILTER,
+    GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
 };
 
@@ -63,9 +66,9 @@ static const GLenum valid_texture_wrap_mode_table[] = {
 };
 
 static const gfx::BufferUsage valid_gfx_buffer_usage_table[] = {
-    gfx::BufferUsage::GPU_READ, gfx::BufferUsage::SCANOUT,
+    gfx::BufferUsage::GPU_READ,
+    gfx::BufferUsage::SCANOUT,
     gfx::BufferUsage::GPU_READ_CPU_READ_WRITE,
-    gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT,
 };
 
 static const viz::ResourceFormat valid_viz_resource_format_table[] = {
@@ -78,7 +81,6 @@ static const viz::ResourceFormat valid_viz_resource_format_table[] = {
     viz::ResourceFormat::RGBX_8888,    viz::ResourceFormat::BGRX_8888,
     viz::ResourceFormat::RGBX_1010102, viz::ResourceFormat::BGRX_1010102,
     viz::ResourceFormat::YVU_420,      viz::ResourceFormat::YUV_420_BIPLANAR,
-    viz::ResourceFormat::UYVY_422,
 };
 
 Validators::Validators()

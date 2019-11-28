@@ -4,19 +4,20 @@
 
 package org.chromium.chrome.browser.download.home.list.holder;
 
-import android.support.annotation.CallSuper;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.TextView;
+
+import androidx.annotation.CallSuper;
 
 import org.chromium.chrome.browser.download.home.list.ListItem;
 import org.chromium.chrome.browser.download.home.list.ListProperties;
 import org.chromium.chrome.browser.download.home.list.UiUtils;
 import org.chromium.chrome.browser.download.home.list.view.CircularProgressView;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
 import org.chromium.chrome.download.R;
 import org.chromium.components.offline_items_collection.OfflineItem;
 import org.chromium.components.offline_items_collection.OfflineItemState;
+import org.chromium.ui.modelutil.PropertyModel;
 
 /**
  * A {@link RecyclerView.ViewHolder} specifically meant to display an in-progress {@code

@@ -7,9 +7,12 @@
 #include <drm.h>
 #include <string.h>
 #include <xf86drm.h>
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/libdrm/src/include/drm/drm_fourcc.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -57,9 +60,7 @@ void DrawCursor(DrmDumbBuffer* cursor, const SkBitmap& image) {
 HardwareDisplayController::HardwareDisplayController(
     std::unique_ptr<CrtcController> controller,
     const gfx::Point& origin)
-    : origin_(origin),
-      is_disabled_(controller->is_disabled()),
-      weak_ptr_factory_(this) {
+    : origin_(origin), is_disabled_(controller->is_disabled()) {
   AddCrtc(std::move(controller));
   AllocateCursorBuffers();
 }
@@ -134,9 +135,9 @@ void HardwareDisplayController::SchedulePageFlip(
       .Run(gfx::SwapResult::SWAP_ACK, std::move(out_fence));
 
   // Everything was submitted successfully, wait for asynchronous completion.
-  page_flip_request->TakeCallback(base::BindOnce(
-      &CompletePageFlip, weak_ptr_factory_.GetWeakPtr(),
-      base::Passed(&presentation_callback), base::Passed(&plane_list)));
+  page_flip_request->TakeCallback(
+      base::BindOnce(&CompletePageFlip, weak_ptr_factory_.GetWeakPtr(),
+                     std::move(presentation_callback), std::move(plane_list)));
   page_flip_request_ = std::move(page_flip_request);
 }
 
@@ -176,7 +177,7 @@ bool HardwareDisplayController::ScheduleOrTestPageFlip(
 }
 
 std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
-    uint32_t format) {
+    uint32_t format) const {
   std::vector<uint64_t> modifiers;
 
   if (crtc_controllers_.empty())
@@ -199,7 +200,7 @@ std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
 
 std::vector<uint64_t>
 HardwareDisplayController::GetFormatModifiersForModesetting(
-    uint32_t fourcc_format) {
+    uint32_t fourcc_format) const {
   const auto& modifiers = GetFormatModifiers(fourcc_format);
   std::vector<uint64_t> filtered_modifiers;
   for (auto modifier : modifiers) {
@@ -356,7 +357,7 @@ void HardwareDisplayController::AllocateCursorBuffers() {
   gfx::Size max_cursor_size = GetMaximumCursorSize(GetDrmDevice()->get_fd());
   SkImageInfo info = SkImageInfo::MakeN32Premul(max_cursor_size.width(),
                                                 max_cursor_size.height());
-  for (size_t i = 0; i < arraysize(cursor_buffers_); ++i) {
+  for (size_t i = 0; i < base::size(cursor_buffers_); ++i) {
     cursor_buffers_[i] = std::make_unique<DrmDumbBuffer>(GetDrmDevice());
     // Don't register a framebuffer for cursors since they are special (they
     // aren't modesetting buffers and drivers may fail to register them due to

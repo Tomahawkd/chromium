@@ -13,11 +13,8 @@
 
 namespace blink {
 class WebLocalFrameClient;
-class WebMIDIAccessor;
-class WebMIDIAccessorClient;
 class WebRTCPeerConnectionHandler;
 class WebRTCPeerConnectionHandlerClient;
-class WebThemeEngine;
 class WebURL;
 class WebView;
 }
@@ -26,13 +23,10 @@ namespace test_runner {
 
 class TestInterfaces;
 class WebFrameTestClient;
-class WebFrameTestProxyBase;
+class WebFrameTestProxy;
 class WebTestDelegate;
-class WebViewTestProxyBase;
-class WebWidgetTestProxyBase;
+class WebViewTestProxy;
 class WebTestRunner;
-class WebViewTestClient;
-class WebWidgetTestClient;
 
 class TEST_RUNNER_EXPORT WebTestInterfaces {
  public:
@@ -51,39 +45,20 @@ class TEST_RUNNER_EXPORT WebTestInterfaces {
                                bool protocol_mode);
 
   WebTestRunner* TestRunner();
-  blink::WebThemeEngine* ThemeEngine();
 
   std::unique_ptr<blink::WebRTCPeerConnectionHandler>
   CreateWebRTCPeerConnectionHandler(
       blink::WebRTCPeerConnectionHandlerClient* client);
-
-  std::unique_ptr<blink::WebMIDIAccessor> CreateMIDIAccessor(
-      blink::WebMIDIAccessorClient* client);
 
   TestInterfaces* GetTestInterfaces();
 
   // Creates a WebLocalFrameClient implementation providing test behavior (i.e.
   // forwarding javascript console output to the test harness).  The caller
   // should guarantee that the returned object won't be used beyond the lifetime
-  // of WebTestInterfaces and/or the lifetime of |web_view_test_proxy_base|.
+  // of WebTestInterfaces and/or the lifetime of |web_view_test_proxy|.
   std::unique_ptr<WebFrameTestClient> CreateWebFrameTestClient(
-      WebViewTestProxyBase* web_view_test_proxy_base,
-      WebFrameTestProxyBase* web_frame_test_proxy_base);
-
-  // Creates a WebViewClient implementation providing test behavior (i.e.
-  // providing a mocked speech recognizer).  The caller should guarantee that
-  // the returned pointer won't be used beyond the lifetime of WebTestInterfaces
-  // and/or the lifetime of |web_view_test_proxy_base|.
-  std::unique_ptr<WebViewTestClient> CreateWebViewTestClient(
-      WebViewTestProxyBase* web_view_test_proxy_base,
-      std::unique_ptr<WebWidgetTestClient> web_widget_test_client);
-
-  // Creates a WebWidgetClient implementation providing test behavior (i.e.
-  // providing a mocked screen orientation).  The caller should guarantee that
-  // the returned pointer won't be used beyond the lifetime of WebTestInterfaces
-  // and/or the lifetime of |web_widget_test_proxy_base|.
-  std::unique_ptr<WebWidgetTestClient> CreateWebWidgetTestClient(
-      WebWidgetTestProxyBase* web_widget_test_proxy_base);
+      WebViewTestProxy* web_view_test_proxy,
+      WebFrameTestProxy* web_frame_test_proxy);
 
   // Gets a list of currently opened windows created by the current test.
   std::vector<blink::WebView*> GetWindowList();

@@ -12,6 +12,7 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -136,6 +137,25 @@ IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreAppsV1) {
   EXPECT_EQ(1u, app1_count);
   EXPECT_EQ(2u, app2_count);  // Only the trusted app windows are restored.
   EXPECT_EQ(4u, total_count);  // Default browser() + 3 app windows
+}
+
+IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, PRE_RestoreNoDevtools) {
+  // Create devtools.
+  CreateBrowserWithParams(Browser::CreateParams::CreateForDevTools(profile()));
+
+  TurnOnSessionRestore();
+}
+
+IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, RestoreNoDevtools) {
+  size_t total_count = 0;
+  size_t devtools_count = 0;
+  for (auto* browser : *BrowserList::GetInstance()) {
+    ++total_count;
+    if (browser->is_type_devtools())
+      ++devtools_count;
+  }
+  EXPECT_EQ(1u, total_count);
+  EXPECT_EQ(0u, devtools_count);
 }
 
 IN_PROC_BROWSER_TEST_F(SessionRestoreTestChromeOS, PRE_RestoreMaximized) {

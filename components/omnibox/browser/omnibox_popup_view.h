@@ -32,11 +32,11 @@ class OmniboxPopupView {
   // mean opening or closing the window.
   virtual void UpdatePopupAppearance() = 0;
 
+  // Called to inform result view of button focus.
+  virtual void ProvideButtonFocusHint(size_t line) = 0;
+
   // Notification that the icon used for the given match has been updated.
   virtual void OnMatchIconUpdated(size_t match_index) = 0;
-
-  // Paint any pending updates.
-  virtual void PaintUpdatesNow() = 0;
 
   // This method is called when the view should cancel any active drag (e.g.
   // because the user pressed ESC). The view may or may not need to take any

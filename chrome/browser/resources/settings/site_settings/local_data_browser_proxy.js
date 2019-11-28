@@ -78,15 +78,6 @@ cr.define('settings', function() {
     getCookieDetails(site) {}
 
     /**
-     * Gets a list containing the number of cookies for each domain (eTLD+1
-     * names) given in |siteList|. This will always return a result array the
-     * same length and in the same order as |siteList|.
-     * @param {!Array<string>} siteList The list of sites to count cookies for.
-     * @return {!Promise<!Array<!EtldPlus1CookieNumber>>}
-     */
-    getNumCookiesList(siteList) {}
-
-    /**
      * Gets the plural string for a given number of cookies.
      * @param {number} numCookies The number of cookies.
      * @return {!Promise<string>}
@@ -106,6 +97,14 @@ cr.define('settings', function() {
      * @param {string} path The path to the parent cookie.
      */
     removeCookie(path) {}
+
+    /**
+     * Removes all SameSite=None cookies, as well as storage available in
+     * third-party contexts.
+     * Note: on-tree-item-removed will not be sent.
+     * @return {!Promise} To signal completion.
+     */
+    removeAllThirdPartyCookies() {}
   }
 
   /**
@@ -138,11 +137,6 @@ cr.define('settings', function() {
     }
 
     /** @override */
-    getNumCookiesList(siteList) {
-      return cr.sendWithPromise('localData.getNumCookiesList', siteList);
-    }
-
-    /** @override */
     getNumCookiesString(numCookies) {
       return cr.sendWithPromise('localData.getNumCookiesString', numCookies);
     }
@@ -155,6 +149,11 @@ cr.define('settings', function() {
     /** @override */
     removeCookie(path) {
       chrome.send('localData.removeCookie', [path]);
+    }
+
+    /** @override */
+    removeAllThirdPartyCookies() {
+      return cr.sendWithPromise('localData.removeThirdPartyCookies');
     }
   }
 

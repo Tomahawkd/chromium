@@ -82,6 +82,10 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   // This must be called after the response arrives.
   bool IsCorsCrossOrigin() const;
 
+  // Returns true if the response includes an Access-Control-Allow-Origin
+  // header (that is not "null").
+  bool HasAccessControl() const;
+
   // Returns the CorsMode of the underlying UrlData.
   UrlData::CorsMode cors_mode() const;
 
@@ -92,7 +96,7 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   bool media_has_played() const;
 
   // Returns true if the resource is local.
-  bool assume_fully_buffered();
+  bool AssumeFullyBuffered() const override;
 
   // Cancels any open network connections once reaching the deferred state. If
   // |always_cancel| is false this is done only for preload=metadata, non-
@@ -101,7 +105,7 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   // deferred, connections will be immediately closed.
   void OnBufferingHaveEnough(bool always_cancel);
 
-  int64_t GetMemoryUsage() const;
+  int64_t GetMemoryUsage() override;
 
   GURL GetUrlAfterRedirects() const;
 
@@ -120,6 +124,8 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   void SetIsClientAudioElement(bool is_client_audio_element) {
     is_client_audio_element_ = is_client_audio_element;
   }
+
+  bool cancel_on_defer_for_testing() const { return cancel_on_defer_; }
 
  protected:
   void OnRedirect(const scoped_refptr<UrlData>& destination);
@@ -265,7 +271,7 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   // a persistent reference. This avoids problems with the thread-safety of
   // reaching into this class from multiple threads to attain a WeakPtr.
   base::WeakPtr<MultibufferDataSource> weak_ptr_;
-  base::WeakPtrFactory<MultibufferDataSource> weak_factory_;
+  base::WeakPtrFactory<MultibufferDataSource> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MultibufferDataSource);
 };

@@ -9,9 +9,9 @@
 #include <memory>
 
 #include "base/callback_forward.h"
-#include "base/md5.h"
-#include "base/test/scoped_feature_list.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/hash/md5.h"
+#include "base/run_loop.h"
+#include "base/test/task_environment.h"
 #include "media/audio/clockless_audio_sink.h"
 #include "media/audio/null_audio_sink.h"
 #include "media/base/demuxer.h"
@@ -35,7 +35,7 @@ class RunLoop;
 namespace media {
 
 class FakeEncryptedMedia;
-class MockMediaSource;
+class TestMediaSource;
 
 // Empty MD5 hash string.  Used to verify empty video tracks.
 extern const char kNullVideoHash[];
@@ -43,25 +43,12 @@ extern const char kNullVideoHash[];
 // Empty hash string.  Used to verify empty audio tracks.
 extern const char kNullAudioHash[];
 
-// Dummy tick clock which advances extremely quickly (1 minute every time
-// NowTicks() is called).
-class DummyTickClock : public base::TickClock {
- public:
-  DummyTickClock() : now_() {}
-  ~DummyTickClock() override {}
-  base::TimeTicks NowTicks() const override;
-
- private:
-  mutable base::TimeTicks now_;
-};
-
 class PipelineTestRendererFactory {
  public:
-  virtual ~PipelineTestRendererFactory() {}
+  virtual ~PipelineTestRendererFactory() = default;
+
   // Creates and returns a Renderer.
-  virtual std::unique_ptr<Renderer> CreateRenderer(
-      CreateVideoDecodersCB prepend_video_decoders_cb,
-      CreateAudioDecodersCB prepend_audio_decoders_cb) = 0;
+  virtual std::unique_ptr<Renderer> CreateRenderer() = 0;
 };
 
 // Integration tests for Pipeline. Real demuxers, real decoders, and
@@ -89,6 +76,7 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
     kUnreliableDuration = 8,
     kWebAudio = 16,
     kMonoOutput = 32,
+    kFuzzing = 64,
   };
 
   // Setup method to intialize various state according to flags.
@@ -156,18 +144,22 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
     audio_play_delay_cb_ = std::move(cb);
   }
 
-  std::unique_ptr<Renderer> CreateRenderer(
-      CreateVideoDecodersCB prepend_video_decoders_cb,
-      CreateAudioDecodersCB prepend_audio_decoders_cb);
+  std::unique_ptr<Renderer> CreateRenderer();
+  void CreateRendererAsync(RendererCreatedCB renderer_created_cb);
 
  protected:
   NiceMock<MockMediaLog> media_log_;
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   base::MD5Context md5_context_;
   bool hashing_enabled_;
   bool clockless_playback_;
   bool webaudio_attached_;
   bool mono_output_;
+  bool fuzzing_;
+#if defined(ADDRESS_SANITIZER) || defined(UNDEFINED_SANITIZER)
+  // TODO(https://crbug.com/924030): ASAN causes Run() timeouts to be reached.
+  const base::RunLoop::ScopedDisableRunTimeoutForTest disable_run_timeout_;
+#endif
   std::unique_ptr<Demuxer> demuxer_;
   std::unique_ptr<DataSource> data_source_;
   std::unique_ptr<PipelineImpl> pipeline_;
@@ -179,7 +171,6 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   Demuxer::EncryptedMediaInitDataCB encrypted_media_init_data_cb_;
   VideoPixelFormat last_video_frame_format_;
   gfx::ColorSpace last_video_frame_color_space_;
-  DummyTickClock dummy_clock_;
   PipelineMetadata metadata_;
   scoped_refptr<VideoFrame> last_frame_;
   base::TimeDelta current_duration_;
@@ -202,12 +193,12 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
       CreateAudioDecodersCB prepend_audio_decoders_cb =
           CreateAudioDecodersCB());
 
-  PipelineStatus StartPipelineWithMediaSource(MockMediaSource* source);
+  PipelineStatus StartPipelineWithMediaSource(TestMediaSource* source);
   PipelineStatus StartPipelineWithEncryptedMedia(
-      MockMediaSource* source,
+      TestMediaSource* source,
       FakeEncryptedMedia* encrypted_media);
   PipelineStatus StartPipelineWithMediaSource(
-      MockMediaSource* source,
+      TestMediaSource* source,
       uint8_t test_type,
       FakeEncryptedMedia* encrypted_media);
 
@@ -225,7 +216,7 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // Creates Demuxer and sets |demuxer_|.
   void CreateDemuxer(std::unique_ptr<DataSource> data_source);
 
-  void OnVideoFramePaint(const scoped_refptr<VideoFrame>& frame);
+  void OnVideoFramePaint(scoped_refptr<VideoFrame> frame);
 
   void CheckDuration();
 
@@ -236,31 +227,36 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // Pipeline::Client overrides.
   void OnError(PipelineStatus status) override;
   void OnEnded() override;
-  MOCK_METHOD1(OnMetadata, void(PipelineMetadata));
-  MOCK_METHOD1(OnBufferingStateChange, void(BufferingState));
+  MOCK_METHOD1(OnMetadata, void(const PipelineMetadata&));
+  MOCK_METHOD2(OnBufferingStateChange,
+               void(BufferingState, BufferingStateChangeReason));
   MOCK_METHOD0(OnDurationChange, void());
   MOCK_METHOD2(OnAddTextTrack,
                void(const TextTrackConfig& config,
                     const AddTextTrackDoneCB& done_cb));
-  MOCK_METHOD0(OnWaitingForDecryptionKey, void(void));
+  MOCK_METHOD1(OnWaiting, void(WaitingReason));
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size&));
   MOCK_METHOD1(OnVideoConfigChange, void(const VideoDecoderConfig&));
   MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
   MOCK_METHOD0(OnVideoAverageKeyframeDistanceUpdate, void());
-  MOCK_METHOD1(OnAudioDecoderChange, void(const std::string&));
-  MOCK_METHOD1(OnVideoDecoderChange, void(const std::string&));
+  MOCK_METHOD1(OnAudioDecoderChange, void(const PipelineDecoderInfo&));
+  MOCK_METHOD1(OnVideoDecoderChange, void(const PipelineDecoderInfo&));
+  MOCK_METHOD1(OnRemotePlayStateChange, void(MediaStatus::State state));
 
  private:
   // Runs |run_loop| until it is explicitly Quit() by some part of the calling
   // test fixture or when an error occurs (by setting |on_error_closure_|). The
-  // |scoped_task_environment_| is RunUntilIdle() after the RunLoop finishes
+  // |task_environment_| is RunUntilIdle() after the RunLoop finishes
   // running, before returning to the caller.
   void RunUntilQuitOrError(base::RunLoop* run_loop);
 
   // Configures |on_ended_closure_| to quit |run_loop| and then calls
   // RunUntilQuitOrError() on it.
   void RunUntilQuitOrEndedOrError(base::RunLoop* run_loop);
+
+  CreateVideoDecodersCB prepend_video_decoders_cb_;
+  CreateAudioDecodersCB prepend_audio_decoders_cb_;
 
   base::OnceClosure on_ended_closure_;
   base::OnceClosure on_error_closure_;

@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/string16.h"
 #include "components/bubble/bubble_delegate.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -16,6 +17,7 @@
 class Browser;
 
 namespace extensions {
+struct ActionInfo;
 class Command;
 class Extension;
 }
@@ -65,17 +67,17 @@ class ExtensionInstalledBubble : public BubbleDelegate {
   // the extension has loaded. |extension| is the installed extension. |browser|
   // is the browser window which will host the bubble. |icon| is the install
   // icon of the extension.
-  static void ShowBubble(const extensions::Extension* extension,
+  static void ShowBubble(scoped_refptr<const extensions::Extension> extension,
                          Browser* browser,
                          const SkBitmap& icon);
 
-  ExtensionInstalledBubble(const extensions::Extension* extension,
+  ExtensionInstalledBubble(scoped_refptr<const extensions::Extension> extension,
                            Browser* browser,
                            const SkBitmap& icon);
 
   ~ExtensionInstalledBubble() override;
 
-  const extensions::Extension* extension() const { return extension_; }
+  const extensions::Extension* extension() const { return extension_.get(); }
   Browser* browser() { return browser_; }
   const Browser* browser() const { return browser_; }
   const SkBitmap& icon() const { return icon_; }
@@ -102,24 +104,28 @@ class ExtensionInstalledBubble : public BubbleDelegate {
   // Returns the string describing how to use the new extension.
   base::string16 GetHowToUseDescription() const;
 
-  // Handle initialization with the extension.
-  void Initialize();
-
  private:
-  // |extension_| is NULL when we are deleted.
-  const extensions::Extension* extension_;
+  ExtensionInstalledBubble(scoped_refptr<const extensions::Extension> extension,
+                           Browser* browser,
+                           const SkBitmap& icon,
+                           const extensions::ActionInfo* action_info);
+
+  // It's possible for an extension to be programmatically uninstalled
+  // underneath us, so don't let the extension object go away until the bubble
+  // is hidden.
+  const scoped_refptr<const extensions::Extension> extension_;
   Browser* const browser_;
   const SkBitmap icon_;
-  BubbleType type_;
-
-  // A bitmask containing the various options of bubble sections to show.
-  int options_;
-
-  // The location where the bubble should be anchored.
-  AnchorPosition anchor_position_;
+  const BubbleType type_;
 
   // The command to execute the extension action, if one exists.
-  std::unique_ptr<extensions::Command> action_command_;
+  const std::unique_ptr<extensions::Command> action_command_;
+
+  // A bitmask containing the various options of bubble sections to show.
+  const int options_;
+
+  // The location where the bubble should be anchored.
+  const AnchorPosition anchor_position_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstalledBubble);
 };

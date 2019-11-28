@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /**
- * @fileoverview A helper object used from the "Google accounts" subsection of
+ * @fileoverview A helper object used from the "Google Accounts" subsection of
  * the "People" section of Settings, to interact with the browser. Chrome OS
  * only.
  */
@@ -15,9 +15,12 @@ cr.exportPath('settings');
  *   id: string,
  *   accountType: number,
  *   isDeviceAccount: boolean,
+ *   isSignedIn: boolean,
+ *   unmigrated: boolean,
  *   fullName: string,
  *   email: string,
  *   pic: string,
+ *   organization: (string|undefined),
  * }}
  */
 settings.Account;
@@ -37,10 +40,29 @@ cr.define('settings', function() {
     addAccount() {}
 
     /**
+     * Triggers the re-authentication flow for the account pointed to by
+     * |account_email|.
+     * @param {string} account_email
+     */
+    reauthenticateAccount(account_email) {}
+
+    /**
+     * Triggers the migration dialog for the account pointed to by
+     * |account_email|.
+     * @param {string} account_email
+     */
+    migrateAccount(account_email) {}
+
+    /**
      * Removes |account| from Account Manager.
      * @param {?settings.Account} account
      */
     removeAccount(account) {}
+
+    /**
+     * Displays the Account Manager welcome dialog if required.
+     */
+    showWelcomeDialogIfRequired() {}
   }
 
   /**
@@ -58,8 +80,23 @@ cr.define('settings', function() {
     }
 
     /** @override */
+    reauthenticateAccount(account_email) {
+      chrome.send('reauthenticateAccount', [account_email]);
+    }
+
+    /** @override */
+    migrateAccount(account_email) {
+      chrome.send('migrateAccount', [account_email]);
+    }
+
+    /** @override */
     removeAccount(account) {
       chrome.send('removeAccount', [account]);
+    }
+
+    /** @override */
+    showWelcomeDialogIfRequired() {
+      chrome.send('showWelcomeDialogIfRequired');
     }
   }
 

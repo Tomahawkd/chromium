@@ -15,15 +15,6 @@ OverflowBubbleViewTestAPI::OverflowBubbleViewTestAPI(
 
 OverflowBubbleViewTestAPI::~OverflowBubbleViewTestAPI() = default;
 
-gfx::Size OverflowBubbleViewTestAPI::GetContentsSize() {
-  return bubble_view_->shelf_view_->GetPreferredSize();
-}
-
-void OverflowBubbleViewTestAPI::ScrollByXOffset(int x_offset) {
-  bubble_view_->ScrollByXOffset(x_offset);
-  bubble_view_->Layout();
-}
-
 views::BubbleFrameView* OverflowBubbleViewTestAPI::GetBubbleFrameView() {
   return bubble_view_->GetBubbleFrameView();
 }

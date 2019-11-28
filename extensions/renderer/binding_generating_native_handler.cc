@@ -4,8 +4,8 @@
 
 #include "extensions/renderer/binding_generating_native_handler.h"
 
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/v8_helpers.h"
@@ -13,7 +13,7 @@
 
 namespace extensions {
 
-using namespace v8_helpers;
+using v8_helpers::GetProperty;
 
 BindingGeneratingNativeHandler::BindingGeneratingNativeHandler(
     ScriptContext* context,
@@ -45,7 +45,7 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
   // Convert |api_name| and |bind_to| into their v8::Strings to pass
   // through the v8 APIs.
   v8::Local<v8::String> v8_api_name;
-  if (!ToV8String(isolate, api_name_, &v8_api_name)) {
+  if (!v8_helpers::ToV8String(isolate, api_name_, &v8_api_name)) {
     NOTREACHED();
     return v8::Local<v8::Object>();
   }
@@ -87,7 +87,7 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
         v8_context->GetIsolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
     // TODO(devlin): We should not be using v8::Function::Call() directly here.
     // Instead, we should use JSRunner once it's used outside native bindings.
-    if (!create_binding->Call(v8_context, binding, arraysize(argv), argv)
+    if (!create_binding->Call(v8_context, binding, base::size(argv), argv)
              .ToLocal(&binding_instance_value) ||
         !binding_instance_value->ToObject(v8_context)
              .ToLocal(&binding_instance)) {

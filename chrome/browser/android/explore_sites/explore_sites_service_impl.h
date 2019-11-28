@@ -43,22 +43,24 @@ class ExploreSitesServiceImpl : public ExploreSitesService,
 
   // ExploreSitesService implementation.
   void GetCatalog(CatalogCallback callback) override;
-
   void GetCategoryImage(int category_id,
                         int pixel_size,
                         BitmapCallback callback) override;
-
-  // Compose a single site icon and return via |callback|.
+  void GetSummaryImage(int pixel_size, BitmapCallback callback) override;
   void GetSiteImage(int site_id, BitmapCallback callback) override;
-
-  // Compose a category icon containing [1 - 4] site icons and return via
-  // |callback|.
   void UpdateCatalogFromNetwork(bool is_immediate_fetch,
                                 const std::string& accept_languages,
                                 BooleanCallback callback) override;
-
-  // Add the url to the blacklist.
+  void RecordClick(const std::string& url, int category_type) override;
   void BlacklistSite(const std::string& url) override;
+  void ClearActivities(base::Time begin,
+                       base::Time end,
+                       base::OnceClosure callback) override;
+  void IncrementNtpShownCount(int category_id) override;
+  void ClearCachedCatalogsForDebugging() override;
+  void OverrideCountryCodeForDebugging(
+      const std::string& country_code) override;
+  std::string GetCountryCode() override;
 
   // Test hook to call the OnCatalogFetched method since we can't pass nullptr
   // through the test fetcher code.
@@ -92,6 +94,7 @@ class ExploreSitesServiceImpl : public ExploreSitesService,
                             int pixel_size,
                             EncodedImageList images);
 
+  std::unique_ptr<std::string> country_override_;
   ImageHelper image_helper_;
 
   // Used to control access to the ExploreSitesStore.
@@ -101,7 +104,7 @@ class ExploreSitesServiceImpl : public ExploreSitesService,
   std::unique_ptr<ExploreSitesFetcher> explore_sites_fetcher_;
   std::unique_ptr<HistoryStatisticsReporter> history_statistics_reporter_;
   std::vector<BooleanCallback> update_catalog_callbacks_;
-  base::WeakPtrFactory<ExploreSitesServiceImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<ExploreSitesServiceImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExploreSitesServiceImpl);
 };

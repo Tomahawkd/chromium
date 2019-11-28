@@ -36,7 +36,7 @@ struct SharedMemoryLimits {
 #endif
   }
 
-  int32_t command_buffer_size = 1024 * 1024;
+  uint32_t command_buffer_size = 1024 * 1024;
   uint32_t start_transfer_buffer_size = 64 * 1024;
   uint32_t min_transfer_buffer_size = 64 * 1024;
   uint32_t max_transfer_buffer_size = 16 * 1024 * 1024;
@@ -66,13 +66,22 @@ struct SharedMemoryLimits {
     return limits;
   }
 
+  static SharedMemoryLimits ForWebGPUContext() {
+    // Most WebGPU commands are sent via transfer buffer, so we use a smaller
+    // command buffer.
+    SharedMemoryLimits limits;
+    limits.command_buffer_size = 64 * 1024;
+
+    return limits;
+  }
+
 #if defined(OS_ANDROID)
   static SharedMemoryLimits ForDisplayCompositor(const gfx::Size& screen_size) {
     DCHECK(!screen_size.IsEmpty());
 
     SharedMemoryLimits limits;
-    constexpr size_t kBytesPerPixel = 4;
-    const size_t full_screen_texture_size_in_bytes =
+    constexpr uint32_t kBytesPerPixel = 4;
+    const uint32_t full_screen_texture_size_in_bytes =
         screen_size.width() * screen_size.height() * kBytesPerPixel;
 
     // Android uses a smaller command buffer for the display compositor. Meant

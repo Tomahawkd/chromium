@@ -12,7 +12,7 @@
 #include "base/stl_util.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/ui_features.h"
+#include "ui/base/buildflags.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 
 namespace {
@@ -31,6 +31,19 @@ int CommandForKeys(bool command_key,
     modifierFlags |= NSControlKeyMask;
   if (opt_key)
     modifierFlags |= NSAlternateKeyMask;
+
+  switch (vkey_code) {
+    case kVK_UpArrow:
+    case kVK_DownArrow:
+    case kVK_LeftArrow:
+    case kVK_RightArrow:
+      // Docs say this is set whenever a key came from the numpad *or* the arrow
+      // keys.
+      modifierFlags |= NSEventModifierFlagNumericPad;
+      break;
+    default:
+      break;
+  }
 
   unichar shifted_character;
   unichar character;

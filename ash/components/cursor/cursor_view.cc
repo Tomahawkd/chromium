@@ -4,6 +4,7 @@
 
 #include "ash/components/cursor/cursor_view.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/paint/paint_canvas.h"
@@ -63,16 +64,15 @@ CursorView::CursorView(aura::Window* container,
                               base::Unretained(this))),
       is_motion_blur_enabled_(is_motion_blur_enabled),
       ui_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      paint_task_runner_(base::CreateSingleThreadTaskRunnerWithTraits(
-          {base::TaskPriority::USER_BLOCKING,
+      paint_task_runner_(base::CreateSingleThreadTaskRunner(
+          {base::ThreadPool(), base::TaskPriority::USER_BLOCKING,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       new_location_(initial_location),
       stationary_timer_(
           FROM_HERE,
           base::TimeDelta::FromMilliseconds(kStationaryDelayMs),
           base::BindRepeating(&CursorView::StationaryOnPaintThread,
-                              base::Unretained(this))),
-      weak_ptr_factory_(this) {
+                              base::Unretained(this))) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(ui_sequence_checker_);
 
   // Detach sequence checker for future usage on paint thread.

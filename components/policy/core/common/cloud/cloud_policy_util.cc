@@ -23,9 +23,12 @@
 #endif
 
 #if defined(OS_MACOSX)
-#import <SystemConfiguration/SCDynamicStoreCopySpecific.h>
 #include <stddef.h>
 #include <sys/sysctl.h>
+#endif
+
+#if defined(OS_MACOSX) && !defined(OS_IOS)
+#import <SystemConfiguration/SCDynamicStoreCopySpecific.h>
 #endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
@@ -35,8 +38,14 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/system/sys_info.h"
 #include "components/version_info/version_info.h"
+
+#if defined(OS_CHROMEOS)
+#include "components/user_manager/user.h"
+#include "components/user_manager/user_manager.h"
+#endif
 
 #if defined(OS_WIN)
 #include "base/strings/stringprintf.h"
@@ -66,6 +75,9 @@ std::string GetMachineName() {
     return hostname;
   return std::string();
 #elif defined(OS_MACOSX)
+// TODO(crbug.com/1024115): Find a different replacement for -[NSHost
+// currentHost] on iOS.
+#if !defined(OS_IOS)
   // Do not use NSHost currentHost, as it's very slow. http://crbug.com/138570
   SCDynamicStoreContext context = {0, NULL, NULL, NULL};
   base::ScopedCFTypeRef<SCDynamicStoreRef> store(SCDynamicStoreCreate(
@@ -80,6 +92,7 @@ std::string GetMachineName() {
       SCDynamicStoreCopyComputerName(store.get(), NULL));
   if (computer_name.get())
     return base::SysCFStringRefToUTF8(computer_name.get());
+#endif  // !OS_IOS
 
   // If all else fails, return to using a slightly nicer version of the
   // hardware model.
@@ -95,7 +108,7 @@ std::string GetMachineName() {
   return std::string();
 #elif defined(OS_WIN)
   wchar_t computer_name[MAX_COMPUTERNAME_LENGTH + 1] = {0};
-  DWORD size = arraysize(computer_name);
+  DWORD size = base::size(computer_name);
   if (::GetComputerNameW(computer_name, &size)) {
     std::string result;
     bool conversion_successful = base::WideToUTF8(computer_name, size, &result);
@@ -110,7 +123,7 @@ std::string GetMachineName() {
 }
 
 std::string GetOSVersion() {
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) || defined(OS_MACOSX)
+#if defined(OS_LINUX) || defined(OS_MACOSX)
   return base::SysInfo::OperatingSystemVersion();
 #elif defined(OS_WIN)
   base::win::OSInfo::VersionNumber version_number =
@@ -152,6 +165,13 @@ std::string GetOSUsername() {
   }
 
   return base::WideToUTF8(username);
+#elif defined(OS_CHROMEOS)
+  if (!user_manager::UserManager::IsInitialized())
+    return std::string();
+  auto* user = user_manager::UserManager::Get()->GetPrimaryUser();
+  if (!user)
+    return std::string();
+  return user->GetAccountId().GetUserEmail();
 #else
   NOTREACHED();
   return std::string();

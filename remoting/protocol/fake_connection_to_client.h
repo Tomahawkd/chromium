@@ -32,6 +32,7 @@ class FakeVideoStream : public protocol::VideoStream {
   void SetLosslessEncode(bool want_lossless) override;
   void SetLosslessColor(bool want_lossless) override;
   void SetObserver(Observer* observer) override;
+  void SelectSource(int id) override;
 
   Observer* observer() { return observer_; }
 
@@ -40,7 +41,7 @@ class FakeVideoStream : public protocol::VideoStream {
  private:
   Observer* observer_ = nullptr;
 
-  base::WeakPtrFactory<FakeVideoStream> weak_factory_;
+  base::WeakPtrFactory<FakeVideoStream> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeVideoStream);
 };

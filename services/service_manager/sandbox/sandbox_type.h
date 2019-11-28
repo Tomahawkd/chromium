@@ -31,6 +31,12 @@ enum SandboxType {
   SANDBOX_TYPE_XRCOMPOSITING,
 #endif
 
+#if defined(OS_FUCHSIA)
+  // Sandbox type for the web::Context process on Fuchsia. Functionally it's an
+  // equivalent of the browser process on other platforms.
+  SANDBOX_TYPE_WEB_CONTEXT,
+#endif
+
   // Renderer or worker process. Most common case.
   SANDBOX_TYPE_RENDERER,
 
@@ -64,6 +70,10 @@ enum SandboxType {
   // The audio service process.
   SANDBOX_TYPE_AUDIO,
 
+#if defined(OS_CHROMEOS)
+  SANDBOX_TYPE_IME,
+#endif  // defined(OS_CHROMEOS)
+
   SANDBOX_TYPE_AFTER_LAST_TYPE,  // Placeholder to ease iteration.
 };
 
@@ -82,6 +92,10 @@ SERVICE_MANAGER_SANDBOX_EXPORT std::string StringFromUtilitySandboxType(
 
 SERVICE_MANAGER_SANDBOX_EXPORT SandboxType
 UtilitySandboxTypeFromString(const std::string& sandbox_string);
+
+SERVICE_MANAGER_SANDBOX_EXPORT void EnableAudioSandbox(bool enable);
+
+SERVICE_MANAGER_SANDBOX_EXPORT bool IsAudioSandboxEnabled();
 
 }  // namespace service_manager
 

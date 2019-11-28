@@ -4,14 +4,14 @@
 
 #include "ash/display/resolution_notification_controller.h"
 
-#include "ash/public/interfaces/session_controller.mojom.h"
 #include "ash/screen_util.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/screen_layout_observer.h"
 #include "ash/test/ash_test_base.h"
 #include "base/bind.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/manager/display_manager.h"
@@ -56,7 +56,8 @@ class ResolutionNotificationControllerTest : public AshTestBase {
   void SetDisplayResolutionAndNotifyWithResolution(
       const display::Display& display,
       const gfx::Size& new_resolution,
-      const gfx::Size& actual_new_resolution) {
+      const gfx::Size& actual_new_resolution,
+      mojom::DisplayConfigSource source = mojom::DisplayConfigSource::kUser) {
     const display::ManagedDisplayInfo& info =
         display_manager()->GetDisplayInfo(display.id());
     display::ManagedDisplayMode old_mode(
@@ -67,7 +68,7 @@ class ResolutionNotificationControllerTest : public AshTestBase {
         old_mode.native(), old_mode.device_scale_factor());
 
     EXPECT_TRUE(controller()->PrepareNotificationAndSetDisplayMode(
-        display.id(), old_mode, new_mode,
+        display.id(), old_mode, new_mode, source,
         base::BindOnce(&ResolutionNotificationControllerTest::OnAccepted,
                        base::Unretained(this))));
 
@@ -85,13 +86,15 @@ class ResolutionNotificationControllerTest : public AshTestBase {
       info_list.push_back(info);
     }
     display_manager()->OnNativeDisplaysChanged(info_list);
-    RunAllPendingInMessageLoop();
+    base::RunLoop().RunUntilIdle();
   }
 
-  void SetDisplayResolutionAndNotify(const display::Display& display,
-                                     const gfx::Size& new_resolution) {
+  void SetDisplayResolutionAndNotify(
+      const display::Display& display,
+      const gfx::Size& new_resolution,
+      mojom::DisplayConfigSource source = mojom::DisplayConfigSource::kUser) {
     SetDisplayResolutionAndNotifyWithResolution(display, new_resolution,
-                                                new_resolution);
+                                                new_resolution, source);
   }
 
   static base::string16 GetNotificationMessage() {
@@ -173,13 +176,32 @@ TEST_F(ResolutionNotificationControllerTest, Basic) {
 
   // Click the revert button, which reverts to the best resolution.
   ClickOnNotificationButton(0);
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
   EXPECT_EQ(0, accept_count());
   EXPECT_TRUE(display_manager()->GetSelectedModeForDisplayId(id2, &mode));
   EXPECT_EQ("250x250", mode.size().ToString());
   EXPECT_EQ(59.0, mode.refresh_rate());
+}
+
+// Check that notification is not shown when changes are forced by policy.
+TEST_F(ResolutionNotificationControllerTest, ForcedByPolicy) {
+  UpdateDisplay("300x300#300x300%57|200x200%58,250x250#250x250%59|200x200%60");
+  int64_t id2 = display_manager()->GetSecondaryDisplay().id();
+  ASSERT_EQ(0, accept_count());
+  EXPECT_FALSE(IsNotificationVisible());
+
+  // Changes the resolution and apply the result.
+  SetDisplayResolutionAndNotify(display_manager()->GetSecondaryDisplay(),
+                                gfx::Size(200, 200),
+                                mojom::DisplayConfigSource::kPolicy);
+  EXPECT_FALSE(IsNotificationVisible());
+  EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
+  display::ManagedDisplayMode mode;
+  EXPECT_TRUE(display_manager()->GetSelectedModeForDisplayId(id2, &mode));
+  EXPECT_EQ("200x200", mode.size().ToString());
+  EXPECT_EQ(60.0, mode.refresh_rate());
 }
 
 TEST_F(ResolutionNotificationControllerTest, ClickMeansAccept) {
@@ -201,7 +223,7 @@ TEST_F(ResolutionNotificationControllerTest, ClickMeansAccept) {
 
   // Click the revert button, which reverts the resolution.
   ClickOnNotification();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
   EXPECT_EQ(1, accept_count());
@@ -270,7 +292,7 @@ TEST_F(ResolutionNotificationControllerTest, Close) {
   // Close the notification (imitates clicking [x] button). Also verifies if
   // this does not cause a crash.  See crbug.com/271784
   CloseNotification();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
   EXPECT_EQ(1, accept_count());
@@ -286,7 +308,7 @@ TEST_F(ResolutionNotificationControllerTest, Timeout) {
     EXPECT_TRUE(IsNotificationVisible()) << "notification is closed after " << i
                                          << "-th timer tick";
     TickTimer();
-    RunAllPendingInMessageLoop();
+    base::RunLoop().RunUntilIdle();
   }
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
@@ -310,7 +332,7 @@ TEST_F(ResolutionNotificationControllerTest, DisplayDisconnected) {
 
   // Disconnects the secondary display and verifies it doesn't cause crashes.
   UpdateDisplay("300x300#300x300%56|200x200%57");
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_EQ(0, accept_count());
   display::ManagedDisplayMode mode;
@@ -320,8 +342,7 @@ TEST_F(ResolutionNotificationControllerTest, DisplayDisconnected) {
 }
 
 // See http://crbug.com/869401 for details.
-TEST_F(ResolutionNotificationControllerTest,
-       DISABLED_MultipleResolutionChange) {
+TEST_F(ResolutionNotificationControllerTest, MultipleResolutionChange) {
   UpdateDisplay(
       "300x300#300x300%56|200x200%57,"
       "250x250#250x250%58|200x200%59");
@@ -350,7 +371,7 @@ TEST_F(ResolutionNotificationControllerTest,
   // SetDisplayResolutionAndNotify is 200x200, it should revert to the original
   // size 250x250.
   ClickOnNotificationButton(0);
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
   EXPECT_EQ(0, accept_count());
@@ -384,7 +405,7 @@ TEST_F(ResolutionNotificationControllerTest, Fallback) {
 
   // Click the revert button, which reverts to the best resolution.
   ClickOnNotificationButton(0);
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(IsNotificationVisible());
   EXPECT_FALSE(IsScreenLayoutObserverNotificationVisible());
   EXPECT_EQ(0, accept_count());
@@ -396,14 +417,12 @@ TEST_F(ResolutionNotificationControllerTest, Fallback) {
 
 TEST_F(ResolutionNotificationControllerTest, NoTimeoutInKioskMode) {
   // Login in as kiosk app.
-  mojom::UserSessionPtr session = mojom::UserSession::New();
-  session->session_id = 1u;
-  session->user_info = mojom::UserInfo::New();
-  session->user_info->avatar = mojom::UserAvatar::New();
-  session->user_info->type = user_manager::USER_TYPE_KIOSK_APP;
-  session->user_info->account_id = AccountId::FromUserEmail("user1@test.com");
-  session->user_info->display_name = "User 1";
-  session->user_info->display_email = "user1@test.com";
+  UserSession session;
+  session.session_id = 1u;
+  session.user_info.type = user_manager::USER_TYPE_KIOSK_APP;
+  session.user_info.account_id = AccountId::FromUserEmail("user1@test.com");
+  session.user_info.display_name = "User 1";
+  session.user_info.display_email = "user1@test.com";
   Shell::Get()->session_controller()->UpdateUserSession(std::move(session));
   EXPECT_EQ(LoginStatus::KIOSK_APP,
             Shell::Get()->session_controller()->login_status());

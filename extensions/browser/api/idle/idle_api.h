@@ -11,14 +11,14 @@
 namespace extensions {
 
 // Implementation of the chrome.idle.queryState API.
-class IdleQueryStateFunction : public UIThreadExtensionFunction {
+class IdleQueryStateFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("idle.queryState", IDLE_QUERYSTATE)
 
  protected:
-  ~IdleQueryStateFunction() override {}
+  ~IdleQueryStateFunction() override;
 
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ResponseAction Run() override;
 
  private:
@@ -26,15 +26,26 @@ class IdleQueryStateFunction : public UIThreadExtensionFunction {
 };
 
 // Implementation of the chrome.idle.setDetectionInterval API.
-class IdleSetDetectionIntervalFunction : public UIThreadExtensionFunction {
+class IdleSetDetectionIntervalFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("idle.setDetectionInterval",
                              IDLE_SETDETECTIONINTERVAL)
 
  protected:
-  ~IdleSetDetectionIntervalFunction() override {}
+  ~IdleSetDetectionIntervalFunction() override;
 
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
+  ResponseAction Run() override;
+};
+
+class IdleGetAutoLockDelayFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("idle.getAutoLockDelay", IDLE_GETAUTOLOCKDELAY)
+
+ protected:
+  ~IdleGetAutoLockDelayFunction() override;
+
+  // ExtensionFunction:
   ResponseAction Run() override;
 };
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -103,8 +104,9 @@ void Scheduler::Sequence::UpdateSchedulingPriority() {
 }
 
 bool Scheduler::Sequence::NeedsRescheduling() const {
-  return running_state_ != IDLE &&
-         scheduling_state_.priority != current_priority();
+  return (running_state_ != IDLE &&
+          scheduling_state_.priority != current_priority()) ||
+         (running_state_ == SCHEDULED && !IsRunnable());
 }
 
 bool Scheduler::Sequence::IsRunnable() const {
@@ -122,16 +124,15 @@ bool Scheduler::Sequence::ShouldYieldTo(const Sequence* other) const {
 void Scheduler::Sequence::SetEnabled(bool enabled) {
   if (enabled_ == enabled)
     return;
-  DCHECK_EQ(running_state_, enabled ? IDLE : RUNNING);
   enabled_ = enabled;
   if (enabled) {
     TRACE_EVENT_ASYNC_BEGIN1("gpu", "SequenceEnabled", this, "sequence_id",
                              sequence_id_.GetUnsafeValue());
-    scheduler_->TryScheduleSequence(this);
   } else {
     TRACE_EVENT_ASYNC_END1("gpu", "SequenceEnabled", this, "sequence_id",
                            sequence_id_.GetUnsafeValue());
   }
+  scheduler_->TryScheduleSequence(this);
 }
 
 Scheduler::SchedulingState Scheduler::Sequence::SetScheduled() {
@@ -290,8 +291,7 @@ void Scheduler::Sequence::RemoveClientWait(CommandBufferId command_buffer_id) {
 Scheduler::Scheduler(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                      SyncPointManager* sync_point_manager)
     : task_runner_(std::move(task_runner)),
-      sync_point_manager_(sync_point_manager),
-      weak_factory_(this) {
+      sync_point_manager_(sync_point_manager) {
   DCHECK(thread_checker_.CalledOnValidThread());
   // Store weak ptr separately because calling GetWeakPtr() is not thread safe.
   weak_ptr_ = weak_factory_.GetWeakPtr();
@@ -302,7 +302,6 @@ Scheduler::~Scheduler() {
 }
 
 SequenceId Scheduler::CreateSequence(SchedulingPriority priority) {
-  DCHECK(thread_checker_.CalledOnValidThread());
   base::AutoLock auto_lock(lock_);
   scoped_refptr<SyncPointOrderData> order_data =
       sync_point_manager_->CreateSyncPointOrderData();
@@ -314,7 +313,6 @@ SequenceId Scheduler::CreateSequence(SchedulingPriority priority) {
 }
 
 void Scheduler::DestroySequence(SequenceId sequence_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
   base::AutoLock auto_lock(lock_);
 
   Sequence* sequence = GetSequence(sequence_id);
@@ -334,7 +332,6 @@ Scheduler::Sequence* Scheduler::GetSequence(SequenceId sequence_id) {
 }
 
 void Scheduler::EnableSequence(SequenceId sequence_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
   base::AutoLock auto_lock(lock_);
   Sequence* sequence = GetSequence(sequence_id);
   DCHECK(sequence);
@@ -342,7 +339,6 @@ void Scheduler::EnableSequence(SequenceId sequence_id) {
 }
 
 void Scheduler::DisableSequence(SequenceId sequence_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
   base::AutoLock auto_lock(lock_);
   Sequence* sequence = GetSequence(sequence_id);
   DCHECK(sequence);
@@ -432,6 +428,10 @@ bool Scheduler::ShouldYield(SequenceId sequence_id) {
   DCHECK(next_sequence->scheduled());
 
   return running_sequence->ShouldYieldTo(next_sequence);
+}
+
+base::WeakPtr<Scheduler> Scheduler::AsWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 void Scheduler::SyncTokenFenceReleased(const SyncToken& sync_token,
@@ -525,7 +525,26 @@ void Scheduler::RunNextTask() {
   {
     base::AutoUnlock auto_unlock(lock_);
     order_data->BeginProcessingOrderNumber(order_num);
+
+    bool supports_thread_time = base::ThreadTicks::IsSupported();
+
+    // We can't call base::ThreadTicks::Now() if it's not supported
+    base::ThreadTicks thread_time_start =
+        supports_thread_time ? base::ThreadTicks::Now() : base::ThreadTicks();
+    base::TimeTicks wall_time_start = base::TimeTicks::Now();
+
     std::move(closure).Run();
+
+    if (supports_thread_time) {
+      base::TimeDelta thread_time_elapsed =
+          base::ThreadTicks::Now() - thread_time_start;
+      base::TimeDelta wall_time_elapsed =
+          base::TimeTicks::Now() - wall_time_start;
+      base::TimeDelta blocked_time = wall_time_elapsed - thread_time_elapsed;
+
+      total_blocked_time_ += blocked_time;
+    }
+
     if (order_data->IsProcessingOrderNumber())
       order_data->FinishProcessingOrderNumber(order_num);
   }
@@ -544,6 +563,14 @@ void Scheduler::RunNextTask() {
 
   task_runner_->PostTask(FROM_HERE,
                          base::BindOnce(&Scheduler::RunNextTask, weak_ptr_));
+}
+
+base::TimeDelta Scheduler::TakeTotalBlockingTime() {
+  if (!base::ThreadTicks::IsSupported())
+    return base::TimeDelta::Min();
+  base::TimeDelta result;
+  std::swap(result, total_blocked_time_);
+  return result;
 }
 
 }  // namespace gpu

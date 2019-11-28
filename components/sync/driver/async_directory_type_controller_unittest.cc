@@ -15,15 +15,16 @@
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/sync/driver/async_directory_type_controller_mock.h"
 #include "components/sync/driver/configure_context.h"
 #include "components/sync/driver/data_type_controller_mock.h"
-#include "components/sync/driver/fake_sync_client.h"
+#include "components/sync/driver/fake_sync_service.h"
 #include "components/sync/driver/generic_change_processor_factory.h"
+#include "components/sync/driver/sync_client_mock.h"
 #include "components/sync/engine/model_safe_worker.h"
 #include "components/sync/model/fake_syncable_service.h"
 #include "components/sync/model/sync_change.h"
@@ -31,9 +32,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace syncer {
-
-class SyncClient;
-
 namespace {
 
 using base::WaitableEvent;
@@ -97,14 +95,16 @@ class SharedChangeProcessorMock : public SharedChangeProcessor {
 class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
  public:
   AsyncDirectoryTypeControllerFake(
+      SyncService* sync_service,
       SyncClient* sync_client,
       AsyncDirectoryTypeControllerMock* mock,
       SharedChangeProcessor* change_processor,
       scoped_refptr<base::SequencedTaskRunner> backend_task_runner)
       : AsyncDirectoryTypeController(kType,
                                      base::Closure(),
+                                     sync_service,
                                      sync_client,
-                                     GROUP_DB,
+                                     GROUP_PASSWORD,
                                      nullptr),
         blocked_(false),
         mock_(mock),
@@ -172,12 +172,11 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
   DISALLOW_COPY_AND_ASSIGN(AsyncDirectoryTypeControllerFake);
 };
 
-class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
-                                             public FakeSyncClient {
+class SyncAsyncDirectoryTypeControllerTest : public testing::Test {
  public:
   SyncAsyncDirectoryTypeControllerTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+      : task_environment_(
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
         backend_thread_("dbthread") {}
 
   void SetUp() override {
@@ -187,7 +186,7 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
     dtc_mock_ =
         std::make_unique<StrictMock<AsyncDirectoryTypeControllerMock>>();
     non_ui_dtc_ = std::make_unique<AsyncDirectoryTypeControllerFake>(
-        this, dtc_mock_.get(), change_processor_.get(),
+        &sync_service_, &sync_client_, dtc_mock_.get(), change_processor_.get(),
         backend_thread_.task_runner());
   }
 
@@ -205,12 +204,6 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
       ADD_FAILURE() << "Timed out waiting for DB thread to finish.";
     }
     base::RunLoop().RunUntilIdle();
-  }
-
-  SyncService* GetSyncService() override {
-    // Make sure this isn't called on backend_thread.
-    EXPECT_FALSE(backend_thread_.task_runner()->BelongsToCurrentThread());
-    return FakeSyncClient::GetSyncService();
   }
 
  protected:
@@ -257,11 +250,13 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
 
   static void SignalDone(WaitableEvent* done) { done->Signal(); }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   base::Thread backend_thread_;
 
   StartCallbackMock start_callback_;
   ModelLoadCallbackMock model_load_callback_;
+  FakeSyncService sync_service_;
+  testing::NiceMock<SyncClientMock> sync_client_;
   // Must be destroyed after non_ui_dtc_.
   FakeSyncableService syncable_service_;
   std::unique_ptr<AsyncDirectoryTypeControllerFake> non_ui_dtc_;

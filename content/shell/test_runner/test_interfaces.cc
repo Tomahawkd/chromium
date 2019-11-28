@@ -25,23 +25,12 @@
 
 namespace test_runner {
 
-namespace {
-bool ShouldUseInnerTextDump(const std::string& test_path) {
-  // We are switching the text dump implementation to spec-conformant
-  // Element.innerText. To avoid gigantic patch, we control the rebaseline
-  // progress here in a per-directory manner.
-  // TODO(xiaochengh): Progressively allow more tests to use innerText.
-  // Remove this function once rebaseline is complete.
-  return test_path >= "web_tests/a" && test_path < "web_tests/t";
-}
-}  // namespace
-
 TestInterfaces::TestInterfaces()
     : gamepad_controller_(new GamepadController()),
       test_runner_(new TestRunner(this)),
       delegate_(nullptr),
       main_view_(nullptr) {
-  blink::SetLayoutTestMode(true);
+  blink::SetWebTestMode(true);
   // NOTE: please don't put feature specific enable flags here,
   // instead add them to runtime_enabled_features.json5
 
@@ -76,8 +65,8 @@ void TestInterfaces::ResetTestHelperControllers() {
   gamepad_controller_->Reset();
   blink::WebCache::Clear();
 
-  for (WebViewTestProxyBase* web_view_test_proxy_base : window_list_)
-    web_view_test_proxy_base->Reset();
+  for (WebViewTestProxy* web_view_test_proxy : window_list_)
+    web_view_test_proxy->Reset();
 }
 
 void TestInterfaces::ResetAll() {
@@ -111,49 +100,43 @@ void TestInterfaces::ConfigureForTestWithURL(const blink::WebURL& test_url,
   // we don't dump non-human-readable binary data. In non-protocol mode, we
   // still generate pixel results (though don't dump them) to let the renderer
   // execute the same code regardless of the protocol mode, e.g. for ease of
-  // debugging a layout test issue.
+  // debugging a web test issue.
   if (!protocol_mode)
-    test_runner_->setShouldDumpAsLayout(true);
+    test_runner_->SetShouldDumpAsLayout(true);
 
   // For http/tests/loading/, which is served via httpd and becomes /loading/.
   if (spec.find("/loading/") != std::string::npos)
-    test_runner_->setShouldDumpFrameLoadCallbacks(true);
+    test_runner_->SetShouldDumpFrameLoadCallbacks(true);
   if (spec.find("/dumpAsText/") != std::string::npos) {
-    test_runner_->setShouldDumpAsText(true);
-    test_runner_->setShouldGeneratePixelResults(false);
+    test_runner_->SetShouldDumpAsText(true);
+    test_runner_->SetShouldGeneratePixelResults(false);
   }
   test_runner_->SetV8CacheDisabled(is_devtools_test);
 
   if (spec.find("/viewsource/") != std::string::npos) {
-    test_runner_->setShouldEnableViewSource(true);
-    test_runner_->setShouldGeneratePixelResults(false);
-    test_runner_->setShouldDumpAsMarkup(true);
+    test_runner_->SetShouldEnableViewSource(true);
+    test_runner_->SetShouldGeneratePixelResults(false);
+    test_runner_->SetShouldDumpAsMarkup(true);
   }
   if (spec.find("/external/wpt/") != std::string::npos ||
       spec.find("/external/csswg-test/") != std::string::npos ||
       spec.find("://web-platform.test") != std::string::npos ||
       spec.find("/harness-tests/wpt/") != std::string::npos)
     test_runner_->set_is_web_platform_tests_mode();
-
-  const bool should_use_inner_text = ShouldUseInnerTextDump(spec);
-  test_runner_->SetShouldUseInnerTextDump(should_use_inner_text);
 }
 
-void TestInterfaces::WindowOpened(WebViewTestProxyBase* proxy) {
+void TestInterfaces::WindowOpened(WebViewTestProxy* proxy) {
   window_list_.push_back(proxy);
 }
 
-void TestInterfaces::WindowClosed(WebViewTestProxyBase* proxy) {
-  std::vector<WebViewTestProxyBase*>::iterator pos =
+void TestInterfaces::WindowClosed(WebViewTestProxy* proxy) {
+  std::vector<WebViewTestProxy*>::iterator pos =
       std::find(window_list_.begin(), window_list_.end(), proxy);
   if (pos == window_list_.end()) {
     NOTREACHED();
     return;
   }
   window_list_.erase(pos);
-
-  if (proxy->web_view() == main_view_)
-    SetMainView(nullptr);
 }
 
 TestRunner* TestInterfaces::GetTestRunner() {
@@ -164,16 +147,8 @@ WebTestDelegate* TestInterfaces::GetDelegate() {
   return delegate_;
 }
 
-const std::vector<WebViewTestProxyBase*>& TestInterfaces::GetWindowList() {
+const std::vector<WebViewTestProxy*>& TestInterfaces::GetWindowList() {
   return window_list_;
-}
-
-blink::WebThemeEngine* TestInterfaces::GetThemeEngine() {
-  if (!test_runner_->UseMockTheme())
-    return nullptr;
-  if (!theme_engine_.get())
-    theme_engine_.reset(new MockWebThemeEngine());
-  return theme_engine_.get();
 }
 
 }  // namespace test_runner

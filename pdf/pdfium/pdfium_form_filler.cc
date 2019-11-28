@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "pdf/pdfium/pdfium_engine.h"
@@ -99,7 +100,7 @@ void PDFiumFormFiller::Form_Invalidate(FPDF_FORMFILLINFO* param,
 
   pp::Rect rect = engine->pages_[page_index]->PageToScreen(
       engine->GetVisibleRect().point(), engine->current_zoom_, left, top, right,
-      bottom, engine->current_rotation_);
+      bottom, engine->layout_.options().default_page_orientation());
   engine->client_->Invalidate(rect);
 }
 
@@ -118,7 +119,7 @@ void PDFiumFormFiller::Form_OutputSelectedRect(FPDF_FORMFILLINFO* param,
   }
   pp::Rect rect = engine->pages_[page_index]->PageToScreen(
       engine->GetVisibleRect().point(), engine->current_zoom_, left, top, right,
-      bottom, engine->current_rotation_);
+      bottom, engine->layout_.options().default_page_orientation());
   if (rect.IsEmpty())
     return;
 

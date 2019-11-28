@@ -5,13 +5,15 @@
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
 
 #include "base/macros.h"
+#include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -27,6 +29,8 @@ class MockAppMenuIconControllerDelegate
  public:
   MOCK_METHOD1(UpdateTypeAndSeverity,
                void(AppMenuIconController::TypeAndSeverity type_and_severity));
+  MOCK_CONST_METHOD0(GetViewThemeProvider, const ui::ThemeProvider*());
+  MOCK_METHOD0(GetViewNativeTheme, ui::NativeTheme*());
 };
 
 // A fake upgrade detector that can broadcast an annoyance level change to its
@@ -34,7 +38,8 @@ class MockAppMenuIconControllerDelegate
 class FakeUpgradeDetector : public UpgradeDetector {
  public:
   FakeUpgradeDetector()
-      : UpgradeDetector(base::DefaultTickClock::GetInstance()) {}
+      : UpgradeDetector(base::DefaultClock::GetInstance(),
+                        base::DefaultTickClock::GetInstance()) {}
 
   void BroadcastLevel(UpgradeNotificationAnnoyanceLevel level) {
     set_upgrade_notification_stage(level);
@@ -43,7 +48,7 @@ class FakeUpgradeDetector : public UpgradeDetector {
 
   // UpgradeDetector:
   base::TimeDelta GetHighAnnoyanceLevelDelta() override;
-  base::TimeTicks GetHighAnnoyanceDeadline() override;
+  base::Time GetHighAnnoyanceDeadline() override;
 
  private:
   // UpgradeDetector:
@@ -57,9 +62,9 @@ base::TimeDelta FakeUpgradeDetector::GetHighAnnoyanceLevelDelta() {
   return base::TimeDelta();
 }
 
-base::TimeTicks FakeUpgradeDetector::GetHighAnnoyanceDeadline() {
+base::Time FakeUpgradeDetector::GetHighAnnoyanceDeadline() {
   // This value is not important for this test.
-  return base::TimeTicks();
+  return base::Time();
 }
 
 void FakeUpgradeDetector::OnRelaunchNotificationPeriodPrefChanged() {}
@@ -89,7 +94,7 @@ class AppMenuIconControllerTest : public ::testing::TestWithParam<int> {
 
   // Returns true if the test is apparently running as an unstable channel.
   bool IsUnstableChannel() {
-#if !defined(GOOGLE_CHROME_BUILD)
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
     // Dev and canary channels are specific to Google Chrome branding.
     return false;
 #elif defined(OS_WIN)
@@ -113,7 +118,7 @@ class AppMenuIconControllerTest : public ::testing::TestWithParam<int> {
   install_static::ScopedInstallDetails install_details_;
 #endif
   FakeUpgradeDetector upgrade_detector_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 
   DISALLOW_COPY_AND_ASSIGN(AppMenuIconControllerTest);
@@ -178,10 +183,10 @@ TEST_P(AppMenuIconControllerTest, UpgradeNotification) {
 }
 
 #if defined(OS_WIN)
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     AppMenuIconControllerTest,
     ::testing::Range(0, static_cast<int>(install_static::NUM_INSTALL_MODES)));
 #else
-INSTANTIATE_TEST_CASE_P(, AppMenuIconControllerTest, ::testing::Values(0));
+INSTANTIATE_TEST_SUITE_P(All, AppMenuIconControllerTest, ::testing::Values(0));
 #endif

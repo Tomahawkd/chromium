@@ -33,7 +33,7 @@ IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest,
   test_ui_->WaitForSinkAvailable(receiver_);
 
   // Mock out file dialog operations, as those can't be simulated.
-  FileDialogSelectsFile(file_url);
+  test_ui_->SetLocalFile(file_url);
   // Click on the desired mode.
   test_ui_->ChooseSourceType(CastDialogView::kLocalFile);
   test_ui_->WaitForSinkAvailable(receiver_);
@@ -88,8 +88,11 @@ IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_MirrorHTML5Video) {
       "webkitRequestFullScreen();";
   ExecuteScript(web_contents, script);
   Wait(base::TimeDelta::FromSeconds(5));
-  if (!test_ui_->IsDialogShown())
+  if (!test_ui_->IsDialogShown()) {
     test_ui_->ShowDialog();
+    // Wait 5s for the dialog to be fully loaded and usable.
+    Wait(base::TimeDelta::FromSeconds(5));
+  }
 
   // Check the mirroring session is still live.
   ASSERT_FALSE(test_ui_->GetRouteIdForSink(receiver_).empty());

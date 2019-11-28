@@ -26,14 +26,6 @@ const char kEnableBLEAdvertising[] = "enable-ble-advertising-in-apps";
 const char kDisableDesktopCaptureAudio[] =
     "disable-audio-support-for-desktop-share";
 
-// FeatureSwitch and about_flags don't play nice. Feature switch expects either
-// --enable-<feature> or --<feature>=1, but about_flags expects the command
-// line argument to enable it (or a selection). Hack this in, so enabling it
-// in about_flags enables the feature. Appending this flag has the same effect
-// as --embedded-extension-options=1.
-const char kEnableEmbeddedExtensionOptions[] =
-    "enable-embedded-extension-options";
-
 // Enables extension APIs that are in development.
 const char kEnableExperimentalExtensionApis[] =
     "enable-experimental-extension-apis";
@@ -45,9 +37,6 @@ const char kEnableOverrideBookmarksUI[] = "enable-override-bookmarks-ui";
 // requests originating from extensions.
 const char kDisableExtensionsHttpThrottling[] =
     "disable-extensions-http-throttling";
-
-// Enables tab for desktop sharing.
-const char kDisableTabForDesktopShare[] = "disable-tab-for-desktop-share";
 
 // Allows the ErrorConsole to collect runtime and manifest errors, and display
 // them in the chrome:extensions page.
@@ -64,18 +53,18 @@ const char kExtensionsOnChromeURLs[] = "extensions-on-chrome-urls";
 // Whether to force developer mode extensions highlighting.
 const char kForceDevModeHighlighting[] = "force-dev-mode-highlighting";
 
+// Whether |extensions_features::kBypassCorbAllowlistParamName| should always be
+// empty (i.e. ignoring hardcoded allowlist and the field trial param).  This
+// switch is useful for manually verifying if an extension would continue to
+// work fine after removing it from the allowlist.
+const char kForceEmptyCorbAllowlist[] = "force-empty-corb-allowlist";
+
 // Comma-separated list of paths to apps to load at startup. The first app in
 // the list will be launched.
 const char kLoadApps[] = "load-apps";
 
 // Comma-separated list of paths to extensions to load at startup.
 const char kLoadExtension[] = "load-extension";
-
-#if defined(CHROMIUM_BUILD)
-// Should we prompt the user before allowing external extensions to install?
-// This flag is available on Chromium for testing purposes.
-const char kPromptForExternalExtensions[] = "prompt-for-external-extensions";
-#endif
 
 // Set the parameters for ExtensionURLLoaderThrottleBrowserTest.
 const char kSetExtensionThrottleTestParams[] =

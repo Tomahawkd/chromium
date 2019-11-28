@@ -33,9 +33,7 @@ void ContextCacheController::ScopedToken::Release() {
 ContextCacheController::ContextCacheController(
     gpu::ContextSupport* context_support,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : context_support_(context_support),
-      task_runner_(std::move(task_runner)),
-      weak_factory_(this) {
+    : context_support_(context_support), task_runner_(std::move(task_runner)) {
   // The |weak_factory_| can only be used from a single thread. We
   // create/destroy this class and run callbacks on a single thread, but we
   // want to be able to post callbacks from multiple threads. We need a weak
@@ -44,7 +42,10 @@ ContextCacheController::ContextCacheController(
   weak_ptr_ = weak_factory_.GetWeakPtr();
 }
 
-ContextCacheController::~ContextCacheController() = default;
+ContextCacheController::~ContextCacheController() {
+  if (held_visibility_)
+    ClientBecameNotVisible(std::move(held_visibility_));
+}
 
 void ContextCacheController::SetGrContext(GrContext* gr_context) {
   gr_context_ = gr_context;
@@ -88,6 +89,16 @@ void ContextCacheController::ClientBecameNotVisible(
     context_support_->SetAggressivelyFreeResources(true);
     context_support_->FlushPendingWork();
   }
+}
+
+void ContextCacheController::ClientBecameNotVisibleDuringShutdown(
+    std::unique_ptr<ScopedVisibility> scoped_visibility) {
+  // We only need to hold on to one visibility token, so free any others that
+  // come in.
+  if (!held_visibility_)
+    held_visibility_ = std::move(scoped_visibility);
+  else
+    ClientBecameNotVisible(std::move(scoped_visibility));
 }
 
 std::unique_ptr<ContextCacheController::ScopedBusy>

@@ -9,9 +9,9 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/native_library.h"
+#include "ui/gl/buildflags.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_egl_api_implementation.h"
-#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_surface_egl.h"
 
@@ -62,16 +62,12 @@ bool InitializeStaticNativeEGLInternal() {
   return true;
 }
 
-bool InitializeStaticEGLInternal() {
+bool InitializeStaticEGLInternal(GLImplementation implementation) {
   bool initialized = false;
 
 #if BUILDFLAG(USE_STATIC_ANGLE)
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  // Use ANGLE if it is requested via the --use-gl=angle flag and it is
-  // statically linked
-  if (command_line->GetSwitchValueASCII(switches::kUseGL) ==
-      kGLImplementationANGLEName) {
+  // Use ANGLE if it is requested and it is statically linked
+  if (implementation == kGLImplementationEGLANGLE) {
     initialized = InitializeStaticANGLEEGLInternal();
   }
 #endif  // BUILDFLAG(USE_STATIC_ANGLE)
@@ -84,7 +80,7 @@ bool InitializeStaticEGLInternal() {
     return false;
   }
 
-  SetGLImplementation(kGLImplementationEGLGLES2);
+  SetGLImplementation(implementation);
 
   InitializeStaticGLBindingsGL();
   InitializeStaticGLBindingsEGL();
@@ -97,6 +93,7 @@ bool InitializeStaticEGLInternal() {
 bool InitializeGLOneOffPlatform() {
   switch (GetGLImplementation()) {
     case kGLImplementationEGLGLES2:
+    case kGLImplementationEGLANGLE:
       if (!GLSurfaceEGL::InitializeOneOff(EGL_DEFAULT_DISPLAY)) {
         LOG(ERROR) << "GLSurfaceEGL::InitializeOneOff failed.";
         return false;
@@ -115,7 +112,8 @@ bool InitializeStaticGLBindings(GLImplementation implementation) {
 
   switch (implementation) {
     case kGLImplementationEGLGLES2:
-      return InitializeStaticEGLInternal();
+    case kGLImplementationEGLANGLE:
+      return InitializeStaticEGLInternal(implementation);
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       SetGLImplementation(implementation);

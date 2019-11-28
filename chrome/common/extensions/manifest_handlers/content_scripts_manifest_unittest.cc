@@ -4,11 +4,12 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
+#include "chrome/common/webui_url_constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
@@ -27,20 +28,19 @@ class ContentScriptsManifestTest : public ChromeManifestTest {
 TEST_F(ContentScriptsManifestTest, MatchPattern) {
   Testcase testcases[] = {
       // chrome:// urls are not allowed.
-      Testcase(
-          "content_script_chrome_url_invalid.json",
-          ErrorUtils::FormatErrorMessage(
-              errors::kInvalidMatch, base::IntToString(0), base::IntToString(0),
-              URLPattern::GetParseResultString(
-                  URLPattern::ParseResult::kInvalidScheme))),
+      Testcase("content_script_chrome_url_invalid.json",
+               ErrorUtils::FormatErrorMessage(
+                   errors::kInvalidMatch, base::NumberToString(0),
+                   base::NumberToString(0),
+                   URLPattern::GetParseResultString(
+                       URLPattern::ParseResult::kInvalidScheme))),
 
       // Match paterns must be strings.
       Testcase("content_script_match_pattern_not_string.json",
                ErrorUtils::FormatErrorMessage(
-                   errors::kInvalidMatch, base::IntToString(0),
-                   base::IntToString(0), errors::kExpectString))};
-  RunTestcases(testcases, arraysize(testcases),
-               EXPECT_TYPE_ERROR);
+                   errors::kInvalidMatch, base::NumberToString(0),
+                   base::NumberToString(0), errors::kExpectString))};
+  RunTestcases(testcases, base::size(testcases), EXPECT_TYPE_ERROR);
 
   LoadAndExpectSuccess("ports_in_content_scripts.json");
 }
@@ -50,7 +50,7 @@ TEST_F(ContentScriptsManifestTest, OnChromeUrlsWithFlag) {
       switches::kExtensionsOnChromeURLs);
   scoped_refptr<Extension> extension =
     LoadAndExpectSuccess("content_script_chrome_url_invalid.json");
-  const GURL newtab_url("chrome://newtab/");
+  const GURL newtab_url(chrome::kChromeUINewTabURL);
   EXPECT_TRUE(
       ContentScriptsInfo::ExtensionHasScriptAtURL(extension.get(), newtab_url));
 }

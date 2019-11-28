@@ -5,9 +5,12 @@
 package org.chromium.chrome.browser.download.home.list;
 
 import android.content.Context;
-import android.support.annotation.DrawableRes;
+import android.content.res.Resources;
 import android.text.format.DateUtils;
 import android.text.format.Formatter;
+
+import androidx.annotation.DrawableRes;
+import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.chrome.R;
@@ -25,11 +28,54 @@ import org.chromium.components.url_formatter.UrlFormatter;
 
 import java.util.Calendar;
 import java.util.Date;
-import java.util.concurrent.TimeUnit;
 
 /** A set of helper utility methods for the UI. */
 public final class UiUtils {
+    private static boolean sDisableUrlFormatting;
+
+    /**
+     * Disable url formatting for tests since tests might not native initialized.
+     */
+    @VisibleForTesting
+    public static void setDisableUrlFormattingForTests(boolean disabled) {
+        sDisableUrlFormatting = disabled;
+    }
+
     private UiUtils() {}
+
+    /**
+     * Builds the accessibility text to be used for a given chip on the chips row.
+     * @param resources The resources to use for lookup.
+     * @param filter The filter type of the chip.
+     * @param itemCount The number of items being shown on the given chip.
+     * @return The content description to be used for the chip.
+     */
+    public static String getChipContentDescription(
+            Resources resources, @Filters.FilterType int filter, int itemCount) {
+        switch (filter) {
+            case Filters.FilterType.NONE:
+                return resources.getQuantityString(
+                        R.plurals.accessibility_download_manager_ui_generic, itemCount, itemCount);
+            case Filters.FilterType.VIDEOS:
+                return resources.getQuantityString(
+                        R.plurals.accessibility_download_manager_ui_video, itemCount, itemCount);
+            case Filters.FilterType.MUSIC:
+                return resources.getQuantityString(
+                        R.plurals.accessibility_download_manager_ui_audio, itemCount, itemCount);
+            case Filters.FilterType.IMAGES:
+                return resources.getQuantityString(
+                        R.plurals.accessibility_download_manager_ui_images, itemCount, itemCount);
+            case Filters.FilterType.SITES:
+                return resources.getQuantityString(
+                        R.plurals.accessibility_download_manager_ui_pages, itemCount, itemCount);
+            case Filters.FilterType.OTHER:
+                return resources.getQuantityString(
+                        R.plurals.accessibility_download_manager_ui_generic, itemCount, itemCount);
+            default:
+                assert false;
+                return null;
+        }
+    }
 
     /**
      * Converts {@code date} into a string meant to be used as a list header.
@@ -77,10 +123,10 @@ public final class UiUtils {
         calendar2.setTime(date);
 
         if (CalendarUtils.isSameDay(calendar1, calendar2)) {
-            int hours =
-                    (int) MathUtils.clamp(TimeUnit.MILLISECONDS.toHours(calendar1.getTimeInMillis()
-                                                  - calendar2.getTimeInMillis()),
-                            1, 23);
+            int hours = (int) MathUtils.clamp(
+                    (calendar1.getTimeInMillis() - calendar2.getTimeInMillis())
+                            / DateUtils.HOUR_IN_MILLIS,
+                    1, 23);
             return context.getResources().getQuantityString(
                     R.plurals.download_manager_n_hours, hours, hours);
         } else {
@@ -96,7 +142,10 @@ public final class UiUtils {
     public static CharSequence generatePrefetchCaption(OfflineItem item) {
         Context context = ContextUtils.getApplicationContext();
         String displaySize = Formatter.formatFileSize(context, item.totalSizeBytes);
-        String displayUrl = UrlFormatter.formatUrlForSecurityDisplayOmitScheme(item.pageUrl);
+        String displayUrl = item.pageUrl;
+        if (!sDisableUrlFormatting) {
+            displayUrl = UrlFormatter.formatUrlForSecurityDisplayOmitScheme(item.pageUrl);
+        }
         return context.getString(
                 R.string.download_manager_prefetch_caption, displayUrl, displaySize);
     }
@@ -108,8 +157,17 @@ public final class UiUtils {
      */
     public static CharSequence generateGenericCaption(OfflineItem item) {
         Context context = ContextUtils.getApplicationContext();
+        String displayUrl = item.pageUrl;
+        if (!sDisableUrlFormatting) {
+            displayUrl = UrlFormatter.formatUrlForSecurityDisplayOmitScheme(item.pageUrl);
+        }
+
+        if (item.totalSizeBytes == 0) {
+            return context.getString(
+                    R.string.download_manager_list_item_description_no_size, displayUrl);
+        }
+
         String displaySize = Formatter.formatFileSize(context, item.totalSizeBytes);
-        String displayUrl = UrlFormatter.formatUrlForSecurityDisplayOmitScheme(item.pageUrl);
         return context.getString(
                 R.string.download_manager_list_item_description, displaySize, displayUrl);
     }
@@ -117,9 +175,10 @@ public final class UiUtils {
     /** @return Whether or not {@code item} can show a thumbnail in the UI. */
     public static boolean canHaveThumbnails(OfflineItem item) {
         switch (item.filter) {
-            case OfflineItemFilter.FILTER_PAGE:
-            case OfflineItemFilter.FILTER_VIDEO:
-            case OfflineItemFilter.FILTER_IMAGE:
+            case OfflineItemFilter.PAGE:
+            case OfflineItemFilter.VIDEO:
+            case OfflineItemFilter.IMAGE:
+            case OfflineItemFilter.AUDIO:
                 return true;
             default:
                 return false;
@@ -191,7 +250,7 @@ public final class UiUtils {
                 shownState = CircularProgressView.UiState.PAUSED;
                 break;
             case OfflineItemState.INTERRUPTED:
-                shownState = item.isResumable ? CircularProgressView.UiState.PAUSED
+                shownState = item.isResumable ? CircularProgressView.UiState.RUNNING
                                               : CircularProgressView.UiState.RETRY;
                 break;
             case OfflineItemState.COMPLETE: // Intentional fallthrough.

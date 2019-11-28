@@ -5,17 +5,18 @@
 #import "ios/chrome/browser/web/image_fetch_tab_helper.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/values.h"
 #include "components/image_fetcher/ios/ios_image_data_fetcher_wrapper.h"
+#include "ios/web/common/referrer_util.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/referrer_util.h"
-#import "ios/web/public/web_state/navigation_context.h"
-#include "ios/web/public/web_task_traits.h"
-#include "ios/web/public/web_thread.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -66,15 +67,9 @@ ImageFetchTabHelper::ImageFetchTabHelper(web::WebState* web_state)
   web_state->AddObserver(this);
   // BindRepeating cannot work on WeakPtr and function with return value, use
   // lambda as mediator.
-  web_state->AddScriptCommandCallback(
-      base::BindRepeating(
-          [](base::WeakPtr<ImageFetchTabHelper> ptr,
-             const base::DictionaryValue& message, const GURL& page_url,
-             bool has_user_gesture, bool form_in_main_frame,
-             web::WebFrame* sender_frame) {
-            return ptr ? ptr->OnJsMessage(message) : true;
-          },
-          weak_ptr_factory_.GetWeakPtr()),
+  subscription_ = web_state->AddScriptCommandCallback(
+      base::BindRepeating(&ImageFetchTabHelper::OnJsMessage,
+                          weak_ptr_factory_.GetWeakPtr()),
       kCommandPrefix);
 }
 
@@ -92,7 +87,6 @@ void ImageFetchTabHelper::DidStartNavigation(
 }
 
 void ImageFetchTabHelper::WebStateDestroyed(web::WebState* web_state) {
-  web_state->RemoveScriptCommandCallback(kCommandPrefix);
   for (auto&& pair : js_callbacks_)
     std::move(pair.second).Run(nullptr);
   web_state->RemoveObserver(this);
@@ -136,7 +130,7 @@ void ImageFetchTabHelper::GetImageDataByJs(const GURL& url,
   DCHECK_EQ(js_callbacks_.count(call_id_), 0UL);
   js_callbacks_.insert({call_id_, std::move(callback)});
 
-  base::PostDelayedTaskWithTraits(
+  base::PostDelayedTask(
       FROM_HERE, {web::WebThread::UI},
       base::BindRepeating(&ImageFetchTabHelper::OnJsTimeout,
                           weak_ptr_factory_.GetWeakPtr(), call_id_),
@@ -165,14 +159,17 @@ void ImageFetchTabHelper::RecordGetImageDataByJsResult(
 // For failure:
 //   {'command': 'image.getImageData',
 //    'id': id_sent_to_gCrWeb_image_getImageData}
-bool ImageFetchTabHelper::OnJsMessage(const base::DictionaryValue& message) {
+void ImageFetchTabHelper::OnJsMessage(const base::DictionaryValue& message,
+                                      const GURL& page_url,
+                                      bool user_is_interacting,
+                                      web::WebFrame* sender_frame) {
   const base::Value* id_key = message.FindKey("id");
   if (!id_key || !id_key->is_double()) {
-    return false;
+    return;
   }
   int id_value = static_cast<int>(id_key->GetDouble());
   if (!js_callbacks_.count(id_value)) {
-    return true;
+    return;
   }
   JsCallback callback = std::move(js_callbacks_[id_value]);
   js_callbacks_.erase(id_value);
@@ -189,14 +186,11 @@ bool ImageFetchTabHelper::OnJsMessage(const base::DictionaryValue& message) {
           (from->GetString() == "canvas")
               ? ContextMenuGetImageDataByJsResult::kCanvasSucceed
               : ContextMenuGetImageDataByJsResult::kXMLHttpRequestSucceed);
-    } else {
-      return false;
     }
   } else {
     std::move(callback).Run(nullptr);
     RecordGetImageDataByJsResult(ContextMenuGetImageDataByJsResult::kFail);
   }
-  return true;
 }
 
 void ImageFetchTabHelper::OnJsTimeout(int call_id) {
@@ -207,3 +201,5 @@ void ImageFetchTabHelper::OnJsTimeout(int call_id) {
     RecordGetImageDataByJsResult(ContextMenuGetImageDataByJsResult::kTimeout);
   }
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(ImageFetchTabHelper)

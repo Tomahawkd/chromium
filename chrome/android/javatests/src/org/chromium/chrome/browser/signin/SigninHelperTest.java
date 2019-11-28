@@ -10,6 +10,7 @@ import android.support.test.filters.SmallTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -20,23 +21,21 @@ import org.chromium.chrome.test.util.browser.signin.MockChangeEventChecker;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
+import org.chromium.components.signin.test.util.AccountManagerTestRule;
 
 /**
  * Instrumentation tests for {@link SigninHelper}.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class SigninHelperTest {
-    private FakeAccountManagerDelegate mAccountManager;
+    @Rule
+    public AccountManagerTestRule mAccountManagerTestRule = new AccountManagerTestRule();
+
     private MockChangeEventChecker mEventChecker;
 
     @Before
     public void setUp() {
         mEventChecker = new MockChangeEventChecker();
-
-        mAccountManager = new FakeAccountManagerDelegate(
-                FakeAccountManagerDelegate.DISABLE_PROFILE_DATA_SOURCE);
-        AccountManagerFacade.overrideAccountManagerFacadeForTests(mAccountManager);
     }
 
     @After
@@ -144,7 +143,7 @@ public class SigninHelperTest {
         mEventChecker.insertRenameEvent("D", "A"); // Looped.
         Account account = AccountManagerFacade.createAccountFromName("D");
         AccountHolder accountHolder = AccountHolder.builder(account).build();
-        mAccountManager.addAccountHolderBlocking(accountHolder);
+        mAccountManagerTestRule.addAccount(accountHolder);
         SigninHelper.updateAccountRenameData(mEventChecker);
         Assert.assertEquals("D", getNewSignedInAccountName());
     }

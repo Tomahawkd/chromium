@@ -11,14 +11,18 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/trace_event/trace_event.h"
+#include "media/capture/video/chromeos/mojom/camera_common.mojom.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/platform/socket_utils_posix.h"
@@ -38,21 +42,6 @@ std::string GenerateRandomToken() {
   return base::HexEncode(random_bytes, 16);
 }
 
-// Creates a pipe. Returns true on success, otherwise false.
-// On success, |read_fd| will be set to the fd of the read side, and
-// |write_fd| will be set to the one of write side.
-bool CreatePipe(base::ScopedFD* read_fd, base::ScopedFD* write_fd) {
-  int fds[2];
-  if (pipe2(fds, O_NONBLOCK | O_CLOEXEC) < 0) {
-    PLOG(ERROR) << "pipe2()";
-    return false;
-  }
-
-  read_fd->reset(fds[0]);
-  write_fd->reset(fds[1]);
-  return true;
-}
-
 // Waits until |raw_socket_fd| is readable.  We signal |raw_cancel_fd| when we
 // want to cancel the blocking wait and stop serving connections on
 // |raw_socket_fd|.  To notify such a situation, |raw_cancel_fd| is also passed
@@ -62,7 +51,7 @@ bool WaitForSocketReadable(int raw_socket_fd, int raw_cancel_fd) {
       {raw_socket_fd, POLLIN, 0}, {raw_cancel_fd, POLLIN, 0},
   };
 
-  if (HANDLE_EINTR(poll(fds, arraysize(fds), -1)) <= 0) {
+  if (HANDLE_EINTR(poll(fds, base::size(fds), -1)) <= 0) {
     PLOG(ERROR) << "poll()";
     return false;
   }
@@ -78,17 +67,19 @@ bool WaitForSocketReadable(int raw_socket_fd, int raw_cancel_fd) {
 
 class MojoCameraClientObserver : public CameraClientObserver {
  public:
-  explicit MojoCameraClientObserver(cros::mojom::CameraHalClientPtr client)
+  explicit MojoCameraClientObserver(
+      mojo::PendingRemote<cros::mojom::CameraHalClient> client)
       : client_(std::move(client)) {}
 
-  void OnChannelCreated(cros::mojom::CameraModulePtr camera_module) override {
+  void OnChannelCreated(
+      mojo::PendingRemote<cros::mojom::CameraModule> camera_module) override {
     client_->SetUpChannel(std::move(camera_module));
   }
 
-  cros::mojom::CameraHalClientPtr& client() { return client_; }
+  mojo::Remote<cros::mojom::CameraHalClient>& client() { return client_; }
 
  private:
-  cros::mojom::CameraHalClientPtr client_;
+  mojo::Remote<cros::mojom::CameraHalClient> client_;
   DISALLOW_IMPLICIT_CONSTRUCTORS(MojoCameraClientObserver);
 };
 
@@ -120,7 +111,7 @@ bool CameraHalDispatcherImpl::StartThreads() {
 }
 
 bool CameraHalDispatcherImpl::Start(
-    MojoJpegDecodeAcceleratorFactoryCB jda_factory,
+    MojoMjpegDecodeAcceleratorFactoryCB jda_factory,
     MojoJpegEncodeAcceleratorFactoryCB jea_factory) {
   DCHECK(!IsStarted());
   if (!StartThreads()) {
@@ -176,17 +167,17 @@ CameraHalDispatcherImpl::~CameraHalDispatcherImpl() {
 }
 
 void CameraHalDispatcherImpl::RegisterServer(
-    cros::mojom::CameraHalServerPtr camera_hal_server) {
+    mojo::PendingRemote<cros::mojom::CameraHalServer> camera_hal_server) {
   DCHECK(proxy_task_runner_->BelongsToCurrentThread());
 
   if (camera_hal_server_) {
     LOG(ERROR) << "Camera HAL server is already registered";
     return;
   }
-  camera_hal_server.set_connection_error_handler(
+  camera_hal_server_.Bind(std::move(camera_hal_server));
+  camera_hal_server_.set_disconnect_handler(
       base::BindOnce(&CameraHalDispatcherImpl::OnCameraHalServerConnectionError,
                      base::Unretained(this)));
-  camera_hal_server_ = std::move(camera_hal_server);
   VLOG(1) << "Camera HAL server registered";
 
   // Set up the Mojo channels for clients which registered before the server
@@ -197,25 +188,26 @@ void CameraHalDispatcherImpl::RegisterServer(
 }
 
 void CameraHalDispatcherImpl::RegisterClient(
-    cros::mojom::CameraHalClientPtr client) {
-  DCHECK(proxy_task_runner_->BelongsToCurrentThread());
-  auto client_observer =
-      std::make_unique<MojoCameraClientObserver>(std::move(client));
-  client_observer->client().set_connection_error_handler(base::BindOnce(
-      &CameraHalDispatcherImpl::OnCameraHalClientConnectionError,
-      base::Unretained(this), base::Unretained(client_observer.get())));
-  AddClientObserver(std::move(client_observer));
-  VLOG(1) << "Camera HAL client registered";
+    mojo::PendingRemote<cros::mojom::CameraHalClient> client) {
+  // RegisterClient can be called locally by ArcCameraBridge. Unretained
+  // reference is safe here because CameraHalDispatcherImpl owns
+  // |proxy_thread_|.
+  proxy_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CameraHalDispatcherImpl::RegisterClientOnProxyThread,
+                     base::Unretained(this), std::move(client)));
 }
 
 void CameraHalDispatcherImpl::GetJpegDecodeAccelerator(
-    media::mojom::JpegDecodeAcceleratorRequest jda_request) {
-  jda_factory_.Run(std::move(jda_request));
+    mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
+        jda_receiver) {
+  jda_factory_.Run(std::move(jda_receiver));
 }
 
 void CameraHalDispatcherImpl::GetJpegEncodeAccelerator(
-    media::mojom::JpegEncodeAcceleratorRequest jea_request) {
-  jea_factory_.Run(std::move(jea_request));
+    mojo::PendingReceiver<chromeos_camera::mojom::JpegEncodeAccelerator>
+        jea_receiver) {
+  jea_factory_.Run(std::move(jea_receiver));
 }
 
 void CameraHalDispatcherImpl::OnTraceLogEnabled() {
@@ -291,9 +283,9 @@ void CameraHalDispatcherImpl::StartServiceLoop(base::ScopedFD socket_fd,
   DCHECK(socket_fd.is_valid());
 
   base::ScopedFD cancel_fd;
-  if (!CreatePipe(&cancel_fd, &cancel_pipe_)) {
+  if (!base::CreatePipe(&cancel_fd, &cancel_pipe_, true)) {
+    PLOG(ERROR) << "Failed to create cancel pipe";
     started->Signal();
-    LOG(ERROR) << "Failed to create cancel pipe";
     return;
   }
 
@@ -343,6 +335,18 @@ void CameraHalDispatcherImpl::StartServiceLoop(base::ScopedFD socket_fd,
   }
 }
 
+void CameraHalDispatcherImpl::RegisterClientOnProxyThread(
+    mojo::PendingRemote<cros::mojom::CameraHalClient> client) {
+  DCHECK(proxy_task_runner_->BelongsToCurrentThread());
+  auto client_observer =
+      std::make_unique<MojoCameraClientObserver>(std::move(client));
+  client_observer->client().set_disconnect_handler(base::BindOnce(
+      &CameraHalDispatcherImpl::OnCameraHalClientConnectionError,
+      base::Unretained(this), base::Unretained(client_observer.get())));
+  AddClientObserver(std::move(client_observer));
+  VLOG(1) << "Camera HAL client registered";
+}
+
 void CameraHalDispatcherImpl::AddClientObserverOnProxyThread(
     std::unique_ptr<CameraClientObserver> observer) {
   DCHECK(proxy_task_runner_->BelongsToCurrentThread());
@@ -355,18 +359,18 @@ void CameraHalDispatcherImpl::AddClientObserverOnProxyThread(
 void CameraHalDispatcherImpl::EstablishMojoChannel(
     CameraClientObserver* client_observer) {
   DCHECK(proxy_task_runner_->BelongsToCurrentThread());
-  cros::mojom::CameraModulePtr camera_module_ptr;
-  cros::mojom::CameraModuleRequest camera_module_request =
-      mojo::MakeRequest(&camera_module_ptr);
-  camera_hal_server_->CreateChannel(std::move(camera_module_request));
-  client_observer->OnChannelCreated(std::move(camera_module_ptr));
+  mojo::PendingRemote<cros::mojom::CameraModule> camera_module;
+  camera_hal_server_->CreateChannel(
+      camera_module.InitWithNewPipeAndPassReceiver());
+  client_observer->OnChannelCreated(std::move(camera_module));
 }
 
 void CameraHalDispatcherImpl::OnPeerConnected(
     mojo::ScopedMessagePipeHandle message_pipe) {
   DCHECK(proxy_task_runner_->BelongsToCurrentThread());
-  binding_set_.AddBinding(
-      this, cros::mojom::CameraHalDispatcherRequest(std::move(message_pipe)));
+  receiver_set_.Add(this,
+                    mojo::PendingReceiver<cros::mojom::CameraHalDispatcher>(
+                        std::move(message_pipe)));
   VLOG(1) << "New CameraHalDispatcher binding added";
 }
 
@@ -379,12 +383,10 @@ void CameraHalDispatcherImpl::OnCameraHalServerConnectionError() {
 void CameraHalDispatcherImpl::OnCameraHalClientConnectionError(
     CameraClientObserver* client_observer) {
   DCHECK(proxy_task_runner_->BelongsToCurrentThread());
-  for (auto& it : client_observers_) {
-    if (it.get() == client_observer) {
-      client_observers_.erase(it);
-      VLOG(1) << "Camera HAL client connection lost";
-      break;
-    }
+  auto it = client_observers_.find(client_observer);
+  if (it != client_observers_.end()) {
+    client_observers_.erase(it);
+    VLOG(1) << "Camera HAL client connection lost";
   }
 }
 
@@ -398,7 +400,7 @@ void CameraHalDispatcherImpl::StopOnProxyThread() {
   cancel_pipe_.reset();
   client_observers_.clear();
   camera_hal_server_.reset();
-  binding_set_.CloseAllBindings();
+  receiver_set_.Clear();
 }
 
 void CameraHalDispatcherImpl::OnTraceLogEnabledOnProxyThread() {

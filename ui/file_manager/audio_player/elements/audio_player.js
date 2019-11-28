@@ -24,15 +24,13 @@ Polymer({
       type: Boolean,
       observer: 'playingChanged',
       reflectToAttribute: true,
+      notify: true
     },
 
     /**
      * Current elapsed time in the current music in millisecond.
      */
-    time: {
-      type: Number,
-      observer: 'onTimeChanged_',
-    },
+    time: Number,
 
     /**
      * Whether the shuffle button is ON.
@@ -102,6 +100,8 @@ Polymer({
 
     /** @type {AriaLabels} */
     ariaLabels: Object,
+
+    ariaExpandArtworkLabel: String,
   },
 
   /**
@@ -158,8 +158,9 @@ Polymer({
       if (currentTrack && currentTrack.url != this.$.audio.src) {
         this.$.audio.src = currentTrack.url;
         currentTrackUrl = this.$.audio.src;
-        if (this.playing)
+        if (this.playing) {
           this.$.audio.play();
+        }
       }
     }
 
@@ -219,6 +220,7 @@ Polymer({
     if(this.repeatMode === "repeat-one") {
       this.playing = true;
       this.$.audio.currentTime = 0;
+      this.time = 0;
       return;
     }
     this.advance_(true /* forward */, this.repeatMode === "repeat-all");
@@ -245,10 +247,12 @@ Polymer({
   onAudioStatusUpdate_: function() {
     this.playing = !this.$.audio.paused;
     // If we're paused due to drag, do not update time.
-    if (this.playing)
+    if (this.playing) {
       this.time = this.$.audio.currentTime * 1000;
-    if (!Number.isNaN(this.$.audio.duration))
+    }
+    if (!Number.isNaN(this.$.audio.duration)) {
       this.duration = this.$.audio.duration * 1000;
+    }
   },
 
   /**
@@ -289,6 +293,7 @@ Polymer({
     var shouldFireEvent = this.$.trackList.currentTrackIndex === nextTrackIndex;
     this.$.trackList.currentTrackIndex = nextTrackIndex;
     this.$.audio.currentTime = 0;
+    this.time = 0;
     // If the next track and current track is the same,
     // the event will not be fired.
     // So we will fire the event here.
@@ -319,15 +324,17 @@ Polymer({
     var timerId = setTimeout(
         function() {
           // If the other timer is scheduled, do nothing.
-          if (this.autoAdvanceTimer_ !== timerId)
+          if (this.autoAdvanceTimer_ !== timerId) {
             return;
+          }
 
           this.autoAdvanceTimer_ = null;
 
           // If the track has been changed since the advance was scheduled, do
           // nothing.
-          if (this.currentTrackIndex !== currentTrackIndex)
+          if (this.currentTrackIndex !== currentTrackIndex) {
             return;
+          }
 
           // We are advancing only if the next track is not known to be invalid.
           // This prevents an endless auto-advancing in the case when all tracks
@@ -362,8 +369,9 @@ Polymer({
     return this.$.trackList ? this.$.trackList.tracks : null;
   },
   set tracks(tracks) {
-    if (this.$.trackList.tracks === tracks)
+    if (this.$.trackList.tracks === tracks) {
       return;
+    }
 
     this.cancelAutoAdvance_();
 
@@ -381,8 +389,9 @@ Polymer({
    * @param {number} index The index of the track whose metadata is updated.
    */
   notifyTrackMetadataUpdated: function(index) {
-    if (index < 0 || index >= this.tracks.length)
+    if (index < 0 || index >= this.tracks.length) {
       return;
+    }
 
     this.$.trackList.notifyPath('tracks.' + index + '.title',
         this.tracks[index].title);
@@ -415,7 +424,7 @@ Polymer({
   /**
    * Invoked when dragging state of seek bar on control panel is changed.
    * During the user is dragging it, audio playback is paused temporalily.
-   * @param {!{detail: {value: boolean}}} e
+   * @param {!CustomEvent<{value: boolean}>} e
    */
   onSeekingChanged_: function(e) {
     if (e.detail.value && this.playing) {
@@ -430,11 +439,13 @@ Polymer({
     }
   },
 
-  /** @private */
-  onTimeChanged_: function() {
-    const newTime = this.time / 1000;
-    if (this.$.audio.currentTime != newTime)
-      this.$.audio.currentTime = newTime;
+  /**
+   * @param {!CustomEvent<number>} e
+   * @private
+   */
+  onUpdateTime_: function(e) {
+    this.$.audio.currentTime = e.detail / 1000;
+    this.time = e.detail;
   },
 
   /**

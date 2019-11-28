@@ -52,6 +52,11 @@ Polymer({
 
     /** @private */
     showErrorDialog_: Boolean,
+
+    // <if expr="chromeos">
+    /** @type settings.BlockingRequestManager */
+    tokenRequestManager: Object
+    // </if>
   },
 
   listeners: {
@@ -104,8 +109,9 @@ Polymer({
     // If export started on a different tab and is still in progress, display a
     // busy UI.
     this.passwordManager_.requestExportProgressStatus(status => {
-      if (status == ProgressStatus.IN_PROGRESS)
+      if (status == ProgressStatus.IN_PROGRESS) {
         this.switchToDialog_(States.IN_PROGRESS);
+      }
     });
 
     this.passwordManager_.addPasswordsFileExportProgressListener(
@@ -124,7 +130,7 @@ Polymer({
     // time (|delayedCompletionToken_| is not null) progress should be cached
     // for consumption when the blocking time ends.
     const progressBlocked =
-        !this.progressTaskToken_ && !!this.delayedCompletionToken_;
+        !this.progressTaskToken_ && this.delayedCompletionToken_;
     if (!progressBlocked) {
       clearTimeout(this.progressTaskToken_);
       this.progressTaskToken_ = null;
@@ -176,11 +182,22 @@ Polymer({
     this.async(() => this.fire('passwords-export-dialog-close'));
   },
 
+  /** @private */
+  onExportTap_: function() {
+    // <if expr="chromeos">
+    this.tokenRequestManager.request(this.exportPasswords_.bind(this));
+    // </if>
+    // <if expr="not chromeos">
+    this.exportPasswords_();
+    // </if>
+  },
+
   /**
-   * Fires an event that should trigger the password export process.
+   * Tells the PasswordsPrivate API to export saved passwords in a .csv pending
+   * security checks.
    * @private
    */
-  onExportTap_: function() {
+  exportPasswords_: function() {
     this.passwordManager_.exportPasswords(() => {
       if (chrome.runtime.lastError &&
           chrome.runtime.lastError.message == 'in-progress') {

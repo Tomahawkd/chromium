@@ -14,14 +14,14 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/stl_util.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/media/webrtc/webrtc_rtp_dump_writer.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -73,7 +73,7 @@ class FakeDumpWriter : public WebRtcRtpDumpWriter {
 class WebRtcRtpDumpHandlerTest : public testing::Test {
  public:
   WebRtcRtpDumpHandlerTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {
+      : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP) {
     ResetDumpHandler(base::FilePath(), true);
   }
 
@@ -97,12 +97,12 @@ class WebRtcRtpDumpHandlerTest : public testing::Test {
     *incoming_dump = dir.AppendASCII("recv");
     *outgoing_dump = dir.AppendASCII("send");
     const char dummy[] = "dummy";
-    EXPECT_GT(base::WriteFile(*incoming_dump, dummy, arraysize(dummy)), 0);
-    EXPECT_GT(base::WriteFile(*outgoing_dump, dummy, arraysize(dummy)), 0);
+    EXPECT_GT(base::WriteFile(*incoming_dump, dummy, base::size(dummy)), 0);
+    EXPECT_GT(base::WriteFile(*outgoing_dump, dummy, base::size(dummy)), 0);
   }
 
   void FlushTaskRunners() {
-    base::TaskScheduler::GetInstance()->FlushForTesting();
+    base::ThreadPoolInstance::Get()->FlushForTesting();
     base::RunLoop().RunUntilIdle();
   }
 
@@ -112,7 +112,7 @@ class WebRtcRtpDumpHandlerTest : public testing::Test {
   MOCK_METHOD0(OnStopOngoingDumpsFinished, void(void));
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<WebRtcRtpDumpHandler> handler_;
 };
 
@@ -124,7 +124,7 @@ TEST_F(WebRtcRtpDumpHandlerTest, StateTransition) {
   types[1] = RTP_DUMP_OUTGOING;
   types[2] = RTP_DUMP_BOTH;
 
-  for (size_t i = 0; i < arraysize(types); ++i) {
+  for (size_t i = 0; i < base::size(types); ++i) {
     DVLOG(2) << "Verifying state transition: type = " << types[i];
 
     // Only StartDump is allowed in STATE_NONE.
@@ -213,10 +213,10 @@ TEST_F(WebRtcRtpDumpHandlerTest, CannotStartMoreThanFiveDumps) {
 
   std::unique_ptr<WebRtcRtpDumpHandler> handlers[6];
 
-  for (size_t i = 0; i < arraysize(handlers); ++i) {
+  for (size_t i = 0; i < base::size(handlers); ++i) {
     handlers[i].reset(new WebRtcRtpDumpHandler(base::FilePath()));
 
-    if (i < arraysize(handlers) - 1) {
+    if (i < base::size(handlers) - 1) {
       EXPECT_TRUE(handlers[i]->StartDump(RTP_DUMP_INCOMING, &error));
     } else {
       EXPECT_FALSE(handlers[i]->StartDump(RTP_DUMP_INCOMING, &error));

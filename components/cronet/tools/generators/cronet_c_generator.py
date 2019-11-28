@@ -220,13 +220,16 @@ class Generator(generator.Generator):
     """
     used_typemaps = []
     seen_types = set()
+    def IsBasicKind(kind):
+      return (mojom.IsIntegralKind(kind) or mojom.IsStringKind(kind) or
+              mojom.IsDoubleKind(kind) or mojom.IsFloatKind(kind) or
+              mojom.IsAnyHandleKind(kind) or
+              mojom.IsInterfaceKind(kind) or
+              mojom.IsInterfaceRequestKind(kind) or
+              mojom.IsAssociatedKind(kind))
+
     def AddKind(kind):
-      if (mojom.IsIntegralKind(kind) or mojom.IsStringKind(kind) or
-          mojom.IsDoubleKind(kind) or mojom.IsFloatKind(kind) or
-          mojom.IsAnyHandleKind(kind) or
-          mojom.IsInterfaceKind(kind) or
-          mojom.IsInterfaceRequestKind(kind) or
-          mojom.IsAssociatedKind(kind)):
+      if IsBasicKind(kind):
         pass
       elif mojom.IsArrayKind(kind):
         AddKind(kind.kind)
@@ -537,8 +540,8 @@ class Generator(generator.Generator):
       return "%sextern const char %s[]" % \
           ((self.export_attribute + " ") if self.export_attribute else "",
            constant.name)
-    return "constexpr %s %s = %s" % (
-        GetCppPodType(constant.kind), constant.name,
+    return "const %s %s_%s = %s" % (
+        GetCppPodType(constant.kind), self.module.namespace, constant.name,
         self._ConstantValue(constant))
 
   def _GetCppWrapperType(self, kind, add_same_module_namespaces=False):

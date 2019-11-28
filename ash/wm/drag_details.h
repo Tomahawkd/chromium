@@ -6,7 +6,7 @@
 #define ASH_WM_DRAG_DETAILS_H_
 
 #include "ash/ash_export.h"
-#include "ash/public/interfaces/window_state_type.mojom.h"
+#include "ash/public/cpp/window_state_type.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/wm/public/window_move_client.h"
 
@@ -24,7 +24,7 @@ struct ASH_EXPORT DragDetails {
               ::wm::WindowMoveSource source);
   ~DragDetails();
 
-  ash::mojom::WindowStateType initial_state_type;
+  ash::WindowStateType initial_state_type;
 
   // Initial bounds of the window in parent coordinates.
   const gfx::Rect initial_bounds_in_parent;
@@ -56,9 +56,6 @@ struct ASH_EXPORT DragDetails {
 
   // Source of the event initiating the drag.
   const ::wm::WindowMoveSource source;
-
-  // True if the window should attach to the shelf after releasing.
-  bool should_attach_to_shelf;
 };
 
 }  // namespace ash

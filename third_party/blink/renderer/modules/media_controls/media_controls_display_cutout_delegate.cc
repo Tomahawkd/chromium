@@ -7,11 +7,11 @@
 #include "third_party/blink/public/platform/web_point.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/events/touch_event.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
@@ -38,7 +38,7 @@ bool MediaControlsDisplayCutoutDelegate::IsEnabled() {
 
 MediaControlsDisplayCutoutDelegate::MediaControlsDisplayCutoutDelegate(
     HTMLVideoElement& video_element)
-    : EventListener(kCPPEventListenerType), video_element_(video_element) {}
+    : video_element_(video_element) {}
 
 void MediaControlsDisplayCutoutDelegate::Attach() {
   DCHECK(video_element_->isConnected());
@@ -58,13 +58,8 @@ void MediaControlsDisplayCutoutDelegate::Detach() {
                                     this, true);
 }
 
-bool MediaControlsDisplayCutoutDelegate::operator==(
-    const EventListener& other) const {
-  return this == &other;
-}
-
 void MediaControlsDisplayCutoutDelegate::Trace(blink::Visitor* visitor) {
-  EventListener::Trace(visitor);
+  NativeEventListener::Trace(visitor);
   visitor->Trace(video_element_);
 }
 

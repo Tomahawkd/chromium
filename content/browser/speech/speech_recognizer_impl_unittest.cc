@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
@@ -20,7 +21,7 @@
 #include "content/browser/speech/speech_recognition_engine.h"
 #include "content/browser/speech/speech_recognizer_impl.h"
 #include "content/public/browser/speech_recognition_event_listener.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_system_impl.h"
 #include "media/audio/fake_audio_input_stream.h"
@@ -29,6 +30,7 @@
 #include "media/audio/test_audio_thread.h"
 #include "media/base/audio_bus.h"
 #include "media/base/test_helpers.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
 #include "net/base/net_errors.h"
@@ -115,8 +117,8 @@ class SpeechRecognizerImplTest : public SpeechRecognitionEventListener,
 
     const int channels =
         ChannelLayoutToChannelCount(SpeechRecognizerImpl::kChannelLayout);
-    bytes_per_sample_ = SpeechRecognizerImpl::kNumBitsPerAudioSample / 8;
-    const int frames = audio_packet_length_bytes / channels / bytes_per_sample_;
+    int bytes_per_sample = SpeechRecognizerImpl::kNumBitsPerAudioSample / 8;
+    const int frames = audio_packet_length_bytes / channels / bytes_per_sample;
     audio_bus_ = media::AudioBus::Create(channels, frames);
     audio_bus_->Zero();
   }
@@ -225,9 +227,11 @@ class SpeechRecognizerImplTest : public SpeechRecognitionEventListener,
   }
 
   void CopyPacketToAudioBus() {
+    static_assert(SpeechRecognizerImpl::kNumBitsPerAudioSample == 16,
+                  "FromInterleaved expects 2 bytes.");
     // Copy the created signal into an audio bus in a deinterleaved format.
-    audio_bus_->FromInterleaved(
-        &audio_packet_[0], audio_bus_->frames(), bytes_per_sample_);
+    audio_bus_->FromInterleaved<media::SignedInt16SampleTypeTraits>(
+        reinterpret_cast<int16_t*>(audio_packet_.data()), audio_bus_->frames());
   }
 
   void FillPacketWithTestWaveform() {
@@ -251,7 +255,7 @@ class SpeechRecognizerImplTest : public SpeechRecognitionEventListener,
     auto* capture_callback =
         static_cast<media::AudioCapturerSource::CaptureCallback*>(
             recognizer_.get());
-    capture_callback->Capture(data, 0, 0.0, false);
+    capture_callback->Capture(data, base::TimeTicks::Now(), 0.0, false);
   }
 
   void OnCaptureError() {
@@ -272,7 +276,7 @@ class SpeechRecognizerImplTest : public SpeechRecognitionEventListener,
   }
 
  protected:
-  TestBrowserThreadBundle thread_bundle_;
+  BrowserTaskEnvironment task_environment_;
   network::TestURLLoaderFactory url_loader_factory_;
   scoped_refptr<SpeechRecognizerImpl> recognizer_;
   std::unique_ptr<media::MockAudioManager> audio_manager_;
@@ -288,7 +292,6 @@ class SpeechRecognizerImplTest : public SpeechRecognitionEventListener,
   blink::mojom::SpeechRecognitionErrorCode error_;
   std::vector<uint8_t> audio_packet_;
   std::unique_ptr<media::AudioBus> audio_bus_;
-  int bytes_per_sample_;
   float volume_;
   float noise_volume_;
 };
@@ -409,7 +412,7 @@ TEST_F(SpeechRecognizerImplTest, StopWithData) {
   // that we are streaming out encoded data as chunks without waiting for the
   // full recording to complete.
   const size_t kNumChunks = 5;
-  network::mojom::ChunkedDataPipeGetterPtr chunked_data_pipe_getter;
+  mojo::Remote<network::mojom::ChunkedDataPipeGetter> chunked_data_pipe_getter;
   mojo::DataPipe data_pipe;
   for (size_t i = 0; i < kNumChunks; ++i) {
     Capture(audio_bus_.get());
@@ -423,7 +426,7 @@ TEST_F(SpeechRecognizerImplTest, StopWithData) {
       ASSERT_TRUE(upstream_request->request.request_body);
       ASSERT_EQ(1u, upstream_request->request.request_body->elements()->size());
       ASSERT_EQ(
-          network::DataElement::TYPE_CHUNKED_DATA_PIPE,
+          network::mojom::DataElementType::kChunkedDataPipe,
           (*upstream_request->request.request_body->elements())[0].type());
       network::TestURLLoaderFactory::PendingRequest* mutable_upstream_request =
           const_cast<network::TestURLLoaderFactory::PendingRequest*>(
@@ -578,7 +581,7 @@ TEST_F(SpeechRecognizerImplTest, ServerError) {
   network::ResourceResponseHead response;
   const char kHeaders[] = "HTTP/1.0 500 Internal Server Error";
   response.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(kHeaders, base::size(kHeaders)));
+      net::HttpUtil::AssembleRawHeaders(kHeaders));
   url_loader_factory_.AddResponse(pending_request->request.url, response, "",
                                   network::URLLoaderCompletionStatus());
 

@@ -38,8 +38,6 @@ static_library("internal") {
     "driver_entry.h",
     "empty_file_monitor.cc",
     "empty_file_monitor.h",
-    "empty_task_scheduler.cc",
-    "empty_task_scheduler.h",
     "entry.cc",
     "entry.h",
     "entry_utils.cc",
@@ -127,7 +125,6 @@ if (is_android) {
     sources = [
       "android/java/src/org/chromium/components/download/internal/BatteryStatusListenerAndroid.java",
     ]
-    jni_package = "components/download/internal/background_service"
   }
 }
 

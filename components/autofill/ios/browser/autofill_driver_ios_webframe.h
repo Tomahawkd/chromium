@@ -6,8 +6,8 @@
 #define COMPONENTS_AUTOFILL_IOS_BROWSER_AUTOFILL_DRIVER_IOS_WEBFRAME_H_
 
 #include "components/autofill/ios/browser/autofill_driver_ios.h"
-#include "ios/web/public/web_state/web_frame_user_data.h"
-#include "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/js_messaging/web_frame_user_data.h"
+#import "ios/web/public/web_state_user_data.h"
 
 namespace web {
 class WebFrame;
@@ -34,23 +34,27 @@ class AutofillDriverIOSWebFrameFactory
       AutofillManager::AutofillDownloadManagerState enable_download_manager);
   ~AutofillDriverIOSWebFrameFactory() override;
 
-  // Returns a AutofillDriverIOSFromWebFrame for |web_frame|, creating it if
-  // needed.
-  AutofillDriverIOSWebFrame* AutofillDriverIOSFromWebFrame(
-      web::WebFrame* web_frame);
-
- private:
   AutofillDriverIOSWebFrameFactory(
       web::WebState* web_state,
       AutofillClient* client,
       id<AutofillDriverIOSBridge> bridge,
       const std::string& app_locale,
       AutofillManager::AutofillDownloadManagerState enable_download_manager);
+
+  // Returns a AutofillDriverIOSFromWebFrame for |web_frame|, creating it if
+  // needed.
+  AutofillDriverIOSWebFrame* AutofillDriverIOSFromWebFrame(
+      web::WebFrame* web_frame);
+
+ private:
+  friend class web::WebStateUserData<AutofillDriverIOSWebFrameFactory>;
+
   web::WebState* web_state_ = nullptr;
   AutofillClient* client_ = nullptr;
   id<AutofillDriverIOSBridge> bridge_ = nil;
   std::string app_locale_;
   AutofillManager::AutofillDownloadManagerState enable_download_manager_;
+  WEB_STATE_USER_DATA_KEY_DECL();
 };
 
 // AutofillDriverIOSWebFrame will keep a refcountable AutofillDriverIOS. This is
@@ -96,7 +100,6 @@ class AutofillDriverIOSWebFrame
   AutofillDriverIOS* driver() { return driver_.get(); }
   scoped_refptr<AutofillDriverIOSRefCountable> GetRetainableDriver();
 
- private:
   AutofillDriverIOSWebFrame(
       web::WebState* web_state,
       web::WebFrame* web_frame,

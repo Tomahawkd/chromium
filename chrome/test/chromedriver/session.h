@@ -26,9 +26,9 @@ static const char kDismiss[] = "dismiss";
 static const char kDismissAndNotify[] = "dismiss and notify";
 static const char kIgnore[] = "ignore";
 
-// Controls whether ChromeDriver operates in W3C mode (when true) or legacy
-// mode (when false) by default.
-static const bool kW3CDefault = false;
+// Controls whether ChromeDriver operates in W3C mode (when true) by default
+// or legacy mode (when false).
+static const bool kW3CDefault = true;
 
 namespace base {
 class DictionaryValue;
@@ -49,6 +49,20 @@ struct FrameInfo {
   std::string chromedriver_frame_id;
 };
 
+struct InputCancelListEntry {
+  InputCancelListEntry(base::DictionaryValue* input_state,
+                       const MouseEvent* mouse_event,
+                       const TouchEvent* touch_event,
+                       const KeyEvent* key_event);
+  InputCancelListEntry(InputCancelListEntry&& other);
+  ~InputCancelListEntry();
+
+  base::DictionaryValue* input_state;
+  std::unique_ptr<MouseEvent> mouse_event;
+  std::unique_ptr<TouchEvent> touch_event;
+  std::unique_ptr<KeyEvent> key_event;
+};
+
 struct Session {
   static const base::TimeDelta kDefaultImplicitWaitTimeout;
   static const base::TimeDelta kDefaultPageLoadTimeout;
@@ -64,15 +78,14 @@ struct Session {
   void SwitchToParentFrame();
   void SwitchToSubFrame(const std::string& frame_id,
                         const std::string& chromedriver_frame_id);
+  void ClearNavigationState(bool for_top_frame);
   std::string GetCurrentFrameId() const;
   std::vector<WebDriverLog*> GetAllLogs() const;
-  std::string GetFirstBrowserError() const;
 
   const std::string id;
   bool w3c_compliant;
   bool quit;
   bool detach;
-  bool force_devtools_screenshot;
   std::unique_ptr<Chrome> chrome;
   std::string window;
   int sticky_modifiers;
@@ -82,10 +95,15 @@ struct Session {
   // Map between input id and input source state for the corresponding input
   // source. One entry for each item in active_input_sources
   base::DictionaryValue input_state_table;
+  // List of actions for Release Actions command.
+  std::vector<InputCancelListEntry> input_cancel_list;
   // List of |FrameInfo|s for each frame to the current target frame from the
   // first frame element in the root document. If target frame is window.top,
   // this list will be empty.
   std::list<FrameInfo> frames;
+  // Download directory that the user specifies. Used only in headless mode.
+  // Defaults to current directory in headless mode if no directory specified
+  std::unique_ptr<std::string> headless_download_directory;
   WebPoint mouse_position;
   MouseButton pressed_mouse_button;
   base::TimeDelta implicit_wait;
@@ -101,7 +119,6 @@ struct Session {
   std::unique_ptr<WebDriverLog> driver_log;
   ScopedTempDirWithRetry temp_dir;
   std::unique_ptr<base::DictionaryValue> capabilities;
-  bool auto_reporting_enabled;
   // |command_listeners| should be declared after |chrome|. When the |Session|
   // is destroyed, |command_listeners| should be freed first, since some
   // |CommandListener|s might be |CommandListenerProxy|s that forward to
@@ -109,6 +126,8 @@ struct Session {
   std::vector<std::unique_ptr<CommandListener>> command_listeners;
   bool strict_file_interactability;
   std::string unhandled_prompt_behavior;
+  int click_count;
+  base::TimeTicks mouse_click_timestamp;
 };
 
 Session* GetThreadLocalSession();

@@ -5,24 +5,26 @@
 #include "components/exo/shell_surface_util.h"
 
 #include "base/trace_event/trace_event.h"
+#include "components/exo/shell_surface_base.h"
 #include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/window.h"
 #include "ui/events/event.h"
+#include "ui/views/widget/widget.h"
 #include "ui/wm/core/window_util.h"
 
 namespace exo {
 
 namespace {
 
-DEFINE_LOCAL_UI_CLASS_PROPERTY_KEY(Surface*, kMainSurfaceKey, nullptr)
+DEFINE_UI_CLASS_PROPERTY_KEY(Surface*, kMainSurfaceKey, nullptr)
 
 // Application Id set by the client.
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kApplicationIdKey, nullptr);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kApplicationIdKey, nullptr)
 
 // Application Id set by the client.
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kStartupIdKey, nullptr);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kStartupIdKey, nullptr)
 
 }  // namespace
 
@@ -31,7 +33,7 @@ void SetShellApplicationId(aura::Window* window,
   TRACE_EVENT1("exo", "SetApplicationId", "application_id", id ? *id : "null");
 
   if (id)
-    window->SetProperty(kApplicationIdKey, new std::string(*id));
+    window->SetProperty(kApplicationIdKey, *id);
   else
     window->ClearProperty(kApplicationIdKey);
 }
@@ -45,7 +47,7 @@ void SetShellStartupId(aura::Window* window,
   TRACE_EVENT1("exo", "SetStartupId", "startup_id", id ? *id : "null");
 
   if (id)
-    window->SetProperty(kStartupIdKey, new std::string(*id));
+    window->SetProperty(kStartupIdKey, *id);
   else
     window->ClearProperty(kStartupIdKey);
 }
@@ -62,6 +64,16 @@ Surface* GetShellMainSurface(const aura::Window* window) {
   return window->GetProperty(kMainSurfaceKey);
 }
 
+ShellSurfaceBase* GetShellSurfaceBaseForWindow(aura::Window* window) {
+  // Only windows with a surface can have a shell surface.
+  if (!GetShellMainSurface(window))
+    return nullptr;
+  views::Widget* widget = views::Widget::GetWidgetForNativeWindow(window);
+  if (!widget)
+    return nullptr;
+  return static_cast<ShellSurfaceBase*>(widget->widget_delegate());
+}
+
 Surface* GetTargetSurfaceForLocatedEvent(ui::LocatedEvent* event) {
   aura::Window* window =
       WMHelper::GetInstance()->GetCaptureClient()->GetCaptureWindow();
@@ -72,8 +84,14 @@ Surface* GetTargetSurfaceForLocatedEvent(ui::LocatedEvent* event) {
 
   Surface* main_surface = GetShellMainSurface(window);
   // Skip if the event is captured by non exo windows.
-  if (!main_surface)
-    return nullptr;
+  if (!main_surface) {
+    auto* widget = views::Widget::GetTopLevelWidgetForNativeView(window);
+    if (!widget)
+      return nullptr;
+    main_surface = GetShellMainSurface(widget->GetNativeWindow());
+    if (!main_surface)
+      return nullptr;
+  }
 
   while (true) {
     aura::Window* focused = window->GetEventHandlerForPoint(

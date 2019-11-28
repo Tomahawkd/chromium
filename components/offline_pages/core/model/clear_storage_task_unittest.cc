@@ -5,6 +5,8 @@
 #include "components/offline_pages/core/model/clear_storage_task.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_enumerator.h"
@@ -16,6 +18,8 @@
 #include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/model/model_task_test_base.h"
 #include "components/offline_pages/core/model/offline_page_test_utils.h"
+#include "components/offline_pages/core/offline_page_client_policy.h"
+#include "components/offline_pages/core/test_scoped_offline_clock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace offline_pages {
@@ -87,7 +91,7 @@ class ClearStorageTaskTest : public ModelTaskTestBase {
   }
 
   ArchiveManager* archive_manager() { return archive_manager_.get(); }
-  base::SimpleTestClock* clock() { return &clock_; }
+  TestScopedOfflineClock* clock() { return &clock_; }
   size_t last_cleared_page_count() { return last_cleared_page_count_; }
   int total_cleared_times() { return total_cleared_times_; }
   ClearStorageResult last_clear_storage_result() {
@@ -97,7 +101,7 @@ class ClearStorageTaskTest : public ModelTaskTestBase {
 
  private:
   std::unique_ptr<TestArchiveManager> archive_manager_;
-  base::SimpleTestClock clock_;
+  TestScopedOfflineClock clock_;
 
   size_t last_cleared_page_count_;
   int total_cleared_times_;
@@ -145,34 +149,32 @@ void ClearStorageTaskTest::AddPages(const PageSettings& setting) {
   // during each test.
 
   // Make sure no persistent pages are marked as expired.
-  if (!policy_controller()->IsRemovedOnCacheReset(setting.name_space))
+  const OfflinePageClientPolicy& policy = GetPolicy(setting.name_space);
+  if (policy.lifetime_type == LifetimeType::PERSISTENT)
     ASSERT_FALSE(setting.expired_page_count);
 
   generator()->SetCreationTime(clock()->Now());
   generator()->SetNamespace(setting.name_space);
-  if (policy_controller()->IsRemovedOnCacheReset(setting.name_space)) {
+  if (policy.lifetime_type == LifetimeType::TEMPORARY) {
     generator()->SetArchiveDirectory(TemporaryDir());
   } else {
     generator()->SetArchiveDirectory(PrivateDir());
   }
 
+  generator()->SetLastAccessTime(clock_.Now());
   for (int i = 0; i < setting.fresh_page_count; ++i) {
-    generator()->SetLastAccessTime(clock_.Now());
     AddPage();
   }
+
+  generator()->SetLastAccessTime(clock_.Now() - policy.expiration_period);
   for (int i = 0; i < setting.expired_page_count; ++i) {
-    // Make the pages expired.
-    generator()->SetLastAccessTime(clock_.Now() -
-                                   policy_controller()
-                                       ->GetPolicy(setting.name_space)
-                                       .lifetime_policy.expiration_period);
     AddPage();
   }
 }
 
 void ClearStorageTaskTest::RunClearStorageTask(const base::Time& start_time) {
   auto task = std::make_unique<ClearStorageTask>(
-      store(), archive_manager(), policy_controller(), start_time,
+      store(), archive_manager(), start_time,
       base::BindOnce(&ClearStorageTaskTest::OnClearStorageDone,
                      base::AsWeakPtr(this)));
 
@@ -261,18 +263,14 @@ TEST_F(ClearStorageTaskTest, ClearMultipleTimes) {
 
   // Check preconditions, especially that last_n expiration is longer than
   // bookmark's.
-  LifetimePolicy bookmark_policy =
-      policy_controller()->GetPolicy(kBookmarkNamespace).lifetime_policy;
-  LifetimePolicy last_n_policy =
-      policy_controller()->GetPolicy(kLastNNamespace).lifetime_policy;
-  LifetimePolicy download_policy =
-      policy_controller()->GetPolicy(kDownloadNamespace).lifetime_policy;
-  ASSERT_EQ(LifetimePolicy::LifetimeType::TEMPORARY,
-            bookmark_policy.lifetime_type);
-  ASSERT_EQ(LifetimePolicy::LifetimeType::TEMPORARY,
-            last_n_policy.lifetime_type);
-  ASSERT_EQ(LifetimePolicy::LifetimeType::PERSISTENT,
-            download_policy.lifetime_type);
+  const OfflinePageClientPolicy& bookmark_policy =
+      GetPolicy(kBookmarkNamespace);
+  const OfflinePageClientPolicy& last_n_policy = GetPolicy(kLastNNamespace);
+  const OfflinePageClientPolicy& download_policy =
+      GetPolicy(kDownloadNamespace);
+  ASSERT_EQ(LifetimeType::TEMPORARY, bookmark_policy.lifetime_type);
+  ASSERT_EQ(LifetimeType::TEMPORARY, last_n_policy.lifetime_type);
+  ASSERT_EQ(LifetimeType::PERSISTENT, download_policy.lifetime_type);
   ASSERT_GT(last_n_policy.expiration_period, bookmark_policy.expiration_period);
 
   // Advance 30 minutes from initial pages creation time.

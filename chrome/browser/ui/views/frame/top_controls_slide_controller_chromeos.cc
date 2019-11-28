@@ -4,13 +4,13 @@
 
 #include "chrome/browser/ui/views/frame/top_controls_slide_controller_chromeos.h"
 
+#include "ash/public/cpp/tablet_mode.h"
+#include "base/bind.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
-#include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
-#include "chrome/common/chrome_render_frame.mojom.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/focused_node_details.h"
 #include "content/public/browser/navigation_controller.h"
@@ -26,7 +26,6 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/browser_controls_state.h"
 #include "extensions/common/constants.h"
-#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/views/controls/native/native_view_host.h"
@@ -34,8 +33,7 @@
 namespace {
 
 bool IsTabletModeEnabled() {
-  return TabletModeClient::Get() &&
-         TabletModeClient::Get()->tablet_mode_enabled();
+  return ash::TabletMode::Get() && ash::TabletMode::Get()->InTabletMode();
 }
 
 bool IsSpokenFeedbackEnabled() {
@@ -74,15 +72,12 @@ content::BrowserControlsState GetBrowserControlsStateConstraints(
   }
 
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
-  if (profile && search::IsNTPURL(url, profile))
+  if (profile && search::IsNTPOrRelatedURL(url, profile))
     return content::BROWSER_CONTROLS_STATE_SHOWN;
 
   auto* helper = SecurityStateTabHelper::FromWebContents(contents);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
-  switch (security_info.security_level) {
-    case security_state::HTTP_SHOW_WARNING:
+  switch (helper->GetSecurityLevel()) {
+    case security_state::WARNING:
     case security_state::DANGEROUS:
       return content::BROWSER_CONTROLS_STATE_SHOWN;
 
@@ -116,19 +111,13 @@ void UpdateBrowserControlsStateShown(content::WebContents* web_contents,
   if (!main_frame)
     return;
 
-  chrome::mojom::ChromeRenderFrameAssociatedPtr renderer;
-  main_frame->GetRemoteAssociatedInterfaces()->GetInterface(&renderer);
-
-  if (!renderer)
-    return;
-
   const content::BrowserControlsState constraints_state =
       GetBrowserControlsStateConstraints(web_contents);
 
   const content::BrowserControlsState current_state =
       content::BROWSER_CONTROLS_STATE_SHOWN;
-  renderer->UpdateBrowserControlsState(constraints_state, current_state,
-                                       animate);
+  main_frame->UpdateBrowserControlsState(constraints_state, current_state,
+                                         animate);
 }
 
 // Triggers a visual properties synchrnoization event on |contents|' main
@@ -194,7 +183,7 @@ class TopControlsSlideTabObserver : public content::WebContentsObserver,
   }
 
   void UpdateDoBrowserControlsShrinkRendererSize() {
-    shrink_renderer_size_ = shown_ratio_ > 0;
+    shrink_renderer_size_ = shown_ratio_ == 1.f;
   }
 
   // content::WebContentsObserver:
@@ -281,9 +270,11 @@ class TopControlsSlideTabObserver : public content::WebContentsObserver,
   float shown_ratio_ = 1.f;
 
   // Indicates whether the renderer's viewport size should be shrunk by the
-  // height of the browser's top controls. This value should only be updated at
-  // the end of sliding, and should never change while sliding or scrolling are
-  // in progress. https://crbug.com/885223.
+  // height of the browser's top controls. This value never changes while
+  // sliding is in progress. It is updated only once right before sliding begins
+  // and remains unchanged until sliding ends, at which point it is updated
+  // right before the final layout of the BrowserView.
+  // https://crbug.com/885223.
   bool shrink_renderer_size_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(TopControlsSlideTabObserver);
@@ -304,8 +295,8 @@ TopControlsSlideControllerChromeOS::TopControlsSlideControllerChromeOS(
   registrar_.Add(this, content::NOTIFICATION_FOCUS_CHANGED_IN_PAGE,
                  content::NotificationService::AllSources());
 
-  if (TabletModeClient::Get())
-    TabletModeClient::Get()->AddObserver(this);
+  if (ash::TabletMode::Get())
+    ash::TabletMode::Get()->AddObserver(this);
 
   browser_view_->browser()->tab_strip_model()->AddObserver(this);
 
@@ -326,8 +317,8 @@ TopControlsSlideControllerChromeOS::~TopControlsSlideControllerChromeOS() {
 
   browser_view_->browser()->tab_strip_model()->RemoveObserver(this);
 
-  if (TabletModeClient::Get())
-    TabletModeClient::Get()->RemoveObserver(this);
+  if (ash::TabletMode::Get())
+    ash::TabletMode::Get()->RemoveObserver(this);
 }
 
 bool TopControlsSlideControllerChromeOS::IsEnabled() const {
@@ -347,33 +338,34 @@ void TopControlsSlideControllerChromeOS::SetShownRatio(
   // disabled, so that we're always synchronized with the renderer.
   DCHECK(observed_tabs_.count(contents));
 
-  // Note that there are two small windows of intervals between:
-  // 1- When |is_gesture_scrolling_in_progress_| is set to true (i.e. received
-  //    ET_GESTURE_SCROLL_BEGIN) and when |is_sliding_in_progress_| is set to
-  //    true (i.e. top-chrome actually starts moving), and
-  // 2- When |is_gesture_scrolling_in_progress_| is set to false (i.e.
-  //    ET_GESTURE_SCROLL_END was received) and when |is_sliding_in_progress_|
-  //    is set to false (i.e. top-chrome stopped moving) which can happen as the
-  //    renderer continues to animate top-chrome towards fully-shown or
-  //    fully-hidden after the user had lifted their fingers while the
-  //    shown_ratio is still a fractional value.
-  // Even during those two small windows, the
-  // `DoBrowserControlsShrinkRendererSize` bit should remain unchanged from its
-  // current value until sliding reaches a steady state.
-  // Make sure it doesn't get updated if sliding is about to start.
+  // The only times the `DoBrowserControlsShrinkRendererSize` bit is allowed to
+  // change are:
+  // 1) Right before we begin sliding the controls, which happens immediately
+  //    after we set a fractional shown ratio.
+  // 2) As soon as both gesture scrolling has finished and controls reach a
+  //    terminal value (1 or 0). Note that a scroll might finish but controls
+  //    might still be animating. In this case,
+  //    `DoBrowserControlsShrinkRendererSize` is changed when the animation
+  //    finishes.
+  const bool is_enabled = IsEnabled();
   const bool sliding_or_scrolling_in_progress =
       is_gesture_scrolling_in_progress_ || is_sliding_in_progress_ ||
-      (IsEnabled() && ratio != 0.f && ratio != 1.f);
+      (is_enabled && ratio != 0.f && ratio != 1.f);
   observed_tabs_[contents]->SetShownRatio(ratio,
                                           sliding_or_scrolling_in_progress);
 
-  if (!IsEnabled()) {
+  if (!is_enabled) {
     // However, if sliding is disabled, we don't update |shown_ratio_|, which is
     // the current value for the entire browser, and it must always be 1.f (i.e.
     // the top controls are fully shown).
     DCHECK_EQ(shown_ratio_, 1.f);
     return;
   }
+
+  // Skip |shown_ratio_| update if the changes is not from the active
+  // WebContents.
+  if (contents != browser_view_->GetActiveWebContents())
+    return;
 
   if (shown_ratio_ == ratio)
     return;
@@ -435,8 +427,11 @@ bool TopControlsSlideControllerChromeOS::IsTopControlsGestureScrollInProgress()
   return is_gesture_scrolling_in_progress_;
 }
 
-void TopControlsSlideControllerChromeOS::OnTabletModeToggled(
-    bool tablet_mode_enabled) {
+void TopControlsSlideControllerChromeOS::OnTabletModeStarted() {
+  OnEnabledStateChanged(CanEnable(base::nullopt));
+}
+
+void TopControlsSlideControllerChromeOS::OnTabletModeEnded() {
   OnEnabledStateChanged(CanEnable(base::nullopt));
 }
 
@@ -445,25 +440,21 @@ void TopControlsSlideControllerChromeOS::OnTabStripModelChanged(
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
   if (change.type() == TabStripModelChange::kInserted) {
-    for (const auto& delta : change.deltas()) {
-      content::WebContents* contents = delta.insert.contents;
-      observed_tabs_.emplace(
-          contents,
-          std::make_unique<TopControlsSlideTabObserver>(contents, this));
+    for (const auto& contents : change.GetInsert()->contents) {
+      observed_tabs_.emplace(contents.contents,
+                             std::make_unique<TopControlsSlideTabObserver>(
+                                 contents.contents, this));
     }
   } else if (change.type() == TabStripModelChange::kRemoved) {
-    for (const auto& delta : change.deltas())
-      observed_tabs_.erase(delta.remove.contents);
+    for (const auto& contents : change.GetRemove()->contents)
+      observed_tabs_.erase(contents.contents);
   } else if (change.type() == TabStripModelChange::kReplaced) {
-    for (const auto& delta : change.deltas()) {
-      observed_tabs_.erase(delta.replace.old_contents);
-
-      DCHECK(!observed_tabs_.count(delta.replace.new_contents));
-
-      observed_tabs_.emplace(delta.replace.new_contents,
-                             std::make_unique<TopControlsSlideTabObserver>(
-                                 delta.replace.new_contents, this));
-    }
+    auto* replace = change.GetReplace();
+    observed_tabs_.erase(replace->old_contents);
+    DCHECK(!observed_tabs_.count(replace->new_contents));
+    observed_tabs_.emplace(replace->new_contents,
+                           std::make_unique<TopControlsSlideTabObserver>(
+                               replace->new_contents, this));
   }
 
   if (tab_strip_model->empty() || !selection.active_tab_changed())
@@ -471,7 +462,6 @@ void TopControlsSlideControllerChromeOS::OnTabStripModelChanged(
 
   content::WebContents* new_active_contents = selection.new_contents;
   DCHECK(observed_tabs_.count(new_active_contents));
-  DCHECK(!is_gesture_scrolling_in_progress_);
 
   // Restore the newly-activated tab's shown ratio. If this is a newly inserted
   // tab, its |shown_ratio_| is 1.0f.
@@ -567,15 +557,22 @@ void TopControlsSlideControllerChromeOS::OnEnabledStateChanged(bool new_state) {
 }
 
 void TopControlsSlideControllerChromeOS::Refresh() {
-  if (!is_gesture_scrolling_in_progress_ &&
-      (shown_ratio_ == 1.f || shown_ratio_ == 0.f)) {
+  const bool got_a_terminal_shown_ratio =
+      (shown_ratio_ == 1.f || shown_ratio_ == 0.f);
+  if (!is_gesture_scrolling_in_progress_ && got_a_terminal_shown_ratio) {
     // Reached a terminal value and gesture scrolling is not in progress.
     OnEndSliding();
     return;
   }
 
-  if (!is_sliding_in_progress_)
+  if (!is_sliding_in_progress_) {
+    if (got_a_terminal_shown_ratio) {
+      // Don't start sliding until we receive a fractional shown ratio.
+      return;
+    }
+
     OnBeginSliding();
+  }
 
   // Using |shown_ratio_|, translate the browser top controls (using the root
   // view layer), as well as the layer of page contents native view's container
@@ -587,19 +584,22 @@ void TopControlsSlideControllerChromeOS::Refresh() {
   gfx::Transform trans;
   trans.Translate(0, y_translation);
 
-  // We need to transform webcontents native view's container rather than the
-  // webcontents native view itself. That's because the container in the case
-  // of aura is the clipping window. If we translate the webcontents native view
-  // the page will appear to scroll, but clipping window will act as a static
-  // view port that doesn't move with the top controls.
-  DCHECK(browser_view_->contents_web_view()->holder()->GetNativeViewContainer())
-      << "The web contents' native view didn't attach yet!";
-  ui::Layer* contents_container_layer = browser_view_->contents_web_view()
-                                            ->holder()
-                                            ->GetNativeViewContainer()
-                                            ->layer();
   ui::Layer* root_layer = browser_view_->frame()->GetRootView()->layer();
-  std::vector<ui::Layer*> layers = {root_layer, contents_container_layer};
+  std::vector<ui::Layer*> layers = {root_layer};
+  // We need to transform all the native views' containers of all the attached
+  // NativeViewHosts to this BrowserView, rather than the NativeViewHosts
+  // themselves. The attached NativeViewHosts can be active tab's WebContents,
+  // and the webui tabstrip (if enabled). This is because for example in the
+  // case of the tab's WebContents, the container in the case of aura is the
+  // clipping window. If we translate the WebContents native view the page will
+  // appear to scroll, but clipping window will act as a static/ view port that
+  // doesn't move with the top controls.
+  for (auto* native_view_host :
+       browser_view_->GetNativeViewHostsForTopControlsSlide()) {
+    DCHECK(native_view_host->GetNativeViewContainer())
+        << "The native view didn't attach yet to the NativeViewHost!";
+    layers.push_back(native_view_host->GetNativeViewContainer()->layer());
+  }
 
   for (auto* layer : layers) {
     ui::ScopedLayerAnimationSettings settings(layer->GetAnimator());
@@ -615,6 +615,15 @@ void TopControlsSlideControllerChromeOS::OnBeginSliding() {
 
   // It should never be called again.
   DCHECK(!is_sliding_in_progress_);
+
+  // Explicitly update the `DoBrowserControlsShrinkRendererSize` bit here before
+  // we begin sliding, and before we resize the browser view below, which will
+  // result in changing the bounds of the `BrowserView::contents_web_view_`,
+  // causing the RednerWidgetHost to request the new value of the
+  // `DoBrowserControlsShrinkRendererSize` bit, which should be false from now
+  // on, during and after sliding, until only sliding ends and the top controls
+  // are fully shown.
+  UpdateDoBrowserControlsShrinkRendererSize();
 
   is_sliding_in_progress_ = true;
 
@@ -652,6 +661,16 @@ void TopControlsSlideControllerChromeOS::OnBeginSliding() {
   const int new_height = widget_layer->bounds().height() + top_container_height;
   root_bounds.set_height(new_height);
   root_view->SetBoundsRect(root_bounds);
+  // Changing the bounds will have triggered an InvalidateLayout() on
+  // NativeViewHost. InvalidateLayout() results in Layout() being called later,
+  // after transforms are set. NativeViewHostAura calculates the bounds of the
+  // window using transforms. By calling LayoutRootViewIfNecessary() we force
+  // the layout now, before any transforms are installed. To do otherwise
+  // results in NativeViewHost positioning the WebContents at the wrong
+  // location.
+  // TODO(https://crbug.com/950981): this is rather fragile, and the code should
+  // deal with Layout() being called during the slide.
+  root_view->GetWidget()->LayoutRootViewIfNecessary();
 
   // We don't want anything to show outside the browser window's bounds.
   widget_layer->SetMasksToBounds(true);
@@ -675,17 +694,17 @@ void TopControlsSlideControllerChromeOS::OnEndSliding() {
   // call from the renderer to set the shown ratio to a terminal value.
   is_sliding_in_progress_ = false;
 
-  // At the end of sliding, we reset the webcontents NativeViewHostAura's
-  // clipping window's layer's transform to identity. From now on, the views
-  // layout takes care of where everything is.
-  DCHECK(browser_view_->contents_web_view()->holder()->GetNativeViewContainer())
-      << "The web contents' native view didn't attach yet!";
-  ui::Layer* contents_container_layer = browser_view_->contents_web_view()
-                                            ->holder()
-                                            ->GetNativeViewContainer()
-                                            ->layer();
-  gfx::Transform transform;
-  contents_container_layer->SetTransform(transform);
+  // At the end of sliding, we reset the transforms of all the attached
+  // NativeViewHostAuras' clipping windows' layers to identity. From now on, the
+  // views layout takes care of where everything is.
+  const gfx::Transform identity_transform;
+  for (auto* native_view_host :
+       browser_view_->GetNativeViewHostsForTopControlsSlide()) {
+    DCHECK(native_view_host->GetNativeViewContainer())
+        << "The native view didn't attach yet to the NativeViewHost!";
+    native_view_host->GetNativeViewContainer()->layer()->SetTransform(
+        identity_transform);
+  }
 
   BrowserFrame* browser_frame = browser_view_->frame();
   views::View* root_view = browser_frame->GetRootView();
@@ -728,10 +747,7 @@ void TopControlsSlideControllerChromeOS::OnEndSliding() {
 
 void TopControlsSlideControllerChromeOS::
     UpdateDoBrowserControlsShrinkRendererSize() {
-  // It should never be called while gesture scrolling is still in progress.
-  DCHECK(!is_gesture_scrolling_in_progress_);
-
-  // Nor should it be called while sliding is in progress.
+  // It should never be called while sliding is in progress.
   DCHECK(!is_sliding_in_progress_);
 
   content::WebContents* active_contents = browser_view_->GetActiveWebContents();

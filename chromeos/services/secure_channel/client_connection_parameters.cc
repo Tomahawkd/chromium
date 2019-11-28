@@ -4,7 +4,7 @@
 
 #include "chromeos/services/secure_channel/client_connection_parameters.h"
 
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 
 namespace chromeos {
 
@@ -39,13 +39,13 @@ void ClientConnectionParameters::SetConnectionAttemptFailed(
 }
 
 void ClientConnectionParameters::SetConnectionSucceeded(
-    mojom::ChannelPtr channel,
-    mojom::MessageReceiverRequest message_receiver_request) {
+    mojo::PendingRemote<mojom::Channel> channel,
+    mojo::PendingReceiver<mojom::MessageReceiver> message_receiver_receiver) {
   static const std::string kFunctionName = "SetConnectionSucceeded";
   VerifyDelegateWaitingForResponse(kFunctionName);
   has_invoked_delegate_function_ = true;
   PerformSetConnectionSucceeded(std::move(channel),
-                                std::move(message_receiver_request));
+                                std::move(message_receiver_receiver));
 }
 
 bool ClientConnectionParameters::operator==(

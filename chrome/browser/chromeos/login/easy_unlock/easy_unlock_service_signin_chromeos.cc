@@ -23,17 +23,16 @@
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager_factory.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_features.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/multidevice/remote_device.h"
 #include "chromeos/components/multidevice/remote_device_cache.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/multidevice/software_feature_state.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/proximity_auth/proximity_auth_local_state_pref_manager.h"
 #include "chromeos/components/proximity_auth/smart_lock_metrics_recorder.h"
-#include "chromeos/components/proximity_auth/switches.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/login/auth/user_context.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "chromeos/tpm/tpm_token_loader.h"
 
 using proximity_auth::ScreenlockState;
@@ -115,9 +114,9 @@ void LoadDataForUser(
 // than outside the user session (sign-in). RemoteDevices are serialized as
 // protocol buffers inside the user session, but we have a custom serialization
 // scheme for sign-in due to slightly different data requirements.
-std::vector<cryptauth::BeaconSeed> DeserializeBeaconSeeds(
+std::vector<multidevice::BeaconSeed> DeserializeBeaconSeeds(
     const std::string& serialized_beacon_seeds) {
-  std::vector<cryptauth::BeaconSeed> beacon_seeds;
+  std::vector<multidevice::BeaconSeed> beacon_seeds;
 
   JSONStringValueDeserializer deserializer(serialized_beacon_seeds);
   std::string error;
@@ -155,7 +154,8 @@ std::vector<cryptauth::BeaconSeed> DeserializeBeaconSeeds(
       continue;
     }
 
-    beacon_seeds.push_back(beacon_seed);
+    beacon_seeds.push_back(
+        chromeos::multidevice::FromCryptAuthSeed(beacon_seed));
   }
 
   PA_LOG(VERBOSE) << "Deserialized " << beacon_seeds.size() << " BeaconSeeds.";
@@ -176,8 +176,7 @@ EasyUnlockServiceSignin::EasyUnlockServiceSignin(
       account_id_(EmptyAccountId()),
       user_pod_last_focused_timestamp_(base::TimeTicks::Now()),
       remote_device_cache_(
-          multidevice::RemoteDeviceCache::Factory::Get()->BuildInstance()),
-      weak_ptr_factory_(this) {}
+          multidevice::RemoteDeviceCache::Factory::Get()->BuildInstance()) {}
 
 EasyUnlockServiceSignin::~EasyUnlockServiceSignin() {}
 
@@ -227,19 +226,11 @@ AccountId EasyUnlockServiceSignin::GetAccountId() const {
   return account_id_;
 }
 
-void EasyUnlockServiceSignin::ClearPermitAccess() {
-  NOTREACHED();
-}
-
 const base::ListValue* EasyUnlockServiceSignin::GetRemoteDevices() const {
   const UserData* data = FindLoadedDataForCurrentUser();
   if (!data)
     return nullptr;
   return &data->remote_devices_value;
-}
-
-void EasyUnlockServiceSignin::SetRemoteDevices(const base::ListValue& devices) {
-  NOTREACHED();
 }
 
 std::string EasyUnlockServiceSignin::GetChallenge() const {
@@ -296,6 +287,10 @@ void EasyUnlockServiceSignin::RecordPasswordLoginEvent(
 
   EasyUnlockAuthEvent event = GetPasswordAuthEvent();
   RecordEasyUnlockSigninEvent(event);
+
+  SmartLockMetricsRecorder::RecordAuthMethodChoiceSignInPasswordState(
+      GetSmartUnlockPasswordAuthEvent());
+
   DVLOG(1) << "Easy Sign-in password login event, event=" << event;
 }
 
@@ -320,6 +315,10 @@ void EasyUnlockServiceSignin::ShutdownInternal() {
     return;
   service_active_ = false;
 
+  remote_device_cache_.reset();
+  challenge_wrapper_.reset();
+  pref_manager_.reset();
+
   weak_ptr_factory_.InvalidateWeakPtrs();
   proximity_auth::ScreenlockBridge::Get()->RemoveObserver(this);
   user_data_.clear();
@@ -338,12 +337,6 @@ bool EasyUnlockServiceSignin::IsEnabled() const {
 
 bool EasyUnlockServiceSignin::IsChromeOSLoginEnabled() const {
   return pref_manager_ && pref_manager_->IsChromeOSLoginEnabled();
-}
-
-void EasyUnlockServiceSignin::OnWillFinalizeUnlock(bool success) {
-  // This code path should only be exercised for the lock screen, not for the
-  // sign-in screen.
-  NOTREACHED();
 }
 
 void EasyUnlockServiceSignin::OnSuspendDoneInternal() {
@@ -383,26 +376,18 @@ void EasyUnlockServiceSignin::OnScreenDidUnlock(
 
   // Only record metrics for users who have enabled the feature.
   if (IsEnabled()) {
-    EasyUnlockAuthEvent event = GetPasswordAuthEvent();
-    if (event == PASSWORD_ENTRY_PHONE_LOCKED ||
-        event == PASSWORD_ENTRY_PHONE_NOT_LOCKABLE ||
-        event == PASSWORD_ENTRY_RSSI_TOO_LOW ||
-        event == PASSWORD_ENTRY_PHONE_LOCKED_AND_RSSI_TOO_LOW ||
-        event == PASSWORD_ENTRY_WITH_AUTHENTICATED_PHONE) {
-      SmartLockMetricsRecorder::RecordGetRemoteStatusResultSignInSuccess();
-    } else if (event == PASSWORD_ENTRY_BLUETOOTH_CONNECTING) {
-      SmartLockMetricsRecorder::RecordGetRemoteStatusResultSignInFailure(
-          SmartLockMetricsRecorder::
-              SmartLockGetRemoteStatusResultFailureReason::
-                  kUserEnteredPasswordWhileConnecting);
-    } else if (event == PASSWORD_ENTRY_NO_BLUETOOTH) {
-      SmartLockMetricsRecorder::RecordGetRemoteStatusResultSignInFailure(
-          SmartLockMetricsRecorder::
-              SmartLockGetRemoteStatusResultFailureReason::
-                  kUserEnteredPasswordWhileBluetoothDisabled);
+    if (will_authenticate_using_easy_unlock()) {
+      SmartLockMetricsRecorder::RecordAuthResultSignInSuccess();
     }
+
+    SmartLockMetricsRecorder::RecordSmartLockSignInAuthMethodChoice(
+        will_authenticate_using_easy_unlock()
+            ? SmartLockMetricsRecorder::SmartLockAuthMethodChoice::kSmartLock
+            : SmartLockMetricsRecorder::SmartLockAuthMethodChoice::kOther);
   }
 
+  // TODO(crbug.com/972156): A KeyedService shutting itself seems dangerous;
+  // look into other ways to "reset state" besides this.
   Shutdown();
 }
 
@@ -518,13 +503,13 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
       continue;
     }
 
-    std::map<cryptauth::SoftwareFeature, multidevice::SoftwareFeatureState>
+    std::map<multidevice::SoftwareFeature, multidevice::SoftwareFeatureState>
         software_features;
-    software_features[cryptauth::SoftwareFeature::EASY_UNLOCK_HOST] =
+    software_features[multidevice::SoftwareFeature::kSmartLockHost] =
         device.unlock_key ? multidevice::SoftwareFeatureState::kEnabled
                           : multidevice::SoftwareFeatureState::kNotSupported;
 
-    std::vector<cryptauth::BeaconSeed> beacon_seeds;
+    std::vector<multidevice::BeaconSeed> beacon_seeds;
     if (!device.serialized_beacon_seeds.empty()) {
       PA_LOG(VERBOSE) << "Deserializing BeaconSeeds: "
                       << device.serialized_beacon_seeds;
@@ -533,9 +518,14 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
       PA_LOG(WARNING) << "No BeaconSeeds were loaded.";
     }
 
+    // Values such as the |instance_id| and |name| of the device are not
+    // provided in the device dictionary that is persisted to the TPM during the
+    // user session. However, in this particular scenario, we do not need these
+    // values to safely construct and use the RemoteDevice objects.
     multidevice::RemoteDevice remote_device(
-        account_id.GetUserEmail(), std::string() /* name */, decoded_public_key,
-        decoded_psk /* persistent_symmetric_key */,
+        account_id.GetUserEmail(), std::string() /* instance_id */,
+        std::string() /* name */, std::string() /* pii_free_name */,
+        decoded_public_key, decoded_psk /* persistent_symmetric_key */,
         0L /* last_update_time_millis */, software_features, beacon_seeds);
 
     remote_devices.push_back(remote_device);
@@ -546,13 +536,8 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
                            remote_device.GetDeviceId());
   }
 
-  // If |chromeos::features::kMultiDeviceApi| is enabled, both a remote device
-  // and local device are expected, and this service cannot continue unless
-  // both are present.
-  //
-  // If the flag is disabled, just one device, the remote device, is expected to
-  // be passed along -- if a second device is present, it can simply be ignored.
-  //
+  // Both a remote device and local device are expected, and this service cannot
+  // continue unless both are present.
   // TODO(crbug.com/856380): The remote and local devices need to be passed in a
   // less hacky way.
   if (remote_devices.size() > 2u) {
@@ -564,8 +549,7 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
     return;
   }
 
-  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi) &&
-      remote_devices.size() != 2u) {
+  if (remote_devices.size() != 2u) {
     PA_LOG(ERROR) << "Expected a device list of size 2, received list of size "
                   << remote_devices.size();
     SetHardlockStateForUser(account_id,
@@ -578,10 +562,10 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
   std::string local_device_id;
 
   for (const auto& remote_device : remote_devices) {
-    if (base::ContainsKey(remote_device.software_features,
-                          cryptauth::SoftwareFeature::EASY_UNLOCK_HOST) &&
+    if (base::Contains(remote_device.software_features,
+                       multidevice::SoftwareFeature::kSmartLockHost) &&
         remote_device.software_features.at(
-            cryptauth::SoftwareFeature::EASY_UNLOCK_HOST) ==
+            multidevice::SoftwareFeature::kSmartLockHost) ==
             multidevice::SoftwareFeatureState::kEnabled) {
       if (!unlock_key_id.empty()) {
         PA_LOG(ERROR) << "Only one of the devices should be an unlock key.";
@@ -621,10 +605,7 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
     return;
   }
 
-  // Likewise, a similar issue could exist when the kMultiDeviceApi flag is
-  // enabled.
-  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi) &&
-      !local_device) {
+  if (!local_device) {
     SetHardlockStateForUser(account_id,
                             EasyUnlockScreenlockStateHandler::NO_PAIRING);
     return;
@@ -651,10 +632,10 @@ void EasyUnlockServiceSignin::ShowInitialUserPodState() {
     return;
 
   if (!pref_manager_->IsChromeOSLoginEnabled()) {
-    // Show a hardlock state if the user has not enabled the login flow.
-    SetHardlockStateForUser(
-        account_id_,
-        EasyUnlockScreenlockStateHandler::PASSWORD_REQUIRED_FOR_LOGIN);
+    // Show a hardlock state if the user has not enabled Smart Lock to the log
+    // in to the user's Google account.
+    SetHardlockStateForUser(account_id_,
+                            EasyUnlockScreenlockStateHandler::LOGIN_DISABLED);
   } else {
     // This UI is simply a placeholder until the RemoteDevices are loaded from
     // cryptohome and the ProximityAuthSystem is started. Hardlock states are

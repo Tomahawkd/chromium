@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_WALLET_HELPER_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_WALLET_HELPER_H_
 
+#include <map>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "base/test/scoped_feature_list.h"
@@ -23,6 +26,7 @@ struct PaymentsCustomerData;
 
 namespace sync_pb {
 class SyncEntity;
+class ModelTypeState;
 }
 
 namespace wallet_helper {
@@ -63,13 +67,17 @@ void UpdateServerAddressMetadata(
     int profile,
     const autofill::AutofillProfile& server_address);
 
-void GetServerCardsMetadata(
-    int profile,
-    std::map<std::string, autofill::AutofillMetadata>* cards_metadata);
+std::map<std::string, autofill::AutofillMetadata> GetServerCardsMetadata(
+    int profile);
 
-void GetServerAddressesMetadata(
-    int profile,
-    std::map<std::string, autofill::AutofillMetadata>* addresses_metadata);
+std::map<std::string, autofill::AutofillMetadata> GetServerAddressesMetadata(
+    int profile);
+
+sync_pb::ModelTypeState GetWalletDataModelTypeState(int profile);
+
+void UnmaskServerCard(int profile,
+                      const autofill::CreditCard& credit_card,
+                      const base::string16& full_number);
 
 sync_pb::SyncEntity CreateDefaultSyncWalletCard();
 
@@ -108,7 +116,7 @@ std::vector<autofill::CreditCard*> GetServerCreditCards(int profile);
 }  // namespace wallet_helper
 
 // Checker to block until autofill wallet & server profiles match on both
-// profiles.
+// profiles and until server profiles got converted to local profiles.
 class AutofillWalletChecker : public StatusChangeChecker,
                               public autofill::PersonalDataManagerObserver {
  public:
@@ -117,8 +125,7 @@ class AutofillWalletChecker : public StatusChangeChecker,
 
   // StatusChangeChecker implementation.
   bool Wait() override;
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
+  bool IsExitConditionSatisfied(std::ostream* os) override;
 
   // autofill::PersonalDataManager implementation.
   void OnPersonalDataChanged() override;
@@ -128,25 +135,46 @@ class AutofillWalletChecker : public StatusChangeChecker,
   const int profile_b_;
 };
 
-// Class that enables or disables USS based on test parameter. Must be the first
-// base class of the test fixture.
-// TODO(jkrcal): When the new implementation fully launches, remove this class,
-// convert all tests from *_P back to *_F and remove the instance at the end.
-class UssWalletSwitchToggler : public testing::WithParamInterface<bool> {
+// Checker to block until autofill server profiles got converted to local
+// profiles.
+class AutofillWalletConversionChecker
+    : public StatusChangeChecker,
+      public autofill::PersonalDataManagerObserver {
  public:
-  UssWalletSwitchToggler();
+  explicit AutofillWalletConversionChecker(int profile);
+  ~AutofillWalletConversionChecker() override;
 
-  // Sets up feature overrides, based on the parameter of the test.
-  void InitWithDefaultFeatures();
+  // StatusChangeChecker implementation.
+  bool Wait() override;
+  bool IsExitConditionSatisfied(std::ostream* os) override;
 
-  // Sets up feature overrides, adds the toggled feature on top of specified
-  // |enabled_features| and |disabled_features|. Vectors are passed by value
-  // because we need to alter them anyway.
-  void InitWithFeatures(std::vector<base::Feature> enabled_features,
-                        std::vector<base::Feature> disabled_features);
+  // autofill::PersonalDataManager implementation.
+  void OnPersonalDataChanged() override;
 
  private:
-  base::test::ScopedFeatureList override_features_;
+  const int profile_;
+};
+
+// Checker to block until autofill wallet metadata sizes match on both profiles.
+class AutofillWalletMetadataSizeChecker
+    : public StatusChangeChecker,
+      public autofill::PersonalDataManagerObserver {
+ public:
+  AutofillWalletMetadataSizeChecker(int profile_a, int profile_b);
+  ~AutofillWalletMetadataSizeChecker() override;
+
+  // StatusChangeChecker implementation.
+  bool IsExitConditionSatisfied(std::ostream* os) override;
+
+  // autofill::PersonalDataManager implementation.
+  void OnPersonalDataChanged() override;
+
+ private:
+  bool IsExitConditionSatisfiedImpl();
+
+  const int profile_a_;
+  const int profile_b_;
+  bool checking_exit_condition_in_flight_ = false;
 };
 
 #endif  // CHROME_BROWSER_SYNC_TEST_INTEGRATION_WALLET_HELPER_H_

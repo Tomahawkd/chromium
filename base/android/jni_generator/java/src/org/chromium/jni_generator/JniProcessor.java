@@ -21,7 +21,9 @@ import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 
 import org.chromium.base.JniStaticTestMocker;
-import org.chromium.base.annotations.JniStaticNatives;
+import org.chromium.base.annotations.CheckDiscard;
+import org.chromium.base.annotations.MainDex;
+import org.chromium.base.annotations.NativeMethods;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -35,6 +37,7 @@ import javax.annotation.Generated;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Processor;
 import javax.annotation.processing.RoundEnvironment;
+import javax.annotation.processing.SupportedOptions;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
@@ -49,17 +52,22 @@ import javax.tools.Diagnostic;
 
 /**
  * Annotation processor that finds inner interfaces annotated with
- * {@link JniStaticNatives} and generates a class with native bindings
+ * {@link NativeMethods} and generates a class with native bindings
  * (GEN_JNI) and a class specific wrapper class with name (classnameJni)
  *
  * NativeClass - refers to the class that contains all native declarations.
  * NativeWrapperClass - refers to the class that is generated for each class
- * containing an interface annotated with JniStaticNatives.
+ * containing an interface annotated with NativeMethods.
  *
  */
+@SupportedOptions({JniProcessor.SKIP_GEN_JNI_ARG})
 @AutoService(Processor.class)
 public class JniProcessor extends AbstractProcessor {
-    private static final Class<JniStaticNatives> JNI_STATIC_NATIVES_CLASS = JniStaticNatives.class;
+    static final String SKIP_GEN_JNI_ARG = "org.chromium.chrome.skipGenJni";
+    private static final Class<NativeMethods> JNI_STATIC_NATIVES_CLASS = NativeMethods.class;
+    private static final Class<MainDex> MAIN_DEX_CLASS = MainDex.class;
+    private static final Class<CheckDiscard> CHECK_DISCARD_CLASS = CheckDiscard.class;
+    private static final String CHECK_DISCARD_CRBUG = "crbug.com/993421";
 
     private static final String NATIVE_WRAPPER_CLASS_POSTFIX = "Jni";
 
@@ -71,21 +79,11 @@ public class JniProcessor extends AbstractProcessor {
     static final String NATIVE_TEST_FIELD_NAME = "TESTING_ENABLED";
     static final String NATIVE_REQUIRE_MOCK_FIELD_NAME = "REQUIRE_MOCK";
 
-    // Lets mocks of the Native impl to be set.
-    static final boolean TESTING_ENABLED = false;
-
-    // If true, throw an exception if no mock is provided.
-    private static final boolean REQUIRE_MOCK = false;
-
     // Builder for NativeClass which will hold all our native method declarations.
     private TypeSpec.Builder mNativesBuilder;
 
     // Hash function for native method names.
     private static MessageDigest sNativeMethodHashFunction;
-
-    // If true, native methods in GEN_JNI will be named as a hash of their descriptor.
-    private static final boolean USE_HASH_FOR_METHODS = !ProcessorArgs.IS_JAVA_DEBUG;
-    private static final boolean USE_SHORTENED_NATIVE_CLASS = !ProcessorArgs.IS_JAVA_DEBUG;
 
     // Limits the number characters of the Base64 encoded hash
     // of the method descriptor used as name of the generated
@@ -113,7 +111,7 @@ public class JniProcessor extends AbstractProcessor {
 
     public JniProcessor() {
         // If non-debug we use shorter names to save space.
-        if (USE_SHORTENED_NATIVE_CLASS) {
+        if (ProcessorArgs.HASH_JNI_NAMES) {
             // J.N
             mNativeClassPackage = "J";
             mNativeClassStr = "N";
@@ -127,17 +125,10 @@ public class JniProcessor extends AbstractProcessor {
                 FieldSpec.builder(TypeName.BOOLEAN, NATIVE_REQUIRE_MOCK_FIELD_NAME)
                         .addModifiers(Modifier.STATIC, Modifier.PUBLIC);
 
-        // Initialize only if true to avoid NoRedundantFieldInit.
-        if (TESTING_ENABLED) {
-            testingFlagBuilder.initializer("true");
-        }
-        if (REQUIRE_MOCK) {
-            throwFlagBuilder.initializer("true");
-        }
-
         // State of mNativesBuilder needs to be preserved between processing rounds.
         mNativesBuilder = TypeSpec.classBuilder(mNativeClassName)
-                                  .addAnnotation(createGeneratedAnnotation())
+                                  .addAnnotation(createAnnotationWithValue(
+                                          Generated.class, JniProcessor.class.getCanonicalName()))
                                   .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
                                   .addField(testingFlagBuilder.build())
                                   .addField(throwFlagBuilder.build());
@@ -164,11 +155,11 @@ public class JniProcessor extends AbstractProcessor {
 
         List<JavaFile> writeQueue = Lists.newArrayList();
         for (Element e : roundEnvironment.getElementsAnnotatedWith(JNI_STATIC_NATIVES_CLASS)) {
-            // @JniStaticNatives can only annotate types so this is safe.
+            // @NativeMethods can only annotate types so this is safe.
             TypeElement type = (TypeElement) e;
 
             if (!e.getKind().isInterface()) {
-                printError("@JniStaticNatives must annotate an interface", e);
+                printError("@NativeMethods must annotate an interface", e);
             }
 
             // Interface must be nested within a class.
@@ -202,13 +193,17 @@ public class JniProcessor extends AbstractProcessor {
             // method overridden will be a wrapper that calls its
             // native counterpart in NativeClass.
             boolean isNativesInterfacePublic = type.getModifiers().contains(Modifier.PUBLIC);
+            // If the outerType needs to be in the main dex, then the generated NativeWrapperClass
+            // should also be added to the main dex.
+            boolean addMainDexAnnotation = outerElement.getAnnotation(MAIN_DEX_CLASS) != null;
+
             TypeSpec nativeWrapperClassSpec =
                     createNativeWrapperClassSpec(getNameOfWrapperClass(outerClassName),
-                            isNativesInterfacePublic, type, methodMap);
+                            isNativesInterfacePublic, addMainDexAnnotation, type, methodMap);
 
             // Queue this file for writing.
             // Can't write right now because the wrapper class depends on NativeClass
-            // to be written and we can't write NativeClass until all @JniStaticNatives
+            // to be written and we can't write NativeClass until all @NativeMethods
             // interfaces are processed because each will add new native methods.
             JavaFile file = JavaFile.builder(packageName, nativeWrapperClassSpec).build();
             writeQueue.add(file);
@@ -221,11 +216,14 @@ public class JniProcessor extends AbstractProcessor {
 
         try {
             // Need to write NativeClass first because the wrapper classes
-            // depend on it.
-            JavaFile nativeClassFile =
-                    JavaFile.builder(mNativeClassPackage, mNativesBuilder.build()).build();
+            // depend on it. This step is skipped for APK targets since the final GEN_JNI class is
+            // provided elsewhere.
+            if (!processingEnv.getOptions().containsKey(SKIP_GEN_JNI_ARG)) {
+                JavaFile nativeClassFile =
+                        JavaFile.builder(mNativeClassPackage, mNativesBuilder.build()).build();
 
-            nativeClassFile.writeTo(processingEnv.getFiler());
+                nativeClassFile.writeTo(processingEnv.getFiler());
+            }
 
             for (JavaFile f : writeQueue) {
                 f.writeTo(processingEnv.getFiler());
@@ -255,7 +253,7 @@ public class JniProcessor extends AbstractProcessor {
         String descriptor = String.format("%s.%s.%s", packageName, className, oldMethodName)
                                     .replaceAll("_", "_1")
                                     .replaceAll("\\.", "_");
-        if (USE_HASH_FOR_METHODS) {
+        if (ProcessorArgs.HASH_JNI_NAMES) {
             // Must start with a character.
             byte[] hash = sNativeMethodHashFunction.digest(descriptor.getBytes(Charsets.UTF_8));
 
@@ -274,8 +272,8 @@ public class JniProcessor extends AbstractProcessor {
 
     /**
      * Creates method specs for the native methods of NativeClass given
-     * the method declarations from a {@link JniStaticNatives} annotated interface
-     * @param interfaceMethods method declarations from a {@link JniStaticNatives} annotated
+     * the method declarations from a {@link NativeMethods} annotated interface
+     * @param interfaceMethods method declarations from a {@link NativeMethods} annotated
      * interface
      * @param outerType ClassName of class that contains the annotated interface
      * @return map from old method name to new native method specification
@@ -306,9 +304,9 @@ public class JniProcessor extends AbstractProcessor {
     /**
      * Creates a generated annotation that contains the name of this class.
      */
-    static AnnotationSpec createGeneratedAnnotation() {
-        return AnnotationSpec.builder(Generated.class)
-                .addMember("value", String.format("\"%s\"", JniProcessor.class.getCanonicalName()))
+    static AnnotationSpec createAnnotationWithValue(Class<?> annotationClazz, String value) {
+        return AnnotationSpec.builder(annotationClazz)
+                .addMember("value", String.format("\"%s\"", value))
                 .build();
     }
 
@@ -318,11 +316,11 @@ public class JniProcessor extends AbstractProcessor {
 
     void printError(String s, Element e) {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
-                String.format("Error processing @JniStaticNatives interface: %s", s), e);
+                String.format("Error processing @NativeMethods interface: %s", s), e);
     }
 
     /**
-     * Creates a class spec for an implementation of an {@link JniStaticNatives} annotated interface
+     * Creates a class spec for an implementation of an {@link NativeMethods} annotated interface
      * that will wrap calls to the NativesClass which contains the actual native method
      * declarations.
      *
@@ -336,26 +334,32 @@ public class JniProcessor extends AbstractProcessor {
      *
      * @param name name of the wrapper class.
      * @param isPublic if true, a public modifier will be added to this native wrapper.
-     * @param nativeInterface the {@link JniStaticNatives} annotated type that this native wrapper
+     * @param isMainDex if true, the @MainDex annotation will be added to this native wrapper.
+     * @param nativeInterface the {@link NativeMethods} annotated type that this native wrapper
      *                        will implement.
      * @param methodMap a map from the old method name to the new method spec in NativeClass.
      * */
-    TypeSpec createNativeWrapperClassSpec(String name, boolean isPublic,
+    TypeSpec createNativeWrapperClassSpec(String name, boolean isPublic, boolean isMainDex,
             TypeElement nativeInterface, Map<String, MethodSpec> methodMap) {
         // The wrapper class builder.
         TypeName nativeInterfaceType = TypeName.get(nativeInterface.asType());
         TypeSpec.Builder builder = TypeSpec.classBuilder(name)
                                            .addSuperinterface(nativeInterfaceType)
                                            .addModifiers(Modifier.FINAL)
-                                           .addAnnotation(createGeneratedAnnotation());
+                                           .addAnnotation(createAnnotationWithValue(Generated.class,
+                                                   JniProcessor.class.getCanonicalName()));
         if (isPublic) {
             builder.addModifiers(Modifier.PUBLIC);
         }
+        if (isMainDex) {
+            builder.addAnnotation(MAIN_DEX_CLASS);
+        }
+        builder.addAnnotation(createAnnotationWithValue(CHECK_DISCARD_CLASS, CHECK_DISCARD_CRBUG));
 
         // Start by adding all the native method wrappers.
         for (Element enclosed : nativeInterface.getEnclosedElements()) {
             if (enclosed.getKind() != ElementKind.METHOD) {
-                printError("Cannot have a non-method in a @JniStaticNatives annotated interface",
+                printError("Cannot have a non-method in a @NativeMethods annotated interface",
                         enclosed);
             }
 
@@ -452,7 +456,7 @@ public class JniProcessor extends AbstractProcessor {
 
     /**
      * Creates a wrapper method that overrides interfaceMethod and calls staticNativeMethod.
-     * @param interfaceMethod method that will be overridden in a {@link JniStaticNatives} annotated
+     * @param interfaceMethod method that will be overridden in a {@link NativeMethods} annotated
      * interface.
      * @param staticNativeMethod method that will be called in NativeClass.
      */
@@ -484,10 +488,6 @@ public class JniProcessor extends AbstractProcessor {
 
         builder.addCode(String.join(", ", paramNames) + ");\n");
         return builder.build();
-    }
-
-    void copyMethodParamsAndReturnType(MethodSpec.Builder builder, ExecutableElement method) {
-        copyMethodParamsAndReturnType(builder, method, false);
     }
 
     boolean shouldDowncastToObjectForJni(TypeName t) {
@@ -547,6 +547,10 @@ public class JniProcessor extends AbstractProcessor {
         TypeName returnType = toTypeName(givenReturnType, useJniTypes);
 
         builder.returns(returnType);
+    }
+
+    void copyMethodParamsAndReturnType(MethodSpec.Builder builder, ExecutableElement method) {
+        copyMethodParamsAndReturnType(builder, method, false);
     }
 
     ParameterSpec createParamSpec(VariableElement param, boolean useJniObjects) {

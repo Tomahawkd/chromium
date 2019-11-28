@@ -46,14 +46,16 @@ class MediaResourceGetterImpl : public media::MediaResourceGetter {
                           GetAuthCredentialsCB callback) override;
   void GetCookies(const GURL& url,
                   const GURL& site_for_cookies,
+                  const url::Origin& top_frame_origin,
                   GetCookieCB callback) override;
   void GetPlatformPathFromURL(const GURL& url,
                               GetPlatformPathCB callback) override;
 
  private:
   // Called when GetAuthCredentials() finishes.
-  void GetAuthCredentialsCallback(GetAuthCredentialsCB callback,
-                                  const net::AuthCredentials& credentials);
+  void GetAuthCredentialsCallback(
+      GetAuthCredentialsCB callback,
+      const base::Optional<net::AuthCredentials>& credentials);
 
   // Called when GetPlatformPathFromFileSystemURL() finishes.
   void GetPlatformPathCallback(GetPlatformPathCB callback,
@@ -72,7 +74,7 @@ class MediaResourceGetterImpl : public media::MediaResourceGetter {
   int render_frame_id_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<MediaResourceGetterImpl> weak_factory_;
+  base::WeakPtrFactory<MediaResourceGetterImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaResourceGetterImpl);
 };

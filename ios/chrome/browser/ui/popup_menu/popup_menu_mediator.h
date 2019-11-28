@@ -7,7 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/ui/popup_menu/popup_menu_consumer.h"
+#import "ios/chrome/browser/ui/popup_menu/popup_menu_action_handler_commands.h"
 #import "ios/chrome/browser/ui/popup_menu/public/popup_menu_ui_updating.h"
 
 namespace bookmarks {
@@ -17,13 +17,15 @@ namespace feature_engagement {
 class Tracker;
 }
 @protocol BrowserCommands;
-@class PopupMenuTableViewController;
+class OverlayPresenter;
+@protocol PopupMenuConsumer;
 class ReadingListModel;
+class TemplateURLService;
 class WebStateList;
 
 // Mediator for the popup menu. This object is in charge of creating and
 // updating the items of the popup menu.
-@interface PopupMenuMediator : NSObject
+@interface PopupMenuMediator : NSObject <PopupMenuActionHandlerCommands>
 
 // Initializes the mediator with a |type| of popup menu, whether it
 // |isIncognito|, a |readingListModel| used to display the badge for the reading
@@ -38,7 +40,11 @@ class WebStateList;
 // The WebStateList that this mediator listens for any changes on the current
 // WebState.
 @property(nonatomic, assign) WebStateList* webStateList;
-// The TableView to be configured with this mediator.
+// The overlay presenter for OverlayModality::kWebContentArea.  This mediator
+// listens for overlay presentation events to determine whether the "Read Later"
+// button should be enabled.
+@property(nonatomic, assign) OverlayPresenter* webContentAreaOverlayPresenter;
+// The consumer to be configured with this mediator.
 @property(nonatomic, strong) id<PopupMenuConsumer> popupMenu;
 // Dispatcher.
 @property(nonatomic, weak) id<BrowserCommands> dispatcher;
@@ -48,6 +54,9 @@ class WebStateList;
 @property(nonatomic, assign) feature_engagement::Tracker* engagementTracker;
 // The bookmarks model to know if the page is bookmarked.
 @property(nonatomic, assign) bookmarks::BookmarkModel* bookmarkModel;
+// The template url service to use for checking whether search by image is
+// available.
+@property(nonatomic, assign) TemplateURLService* templateURLService;
 
 // Disconnect the mediator.
 - (void)disconnect;

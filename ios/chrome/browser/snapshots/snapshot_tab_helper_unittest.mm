@@ -12,11 +12,14 @@
 #import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
 #import "ios/chrome/browser/ui/image_util/image_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/public/test/web_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
+#import "third_party/ocmock/OCMock/OCMock.h"
+#import "third_party/ocmock/gtest_support.h"
 #include "ui/base/test/ios/ui_image_test_utils.h"
 #include "ui/gfx/image/image.h"
 
@@ -79,9 +82,6 @@ constexpr CGSize kCachedSnapshotSize = {15, 20};
 // Dimension of the default snapshot image.
 constexpr CGSize kDefaultSnapshotSize = {150, 200};
 
-// Number of snapshot to take to test snapshot coalescing.
-constexpr NSUInteger kCountSnapshotToTake = 5;
-
 }  // namespace
 
 class SnapshotTabHelperTest : public PlatformTest {
@@ -134,7 +134,7 @@ class SnapshotTabHelperTest : public PlatformTest {
   }
 
  protected:
-  web::TestWebThreadBundle thread_bundle_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<ios::ChromeBrowserState> browser_state_;
   TabHelperSnapshotGeneratorDelegate* delegate_ = nil;
   NSString* snapshot_session_id_ = nil;
@@ -167,8 +167,8 @@ TEST_F(SnapshotTabHelperTest, RetrieveColorSnapshotCachedSnapshot) {
   EXPECT_EQ(delegate_.snapshotTakenCount, 0u);
 }
 
-// Tests that RetrieveColorSnapshot returns the default snapshot image when
-// there is no cached snapshot and the WebState web usage is disabled.
+// Tests that RetrieveColorSnapshot returns nil when there is no cached snapshot
+// and the WebState web usage is disabled.
 TEST_F(SnapshotTabHelperTest, RetrieveColorSnapshotWebUsageDisabled) {
   web_state_.SetWebUsageEnabled(false);
 
@@ -184,15 +184,12 @@ TEST_F(SnapshotTabHelperTest, RetrieveColorSnapshotWebUsageDisabled) {
 
   run_loop.Run();
 
-  ASSERT_TRUE(snapshot);
-  EXPECT_TRUE(
-      UIImagesAreEqual(snapshot, SnapshotTabHelper::GetDefaultSnapshotImage()));
+  EXPECT_FALSE(snapshot);
   EXPECT_EQ(delegate_.snapshotTakenCount, 0u);
 }
 
-// Tests that RetrieveColorSnapshot returns the default snapshot image when
-// there is no cached snapshot and the delegate says it is not possible to
-// take a snapshot.
+// Tests that RetrieveColorSnapshot returns nil when there is no cached snapshot
+// and the delegate says it is not possible to take a snapshot.
 TEST_F(SnapshotTabHelperTest, RetrieveColorSnapshotCannotTakeSnapshot) {
   delegate_.canTakeSnapshot = YES;
 
@@ -208,9 +205,7 @@ TEST_F(SnapshotTabHelperTest, RetrieveColorSnapshotCannotTakeSnapshot) {
 
   run_loop.Run();
 
-  ASSERT_TRUE(snapshot);
-  EXPECT_TRUE(
-      UIImagesAreEqual(snapshot, SnapshotTabHelper::GetDefaultSnapshotImage()));
+  EXPECT_FALSE(snapshot);
   EXPECT_EQ(delegate_.snapshotTakenCount, 0u);
 }
 
@@ -237,8 +232,8 @@ TEST_F(SnapshotTabHelperTest, RetrieveGreySnapshotCachedSnapshot) {
   EXPECT_EQ(delegate_.snapshotTakenCount, 0u);
 }
 
-// Tests that RetrieveGreySnapshot returns the default snapshot image when
-// there is no cached snapshot and the WebState web usage is disabled.
+// Tests that RetrieveGreySnapshot returns nil when there is no cached snapshot
+// and the WebState web usage is disabled.
 TEST_F(SnapshotTabHelperTest, RetrieveGreySnapshotWebUsageDisabled) {
   web_state_.SetWebUsageEnabled(false);
 
@@ -254,14 +249,12 @@ TEST_F(SnapshotTabHelperTest, RetrieveGreySnapshotWebUsageDisabled) {
 
   run_loop.Run();
 
-  ASSERT_TRUE(snapshot);
-  EXPECT_TRUE(UIImagesAreEqual(
-      snapshot, GreyImage(SnapshotTabHelper::GetDefaultSnapshotImage())));
+  EXPECT_FALSE(snapshot);
   EXPECT_EQ(delegate_.snapshotTakenCount, 0u);
 }
 
-// Tests that RetrieveGreySnapshot returns the default snapshot image when
-// there is no cached snapshot and the WebState web usage is disabled.
+// Tests that RetrieveGreySnapshot returns nil when there is no cached snapshot
+// and the WebState web usage is disabled.
 TEST_F(SnapshotTabHelperTest, RetrieveGreySnapshotCannotTakeSnapshot) {
   delegate_.canTakeSnapshot = YES;
   base::RunLoop run_loop;
@@ -276,9 +269,7 @@ TEST_F(SnapshotTabHelperTest, RetrieveGreySnapshotCannotTakeSnapshot) {
 
   run_loop.Run();
 
-  ASSERT_TRUE(snapshot);
-  EXPECT_TRUE(UIImagesAreEqual(
-      snapshot, GreyImage(SnapshotTabHelper::GetDefaultSnapshotImage())));
+  EXPECT_FALSE(snapshot);
   EXPECT_EQ(delegate_.snapshotTakenCount, 0u);
 }
 
@@ -309,9 +300,8 @@ TEST_F(SnapshotTabHelperTest, UpdateSnapshot) {
   SetCachedSnapshot(
       UIImageWithSizeAndSolidColor(kDefaultSnapshotSize, [UIColor greenColor]));
 
-  UIImage* snapshot = SnapshotTabHelper::FromWebState(&web_state_)
-                          ->UpdateSnapshot(/*with_overlays=*/true,
-                                           /*visibible_frame_only=*/true);
+  UIImage* snapshot =
+      SnapshotTabHelper::FromWebState(&web_state_)->UpdateSnapshot();
 
   ASSERT_TRUE(snapshot);
   EXPECT_TRUE(CGSizeEqualToSize(snapshot.size, kWebStateViewSize));
@@ -322,42 +312,6 @@ TEST_F(SnapshotTabHelperTest, UpdateSnapshot) {
   EXPECT_EQ(delegate_.snapshotTakenCount, 1u);
 }
 
-// Tests that if snapshot coalescing is disabled, each call to UpdateSnapshot
-// will cause a new snapshot to be generated.
-TEST_F(SnapshotTabHelperTest, UpdateSnapshotNoCoalescing) {
-  for (NSUInteger ii = 0; ii < kCountSnapshotToTake; ++ii) {
-    UIImage* snapshot = SnapshotTabHelper::FromWebState(&web_state_)
-                            ->UpdateSnapshot(/*with_overlays=*/true,
-                                             /*visibible_frame_only=*/true);
-
-    ASSERT_TRUE(snapshot);
-    EXPECT_TRUE(CGSizeEqualToSize(snapshot.size, kWebStateViewSize));
-    EXPECT_TRUE(IsDominantColorForImage(snapshot, [UIColor redColor]));
-  }
-
-  EXPECT_EQ(delegate_.snapshotTakenCount, kCountSnapshotToTake);
-}
-
-// Tests that if snapshot coalescing is enabled, only the first call to
-// UpdateSnapshot will cause a new snapshot to be generated.
-TEST_F(SnapshotTabHelperTest, UpdateSnapshotWithCoalescing) {
-  SnapshotTabHelper::FromWebState(&web_state_)
-      ->SetSnapshotCoalescingEnabled(true);
-  for (NSUInteger ii = 0; ii < kCountSnapshotToTake; ++ii) {
-    UIImage* snapshot = SnapshotTabHelper::FromWebState(&web_state_)
-                            ->UpdateSnapshot(/*with_overlays=*/true,
-                                             /*visibible_frame_only=*/true);
-
-    ASSERT_TRUE(snapshot);
-    EXPECT_TRUE(CGSizeEqualToSize(snapshot.size, kWebStateViewSize));
-    EXPECT_TRUE(IsDominantColorForImage(snapshot, [UIColor redColor]));
-  }
-  SnapshotTabHelper::FromWebState(&web_state_)
-      ->SetSnapshotCoalescingEnabled(false);
-
-  EXPECT_EQ(delegate_.snapshotTakenCount, 1u);
-}
-
 // Tests that GenerateSnapshot ignores any cached snapshots and generate a new
 // snapshot without adding it to the cache.
 TEST_F(SnapshotTabHelperTest, GenerateSnapshot) {
@@ -365,8 +319,7 @@ TEST_F(SnapshotTabHelperTest, GenerateSnapshot) {
       UIImageWithSizeAndSolidColor(kDefaultSnapshotSize, [UIColor greenColor]));
 
   UIImage* snapshot = SnapshotTabHelper::FromWebState(&web_state_)
-                          ->GenerateSnapshot(/*with_overlays=*/true,
-                                             /*visibible_frame_only=*/true);
+                          ->GenerateSnapshotWithoutOverlays();
 
   ASSERT_TRUE(snapshot);
   EXPECT_TRUE(CGSizeEqualToSize(snapshot.size, kWebStateViewSize));
@@ -374,42 +327,6 @@ TEST_F(SnapshotTabHelperTest, GenerateSnapshot) {
 
   UIImage* cached_snapshot = GetCachedSnapshot();
   EXPECT_FALSE(UIImagesAreEqual(snapshot, cached_snapshot));
-}
-
-// Tests that if snapshot coalescing is disabled, each call to GenerateSnapshot
-// will cause a new snapshot to be generated.
-TEST_F(SnapshotTabHelperTest, GenerateSnapshotNoCoalescing) {
-  for (NSUInteger ii = 0; ii < kCountSnapshotToTake; ++ii) {
-    UIImage* snapshot = SnapshotTabHelper::FromWebState(&web_state_)
-                            ->GenerateSnapshot(/*with_overlays=*/true,
-                                               /*visibible_frame_only=*/true);
-
-    ASSERT_TRUE(snapshot);
-    EXPECT_TRUE(CGSizeEqualToSize(snapshot.size, kWebStateViewSize));
-    EXPECT_TRUE(IsDominantColorForImage(snapshot, [UIColor redColor]));
-  }
-
-  EXPECT_EQ(delegate_.snapshotTakenCount, kCountSnapshotToTake);
-}
-
-// Tests that if snapshot coalescing is enabled, only the first call to
-// GenerateSnapshot will cause a new snapshot to be generated.
-TEST_F(SnapshotTabHelperTest, GenerateSnapshotWithCoalescing) {
-  SnapshotTabHelper::FromWebState(&web_state_)
-      ->SetSnapshotCoalescingEnabled(true);
-  for (NSUInteger ii = 0; ii < kCountSnapshotToTake; ++ii) {
-    UIImage* snapshot = SnapshotTabHelper::FromWebState(&web_state_)
-                            ->GenerateSnapshot(/*with_overlays=*/true,
-                                               /*visibible_frame_only=*/true);
-
-    ASSERT_TRUE(snapshot);
-    EXPECT_TRUE(CGSizeEqualToSize(snapshot.size, kWebStateViewSize));
-    EXPECT_TRUE(IsDominantColorForImage(snapshot, [UIColor redColor]));
-  }
-  SnapshotTabHelper::FromWebState(&web_state_)
-      ->SetSnapshotCoalescingEnabled(false);
-
-  EXPECT_EQ(delegate_.snapshotTakenCount, 1u);
 }
 
 // Tests that RemoveSnapshot deletes the cached snapshot from memory and
@@ -422,4 +339,26 @@ TEST_F(SnapshotTabHelperTest, RemoveSnapshot) {
   SnapshotTabHelper::FromWebState(&web_state_)->RemoveSnapshot();
 
   ASSERT_FALSE(GetCachedSnapshot());
+}
+
+TEST_F(SnapshotTabHelperTest, ClosingWebStateDoesNotRemoveSnapshot) {
+  id partialMock = OCMPartialMock(
+      SnapshotCacheFactory::GetForBrowserState(browser_state_.get()));
+  std::unique_ptr<web::WebState> web_state =
+      std::make_unique<web::TestWebState>();
+  TabIdTabHelper::CreateForWebState(web_state.get());
+
+  NSString* tab_id = TabIdTabHelper::FromWebState(web_state.get())->tab_id();
+  SnapshotTabHelper::CreateForWebState(web_state.get(), tab_id);
+  [[partialMock reject] removeImageWithSessionID:tab_id];
+
+  // Use @try/@catch as -reject raises an exception.
+  @try {
+    web_state.reset();
+    EXPECT_OCMOCK_VERIFY(partialMock);
+  } @catch (NSException* exception) {
+    // The exception is raised when -removeImageWithSessionID: is invoked. As
+    // this should not happen, mark the test as failed.
+    GTEST_FAIL();
+  }
 }

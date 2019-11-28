@@ -4,18 +4,22 @@
 
 #include "content/browser/background_fetch/storage/database_task.h"
 
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "content/browser/background_fetch/background_fetch_data_manager.h"
 #include "content/browser/background_fetch/background_fetch_data_manager_observer.h"
 #include "content/browser/background_fetch/storage/database_helpers.h"
+#include "content/browser/cache_storage/cache_storage.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/service_worker_context.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 
 namespace content {
-
 namespace background_fetch {
 
 namespace {
@@ -33,13 +37,9 @@ void DidGetUsageAndQuota(DatabaseTask::IsQuotaAvailableCallback callback,
 
 }  // namespace
 
-DatabaseTaskHost::DatabaseTaskHost() : weak_factory_(this) {}
+DatabaseTaskHost::DatabaseTaskHost() = default;
 
 DatabaseTaskHost::~DatabaseTaskHost() = default;
-
-base::WeakPtr<DatabaseTaskHost> DatabaseTaskHost::GetWeakPtr() {
-  return weak_factory_.GetWeakPtr();
-}
 
 DatabaseTask::DatabaseTask(DatabaseTaskHost* host) : host_(host) {
   DCHECK(host_);
@@ -49,8 +49,12 @@ DatabaseTask::DatabaseTask(DatabaseTaskHost* host) : host_(host) {
 
 DatabaseTask::~DatabaseTask() = default;
 
+base::WeakPtr<DatabaseTaskHost> DatabaseTask::GetWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
 void DatabaseTask::Finished() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
   // Post the OnTaskFinished callback to the same thread, to allow the the
   // DatabaseTask to finish execution before deallocating it.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -88,6 +92,41 @@ void DatabaseTask::IsQuotaAvailable(const url::Origin& origin,
       base::ThreadTaskRunnerHandle::Get().get(), origin,
       blink::mojom::StorageType::kTemporary,
       base::BindOnce(&DidGetUsageAndQuota, std::move(callback), size));
+}
+
+void DatabaseTask::GetStorageVersion(int64_t service_worker_registration_id,
+                                     const std::string& unique_id,
+                                     StorageVersionCallback callback) {
+  service_worker_context()->GetRegistrationUserData(
+      service_worker_registration_id, {StorageVersionKey(unique_id)},
+      base::BindOnce(&DatabaseTask::DidGetStorageVersion,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void DatabaseTask::DidGetStorageVersion(StorageVersionCallback callback,
+                                        const std::vector<std::string>& data,
+                                        blink::ServiceWorkerStatusCode status) {
+  switch (ToDatabaseStatus(status)) {
+    case DatabaseStatus::kNotFound:
+      std::move(callback).Run(proto::SV_UNINITIALIZED);
+      return;
+    case DatabaseStatus::kFailed:
+      std::move(callback).Run(proto::SV_ERROR);
+      return;
+    case DatabaseStatus::kOk:
+      break;
+  }
+
+  DCHECK_EQ(data.size(), 1u);
+  int storage_version = proto::SV_UNINITIALIZED;
+
+  if (!base::StringToInt(data[0], &storage_version) ||
+      !proto::BackgroundFetchStorageVersion_IsValid(storage_version)) {
+    storage_version = proto::SV_ERROR;
+  }
+
+  std::move(callback).Run(
+      static_cast<proto::BackgroundFetchStorageVersion>(storage_version));
 }
 
 void DatabaseTask::SetStorageError(BackgroundFetchStorageError error) {
@@ -156,6 +195,21 @@ storage::QuotaManagerProxy* DatabaseTask::quota_manager_proxy() {
   return data_manager()->quota_manager_proxy();
 }
 
-}  // namespace background_fetch
+CacheStorageHandle DatabaseTask::GetOrOpenCacheStorage(
+    const BackgroundFetchRegistrationId& registration_id) {
+  return GetOrOpenCacheStorage(registration_id.origin(),
+                               registration_id.unique_id());
+}
 
+CacheStorageHandle DatabaseTask::GetOrOpenCacheStorage(
+    const url::Origin& origin,
+    const std::string& unique_id) {
+  return data_manager()->GetOrOpenCacheStorage(origin, unique_id);
+}
+
+void DatabaseTask::ReleaseCacheStorage(const std::string& unique_id) {
+  data_manager()->ReleaseCacheStorage(unique_id);
+}
+
+}  // namespace background_fetch
 }  // namespace content

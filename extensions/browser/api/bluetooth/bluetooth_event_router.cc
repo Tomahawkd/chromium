@@ -29,7 +29,6 @@
 #include "extensions/browser/api/bluetooth/bluetooth_private_api.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_host.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/common/api/bluetooth.h"
 #include "extensions/common/api/bluetooth_private.h"
@@ -41,9 +40,9 @@ namespace {
 void IgnoreAdapterResult(scoped_refptr<device::BluetoothAdapter> adapter) {}
 
 void IgnoreAdapterResultAndThen(
-    const base::Closure& callback,
+    base::OnceClosure callback,
     scoped_refptr<device::BluetoothAdapter> adapter) {
-  callback.Run();
+  std::move(callback).Run();
 }
 
 std::string GetListenerId(const extensions::EventListenerInfo& details) {
@@ -57,10 +56,7 @@ namespace bluetooth = api::bluetooth;
 namespace bt_private = api::bluetooth_private;
 
 BluetoothEventRouter::BluetoothEventRouter(content::BrowserContext* context)
-    : browser_context_(context),
-      adapter_(nullptr),
-      extension_registry_observer_(this),
-      weak_ptr_factory_(this) {
+    : browser_context_(context), adapter_(nullptr) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   BLUETOOTH_LOG(USER) << "BluetoothEventRouter()";
   DCHECK(browser_context_);
@@ -84,17 +80,17 @@ bool BluetoothEventRouter::IsBluetoothSupported() const {
 }
 
 void BluetoothEventRouter::GetAdapter(
-    const device::BluetoothAdapterFactory::AdapterCallback& callback) {
+    device::BluetoothAdapterFactory::AdapterCallback callback) {
   if (adapter_.get()) {
-    callback.Run(scoped_refptr<device::BluetoothAdapter>(adapter_));
+    std::move(callback).Run(adapter_);
     return;
   }
 
   // Note: On ChromeOS this will return an adapter that also supports Bluetooth
   // Low Energy.
   device::BluetoothAdapterFactory::GetClassicAdapter(
-      base::Bind(&BluetoothEventRouter::OnAdapterInitialized,
-                 weak_ptr_factory_.GetWeakPtr(), callback));
+      base::BindOnce(&BluetoothEventRouter::OnAdapterInitialized,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void BluetoothEventRouter::StartDiscoverySession(
@@ -105,11 +101,12 @@ void BluetoothEventRouter::StartDiscoverySession(
   if (!adapter_.get() && IsBluetoothSupported()) {
     // If |adapter_| isn't set yet, call GetAdapter() which will synchronously
     // invoke the callback (StartDiscoverySessionImpl).
-    GetAdapter(base::Bind(
+    GetAdapter(base::BindOnce(
         &IgnoreAdapterResultAndThen,
-        base::Bind(&BluetoothEventRouter::StartDiscoverySessionImpl,
-                   weak_ptr_factory_.GetWeakPtr(), base::RetainedRef(adapter),
-                   extension_id, callback, error_callback)));
+        base::BindOnce(&BluetoothEventRouter::StartDiscoverySessionImpl,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       base::RetainedRef(adapter), extension_id, callback,
+                       error_callback)));
     return;
   }
   StartDiscoverySessionImpl(adapter, extension_id, callback, error_callback);
@@ -186,7 +183,13 @@ void BluetoothEventRouter::SetDiscoveryFilter(
     const base::Closure& callback,
     const base::Closure& error_callback) {
   BLUETOOTH_LOG(USER) << "SetDiscoveryFilter";
+  if (!adapter_.get()) {
+    BLUETOOTH_LOG(ERROR) << "Unable to get Bluetooth adapter.";
+    error_callback.Run();
+    return;
+  }
   if (adapter != adapter_.get()) {
+    BLUETOOTH_LOG(ERROR) << "Bluetooth adapter mismatch.";
     error_callback.Run();
     return;
   }
@@ -200,27 +203,32 @@ void BluetoothEventRouter::SetDiscoveryFilter(
     return;
   }
 
-  // extension is already running discovery, update it's discovery filter
-  iter->second->SetDiscoveryFilter(std::move(discovery_filter), callback,
-                                   error_callback);
+  // If the session has already started simply start a new one. The callback
+  // will automatically delete the old session and put the new session (with its
+  // new filter) in as this extension's session
+  adapter->StartDiscoverySessionWithFilter(
+      std::move(discovery_filter),
+      base::Bind(&BluetoothEventRouter::OnStartDiscoverySession,
+                 weak_ptr_factory_.GetWeakPtr(), extension_id, callback),
+      error_callback);
 }
 
 BluetoothApiPairingDelegate* BluetoothEventRouter::GetPairingDelegate(
     const std::string& extension_id) {
-  return base::ContainsKey(pairing_delegate_map_, extension_id)
+  return base::Contains(pairing_delegate_map_, extension_id)
              ? pairing_delegate_map_[extension_id]
              : nullptr;
 }
 
 void BluetoothEventRouter::OnAdapterInitialized(
-    const device::BluetoothAdapterFactory::AdapterCallback& callback,
+    device::BluetoothAdapterFactory::AdapterCallback callback,
     scoped_refptr<device::BluetoothAdapter> adapter) {
   if (!adapter_.get()) {
     adapter_ = adapter;
     adapter_->AddObserver(this);
   }
 
-  callback.Run(adapter);
+  std::move(callback).Run(adapter);
 }
 
 void BluetoothEventRouter::MaybeReleaseAdapter() {
@@ -234,10 +242,10 @@ void BluetoothEventRouter::MaybeReleaseAdapter() {
 
 void BluetoothEventRouter::AddPairingDelegate(const std::string& extension_id) {
   if (!adapter_.get() && IsBluetoothSupported()) {
-    GetAdapter(
-        base::Bind(&IgnoreAdapterResultAndThen,
-                   base::Bind(&BluetoothEventRouter::AddPairingDelegateImpl,
-                              weak_ptr_factory_.GetWeakPtr(), extension_id)));
+    GetAdapter(base::BindOnce(
+        &IgnoreAdapterResultAndThen,
+        base::BindOnce(&BluetoothEventRouter::AddPairingDelegateImpl,
+                       weak_ptr_factory_.GetWeakPtr(), extension_id)));
     return;
   }
   AddPairingDelegateImpl(extension_id);
@@ -249,7 +257,8 @@ void BluetoothEventRouter::AddPairingDelegateImpl(
     LOG(ERROR) << "Unable to get adapter for extension_id: " << extension_id;
     return;
   }
-  if (base::ContainsKey(pairing_delegate_map_, extension_id)) {
+
+  if (base::Contains(pairing_delegate_map_, extension_id)) {
     // For WebUI there may be more than one page open to the same url
     // (e.g. chrome://settings). These will share the same pairing delegate.
     BLUETOOTH_LOG(EVENT) << "Pairing delegate already exists for extension_id: "
@@ -266,7 +275,7 @@ void BluetoothEventRouter::AddPairingDelegateImpl(
 
 void BluetoothEventRouter::RemovePairingDelegate(
     const std::string& extension_id) {
-  if (base::ContainsKey(pairing_delegate_map_, extension_id)) {
+  if (base::Contains(pairing_delegate_map_, extension_id)) {
     BluetoothApiPairingDelegate* delegate = pairing_delegate_map_[extension_id];
     if (adapter_.get())
       adapter_->RemovePairingDelegate(delegate);
@@ -330,8 +339,8 @@ void BluetoothEventRouter::AdapterDiscoveringChanged(
   // Release the adapter after dispatching the event.
   if (!discovering) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&BluetoothEventRouter::MaybeReleaseAdapter,
-                              weak_ptr_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&BluetoothEventRouter::MaybeReleaseAdapter,
+                                  weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -380,7 +389,7 @@ void BluetoothEventRouter::OnListenerAdded(const EventListenerInfo& details) {
   int count = ++event_listener_count_[id];
   BLUETOOTH_LOG(EVENT) << "Event Listener Added: " << id << " Count: " << count;
   if (!adapter_.get())
-    GetAdapter(base::Bind(&IgnoreAdapterResult));
+    GetAdapter(base::BindOnce(&IgnoreAdapterResult));
 }
 
 void BluetoothEventRouter::OnListenerRemoved(const EventListenerInfo& details) {

@@ -12,12 +12,14 @@
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
+#include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
@@ -28,15 +30,15 @@
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/profile_chooser_constants.h"
-#include "chrome/browser/ui/signin_view_controller.h"
-#include "chrome/browser/ui/tab_contents/core_tab_helper_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "chrome/browser/ui/unload_controller.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/sessions/core/session_id.h"
 #include "components/translate/content/browser/content_translate_driver.h"
+#include "components/zoom/zoom_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/page_navigator.h"
@@ -45,34 +47,34 @@
 #include "content/public/common/page_zoom.h"
 #include "extensions/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
+#include "third_party/blink/public/common/frame/blocked_navigation_types.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
-#if !defined(OS_ANDROID)
-#include "components/zoom/zoom_observer.h"
-#endif  // !defined(OS_ANDROID)
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "extensions/browser/extension_registry_observer.h"
+#if defined(OS_ANDROID)
+#error This file should only be included on desktop.
 #endif
 
+#if !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/signin_view_controller.h"
+#endif
+
+class BackgroundContents;
 class BrowserContentSettingBubbleModelDelegate;
 class BrowserInstantController;
 class BrowserSyncedWindowDelegate;
 class BrowserLocationBarModelDelegate;
 class BrowserLiveTabContext;
 class BrowserWindow;
-class FastUnloadController;
 class FindBarController;
 class Profile;
 class ScopedKeepAlive;
 class StatusBubble;
 class TabStripModel;
 class TabStripModelDelegate;
-class UnloadController;
 
 namespace chrome {
 class BrowserCommandController;
@@ -84,10 +86,8 @@ class SessionStorageNamespace;
 
 namespace extensions {
 class BrowserExtensionWindowController;
-class HostedAppBrowserController;
-class Extension;
-class ExtensionRegistry;
-}
+class ExtensionBrowserWindowHelper;
+}  // namespace extensions
 
 namespace gfx {
 class Image;
@@ -105,19 +105,17 @@ namespace viz {
 class SurfaceId;
 }
 
+namespace web_app {
+class AppBrowserController;
+}
+
 class Browser : public TabStripModelObserver,
                 public content::WebContentsDelegate,
-                public CoreTabHelperDelegate,
                 public ChromeWebModalDialogManagerDelegate,
                 public BookmarkTabHelperObserver,
-#if !defined(OS_ANDROID)
                 public zoom::ZoomObserver,
-#endif  // !defined(OS_ANDROID)
                 public content::PageNavigator,
                 public content::NotificationObserver,
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-                public extensions::ExtensionRegistryObserver,
-#endif
                 public translate::ContentTranslateDriver::Observer,
                 public ui::SelectFileDialog::Listener {
  public:
@@ -125,46 +123,66 @@ class Browser : public TabStripModelObserver,
   // enum, look at SessionService::WindowType to see if it needs to be
   // updated.
   enum Type {
+    // Normal tabbed non-app browser (previously TYPE_TABBED).
+    TYPE_NORMAL,
+    // Popup browser.
+    TYPE_POPUP,
+    // App browser.
+    TYPE_APP,
+    // Devtools browser.
+    TYPE_DEVTOOLS,
     // If you add a new type, consider updating the test
     // BrowserTest.StartMaximized.
-    TYPE_TABBED = 1,
-    TYPE_POPUP = 2
   };
 
   // Possible elements of the Browser window.
   enum WindowFeature {
     FEATURE_NONE = 0,
-    FEATURE_TITLEBAR = 1,
-    FEATURE_TABSTRIP = 2,
-    FEATURE_TOOLBAR = 4,
-    FEATURE_LOCATIONBAR = 8,
-    FEATURE_BOOKMARKBAR = 16,
-    FEATURE_INFOBAR = 32,
-    FEATURE_DOWNLOADSHELF = 64,
+    FEATURE_TITLEBAR = 1 << 0,
+    FEATURE_TABSTRIP = 1 << 1,
+    FEATURE_TOOLBAR = 1 << 2,
+    FEATURE_LOCATIONBAR = 1 << 3,
+    FEATURE_BOOKMARKBAR = 1 << 4,
+    FEATURE_INFOBAR = 1 << 5,
+    FEATURE_DOWNLOADSHELF = 1 << 6,
+    // TODO(crbug.com/992834): Add FEATURE_PAGECONTROLS to describe the presence
+    // of per-page controls such as Content Settings Icons, which should be
+    // decoupled from FEATURE_LOCATIONBAR as they have independent presence in
+    // Web App browsers.
   };
 
   // The context for a download blocked notification from
   // OkToCloseWithInProgressDownloads.
-  enum DownloadClosePreventionType {
+  enum class DownloadCloseType {
     // Browser close is not blocked by download state.
-    DOWNLOAD_CLOSE_OK,
+    kOk,
 
     // The browser is shutting down and there are active downloads
     // that would be cancelled.
-    DOWNLOAD_CLOSE_BROWSER_SHUTDOWN,
+    kBrowserShutdown,
 
     // There are active downloads associated with this incognito profile
     // that would be canceled.
-    DOWNLOAD_CLOSE_LAST_WINDOW_IN_INCOGNITO_PROFILE,
+    kLastWindowInIncognitoProfile,
+
+    // There are active downloads associated with this guest session
+    // that would be canceled.
+    kLastWindowInGuestSession,
   };
+
+  // Represents the result of the user being warned before closing the browser.
+  // See WarnBeforeClosingCallback and WarnBeforeClosing() below.
+  enum class WarnBeforeClosingResult { kOkToClose, kDoNotClose };
+
+  // Callback that receives the result of a user being warned about closing a
+  // browser window (for example, if closing the window would interrupt a
+  // download). The parameter is whether the close should proceed.
+  using WarnBeforeClosingCallback =
+      base::OnceCallback<void(WarnBeforeClosingResult)>;
 
   struct CreateParams {
     explicit CreateParams(Profile* profile, bool user_gesture);
     CreateParams(Type type, Profile* profile, bool user_gesture);
-    CreateParams(Type type,
-                 Profile* profile,
-                 bool user_gesture,
-                 bool in_tab_dragging);
     CreateParams(const CreateParams& other);
 
     static CreateParams CreateForApp(const std::string& app_name,
@@ -193,6 +211,8 @@ class Browser : public TabStripModelObserver,
     ui::WindowShowState initial_show_state = ui::SHOW_STATE_DEFAULT;
 
     bool is_session_restore = false;
+
+    bool is_focus_mode = false;
 
     // Whether this browser was created by a user gesture. We track this
     // specifically for the multi-user case in chromeos where we can place
@@ -226,6 +246,22 @@ class Browser : public TabStripModelObserver,
 
   // Constructors, Creation, Showing //////////////////////////////////////////
 
+  // Creates a browser instance with the provided params.
+  // Returns nullptr if the requested browser creation is not allowed.
+  // For example, browser creation will not be allowed for profiles that
+  // disallow browsing (like sign-in profile on Chrome OS).
+  //
+  // Unless |params->window| is specified, a new BrowserWindow will be created
+  // for the browser - the created BrowserWindow will take the ownership of the
+  // created Browser instance.
+  //
+  // If |params.window| or |params.skip_window_init_for_testing| are set, the
+  // caller is expected to take the ownership of the created Browser instance.
+  static Browser* Create(const CreateParams& params);
+
+  // DEPRECATED in favor of Create().
+  // TODO(tbarzic): Make the constructor non-public once browser construction
+  // instances are replaced with Create(). https://crbug.com/916859.
   explicit Browser(const CreateParams& params);
   ~Browser() override;
 
@@ -238,21 +274,20 @@ class Browser : public TabStripModelObserver,
     initial_show_state_ = initial_show_state;
   }
   // Return true if the initial window bounds have been overridden.
-  bool bounds_overridden() const {
-    return !override_bounds_.IsEmpty();
-  }
+  bool bounds_overridden() const { return !override_bounds_.IsEmpty(); }
   // Set indicator that this browser is being created via session restore.
   // This is used on the Mac (only) to determine animation style when the
   // browser window is shown.
   void set_is_session_restore(bool is_session_restore) {
     is_session_restore_ = is_session_restore;
   }
-  bool is_session_restore() const {
-    return is_session_restore_;
-  }
+  bool is_session_restore() const { return is_session_restore_; }
+
+  bool is_focus_mode() const { return is_focus_mode_; }
 
   // Accessors ////////////////////////////////////////////////////////////////
 
+  const CreateParams& create_params() const { return create_params_; }
   Type type() const { return type_; }
   const std::string& app_name() const { return app_name_; }
   bool is_trusted_source() const { return is_trusted_source_; }
@@ -273,13 +308,16 @@ class Browser : public TabStripModelObserver,
     location_bar_model->swap(location_bar_model_);
   }
 #endif
+
+  // Never nullptr.
   TabStripModel* tab_strip_model() const { return tab_strip_model_.get(); }
+
   chrome::BrowserCommandController* command_controller() {
     return command_controller_.get();
   }
   const SessionID& session_id() const { return session_id_; }
   BrowserContentSettingBubbleModelDelegate*
-      content_setting_bubble_model_delegate() {
+  content_setting_bubble_model_delegate() {
     return content_setting_bubble_model_delegate_.get();
   }
   BrowserLiveTabContext* live_tab_context() { return live_tab_context_.get(); }
@@ -289,16 +327,18 @@ class Browser : public TabStripModelObserver,
   BrowserInstantController* instant_controller() {
     return instant_controller_.get();
   }
-  const extensions::HostedAppBrowserController* hosted_app_controller() const {
-    return hosted_app_controller_.get();
+  const web_app::AppBrowserController* app_controller() const {
+    return app_controller_.get();
   }
-  extensions::HostedAppBrowserController* hosted_app_controller() {
-    return hosted_app_controller_.get();
+  web_app::AppBrowserController* app_controller() {
+    return app_controller_.get();
   }
 
+#if !defined(OS_CHROMEOS)
   SigninViewController* signin_view_controller() {
     return &signin_view_controller_;
   }
+#endif
 
   // Will lazy create the bubble manager.
   ChromeBubbleManager* GetBubbleManager();
@@ -314,6 +354,8 @@ class Browser : public TabStripModelObserver,
   BookmarkBar::State bookmark_bar_state() const { return bookmark_bar_state_; }
 
   // State Storage and Retrieval for UI ///////////////////////////////////////
+
+  GURL GetNewTabURL() const;
 
   // Gets the Favicon of the page in the selected tab.
   gfx::Image GetCurrentPageIcon() const;
@@ -340,9 +382,29 @@ class Browser : public TabStripModelObserver,
 
   // OnBeforeUnload handling //////////////////////////////////////////////////
 
+  // Displays any necessary warnings to the user on taking an action that might
+  // close the browser (for example, warning if there are downloads in progress
+  // that would be interrupted).
+  //
+  // Distinct from ShouldCloseWindow() (which calls this method) because this
+  // method does not consider beforeunload handler, only things the user should
+  // be prompted about.
+  //
+  // If no warnings are needed, the method returns kOkToClose, indicating that
+  // the close can proceed immediately, and the callback is not called. If the
+  // method returns kDoNotClose, closing should be handled by |warn_callback|
+  // (and then only if the callback receives the kOkToClose value).
+  WarnBeforeClosingResult MaybeWarnBeforeClosing(
+      WarnBeforeClosingCallback warn_callback);
+
   // Gives beforeunload handlers the chance to cancel the close. Returns whether
   // to proceed with the close. If called while the process begun by
   // TryToCloseWindow is in progress, returns false without taking action.
+  //
+  // If you don't care about beforeunload handlers and just want to prompt the
+  // user that they might lose an in-progress operation, call
+  // MaybeWarnBeforeClosing() instead (ShouldCloseWindow() also calls this
+  // method).
   bool ShouldCloseWindow();
 
   // Begins the process of confirming whether the associated browser can be
@@ -371,9 +433,6 @@ class Browser : public TabStripModelObserver,
   // It starts beforeunload/unload processing as a side-effect.
   bool TabsNeedBeforeUnloadFired();
 
-  // Returns true if all tabs' beforeunload/unload events have fired.
-  bool HasCompletedUnloadProcessing() const;
-
   bool IsAttemptingToCloseBrowser() const;
 
   // Invoked when the window containing us is closing. Performs the necessary
@@ -382,18 +441,12 @@ class Browser : public TabStripModelObserver,
 
   // In-progress download termination handling /////////////////////////////////
 
-  // Called when the user has decided whether to proceed or not with the browser
-  // closure.  |cancel_downloads| is true if the downloads should be canceled
-  // and the browser closed, false if the browser should stay open and the
-  // downloads running.
-  void InProgressDownloadResponse(bool cancel_downloads);
-
   // Indicates whether or not this browser window can be closed, or
   // would be blocked by in-progress downloads.
   // If executing downloads would be cancelled by this window close,
   // then |*num_downloads_blocking| is updated with how many downloads
   // would be canceled if the close continued.
-  DownloadClosePreventionType OkToCloseWithInProgressDownloads(
+  DownloadCloseType OkToCloseWithInProgressDownloads(
       int* num_downloads_blocking) const;
 
   // External state change handling ////////////////////////////////////////////
@@ -402,9 +455,12 @@ class Browser : public TabStripModelObserver,
   // transition, and WindowFullscreenStateChanged is at the end.
   void WindowFullscreenStateWillChange();
   void WindowFullscreenStateChanged();
+
   // Only used on Mac. Called when the top ui style has been changed since this
   // may trigger bookmark bar state change.
   void FullscreenTopUIStateChanged();
+
+  void OnFindBarVisibilityChanged();
 
   // Assorted browser commands ////////////////////////////////////////////////
 
@@ -431,6 +487,14 @@ class Browser : public TabStripModelObserver,
 
   void UpdateDownloadShelfVisibility(bool visible);
 
+  // Whether the specified WebContents can be reloaded.
+  // Reloading can be disabled e.g. for the DevTools window.
+  bool CanReloadContents(content::WebContents* web_contents) const;
+
+  // Whether the specified WebContents can be saved.
+  // Saving can be disabled e.g. for the DevTools window.
+  bool CanSaveContents(content::WebContents* web_contents) const;
+
   /////////////////////////////////////////////////////////////////////////////
 
   // Called by Navigate() when a navigation has occurred in a tab in
@@ -456,6 +520,10 @@ class Browser : public TabStripModelObserver,
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override;
+  void OnTabGroupVisualDataChanged(
+      TabStripModel* tab_strip_model,
+      TabGroupId group,
+      const TabGroupVisualData* visual_data) override;
   void TabPinnedStateChanged(TabStripModel* tab_strip_model,
                              content::WebContents* contents,
                              int index) override;
@@ -464,13 +532,13 @@ class Browser : public TabStripModelObserver,
   // Overridden from content::WebContentsDelegate:
   void SetTopControlsShownRatio(content::WebContents* web_contents,
                                 float ratio) override;
-  int GetTopControlsHeight() const override;
+  int GetTopControlsHeight() override;
   bool DoBrowserControlsShrinkRendererSize(
-      const content::WebContents* contents) const override;
+      const content::WebContents* contents) override;
   void SetTopControlsGestureScrollInProgress(bool in_progress) override;
-  bool CanOverscrollContent() const override;
+  bool CanOverscrollContent() override;
   bool ShouldPreserveAbortedURLs(content::WebContents* source) override;
-  void SetFocusToLocationBar(bool select_all) override;
+  void SetFocusToLocationBar() override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
@@ -482,35 +550,56 @@ class Browser : public TabStripModelObserver,
   bool CanDragEnter(content::WebContents* source,
                     const content::DropData& data,
                     blink::WebDragOperationsMask operations_allowed) override;
-  blink::WebSecurityStyle GetSecurityStyle(
+  blink::SecurityStyle GetSecurityStyle(
       content::WebContents* web_contents,
       content::SecurityStyleExplanations* security_style_explanations) override;
   std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
       content::RenderFrameHost* frame,
       const content::BluetoothChooser::EventHandler& event_handler) override;
-  void RequestAppBannerFromDevTools(
-      content::WebContents* web_contents) override;
+  std::unique_ptr<content::BluetoothScanningPrompt> ShowBluetoothScanningPrompt(
+      content::RenderFrameHost* frame,
+      const content::BluetoothScanningPrompt::EventHandler& event_handler)
+      override;
+  void CreateSmsPrompt(content::RenderFrameHost*,
+                       const url::Origin&,
+                       const std::string& one_time_code,
+                       base::OnceClosure on_confirm,
+                       base::OnceClosure on_cancel) override;
   void PassiveInsecureContentFound(const GURL& resource_url) override;
   bool ShouldAllowRunningInsecureContent(content::WebContents* web_contents,
                                          bool allowed_per_prefs,
                                          const url::Origin& origin,
                                          const GURL& resource_url) override;
-  void OnDidBlockFramebust(content::WebContents* web_contents,
-                           const GURL& url) override;
-  gfx::Size EnterPictureInPicture(const viz::SurfaceId&,
-                                  const gfx::Size&) override;
+  void OnDidBlockNavigation(content::WebContents* web_contents,
+                            const GURL& blocked_url,
+                            const GURL& initiator_url,
+                            blink::NavigationBlockedReason reason) override;
+  content::PictureInPictureResult EnterPictureInPicture(
+      content::WebContents* web_contents,
+      const viz::SurfaceId&,
+      const gfx::Size&) override;
   void ExitPictureInPicture() override;
   std::unique_ptr<content::WebContents> SwapWebContents(
       content::WebContents* old_contents,
       std::unique_ptr<content::WebContents> new_contents,
       bool did_start_load,
       bool did_finish_load) override;
+  bool ShouldShowStaleContentOnEviction(content::WebContents* source) override;
+  bool IsFrameLowPriority(
+      const content::WebContents* web_contents,
+      const content::RenderFrameHost* render_frame_host) override;
 
-  bool is_type_tabbed() const { return type_ == TYPE_TABBED; }
+  bool is_type_normal() const { return type_ == TYPE_NORMAL; }
   bool is_type_popup() const { return type_ == TYPE_POPUP; }
-
-  bool is_app() const;
-  bool is_devtools() const;
+  bool is_type_app() const { return type_ == TYPE_APP; }
+  bool is_type_devtools() const { return type_ == TYPE_DEVTOOLS; }
+  // TODO(crbug.com/990158): |deprecated_is_app()| is added for backwards
+  // compatibility for previous callers to |is_app()| which returned true when
+  // |app_name_| is non-empty.  This includes TYPE_APP and TYPE_DEVTOOLS.
+  // Existing callers should change to use the appropriate is_type_* functions.
+  bool deprecated_is_app() const {
+    return type_ == TYPE_APP || type_ == TYPE_DEVTOOLS;
+  }
 
   // True when the mouse cursor is locked.
   bool IsMouseLocked() const;
@@ -542,6 +631,9 @@ class Browser : public TabStripModelObserver,
   FRIEND_TEST_ALL_PREFIXES(AppModeTest, EnableAppModeTest);
   FRIEND_TEST_ALL_PREFIXES(BrowserCommandControllerTest,
                            IsReservedCommandOrKeyIsApp);
+  FRIEND_TEST_ALL_PREFIXES(BrowserCloseTest, LastGuest);
+  FRIEND_TEST_ALL_PREFIXES(BrowserCloseTest, LastIncognito);
+  FRIEND_TEST_ALL_PREFIXES(BrowserCloseTest, LastRegular);
   FRIEND_TEST_ALL_PREFIXES(BrowserCommandControllerTest, AppFullScreen);
   FRIEND_TEST_ALL_PREFIXES(BrowserTest, OpenAppWindowLikeNtp);
   FRIEND_TEST_ALL_PREFIXES(BrowserTest, AppIdSwitch);
@@ -621,14 +713,16 @@ class Browser : public TabStripModelObserver,
                          bool* proceed_to_fire_unload) override;
   bool ShouldFocusLocationBarByDefault(content::WebContents* source) override;
   void ShowRepostFormWarningDialog(content::WebContents* source) override;
-  bool ShouldCreateWebContents(
-      content::WebContents* web_contents,
+  bool IsWebContentsCreationOverridden(
+      content::SiteInstance* source_site_instance,
+      content::mojom::WindowContainerType window_container_type,
+      const GURL& opener_url,
+      const std::string& frame_name,
+      const GURL& target_url) override;
+  content::WebContents* CreateCustomWebContents(
       content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
-      int32_t route_id,
-      int32_t main_frame_route_id,
-      int32_t main_frame_widget_route_id,
-      content::mojom::WindowContainerType window_container_type,
+      bool is_new_browsing_instance,
       const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
@@ -653,6 +747,7 @@ class Browser : public TabStripModelObserver,
       content::WebContents* web_contents) override;
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
       content::WebContents* source) override;
+  bool GuestSaveFrame(content::WebContents* guest_web_contents) override;
   content::ColorChooser* OpenColorChooser(
       content::WebContents* web_contents,
       SkColor color,
@@ -664,16 +759,16 @@ class Browser : public TabStripModelObserver,
   void EnumerateDirectory(content::WebContents* web_contents,
                           std::unique_ptr<content::FileSelectListener> listener,
                           const base::FilePath& path) override;
-  bool EmbedsFullscreenWidget() const override;
+  bool EmbedsFullscreenWidget() override;
   void EnterFullscreenModeForTab(
       content::WebContents* web_contents,
       const GURL& origin,
-      const blink::WebFullscreenOptions& options) override;
+      const blink::mojom::FullscreenOptions& options) override;
   void ExitFullscreenModeForTab(content::WebContents* web_contents) override;
   bool IsFullscreenForTabOrPending(
-      const content::WebContents* web_contents) const override;
-  blink::WebDisplayMode GetDisplayMode(
-      const content::WebContents* web_contents) const override;
+      const content::WebContents* web_contents) override;
+  blink::mojom::DisplayMode GetDisplayMode(
+      const content::WebContents* web_contents) override;
   void RegisterProtocolHandler(content::WebContents* web_contents,
                                const std::string& protocol,
                                const GURL& url,
@@ -701,16 +796,15 @@ class Browser : public TabStripModelObserver,
       content::MediaResponseCallback callback) override;
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  content::MediaStreamType type) override;
-  std::string GetDefaultMediaDeviceID(content::WebContents* web_contents,
-                                      content::MediaStreamType type) override;
-  bool RequestPpapiBrokerPermission(
+                                  blink::mojom::MediaStreamType type) override;
+  std::string GetDefaultMediaDeviceID(
+      content::WebContents* web_contents,
+      blink::mojom::MediaStreamType type) override;
+  void RequestPpapiBrokerPermission(
       content::WebContents* web_contents,
       const GURL& url,
       const base::FilePath& plugin_path,
-      const base::Callback<void(bool)>& callback) override;
-  gfx::Size GetSizeForNewRenderView(
-      content::WebContents* web_contents) const override;
+      base::OnceCallback<void(bool)> callback) override;
 
 #if BUILDFLAG(ENABLE_PRINTING)
   void PrintCrossProcessSubframe(
@@ -719,10 +813,6 @@ class Browser : public TabStripModelObserver,
       int document_cookie,
       content::RenderFrameHost* subframe_host) const override;
 #endif
-
-  // Overridden from CoreTabHelperDelegate:
-  bool CanReloadContents(content::WebContents* web_contents) const override;
-  bool CanSaveContents(content::WebContents* web_contents) const override;
 
   // Overridden from WebContentsModalDialogManagerDelegate:
   void SetWebContentsBlocked(content::WebContents* web_contents,
@@ -734,11 +824,9 @@ class Browser : public TabStripModelObserver,
   void URLStarredChanged(content::WebContents* web_contents,
                          bool starred) override;
 
-#if !defined(OS_ANDROID)
   // Overridden from ZoomObserver:
   void OnZoomChanged(
       const zoom::ZoomController::ZoomChangedEventData& data) override;
-#endif  // !defined(OS_ANDROID)
 
   // Overridden from SelectFileDialog::Listener:
   void FileSelected(const base::FilePath& path,
@@ -747,20 +835,12 @@ class Browser : public TabStripModelObserver,
   void FileSelectedWithExtraInfo(const ui::SelectedFileInfo& file_info,
                                  int index,
                                  void* params) override;
+  void FileSelectionCanceled(void* params) override;
 
   // Overridden from content::NotificationObserver:
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Overridden from extensions::ExtensionRegistryObserver:
-  void OnExtensionLoaded(content::BrowserContext* browser_context,
-                         const extensions::Extension* extension) override;
-  void OnExtensionUnloaded(content::BrowserContext* browser_context,
-                           const extensions::Extension* extension,
-                           extensions::UnloadedExtensionReason reason) override;
-#endif
 
   // Overridden from translate::ContentTranslateDriver::Observer:
   void OnIsPageTranslatedChanged(content::WebContents* source) override;
@@ -781,6 +861,9 @@ class Browser : public TabStripModelObserver,
   void OnTabReplacedAt(content::WebContents* old_contents,
                        content::WebContents* new_contents,
                        int index);
+  void OnTabGroupChanged(int index,
+                         base::Optional<TabGroupId> old_group,
+                         base::Optional<TabGroupId> new_group);
 
   // Handle changes to kDevToolsAvailability preference.
   void OnDevToolsAvailabilityChanged();
@@ -800,8 +883,7 @@ class Browser : public TabStripModelObserver,
   //   updates), then scheduled_updates_ is updated for the |source| and update
   //   pair and a task is scheduled (assuming it isn't running already)
   //   that invokes ProcessPendingUIUpdates.
-  void ScheduleUIUpdate(content::WebContents* source,
-                        unsigned changed_flags);
+  void ScheduleUIUpdate(content::WebContents* source, unsigned changed_flags);
 
   // Processes all pending updates to the UI that have been scheduled by
   // ScheduleUIUpdate in scheduled_updates_.
@@ -835,6 +917,17 @@ class Browser : public TabStripModelObserver,
   // Returns true if the window can close, false otherwise.
   bool CanCloseWithInProgressDownloads();
 
+  // Called when the user has decided whether to proceed or not with the browser
+  // closure.  |cancel_downloads| is true if the downloads should be canceled
+  // and the browser closed, false if the browser should stay open and the
+  // downloads running.
+  void InProgressDownloadResponse(bool cancel_downloads);
+
+  // Called when all warnings have completed when attempting to close the
+  // browser directly (e.g. via hotkey, close button, terminate signal, etc.)
+  // Used as a WarnBeforeClosingCallback by ShouldCloseWindow().
+  void FinishWarnBeforeClosing(WarnBeforeClosingResult result);
+
   // Assorted utility functions ///////////////////////////////////////////////
 
   // Sets the specified browser as the delegate of the WebContents and all the
@@ -864,9 +957,17 @@ class Browser : public TabStripModelObserver,
   // Shared code between Reload() and ReloadBypassingCache().
   void ReloadInternal(WindowOpenDisposition disposition, bool bypass_cache);
 
-  // Returns true if the Browser window supports a location bar. Having support
-  // for the location bar does not mean it will be visible.
-  bool SupportsLocationBar() const;
+  bool NormalBrowserSupportsWindowFeature(WindowFeature feature,
+                                          bool check_can_support) const;
+
+  bool PopupBrowserSupportsWindowFeature(WindowFeature feature,
+                                         bool check_can_support) const;
+
+  bool LegacyAppBrowserSupportsWindowFeature(WindowFeature feature,
+                                             bool check_can_support) const;
+
+  bool WebAppBrowserSupportsWindowFeature(WindowFeature feature,
+                                          bool check_can_support) const;
 
   // Implementation of SupportsWindowFeature and CanSupportWindowFeature. If
   // |check_fullscreen| is true, the set of features reflect the actual state of
@@ -879,6 +980,8 @@ class Browser : public TabStripModelObserver,
   // BrowserWindow if necessary.
   void UpdateBookmarkBarState(BookmarkBarStateChangeReason reason);
 
+  bool ShouldShowBookmarkBar() const;
+
   bool ShouldHideUIForFullscreen() const;
 
   // Indicates if we have called BrowserList::NotifyBrowserCloseStarted for the
@@ -889,15 +992,20 @@ class Browser : public TabStripModelObserver,
   // the last browser window is being closed.
   bool ShouldStartShutdown() const;
 
-  // Creates a BackgroundContents if appropriate; return true if one was
-  // created.
-  bool MaybeCreateBackgroundContents(
+  // Returns true if a BackgroundContents should be created in response to a
+  // WebContents::CreateNewWindow() call.
+  bool ShouldCreateBackgroundContents(
+      content::SiteInstance* source_site_instance,
+      const GURL& opener_url,
+      const std::string& frame_name);
+
+  // Creates a BackgroundContents. This should only be called when
+  // ShouldCreateBackgroundContents() is true.
+  BackgroundContents* CreateBackgroundContents(
       content::SiteInstance* source_site_instance,
       content::RenderFrameHost* opener,
       const GURL& opener_url,
-      int32_t route_id,
-      int32_t main_frame_route_id,
-      int32_t main_frame_widget_route_id,
+      bool is_new_browsing_instance,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
@@ -909,13 +1017,10 @@ class Browser : public TabStripModelObserver,
 
   content::NotificationRegistrar registrar_;
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  ScopedObserver<extensions::ExtensionRegistry,
-                 extensions::ExtensionRegistryObserver>
-      extension_registry_observer_;
-#endif
-
   PrefChangeRegistrar profile_pref_registrar_;
+
+  // This Browser's create params.
+  const CreateParams create_params_;
 
   // This Browser's type.
   const Type type_;
@@ -926,19 +1031,22 @@ class Browser : public TabStripModelObserver,
   // This Browser's window.
   BrowserWindow* window_;
 
-  std::unique_ptr<TabStripModelDelegate> tab_strip_model_delegate_;
-  std::unique_ptr<TabStripModel> tab_strip_model_;
+  std::unique_ptr<TabStripModelDelegate> const tab_strip_model_delegate_;
+  std::unique_ptr<TabStripModel> const tab_strip_model_;
 
   // The application name that is also the name of the window to the shell.
   // This name should be set when:
   // 1) we launch an application via an application shortcut or extension API.
   // 2) we launch an undocked devtool window.
-  std::string app_name_;
+  const std::string app_name_;
 
   // True if the source is trusted (i.e. we do not need to show the URL in a
   // a popup window). Also used to determine which app windows to save and
   // restore on Chrome OS.
   bool is_trusted_source_;
+
+  // Whether this browser was created for focus mode. See https://crbug/932814.
+  const bool is_focus_mode_;
 
   // Unique identifier of this browser for session restore. This id is only
   // unique within the current session, and is not guaranteed to be unique
@@ -986,8 +1094,9 @@ class Browser : public TabStripModelObserver,
   // Tracks when this browser is being created by session restore.
   bool is_session_restore_;
 
-  std::unique_ptr<UnloadController> unload_controller_;
-  std::unique_ptr<FastUnloadController> fast_unload_controller_;
+  base::TimeTicks focus_mode_start_time_;
+
+  UnloadController unload_controller_;
 
   std::unique_ptr<ChromeBubbleManager> bubble_manager_;
 
@@ -1016,8 +1125,7 @@ class Browser : public TabStripModelObserver,
   // Helper which handles bookmark app specific browser configuration.
   // This must be initialized before |command_controller_| to ensure the correct
   // set of commands are enabled.
-  std::unique_ptr<extensions::HostedAppBrowserController>
-      hosted_app_controller_;
+  std::unique_ptr<web_app::AppBrowserController> app_controller_;
 
   BookmarkBar::State bookmark_bar_state_;
 
@@ -1031,15 +1139,26 @@ class Browser : public TabStripModelObserver,
   // True if the browser window has been shown at least once.
   bool window_has_shown_;
 
+#if !defined(OS_CHROMEOS)
   SigninViewController signin_view_controller_;
+#endif
 
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
 
+  WarnBeforeClosingCallback warn_before_closing_callback_;
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  std::unique_ptr<extensions::ExtensionBrowserWindowHelper>
+      extension_browser_window_helper_;
+#endif
+
+  const base::ElapsedTimer creation_timer_;
+
   // The following factory is used for chrome update coalescing.
-  base::WeakPtrFactory<Browser> chrome_updater_factory_;
+  base::WeakPtrFactory<Browser> chrome_updater_factory_{this};
 
   // The following factory is used to close the frame at a later time.
-  base::WeakPtrFactory<Browser> weak_factory_;
+  base::WeakPtrFactory<Browser> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Browser);
 };

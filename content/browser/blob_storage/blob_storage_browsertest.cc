@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <functional>
+
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
@@ -16,8 +19,8 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "storage/browser/blob/blob_memory_controller.h"
+#include "storage/browser/blob/blob_storage_constants.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/common/blob_storage/blob_storage_constants.h"
 
 namespace content {
 namespace {
@@ -59,10 +62,9 @@ class BlobStorageBrowserTest : public ContentBrowserTest {
   }
 
   void SetBlobLimits() {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&SetBlobLimitsOnIO, GetBlobContext(),
-                       base::ConstRef(limits_)));
+    base::PostTask(FROM_HERE, {BrowserThread::IO},
+                   base::BindOnce(&SetBlobLimitsOnIO, GetBlobContext(),
+                                  std::cref(limits_)));
   }
 
   void SimpleTest(const GURL& test_url, bool incognito = false) {
@@ -98,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(BlobStorageBrowserTest, BlobCombinations) {
 
   auto blob_context = GetBlobContext();
   base::RunLoop loop;
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO}, base::BindLambdaForTesting([&]() {
         const storage::BlobMemoryController& memory_controller =
             blob_context->context()->memory_controller();

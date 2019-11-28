@@ -26,11 +26,6 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
  public:
   enum Animate { ANIMATE_YES, ANIMATE_NO };
 
-  enum class ColorMode {
-    kDefault,  // Most windows.
-    kThemed,   // Windows that have been themed by PWA manifest.
-  };
-
   static const char kViewClassName[];
 
   FrameCaptionButton(views::ButtonListener* listener,
@@ -38,9 +33,8 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
                      int hit_test_type);
   ~FrameCaptionButton() override;
 
-  // Gets the color to use for a frame caption button while a theme color is
-  // set.
-  static SkColor GetButtonColor(ColorMode color_mode, SkColor background_color);
+  // Gets the color to use for a frame caption button.
+  static SkColor GetButtonColor(SkColor background_color);
 
   // Gets the alpha ratio for the colors of inactive frame caption buttons.
   static float GetInactiveButtonColorAlphaRatio();
@@ -69,7 +63,6 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
   std::unique_ptr<views::InkDropMask> CreateInkDropMask() const override;
 
   void SetBackgroundColor(SkColor background_color);
-  void SetColorMode(ColorMode color_mode);
 
   void set_paint_as_active(bool paint_as_active) {
     paint_as_active_ = paint_as_active;
@@ -77,9 +70,9 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
 
   bool paint_as_active() const { return paint_as_active_; }
 
-  SkColor background_color() const { return background_color_; }
-
-  ColorMode color_mode() const { return color_mode_; }
+  void set_ink_drop_corner_radius(int ink_drop_corner_radius) {
+    ink_drop_corner_radius_ = ink_drop_corner_radius;
+  }
 
   CaptionButtonIcon icon() const { return icon_; }
 
@@ -98,6 +91,11 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
   // active state.
   int GetAlphaForIcon(int base_alpha) const;
 
+  // Returns the amount by which the inkdrop ripple and mask should be insetted
+  // from the button size in order to achieve a circular inkdrop with a size
+  // equals to kInkDropHighlightSize.
+  gfx::Insets GetInkdropInsets(const gfx::Size& button_size) const;
+
   void UpdateInkDropBaseColor();
 
   // The button's current icon.
@@ -106,14 +104,14 @@ class VIEWS_EXPORT FrameCaptionButton : public views::Button {
   // The current background color.
   SkColor background_color_;
 
-  // The algorithm to determine button colors.
-  ColorMode color_mode_;
-
   // Whether the button should be painted as active.
   bool paint_as_active_;
 
   // Current alpha to use for painting.
   int alpha_;
+
+  // Radius of the ink drop highlight and mask.
+  int ink_drop_corner_radius_;
 
   // The image id (kept for the purposes of testing) and image used to paint the
   // button's icon.

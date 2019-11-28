@@ -14,11 +14,11 @@
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/server_backed_device_state.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/cros_settings_provider.h"
-#include "chromeos/settings/install_attributes.h"
 #include "chromeos/system/statistics_provider.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
@@ -37,12 +37,11 @@ DeviceDisablingManager::DeviceDisablingManager(
     CrosSettings* cros_settings,
     user_manager::UserManager* user_manager)
     : delegate_(delegate),
-      browser_policy_connector_(g_browser_process->platform_part()->
-          browser_policy_connector_chromeos()),
+      browser_policy_connector_(g_browser_process->platform_part()
+                                    ->browser_policy_connector_chromeos()),
       cros_settings_(cros_settings),
       user_manager_(user_manager),
-      device_disabled_(false),
-      weak_factory_(this) {
+      device_disabled_(false) {
   CHECK(delegate_);
 }
 

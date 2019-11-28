@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_DIALOG_H_
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_DIALOG_H_
 
+#include <memory>
+
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -67,7 +69,6 @@ class ExtensionDialog : public views::DialogDelegate,
   extensions::ExtensionViewHost* host() const { return host_.get(); }
 
   // views::DialogDelegate override.
-  int GetDialogButtons() const override;
   bool CanResize() const override;
   ui::ModalType GetModalType() const override;
   bool ShouldShowWindowTitle() const override;
@@ -77,7 +78,6 @@ class ExtensionDialog : public views::DialogDelegate,
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
   views::View* GetContentsView() override;
-  bool ShouldUseCustomFrame() const override;
 
   // content::NotificationObserver overrides.
   void Observe(int type,
@@ -91,13 +91,15 @@ class ExtensionDialog : public views::DialogDelegate,
   friend class base::RefCounted<ExtensionDialog>;
 
   // Use Show() to create instances.
-  ExtensionDialog(extensions::ExtensionViewHost* host,
+  ExtensionDialog(std::unique_ptr<extensions::ExtensionViewHost> host,
                   ExtensionDialogObserver* observer);
 
   void InitWindow(gfx::NativeWindow parent_window,
                   bool is_modal,
                   int width,
-                  int height);
+                  int height,
+                  int min_width,
+                  int min_height);
 
   ExtensionViewViews* GetExtensionView() const;
   static ExtensionViewViews* GetExtensionView(

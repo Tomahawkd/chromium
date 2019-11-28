@@ -4,21 +4,7 @@
 
 #include "services/network/ssl_config_type_converter.h"
 
-namespace {
-
-net::TLS13Variant MojoTLS13VariantToNetTLS13Variant(
-    network::mojom::TLS13Variant tls13_variant) {
-  switch (tls13_variant) {
-    case network::mojom::TLS13Variant::kDraft23:
-      return net::kTLS13VariantDraft23;
-    case network::mojom::TLS13Variant::kFinal:
-      return net::kTLS13VariantFinal;
-  }
-  NOTREACHED();
-  return net::kTLS13VariantDraft23;
-}
-
-}  // namespace
+#include "base/logging.h"
 
 namespace mojo {
 
@@ -37,12 +23,9 @@ int MojoSSLVersionToNetSSLVersion(network::mojom::SSLVersion mojo_version) {
   return net::SSL_PROTOCOL_VERSION_TLS1_3;
 }
 
-net::SSLConfig
-TypeConverter<net::SSLConfig, network::mojom::SSLConfigPtr>::Convert(
+net::SSLContextConfig MojoSSLConfigToSSLContextConfig(
     const network::mojom::SSLConfigPtr& mojo_config) {
-  DCHECK(mojo_config);
-
-  net::SSLConfig net_config;
+  net::SSLContextConfig net_config;
 
   net_config.version_min =
       MojoSSLVersionToNetSSLVersion(mojo_config->version_min);
@@ -50,12 +33,23 @@ TypeConverter<net::SSLConfig, network::mojom::SSLConfigPtr>::Convert(
       MojoSSLVersionToNetSSLVersion(mojo_config->version_max);
   DCHECK_LE(net_config.version_min, net_config.version_max);
 
-  net_config.tls13_variant =
-      MojoTLS13VariantToNetTLS13Variant(mojo_config->tls13_variant);
+  net_config.disabled_cipher_suites = mojo_config->disabled_cipher_suites;
+  net_config.tls13_hardening_for_local_anchors_enabled =
+      mojo_config->tls13_hardening_for_local_anchors_enabled;
+  return net_config;
+}
 
-  for (uint16_t cipher_suite : mojo_config->disabled_cipher_suites) {
-    net_config.disabled_cipher_suites.push_back(cipher_suite);
-  }
+net::CertVerifier::Config MojoSSLConfigToCertVerifierConfig(
+    const network::mojom::SSLConfigPtr& mojo_config) {
+  net::CertVerifier::Config net_config;
+  net_config.enable_rev_checking = mojo_config->rev_checking_enabled;
+  net_config.require_rev_checking_local_anchors =
+      mojo_config->rev_checking_required_local_anchors;
+  net_config.enable_sha1_local_anchors =
+      mojo_config->sha1_local_anchors_enabled;
+  net_config.disable_symantec_enforcement =
+      mojo_config->symantec_enforcement_disabled;
+
   return net_config;
 }
 

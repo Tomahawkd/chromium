@@ -52,8 +52,6 @@ _DALVIK_JNI_THREAD_LINE = re.compile("(\".*\" prio=[0-9]+ tid=[0-9]+ NATIVE.*)")
 _DALVIK_NATIVE_THREAD_LINE = re.compile("(\".*\" sysTid=[0-9]+ nice=[0-9]+.*)")
 _JAVA_STDERR_LINE = re.compile("([0-9]+)\s+[0-9]+\s+.\s+System.err:\s*(.+)")
 
-_WIDTH = '{8}'
-
 # Matches LOG(FATAL) lines, like the following example:
 #   [FATAL:source_file.cc(33)] Check failed: !instances_.empty()
 _LOG_FATAL_LINE = re.compile('(\[FATAL\:.*\].*)$')
@@ -72,17 +70,14 @@ _LOG_FATAL_LINE = re.compile('(\[FATAL\:.*\].*)$')
 _TRACE_LINE = re.compile('(.*)\#(?P<frame>[0-9]+)[ \t]+(..)[ \t]+(0x)?(?P<address>[0-9a-f]{0,16})[ \t]+(?P<lib>[^\r\n \t]*)(?P<symbol_present> \((?P<symbol_name>.*)\))?')  # pylint: disable-msg=C6310
 
 def InitWidthRelatedLineMatchers():
-  global _WIDTH
   global _DEBUG_TRACE_LINE, _VALUE_LINE, _CODE_LINE
-  if symbol.ARCH == 'arm64' or symbol.ARCH == 'x86_64' or symbol.ARCH == 'x64':
-    _WIDTH = '{16}'
   # Matches lines emitted by src/base/debug/stack_trace_android.cc, like:
   #   #00 0x7324d92d /data/app-lib/org.chromium.native_test-1/libbase.cr.so+0x0006992d
   # This pattern includes the unused named capture groups <symbol_present> and
   # <symbol_name> so that it can interoperate with the |_TRACE_LINE| regex.
   _DEBUG_TRACE_LINE = re.compile(
-      '(.*)(?P<frame>\#[0-9]+ 0x[0-9a-f]' + _WIDTH + ') '
-      '(?P<lib>[^+]+)\+0x(?P<address>[0-9a-f]' + _WIDTH + ')'
+      '(.*)(?P<frame>\#[0-9]+ 0x[0-9a-f]{8,16}) '
+      '(?P<lib>[^+]+)\+0x(?P<address>[0-9a-f]{8,16})'
       '(?P<symbol_present>)(?P<symbol_name>)')
 
   # Examples of matched value lines include:
@@ -90,7 +85,7 @@ def InitWidthRelatedLineMatchers():
   #   bea4170c  8018e4e9  /data/data/com.my.project/lib/libmyproject.so (symbol)
   #   03-25 00:51:05.530 I/DEBUG ( 65): bea4170c 8018e4e9 /data/data/com.my.project/lib/libmyproject.so
   # Again, note the spacing differences.
-  _VALUE_LINE = re.compile('(.*)([0-9a-f]' + _WIDTH + ')[ \t]+([0-9a-f]' + _WIDTH + ')[ \t]+([^\r\n \t]*)( \((.*)\))?')
+  _VALUE_LINE = re.compile('(.*)([0-9a-f]{8,16})[ \t]+([0-9a-f]{8,16})[ \t]+([^\r\n \t]*)( \((.*)\))?')
   # Lines from 'code around' sections of the output will be matched before
   # value lines because otheriwse the 'code around' sections will be confused as
   # value lines.
@@ -98,18 +93,18 @@ def InitWidthRelatedLineMatchers():
   # Examples include:
   #   801cf40c ffffc4cc 00b2f2c5 00b2f1c7 00c1e1a8
   #   03-25 00:51:05.530 I/DEBUG ( 65): 801cf40c ffffc4cc 00b2f2c5 00b2f1c7 00c1e1a8
-  _CODE_LINE = re.compile('(.*)[ \t]*[a-f0-9]' + _WIDTH + '[ \t]*[a-f0-9]' + _WIDTH +
-                          '[ \t]*[a-f0-9]' + _WIDTH + '[ \t]*[a-f0-9]' + _WIDTH +
-                          '[ \t]*[a-f0-9]' + _WIDTH + '[ \t]*[ \r\n]')  # pylint: disable-msg=C6310
+  _CODE_LINE = re.compile('(.*)[ \t]*[a-f0-9]{8,16}[ \t]*[a-f0-9]{8,16}' +
+                          '[ \t]*[a-f0-9]{8,16}[ \t]*[a-f0-9]{8,16}' +
+                          '[ \t]*[a-f0-9]{8,16}[ \t]*[ \r\n]')  # pylint: disable-msg=C6310
 
 # This pattern is used to find shared library offset in APK.
 # Example:
 #    (offset 0x568000)
-_SHARED_LIB_OFFSET_IN_APK = re.compile(' \(offset 0x(?P<offset>[0-9a-f]{0,16})\)$')
+_SHARED_LIB_OFFSET_IN_APK = re.compile(' \(offset 0x(?P<offset>[0-9a-f]{0,16})\)')
 
 def PrintTraceLines(trace_lines):
   """Print back trace."""
-  maxlen = max(map(lambda tl: len(tl[1]), trace_lines))
+  maxlen = min(80, max(map(lambda tl: len(tl[1]), trace_lines)))
   print
   print 'Stack Trace:'
   print '  RELADDR   ' + 'FUNCTION'.ljust(maxlen) + '  FILE:LINE'
@@ -122,7 +117,7 @@ def PrintTraceLines(trace_lines):
 
 def PrintValueLines(value_lines):
   """Print stack data values."""
-  maxlen = max(map(lambda tl: len(tl[2]), value_lines))
+  maxlen = min(80, max(map(lambda tl: len(tl[2]), value_lines)))
   print
   print 'Stack Data:'
   print '  ADDR      VALUE     ' + 'FUNCTION'.ljust(maxlen) + '  FILE:LINE'
@@ -159,7 +154,9 @@ def PrintDivider():
   print
   print '-----------------------------------------------------\n'
 
-def StreamingConvertTrace(input, load_vaddrs, more_info, fallback_monochrome, arch_defined, llvm_symbolizer):
+
+def StreamingConvertTrace(input, load_vaddrs, more_info, fallback_monochrome,
+                          arch_defined, llvm_symbolizer, apks_directory):
   """Symbolize stacks on the fly as they are read from an input stream."""
   InitWidthRelatedLineMatchers()
 
@@ -169,31 +166,40 @@ def StreamingConvertTrace(input, load_vaddrs, more_info, fallback_monochrome, ar
   useful_lines = []
   so_dirs = []
   in_stack = False
+  def ConvertStreamingChunk():
+    print "Stack found. Symbolizing..."
+    if so_dirs:
+      UpdateLibrarySearchPath(so_dirs)
+    # if arch isn't defined in command line, find it from log
+    if not arch_defined:
+      arch = _FindAbi(useful_lines)
+      if arch:
+        print ('Find ABI:' + arch)
+        symbol.ARCH = arch
+    ResolveCrashSymbol(list(useful_lines), more_info, llvm_symbolizer)
+
   for line in iter(sys.stdin.readline, b''):
     print line,
-    maybe_line, maybe_so_dir = PreProcessLog(load_vaddrs)([line])
+    maybe_line, maybe_so_dir = PreProcessLog(load_vaddrs,
+                                             apks_directory)([line])
     useful_lines.extend(maybe_line)
     so_dirs.extend(maybe_so_dir)
     if in_stack:
       if not maybe_line:
-        print "Stack found. Symbolizing..."
-        if so_dirs:
-          UpdateLibrarySearchPath(so_dirs)
-        # if arch isn't defined in command line, find it from log
-        if not arch_defined:
-          arch = _FindAbi(useful_lines)
-          if arch:
-            print ('Find ABI:' + arch)
-            symbol.ARCH = arch
-        ResolveCrashSymbol(list(useful_lines), more_info, llvm_symbolizer)
+        ConvertStreamingChunk()
         so_dirs = []
         useful_lines = []
         in_stack = False
     else:
-      if _TRACE_LINE.search(line):
+      if _TRACE_LINE.match(line) or _DEBUG_TRACE_LINE.match(line) or \
+          _VALUE_LINE.match(line) or _CODE_LINE.match(line):
         in_stack = True
+  if in_stack:
+    ConvertStreamingChunk()
 
-def ConvertTrace(lines, load_vaddrs, more_info, fallback_monochrome, arch_defined, llvm_symbolizer):
+
+def ConvertTrace(lines, load_vaddrs, more_info, fallback_monochrome,
+                 arch_defined, llvm_symbolizer, apks_directory):
   """Convert strings containing native crash to a stack."""
   InitWidthRelatedLineMatchers()
 
@@ -203,15 +209,24 @@ def ConvertTrace(lines, load_vaddrs, more_info, fallback_monochrome, arch_define
   start = time.time()
 
   chunks = [lines[i: i+_CHUNK_SIZE] for i in xrange(0, len(lines), _CHUNK_SIZE)]
-  pool = multiprocessing.Pool(processes=_DEFAULT_JOBS)
-  results = pool.map(PreProcessLog(load_vaddrs), chunks)
+
+  use_multiprocessing = os.environ.get('STACK_DISABLE_ASYNC') != '1'
+  if use_multiprocessing:
+    pool = multiprocessing.Pool(processes=_DEFAULT_JOBS)
+    results = pool.map(PreProcessLog(load_vaddrs, apks_directory), chunks)
+  else:
+    results = map(PreProcessLog(load_vaddrs, apks_directory), chunks)
+
   useful_log = []
   so_dirs = []
   for result in results:
     useful_log += result[0]
     so_dirs += result[1]
-  pool.close()
-  pool.join()
+
+  if use_multiprocessing:
+    pool.close()
+    pool.join()
+
   end = time.time()
   logging.debug('Finished processing. Elapsed time: %.4fs', (end - start))
   if so_dirs:
@@ -231,12 +246,13 @@ def ConvertTrace(lines, load_vaddrs, more_info, fallback_monochrome, arch_define
 
 class PreProcessLog:
   """Closure wrapper, for multiprocessing.Pool.map."""
-  def __init__(self, load_vaddrs):
+  def __init__(self, load_vaddrs, apks_directory):
     """Bind load_vaddrs to the PreProcessLog closure.
     Args:
       load_vaddrs: LOAD segment min_vaddrs keyed on mapped executable
     """
-    self._load_vaddrs = load_vaddrs;
+    self._load_vaddrs = load_vaddrs
+    self._apks_directory = apks_directory
     # This is mapping from apk's offset to shared libraries.
     self._shared_libraries_mapping = dict()
     # The list of directires in which instead of default output dir,
@@ -257,7 +273,8 @@ class PreProcessLog:
       soname = self._shared_libraries_mapping[key]
     else:
       soname, host_so = _FindSharedLibraryFromAPKs(constants.GetOutDirectory(),
-                                                  int(offset, 16))
+                                                   self._apks_directory,
+                                                   int(offset, 16))
       if soname:
         self._shared_libraries_mapping[key] = soname
         so_dir = os.path.dirname(host_so)
@@ -317,9 +334,11 @@ class PreProcessLog:
           soname = self._DetectSharedLibrary(lib, symbol_present)
           if soname:
             line = line.replace('/' + os.path.basename(lib), '/' + soname)
-          else:
+          elif not self._apks_directory:
             # If the trace line suggests a direct load from APK, replace the
-            # APK name with _FALLBACK_SO.
+            # APK name with _FALLBACK_SO, unless an APKs directory was
+            # explicitly specified (in which case, the correct .so should always
+            # be identified, and using a fallback could be misleading).
             line = line.replace('/' + _BASE_APK, '/' + _FALLBACK_SO)
             logging.debug("Can't detect shared library in APK, fallback to" +
                           " library " + _FALLBACK_SO)
@@ -431,6 +450,10 @@ def ResolveCrashSymbol(lines, more_info, llvm_symbolizer):
           if nest_count > 0:
             nest_count = nest_count - 1
             trace_lines.append(('v------>', source_symbol, source_location))
+          elif '<UNKNOWN>' in source_symbol and symbol_name:
+            # If the symbolizer couldn't find a symbol name, but the trace had
+            # one, use what the trace had.
+            trace_lines.append((code_addr, symbol_name, source_location))
           else:
             trace_lines.append((code_addr,
                                 source_symbol,
@@ -512,11 +535,12 @@ def _GetSharedLibraryInHost(soname, dirs):
     return host_so_file
 
 
-def _FindSharedLibraryFromAPKs(out_dir, offset):
+def _FindSharedLibraryFromAPKs(output_directory, apks_directory, offset):
   """Find the shared library at the specifc offset of an APK file.
 
-    WARNING: This function will look at *all* the apks under $out_dir/apks/
-    looking for native libraries they may contain at |offset|.
+    WARNING: This function will look at *all* the apks under
+    $output_directory/apks/ looking for native libraries they may contain at
+    |offset|, unless an APKs directory is explicitly specified.
 
     This is error-prone, since a typical full Chrome build has more than a
     hundred APKs these days, meaning that several APKs might actually match
@@ -530,24 +554,34 @@ def _FindSharedLibraryFromAPKs(out_dir, offset):
     If there are more than one library at offset from the pool of all APKs,
     the function prints an error message and fails.
 
-    TODO(digit): Either find a way to pass a list of valid APKs here, or
-    rewrite this script entirely to avoid so many other problematic things
-    in it.
-
   Args:
-    out_dir: Chromium output directory.
+    output_directory: Chromium output directory.
+    apks_directory: A optional directory containing (only) the APK in question,
+        or in the case of a bundle, all split APKs. This overrides the default
+        apks directory derived from the output directory, and allows for
+        disambiguation.
     offset: APK file offset, as extracted from the stack trace.
   Returns:
     A (library_name, host_library_path) tuple on success, or (None, None)
     in case of failure.
   """
-  apk_dir = os.path.join(out_dir, "apks")
-  if not os.path.isdir(apk_dir):
-    return (None, None)
 
-  apks = [os.path.join(apk_dir, f) for f in os.listdir(apk_dir)
-              if (os.path.isfile(os.path.join(apk_dir, f)) and
-                   os.path.splitext(f)[1] == '.apk')]
+  if apks_directory:
+    if not os.path.isdir(apks_directory):
+      raise Exception('Explicit APKs directory does not exist: %s',
+                      repr(apks_directory))
+  else:
+    apks_directory = os.path.join(output_directory, 'apks')
+    if not os.path.isdir(apks_directory):
+      return (None, None)
+
+  apks = []
+  # Walk subdirectories here, in case the directory contains an unzipped bundle
+  # .apks file, with splits in it.
+  for d, _, files in os.walk(apks_directory):
+    apks.extend(
+        os.path.join(d, f) for f in files if os.path.splitext(f)[1] == '.apk')
+
   shared_libraries = []
   for apk in apks:
     soname, sosize = GetUncompressedSharedLibraryFromAPK(apk, offset)
@@ -556,13 +590,13 @@ def _FindSharedLibraryFromAPKs(out_dir, offset):
     # The relocation section of libraries in APK is packed, we can't
     # detect library by its size, and have to rely on the order of lib
     # directories; for a specific ARCH, the libraries are in either
-    # out_dir or out_dir/android_ARCH, and android_ARCH directory could
-    # exists or not, so having android_ARCH directory be in first, we
-    # will find the correct lib.
+    # output_directory or output_directory/android_ARCH, and android_ARCH
+    # directory could exists or not, so having android_ARCH directory be in
+    # first, we will find the correct lib.
     dirs = [
-           os.path.join(out_dir, "android_%s" % symbol.ARCH),
-           out_dir,
-           ]
+        os.path.join(output_directory, "android_%s" % symbol.ARCH),
+        output_directory,
+    ]
     host_so_file = _GetSharedLibraryInHost(soname, dirs)
     if host_so_file:
       shared_libraries += [(soname, host_so_file)]

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/optional.h"
@@ -59,7 +60,7 @@ class BrowserAssociatedInterface {
       : internal_state_(new InternalState(impl)) {
     filter->AddAssociatedInterface(
         Interface::Name_,
-        base::Bind(&InternalState::BindRequest, internal_state_),
+        base::BindRepeating(&InternalState::BindRequest, internal_state_),
         base::BindOnce(&InternalState::ClearBindings, internal_state_));
   }
 
@@ -75,9 +76,8 @@ class BrowserAssociatedInterface {
 
     void ClearBindings() {
       if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-        base::PostTaskWithTraits(
-            FROM_HERE, {BrowserThread::IO},
-            base::BindOnce(&InternalState::ClearBindings, this));
+        base::PostTask(FROM_HERE, {BrowserThread::IO},
+                       base::BindOnce(&InternalState::ClearBindings, this));
         return;
       }
       bindings_.reset();
@@ -109,6 +109,6 @@ class BrowserAssociatedInterface {
   DISALLOW_COPY_AND_ASSIGN(BrowserAssociatedInterface);
 };
 
-};
+}  // namespace content
 
 #endif  // CONTENT_BROWSER_BROWSER_ASSOCIATED_INTERFACE_H_

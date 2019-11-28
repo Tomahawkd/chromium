@@ -27,7 +27,6 @@
 
 #if defined(CHROMEOS)
 #include "ash/public/cpp/window_properties.h"
-#include "ash/public/interfaces/window_state_type.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/native_widget_types.h"
@@ -119,7 +118,7 @@ IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
   // It waits for the location bar visibility to change rather than simply using
   // RunLoop::RunUntilIdle because in Mash, the fullscreen change takes place in
   // another process.
-  class FullscreenWaiter final : public views::ViewObserver {
+  class FullscreenWaiter final {
    public:
     enum class AwaitType {
       kOutOfFullscreen,
@@ -132,21 +131,24 @@ IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
         : receiver_view_(receiver_view),
           await_type_(await_type),
           fullscreen_callback_(std::move(fullscreen_callback)) {
-      receiver_view_->location_bar_view()->AddObserver(this);
+      auto* location_bar_view = receiver_view_->location_bar_view();
+      subscription_ =
+          location_bar_view->AddVisibleChangedCallback(base::BindRepeating(
+              &FullscreenWaiter::OnViewVisibilityChanged,
+              base::Unretained(this), base::Unretained(location_bar_view)));
     }
-    ~FullscreenWaiter() final {
-      receiver_view_->location_bar_view()->RemoveObserver(this);
-    }
+    ~FullscreenWaiter() = default;
 
    private:
-    void OnViewVisibilityChanged(views::View* observed_view) override {
-      bool fullscreen = !observed_view->visible();
+    void OnViewVisibilityChanged(views::View* observed_view) {
+      bool fullscreen = !observed_view->GetVisible();
       EXPECT_EQ(fullscreen, receiver_view_->IsFullscreen());
       if (fullscreen == (await_type_ == AwaitType::kIntoFullscreen))
         std::move(fullscreen_callback_).Run();
     }
 
     PresentationReceiverWindowView* const receiver_view_;
+    views::PropertyChangedSubscription subscription_;
     const AwaitType await_type_;
     base::OnceClosure fullscreen_callback_;
 
@@ -162,7 +164,7 @@ IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
     fullscreen_loop.Run();
 
     ASSERT_TRUE(receiver_view_->IsFullscreen());
-    EXPECT_FALSE(receiver_view_->location_bar_view()->visible());
+    EXPECT_FALSE(receiver_view_->location_bar_view()->GetVisible());
   }
 
   {
@@ -173,7 +175,7 @@ IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
     receiver_view_->GetWidget()->SetFullscreen(false);
     fullscreen_loop.Run();
     ASSERT_FALSE(receiver_view_->IsFullscreen());
-    EXPECT_TRUE(receiver_view_->location_bar_view()->visible());
+    EXPECT_TRUE(receiver_view_->location_bar_view()->GetVisible());
   }
 
   // Back to fullscreen with the hardware button.
@@ -185,20 +187,13 @@ IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
     receiver_view_->GetWidget()->SetFullscreen(true);
     fullscreen_loop.Run();
     ASSERT_TRUE(receiver_view_->IsFullscreen());
-    EXPECT_FALSE(receiver_view_->location_bar_view()->visible());
+    EXPECT_FALSE(receiver_view_->location_bar_view()->GetVisible());
   }
 }
 #endif
 
-#if defined(OS_MACOSX)
-// https://crbug.com/828031
-#define MAYBE_LocationBarViewShown DISABLED_LocationBarViewShown
-#else
-#define MAYBE_LocationBarViewShown LocationBarViewShown
-#endif
-
 IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
-                       MAYBE_LocationBarViewShown) {
+                       LocationBarViewShown) {
   receiver_view_->ShowInactiveFullscreen();
   receiver_view_->ExitFullscreen();
   ASSERT_FALSE(receiver_view_->IsFullscreen());
@@ -211,15 +206,8 @@ IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
   EXPECT_LT(0, location_bar_view->height());
 }
 
-#if defined(OS_MACOSX)
-// https://crbug.com/828031
-#define MAYBE_ShowPageInfoDialog DISABLED_ShowPageInfoDialog
-#else
-#define MAYBE_ShowPageInfoDialog ShowPageInfoDialog
-#endif
-
 IN_PROC_BROWSER_TEST_F(PresentationReceiverWindowViewBrowserTest,
-                       MAYBE_ShowPageInfoDialog) {
+                       ShowPageInfoDialog) {
   content::NavigationController::LoadURLParams load_params(GURL("about:blank"));
   fake_delegate_->web_contents()->GetController().LoadURLWithParams(
       load_params);

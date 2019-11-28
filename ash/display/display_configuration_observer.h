@@ -7,7 +7,7 @@
 
 #include "ash/ash_export.h"
 #include "ash/display/window_tree_host_manager.h"
-#include "ash/wm/tablet_mode/tablet_mode_observer.h"
+#include "ash/public/cpp/tablet_mode_observer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -22,6 +22,8 @@ class ASH_EXPORT DisplayConfigurationObserver
  public:
   DisplayConfigurationObserver();
   ~DisplayConfigurationObserver() override;
+
+  bool save_preference() const { return save_preference_; }
 
  protected:
   // WindowTreeHostManager::Observer:

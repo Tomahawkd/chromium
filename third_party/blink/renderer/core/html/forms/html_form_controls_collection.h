@@ -42,19 +42,19 @@ class HTMLFormControlsCollection final : public HTMLCollection {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HTMLFormControlsCollection* Create(ContainerNode&, CollectionType);
-
   explicit HTMLFormControlsCollection(ContainerNode&);
+  HTMLFormControlsCollection(ContainerNode&, CollectionType);
+
   ~HTMLFormControlsCollection() override;
 
   HTMLElement* item(unsigned offset) const {
-    return ToHTMLElement(HTMLCollection::item(offset));
+    return To<HTMLElement>(HTMLCollection::item(offset));
   }
 
   HTMLElement* namedItem(const AtomicString& name) const override;
   void namedGetter(const AtomicString& name, RadioNodeListOrElement&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void UpdateIdNameCache() const override;

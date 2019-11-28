@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/event_interface_names.h"
 
 namespace blink {
 
@@ -47,12 +48,10 @@ void JSEventListener::InvokeInternal(EventTarget&,
                                      v8::Local<v8::Value> js_event) {
   // Step 10: Call a listener with event's currentTarget as receiver and event
   // and handle errors if thrown.
-  const bool is_beforeunload_event =
-      event.IsBeforeUnloadEvent() &&
-      event.type() == event_type_names::kBeforeunload;
   if (!event_listener_->IsRunnableOrThrowException(
-          is_beforeunload_event ? V8EventListener::IgnorePause::kIgnore
-                                : V8EventListener::IgnorePause::kDontIgnore)) {
+          event.ShouldDispatchEvenWhenExecutionContextIsPaused()
+              ? V8EventListener::IgnorePause::kIgnore
+              : V8EventListener::IgnorePause::kDontIgnore)) {
     return;
   }
   v8::Maybe<void> maybe_result = event_listener_->InvokeWithoutRunnabilityCheck(

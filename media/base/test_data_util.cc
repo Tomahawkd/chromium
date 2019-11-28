@@ -12,6 +12,7 @@
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "media/base/decoder_buffer.h"
 
 namespace media {
@@ -28,6 +29,7 @@ const char kMp3Audio[] = "audio/mpeg";
 const char kMp4AacAudio[] = "audio/mp4; codecs=\"mp4a.40.2\"";
 const char kMp4Av110bitVideo[] = "video/mp4; codecs=\"av01.0.04M.10\"";
 const char kMp4Av1Video[] = "video/mp4; codecs=\"av01.0.04M.08\"";
+const char kMp4Av1VideoOpusAudio[] = "video/mp4; codecs=\"av01.0.04M.08,opus\"";
 const char kMp4Avc1Video[] = "video/mp4; codecs=\"avc1.64001E\"";
 const char kMp4AacAudioAvc1Video[] =
     "video/mp4; codecs=\"mp4a.40.2, avc1.64001E\"";
@@ -124,12 +126,14 @@ const FileToMimeTypeMap& GetFileToMimeTypeMap() {
       {"bear-av1-480x360.webm", kWebMAv1Video},
       {"bear-av1-cenc.mp4", kMp4Av1Video},
       {"bear-av1-cenc.webm", kWebMAv1Video},
+      {"bear-av1-opus.mp4", kMp4Av1VideoOpusAudio},
       {"bear-av1.mp4", kMp4Av1Video},
       {"bear-av1.webm", kWebMAv1Video},
       {"bear-flac-cenc.mp4", kMp4FlacAudio},
       {"bear-flac_frag.mp4", kMp4FlacAudio},
       {"bear-opus.mp4", kMp4OpusAudio},
       {"bear-opus.webm", kWebMOpusAudio},
+      {"bear-opus-cenc.mp4", kMp4OpusAudio},
       {"bear-vp8a.webm", kWebMVp8Video},
       {"bear-vp9-blockgroup.webm", kWebMVp9Video},
       {"bear-vp9.webm", kWebMVp9Video},
@@ -221,13 +225,13 @@ scoped_refptr<DecoderBuffer> ReadTestDataFile(const std::string& name) {
 bool LookupTestKeyVector(const std::vector<uint8_t>& key_id,
                          bool allow_rotation,
                          std::vector<uint8_t>* key) {
-  std::vector<uint8_t> starting_key_id(kKeyId, kKeyId + arraysize(kKeyId));
+  std::vector<uint8_t> starting_key_id(kKeyId, kKeyId + base::size(kKeyId));
   size_t rotate_limit = allow_rotation ? starting_key_id.size() : 1;
   for (size_t pos = 0; pos < rotate_limit; ++pos) {
     std::rotate(starting_key_id.begin(), starting_key_id.begin() + pos,
                 starting_key_id.end());
     if (key_id == starting_key_id) {
-      key->assign(kSecretKey, kSecretKey + arraysize(kSecretKey));
+      key->assign(kSecretKey, kSecretKey + base::size(kSecretKey));
       std::rotate(key->begin(), key->begin() + pos, key->end());
       return true;
     }

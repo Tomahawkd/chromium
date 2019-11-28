@@ -20,6 +20,8 @@ namespace ash {
 const char kShelfAutoHideBehaviorAlways[] = "Always";
 const char kShelfAutoHideBehaviorNever[] = "Never";
 
+// If any of the following ShelfAlignment values changed, the ShelfAlignment
+// policy should be updated.
 const char kShelfAlignmentBottom[] = "Bottom";
 const char kShelfAlignmentLeft[] = "Left";
 const char kShelfAlignmentRight[] = "Right";
@@ -50,7 +52,7 @@ std::string GetPerDisplayPref(PrefService* prefs,
   if (local_pref->IsManaged())
     return value;
 
-  std::string pref_key = base::Int64ToString(display_id);
+  std::string pref_key = base::NumberToString(display_id);
   bool has_per_display_prefs = false;
   if (!pref_key.empty()) {
     const base::DictionaryValue* shelf_prefs =
@@ -95,7 +97,7 @@ void SetPerDisplayPref(PrefService* prefs,
   const base::DictionaryValue* current_shelf_prefs =
       prefs->GetDictionary(prefs::kShelfPreferences);
   DCHECK(current_shelf_prefs);
-  std::string display_key = base::Int64ToString(display_id);
+  std::string display_key = base::NumberToString(display_id);
   const base::DictionaryValue* current_display_prefs = nullptr;
   std::string current_value;
   if (current_shelf_prefs->GetDictionary(display_key, &current_display_prefs) &&

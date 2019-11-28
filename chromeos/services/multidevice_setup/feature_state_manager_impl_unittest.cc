@@ -31,13 +31,15 @@ multidevice::RemoteDeviceRef CreateTestHostDevice() {
   multidevice::RemoteDevice* raw_device =
       multidevice::GetMutableRemoteDevice(host_device);
   raw_device
-      ->software_features[cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST] =
+      ->software_features[multidevice::SoftwareFeature::kBetterTogetherHost] =
       multidevice::SoftwareFeatureState::kSupported;
-  raw_device->software_features[cryptauth::SoftwareFeature::EASY_UNLOCK_HOST] =
+  raw_device->software_features[multidevice::SoftwareFeature::kSmartLockHost] =
       multidevice::SoftwareFeatureState::kSupported;
-  raw_device->software_features[cryptauth::SoftwareFeature::MAGIC_TETHER_HOST] =
+  raw_device
+      ->software_features[multidevice::SoftwareFeature::kInstantTetheringHost] =
       multidevice::SoftwareFeatureState::kSupported;
-  raw_device->software_features[cryptauth::SoftwareFeature::SMS_CONNECT_HOST] =
+  raw_device
+      ->software_features[multidevice::SoftwareFeature::kMessagesForWebHost] =
       multidevice::SoftwareFeatureState::kSupported;
 
   return host_device;
@@ -68,16 +70,14 @@ class MultiDeviceSetupFeatureStateManagerImplTest : public testing::Test {
                                          test_host_device_});
     fake_device_sync_client_->set_local_device_metadata(test_local_device_);
 
-    auto fake_android_sms_pairing_state_tracker =
-        std::make_unique<FakeAndroidSmsPairingStateTracker>();
-    fake_android_sms_pairing_state_tracker->SetPairingComplete(true);
     fake_android_sms_pairing_state_tracker_ =
-        fake_android_sms_pairing_state_tracker.get();
+        std::make_unique<FakeAndroidSmsPairingStateTracker>();
+    fake_android_sms_pairing_state_tracker_->SetPairingComplete(true);
 
     manager_ = FeatureStateManagerImpl::Factory::Get()->BuildInstance(
         test_pref_service_.get(), fake_host_status_provider_.get(),
         fake_device_sync_client_.get(),
-        std::move(fake_android_sms_pairing_state_tracker));
+        fake_android_sms_pairing_state_tracker_.get());
 
     fake_observer_ = std::make_unique<FakeFeatureStateManagerObserver>();
     manager_->AddObserver(fake_observer_.get());
@@ -136,7 +136,7 @@ class MultiDeviceSetupFeatureStateManagerImplTest : public testing::Test {
         fake_observer_->feature_state_updates().size();
 
     SetSoftwareFeatureState(false /* use_local_device */,
-                            cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST,
+                            multidevice::SoftwareFeature::kBetterTogetherHost,
                             multidevice::SoftwareFeatureState::kEnabled);
     fake_host_status_provider_->SetHostWithStatus(
         mojom::HostStatus::kHostVerified, test_host_device_);
@@ -149,7 +149,7 @@ class MultiDeviceSetupFeatureStateManagerImplTest : public testing::Test {
 
   void MakeBetterTogetherSuiteDisabledByUser() {
     SetSoftwareFeatureState(true /* use_local_device */,
-                            cryptauth::SoftwareFeature::BETTER_TOGETHER_CLIENT,
+                            multidevice::SoftwareFeature::kBetterTogetherClient,
                             multidevice::SoftwareFeatureState::kSupported);
     test_pref_service_->SetBoolean(kBetterTogetherSuiteEnabledPrefName, false);
     EXPECT_EQ(
@@ -169,7 +169,7 @@ class MultiDeviceSetupFeatureStateManagerImplTest : public testing::Test {
 
   void SetSoftwareFeatureState(
       bool use_local_device,
-      cryptauth::SoftwareFeature software_feature,
+      multidevice::SoftwareFeature software_feature,
       multidevice::SoftwareFeatureState software_feature_state) {
     multidevice::RemoteDeviceRef& device =
         use_local_device ? test_local_device_ : test_host_device_;
@@ -196,7 +196,8 @@ class MultiDeviceSetupFeatureStateManagerImplTest : public testing::Test {
       test_pref_service_;
   std::unique_ptr<FakeHostStatusProvider> fake_host_status_provider_;
   std::unique_ptr<device_sync::FakeDeviceSyncClient> fake_device_sync_client_;
-  FakeAndroidSmsPairingStateTracker* fake_android_sms_pairing_state_tracker_;
+  std::unique_ptr<FakeAndroidSmsPairingStateTracker>
+      fake_android_sms_pairing_state_tracker_;
 
   std::unique_ptr<FakeFeatureStateManagerObserver> fake_observer_;
 
@@ -215,7 +216,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, BetterTogetherSuite) {
       manager()->GetFeatureStates()[mojom::Feature::kBetterTogetherSuite]);
 
   SetSoftwareFeatureState(true /* use_local_device */,
-                          cryptauth::SoftwareFeature::BETTER_TOGETHER_CLIENT,
+                          multidevice::SoftwareFeature::kBetterTogetherClient,
                           multidevice::SoftwareFeatureState::kSupported);
   EXPECT_EQ(
       mojom::FeatureState::kEnabledByUser,
@@ -254,7 +255,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, InstantTethering) {
             manager()->GetFeatureStates()[mojom::Feature::kInstantTethering]);
 
   SetSoftwareFeatureState(true /* use_local_device */,
-                          cryptauth::SoftwareFeature::MAGIC_TETHER_CLIENT,
+                          multidevice::SoftwareFeature::kInstantTetheringClient,
                           multidevice::SoftwareFeatureState::kSupported);
   EXPECT_EQ(mojom::FeatureState::kNotSupportedByPhone,
             manager()->GetFeatureStates()[mojom::Feature::kInstantTethering]);
@@ -263,7 +264,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, InstantTethering) {
                            mojom::FeatureState::kNotSupportedByPhone);
 
   SetSoftwareFeatureState(false /* use_local_device */,
-                          cryptauth::SoftwareFeature::MAGIC_TETHER_HOST,
+                          multidevice::SoftwareFeature::kInstantTetheringHost,
                           multidevice::SoftwareFeatureState::kEnabled);
   EXPECT_EQ(mojom::FeatureState::kEnabledByUser,
             manager()->GetFeatureStates()[mojom::Feature::kInstantTethering]);
@@ -301,7 +302,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, Messages) {
             manager()->GetFeatureStates()[mojom::Feature::kMessages]);
 
   SetSoftwareFeatureState(true /* use_local_device */,
-                          cryptauth::SoftwareFeature::SMS_CONNECT_CLIENT,
+                          multidevice::SoftwareFeature::kMessagesForWebClient,
                           multidevice::SoftwareFeatureState::kSupported);
   EXPECT_EQ(mojom::FeatureState::kNotSupportedByPhone,
             manager()->GetFeatureStates()[mojom::Feature::kMessages]);
@@ -309,7 +310,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, Messages) {
                            mojom::FeatureState::kNotSupportedByPhone);
 
   SetSoftwareFeatureState(false /* use_local_device */,
-                          cryptauth::SoftwareFeature::SMS_CONNECT_HOST,
+                          multidevice::SoftwareFeature::kMessagesForWebHost,
                           multidevice::SoftwareFeatureState::kEnabled);
   EXPECT_EQ(mojom::FeatureState::kEnabledByUser,
             manager()->GetFeatureStates()[mojom::Feature::kMessages]);
@@ -360,7 +361,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, SmartLock) {
             manager()->GetFeatureStates()[mojom::Feature::kSmartLock]);
 
   SetSoftwareFeatureState(true /* use_local_device */,
-                          cryptauth::SoftwareFeature::EASY_UNLOCK_CLIENT,
+                          multidevice::SoftwareFeature::kSmartLockClient,
                           multidevice::SoftwareFeatureState::kSupported);
   EXPECT_EQ(mojom::FeatureState::kUnavailableInsufficientSecurity,
             manager()->GetFeatureStates()[mojom::Feature::kSmartLock]);
@@ -369,7 +370,7 @@ TEST_F(MultiDeviceSetupFeatureStateManagerImplTest, SmartLock) {
       mojom::FeatureState::kUnavailableInsufficientSecurity);
 
   SetSoftwareFeatureState(false /* use_local_device */,
-                          cryptauth::SoftwareFeature::EASY_UNLOCK_HOST,
+                          multidevice::SoftwareFeature::kSmartLockHost,
                           multidevice::SoftwareFeatureState::kEnabled);
   EXPECT_EQ(mojom::FeatureState::kEnabledByUser,
             manager()->GetFeatureStates()[mojom::Feature::kSmartLock]);

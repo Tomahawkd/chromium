@@ -15,6 +15,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/views_content_client/views_content_browser_client.h"
+#include "ui/views_content_client/views_content_client_main_parts.h"
 
 #if defined(OS_WIN)
 #include "base/logging_win.h"
@@ -49,7 +50,8 @@ bool ViewsContentMainDelegate::BasicStartupComplete(int* exit_code) {
   content::SetContentClient(&content_client_);
 
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   bool success = logging::InitLogging(settings);
   CHECK(success);
 #if defined(OS_WIN)
@@ -79,9 +81,15 @@ void ViewsContentMainDelegate::PreSandboxStartup() {
   }
 }
 
+void ViewsContentMainDelegate::PreCreateMainMessageLoop() {
+  content::ContentMainDelegate::PreCreateMainMessageLoop();
+  ViewsContentClientMainParts::PreCreateMainMessageLoop();
+}
+
 content::ContentBrowserClient*
     ViewsContentMainDelegate::CreateContentBrowserClient() {
-  browser_client_.reset(new ViewsContentBrowserClient(views_content_client_));
+  browser_client_ =
+      std::make_unique<ViewsContentBrowserClient>(views_content_client_);
   return browser_client_.get();
 }
 

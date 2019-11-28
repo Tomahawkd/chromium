@@ -5,9 +5,10 @@
 """Handling of the <include> element.
 """
 
+from __future__ import print_function
+
 import os
 
-from grit import exception
 from grit import util
 import grit.format.html_inline
 import grit.format.rc
@@ -30,22 +31,35 @@ class IncludeNode(base.Node):
   def _IsValidChild(self, child):
     return False
 
-  def _GetFlattenedData(self, allow_external_script=False):
+  def _GetFlattenedData(
+      self, allow_external_script=False, preprocess_only=False):
     if not self._flattened_data:
       filename = self.ToRealPath(self.GetInputPath())
       self._flattened_data = (
           grit.format.html_inline.InlineToString(filename, self,
-              preprocess_only=False,
+              preprocess_only=preprocess_only,
               allow_external_script=allow_external_script))
     return self._flattened_data
   def MandatoryAttributes(self):
     return ['name', 'type', 'file']
 
   def DefaultAttributes(self):
+    """Attributes:
+       translateable:         False if the node has contents that should not be
+                              translated.
+       preprocess:            Takes the same code path as flattenhtml, but it
+                              disables any  processing/inlining outside of <if>
+                              and <include>.
+       compress:              The format to compress the data with, e.g. 'gzip'
+                              or 'false' if data should not be compressed.
+       skip_minify:           If true, skips minifying the node's contents.
+       skip_in_resource_map:  If true, do not add to the resource map.
+    """
     return {'translateable' : 'true',
             'generateid': 'true',
             'filenameonly': 'false',
             'mkoutput': 'false',
+            'preprocess': 'false',
             'flattenhtml': 'false',
             'compress': 'false',
             'allowexternalscript': 'false',
@@ -60,10 +74,14 @@ class IncludeNode(base.Node):
     if os.path.isabs(os.path.expandvars(self.attrs['file'])):
       return self.attrs['file']
 
-    # We have no control over code that calles ToRealPath later, so convert
+    # We have no control over code that calls ToRealPath later, so convert
     # the path to be relative against our basedir.
     if self.attrs.get('use_base_dir', 'true') != 'true':
-      return os.path.relpath(self.attrs['file'], self.GetRoot().GetBaseDir())
+      # Normalize the directory path to use the appropriate OS separator.
+      # GetBaseDir() may return paths\like\this or paths/like/this, since it is
+      # read from the base_dir attribute in the grd file.
+      norm_base_dir = util.normpath(self.GetRoot().GetBaseDir())
+      return os.path.relpath(self.attrs['file'], norm_base_dir)
 
     return self.attrs['file']
 
@@ -83,6 +101,8 @@ class IncludeNode(base.Node):
     if self.attrs['flattenhtml'] == 'true':
       allow_external_script = self.attrs['allowexternalscript'] == 'true'
       data = self._GetFlattenedData(allow_external_script=allow_external_script)
+    elif self.attrs['preprocess'] == 'true':
+      data = self._GetFlattenedData(preprocess_only=True)
     else:
       data = util.ReadFile(filename, util.BINARY)
 

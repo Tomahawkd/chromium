@@ -5,6 +5,7 @@
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
 
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -18,12 +19,18 @@
 #include "chrome/test/base/test_browser_window.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/test/browser_side_navigation_test_utils.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_builder.h"
 #include "ui/display/test/scoped_screen_override.h"
 #include "ui/display/test/test_screen.h"
+
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/window_pin_type.h"
+#include "ash/public/cpp/window_properties.h"
+#endif
 
 namespace extensions {
 
@@ -58,12 +65,8 @@ std::unique_ptr<content::WebContents> CreateWebContentsWithHistory(
       content::WebContentsTester::CreateTestWebContents(profile, nullptr);
 
   for (const auto& url : urls) {
-    web_contents->GetController().LoadURL(
-        url, content::Referrer(),
-        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK), std::string());
-
-    content::RenderFrameHostTester::CommitPendingLoad(
-        &web_contents->GetController());
+    content::NavigationSimulator::NavigateAndCommitFromBrowser(
+        web_contents.get(), url);
     EXPECT_EQ(url, web_contents->GetLastCommittedURL());
     EXPECT_EQ(url, web_contents->GetVisibleURL());
   }
@@ -79,6 +82,7 @@ class TabsApiUnitTest : public ExtensionServiceTestBase {
   ~TabsApiUnitTest() override {}
 
   Browser* browser() { return browser_.get(); }
+  TestBrowserWindow* browser_window() { return browser_window_.get(); }
 
   TabStripModel* GetTabStripModel() { return browser_->tab_strip_model(); }
 
@@ -108,7 +112,7 @@ void TabsApiUnitTest::SetUp() {
 
   browser_window_.reset(new TestBrowserWindow());
   Browser::CreateParams params(profile(), true);
-  params.type = Browser::TYPE_TABBED;
+  params.type = Browser::TYPE_NORMAL;
   params.window = browser_window_.get();
   browser_.reset(new Browser(params));
   scoped_screen_override_ =
@@ -129,8 +133,8 @@ TEST_F(TabsApiUnitTest, QueryWithoutTabsPermission) {
   std::string tab_titles[] = {"", "Sample title", "Sample title"};
 
   // Add 3 web contentses to the browser.
-  content::WebContents* web_contentses[arraysize(tab_urls)];
-  for (size_t i = 0; i < arraysize(tab_urls); ++i) {
+  content::WebContents* web_contentses[base::size(tab_urls)];
+  for (size_t i = 0; i < base::size(tab_urls); ++i) {
     std::unique_ptr<content::WebContents> web_contents =
         content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
     content::WebContents* raw_web_contents = web_contents.get();
@@ -190,8 +194,8 @@ TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
   std::string tab_titles[] = {"", "Sample title", "Sample title"};
 
   // Add 3 web contentses to the browser.
-  content::WebContents* web_contentses[arraysize(tab_urls)];
-  for (size_t i = 0; i < arraysize(tab_urls); ++i) {
+  content::WebContents* web_contentses[base::size(tab_urls)];
+  for (size_t i = 0; i < base::size(tab_urls); ++i) {
     std::unique_ptr<content::WebContents> web_contents =
         content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
     content::WebContents* raw_web_contents = web_contents.get();
@@ -257,11 +261,11 @@ TEST_F(TabsApiUnitTest, QueryWithHostPermission) {
 
     int first_tab_id = -1;
     ASSERT_TRUE(first_tab_info->GetInteger("id", &first_tab_id));
-    EXPECT_TRUE(base::ContainsValue(expected_tabs_ids, first_tab_id));
+    EXPECT_TRUE(base::Contains(expected_tabs_ids, first_tab_id));
 
     int third_tab_id = -1;
     ASSERT_TRUE(third_tab_info->GetInteger("id", &third_tab_id));
-    EXPECT_TRUE(base::ContainsValue(expected_tabs_ids, third_tab_id));
+    EXPECT_TRUE(base::Contains(expected_tabs_ids, third_tab_id));
   }
   while (!browser()->tab_strip_model()->empty())
     browser()->tab_strip_model()->DetachWebContentsAt(0);
@@ -303,9 +307,9 @@ TEST_F(TabsApiUnitTest, PDFExtensionNavigation) {
   function->set_extension(extension.get());
   function->set_browser_context(profile());
   std::unique_ptr<base::ListValue> args(
-      extension_function_test_utils::ParseList(base::StringPrintf(
-          "[%d, {\"url\":\"http://example.com\"}]", tab_id)));
-  function->SetArgs(args.get());
+      extension_function_test_utils::ParseList(
+          base::StringPrintf(R"([%d, {"url":"http://example.com"}])", tab_id)));
+  function->SetArgs(base::Value::FromUniquePtrValue(std::move(args)));
   api_test_utils::SendResponseHelper response_helper(function.get());
   function->RunWithValidation()->Execute();
 
@@ -484,7 +488,8 @@ TEST_F(TabsApiUnitTest, TabsGoForwardAndBackWithoutTabId) {
   ASSERT_EQ(2, tab_strip_model->count());
 
   // Activate first tab.
-  tab_strip_model->ActivateTabAt(tab1_index, true);
+  tab_strip_model->ActivateTabAt(tab1_index,
+                                 {TabStripModel::GestureType::kOther});
 
   // Go back without tab_id. But first tab should be navigated since it's
   // activated.
@@ -516,7 +521,8 @@ TEST_F(TabsApiUnitTest, TabsGoForwardAndBackWithoutTabId) {
               controller.GetLastCommittedEntry()->GetTransitionType());
 
   // Activate second tab.
-  tab_strip_model->ActivateTabAt(tab2_index, true);
+  tab_strip_model->ActivateTabAt(tab2_index,
+                                 {TabStripModel::GestureType::kOther});
 
   auto goback_function2 = base::MakeRefCounted<TabsGoBackFunction>();
   goback_function2->set_extension(extension_with_tabs_permission.get());
@@ -537,5 +543,26 @@ TEST_F(TabsApiUnitTest, TabsGoForwardAndBackWithoutTabId) {
     browser()->tab_strip_model()->CloseWebContentsAt(0, 0);
   base::RunLoop().RunUntilIdle();
 }
+
+#if defined(OS_CHROMEOS)
+TEST_F(TabsApiUnitTest, DontCreateTabsInLockedFullscreenMode) {
+  scoped_refptr<const Extension> extension_with_tabs_permission =
+      CreateTabsExtension();
+
+  browser_window()->SetNativeWindow(new aura::Window(nullptr));
+
+  auto function = base::MakeRefCounted<TabsCreateFunction>();
+
+  function->set_extension(extension_with_tabs_permission.get());
+
+  // In locked fullscreen mode we should not be able to create any tabs.
+  browser_window()->GetNativeWindow()->SetProperty(
+      ash::kWindowPinTypeKey, ash::WindowPinType::kTrustedPinned);
+
+  EXPECT_EQ(tabs_constants::kLockedFullscreenModeNewTabError,
+            extension_function_test_utils::RunFunctionAndReturnError(
+                function.get(), "[{}]", browser(), api_test_utils::NONE));
+}
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace extensions

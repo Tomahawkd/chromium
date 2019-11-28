@@ -4,13 +4,13 @@
 
 #include "content/browser/background_fetch/storage/start_next_pending_request_task.h"
 
+#include "base/bind.h"
 #include "base/guid.h"
 #include "content/browser/background_fetch/storage/database_helpers.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
-#include "content/common/service_worker/service_worker_utils.h"
+#include "content/common/fetch/fetch_api_request_proto.h"
 
 namespace content {
-
 namespace background_fetch {
 
 StartNextPendingRequestTask::StartNextPendingRequestTask(
@@ -19,8 +19,7 @@ StartNextPendingRequestTask::StartNextPendingRequestTask(
     NextRequestCallback callback)
     : DatabaseTask(host),
       registration_id_(registration_id),
-      callback_(std::move(callback)),
-      weak_factory_(this) {
+      callback_(std::move(callback)) {
   DCHECK(!registration_id_.is_null());
 }
 
@@ -72,6 +71,7 @@ void StartNextPendingRequestTask::DidGetPendingRequests(
   // Transfer ownership of the request to avoid a potentially expensive copy.
   active_request_.set_allocated_serialized_request(
       pending_request_.release_serialized_request());
+  active_request_.set_request_body_size(pending_request_.request_body_size());
 
   service_worker_context()->StoreRegistrationUserData(
       registration_id_.service_worker_registration_id(),
@@ -97,8 +97,8 @@ void StartNextPendingRequestTask::DidStoreActiveRequest(
 
   next_request_ = base::MakeRefCounted<BackgroundFetchRequestInfo>(
       active_request_.request_index(),
-      ServiceWorkerUtils::DeserializeFetchRequestFromString(
-          active_request_.serialized_request()));
+      DeserializeFetchRequestFromString(active_request_.serialized_request()),
+      active_request_.request_body_size());
   next_request_->SetDownloadGuid(active_request_.download_guid());
 
   // Delete the pending request.
@@ -134,5 +134,4 @@ std::string StartNextPendingRequestTask::HistogramName() const {
 }
 
 }  // namespace background_fetch
-
 }  // namespace content

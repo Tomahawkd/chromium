@@ -15,7 +15,7 @@
 #include "content/common/widget_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/use_zoom_for_dsf_policy.h"
-#include "content/renderer/gpu/layer_tree_view.h"
+#include "content/renderer/compositor/layer_tree_view.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
@@ -57,7 +57,8 @@ class FullscreenMouseLockDispatcher : public MouseLockDispatcher {
 
  private:
   // MouseLockDispatcher implementation.
-  void SendLockMouseRequest() override;
+  void SendLockMouseRequest(blink::WebLocalFrame* requester_frame,
+                            bool request_unadjusted_movement) override;
   void SendUnlockMouseRequest() override;
 
   RenderWidgetFullscreenPepper* widget_;
@@ -69,7 +70,7 @@ WebMouseEvent WebMouseEventFromGestureEvent(const WebGestureEvent& gesture) {
 
   // Only convert touch screen gesture events, do not convert
   // touchpad/mouse wheel gesture events. (crbug.com/620974)
-  if (gesture.SourceDevice() != blink::kWebGestureDeviceTouchscreen)
+  if (gesture.SourceDevice() != blink::WebGestureDevice::kTouchscreen)
     return WebMouseEvent();
 
   WebInputEvent::Type type = WebInputEvent::kUndefined;
@@ -116,9 +117,14 @@ FullscreenMouseLockDispatcher::FullscreenMouseLockDispatcher(
 FullscreenMouseLockDispatcher::~FullscreenMouseLockDispatcher() {
 }
 
-void FullscreenMouseLockDispatcher::SendLockMouseRequest() {
-  widget_->Send(
-      new WidgetHostMsg_LockMouse(widget_->routing_id(), false, true));
+void FullscreenMouseLockDispatcher::SendLockMouseRequest(
+    blink::WebLocalFrame* requester_frame,
+    bool request_unadjusted_movement) {
+  // TODO(mustaq): Why is it not checking user activation state at all?  In
+  // particular, the last Boolean param ("privileged") in the IPC below looks
+  // scary without this check.
+  widget_->Send(new WidgetHostMsg_LockMouse(widget_->routing_id(), false, true,
+                                            request_unadjusted_movement));
 }
 
 void FullscreenMouseLockDispatcher::SendUnlockMouseRequest() {
@@ -137,7 +143,7 @@ class PepperWidget : public WebWidget {
   virtual ~PepperWidget() {}
 
   // WebWidget API
-  void SetLayerTreeView(blink::WebLayerTreeView*) override {
+  void SetAnimationHost(cc::AnimationHost*) override {
     // Does nothing, as the LayerTreeView can be accessed from the RenderWidget
     // directly.
   }
@@ -155,7 +161,6 @@ class PepperWidget : public WebWidget {
     size_ = size;
     WebRect plugin_rect(0, 0, size_.width, size_.height);
     widget_->plugin()->ViewChanged(plugin_rect, plugin_rect, plugin_rect);
-    widget_->Invalidate();
   }
 
   void ThemeChanged() override { NOTIMPLEMENTED(); }
@@ -270,49 +275,37 @@ RenderWidgetFullscreenPepper* RenderWidgetFullscreenPepper::Create(
     int32_t routing_id,
     RenderWidget::ShowCallback show_callback,
     CompositorDependencies* compositor_deps,
+    const ScreenInfo& screen_info,
     PepperPluginInstanceImpl* plugin,
     const blink::WebURL& local_main_frame_url,
-    const ScreenInfo& screen_info,
-    mojom::WidgetRequest widget_request) {
+    mojo::PendingReceiver<mojom::Widget> widget_receiver) {
   DCHECK_NE(MSG_ROUTING_NONE, routing_id);
   DCHECK(show_callback);
-  scoped_refptr<RenderWidgetFullscreenPepper> widget(
-      new RenderWidgetFullscreenPepper(routing_id, compositor_deps, plugin,
-                                       screen_info, std::move(widget_request)));
-  widget->Init(std::move(show_callback),
-               new PepperWidget(widget.get(), local_main_frame_url));
-  widget->AddRef();
-  return widget.get();
+  RenderWidgetFullscreenPepper* widget = new RenderWidgetFullscreenPepper(
+      routing_id, compositor_deps, plugin, std::move(widget_receiver));
+  widget->InitForPepperFullscreen(
+      std::move(show_callback), new PepperWidget(widget, local_main_frame_url),
+      screen_info);
+  return widget;
 }
 
 RenderWidgetFullscreenPepper::RenderWidgetFullscreenPepper(
     int32_t routing_id,
     CompositorDependencies* compositor_deps,
     PepperPluginInstanceImpl* plugin,
-    const ScreenInfo& screen_info,
-    mojom::WidgetRequest widget_request)
+    mojo::PendingReceiver<mojom::Widget> widget_receiver)
     : RenderWidget(routing_id,
                    compositor_deps,
-                   WidgetType::kFrame,
-                   screen_info,
-                   blink::kWebDisplayModeUndefined,
-                   false,
-                   false,
-                   false,
-                   std::move(widget_request)),
+                   /*display_mode=*/blink::mojom::DisplayMode::kUndefined,
+                   /*is_undead=*/false,
+                   /*hidden=*/false,
+                   /*never_visible=*/false,
+                   std::move(widget_receiver)),
       plugin_(plugin),
-      layer_(nullptr),
-      mouse_lock_dispatcher_(new FullscreenMouseLockDispatcher(this)) {}
+      mouse_lock_dispatcher_(
+          std::make_unique<FullscreenMouseLockDispatcher>(this)) {}
 
 RenderWidgetFullscreenPepper::~RenderWidgetFullscreenPepper() {
-}
-
-void RenderWidgetFullscreenPepper::Invalidate() {
-  InvalidateRect(gfx::Rect(size()));
-}
-
-void RenderWidgetFullscreenPepper::InvalidateRect(const blink::WebRect& rect) {
-  DidInvalidateRect(rect);
 }
 
 void RenderWidgetFullscreenPepper::ScrollRect(
@@ -334,8 +327,9 @@ void RenderWidgetFullscreenPepper::Destroy() {
   // away.
   SetLayer(nullptr);
 
+  // This instructs the browser process, which owns this object, to send back a
+  // WidgetMsg_Close to destroy this object.
   Send(new WidgetHostMsg_Close(routing_id()));
-  Release();
 }
 
 void RenderWidgetFullscreenPepper::PepperDidChangeCursor(
@@ -347,13 +341,13 @@ void RenderWidgetFullscreenPepper::PepperDidChangeCursor(
 void RenderWidgetFullscreenPepper::SetLayer(cc::Layer* layer) {
   layer_ = layer;
   if (!layer_) {
-    if (layer_tree_view())
-      layer_tree_view()->ClearRootLayer();
+    RenderWidget::SetRootLayer(nullptr);
     return;
   }
   UpdateLayerBounds();
   layer_->SetIsDrawable(true);
-  layer_tree_view()->SetRootLayer(layer_);
+  layer_->SetHitTestable(true);
+  layer_tree_host()->SetNonBlinkManagedRootLayer(layer_);
 }
 
 bool RenderWidgetFullscreenPepper::OnMessageReceived(const IPC::Message& msg) {
@@ -376,19 +370,17 @@ void RenderWidgetFullscreenPepper::DidInitiatePaint() {
     plugin_->ViewInitiatedPaint();
 }
 
-void RenderWidgetFullscreenPepper::Close() {
+void RenderWidgetFullscreenPepper::Close(std::unique_ptr<RenderWidget> widget) {
   // If the fullscreen window is closed (e.g. user pressed escape), reset to
   // normal mode.
   if (plugin_)
     plugin_->FlashSetFullscreen(false, false);
 
   // Call Close on the base class to destroy the WebWidget instance.
-  RenderWidget::Close();
+  RenderWidget::Close(std::move(widget));
 }
 
-void RenderWidgetFullscreenPepper::OnSynchronizeVisualProperties(
-    const VisualProperties& visual_properties) {
-  RenderWidget::OnSynchronizeVisualProperties(visual_properties);
+void RenderWidgetFullscreenPepper::AfterUpdateVisualProperties() {
   UpdateLayerBounds();
 }
 
@@ -396,19 +388,18 @@ void RenderWidgetFullscreenPepper::UpdateLayerBounds() {
   if (!layer_)
     return;
 
+  // The |layer_| is sized here to cover the entire renderer's compositor
+  // viewport.
+  gfx::Size layer_size = gfx::Rect(ViewRect()).size();
+  // When IsUseZoomForDSFEnabled() is true, layout and compositor layer sizes
+  // given by blink are all in physical pixels, and the compositor does not do
+  // any scaling. But the ViewRect() is always in DIP so we must scale the layer
+  // here as the compositor won't.
   if (compositor_deps()->IsUseZoomForDSFEnabled()) {
-    // Note that root cc::Layers' bounds are specified in pixels (in contrast
-    // with non-root cc::Layers' bounds, which are specified in DIPs).
-    layer_->SetBounds(blink::WebSize(compositor_viewport_pixel_size()));
-  } else {
-    // For reasons that are unclear, the above comment doesn't appear to apply
-    // when zoom for DSF is not enabled.
-    // https://crbug.com/822252
-    gfx::Size dip_size =
-        gfx::ConvertSizeToDIP(GetOriginalScreenInfo().device_scale_factor,
-                              compositor_viewport_pixel_size());
-    layer_->SetBounds(blink::WebSize(dip_size));
+    layer_size = gfx::ScaleToCeiledSize(
+        layer_size, GetOriginalScreenInfo().device_scale_factor);
   }
+  layer_->SetBounds(layer_size);
 }
 
 }  // namespace content

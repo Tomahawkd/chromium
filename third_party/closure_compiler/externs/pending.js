@@ -9,53 +9,44 @@
  */
 
 /**
- * @see https://drafts.fxtf.org/geometry-1/#domrectreadonly
- * TODO(scottchen): Remove this once it is added to Closure Compiler itself.
+ * TODO(dstockwell): Remove this once it is added to Closure Compiler itself.
+ * @see https://drafts.fxtf.org/geometry/#DOMMatrix
  */
-class DOMRectReadOnly {
+class DOMMatrix {
   /**
    * @param {number} x
    * @param {number} y
-   * @param {number} width
-   * @param {number} height
    */
-  constructor(x, y, width, height) {
-    /** @type {number} */
-    this.x;
-    /** @type {number} */
-    this.y;
-    /** @type {number} */
-    this.width;
-    /** @type {number} */
-    this.height;
-    /** @type {number} */
-    this.top;
-    /** @type {number} */
-    this.right;
-    /** @type {number} */
-    this.bottom;
-    /** @type {number} */
-    this.left;
-  }
-
+  translateSelf(x, y) {}
   /**
-   * @param {{x: number, y: number, width: number, height: number}=} rectangle
-   * @return {DOMRectReadOnly}
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
    */
-  fromRect(rectangle) {}
+  rotateSelf(x, y, z) {}
+  /**
+   * @param {number} x
+   * @param {number} y
+   */
+  scaleSelf(x, y) {}
+  /**
+   * @param {{x: number, y: number}} point
+   * @return {{x: number, y: number}}
+   */
+  transformPoint(point) {}
 }
 
 /**
  * @see https://wicg.github.io/ResizeObserver/#resizeobserverentry
  * @typedef {{contentRect: DOMRectReadOnly,
  *            target: Element}}
- * TODO(scottchen): Remove this once it is added to Closure Compiler itself.
+ * TODO(dpapad): Remove this once it is added to Closure Compiler itself.
  */
 let ResizeObserverEntry;
 
 /**
  * @see https://wicg.github.io/ResizeObserver/#api
- * TODO(scottchen): Remove this once it is added to Closure Compiler itself.
+ * TODO(dpapad): Remove this once it is added to Closure Compiler itself.
  */
 class ResizeObserver {
   /**
@@ -74,17 +65,6 @@ class ResizeObserver {
 
 /**
  * @see
- * https://www.polymer-project.org/2.0/docs/api/namespaces/Polymer.RenderStatus
- * Queue a function call to be run before the next render.
- * @param {!Element} element The element on which the function call is made.
- * @param {!function()} fn The function called on next render.
- * @param {...*} args The function arguments.
- * TODO(rbpotter): Remove this once it is added to Closure Compiler itself.
- */
-Polymer.RenderStatus.beforeNextRender = function(element, fn, args) {};
-
-/**
- * @see
  * https://github.com/tc39/proposal-bigint
  * This supports wrapping and operating on arbitrarily large integers.
  *
@@ -92,35 +72,83 @@ Polymer.RenderStatus.beforeNextRender = function(element, fn, args) {};
  */
 let BigInt = function(value) {};
 
-/**
- * TODO(manukh): Remove this once it is added to Closure Compiler itself.
- * @see https://w3c.github.io/clipboard-apis/#async-clipboard-api
- * @interface
- */
-function Clipboard() {}
-
-/**
- * @return {!Promise<string>}
- */
-Clipboard.prototype.readText = function() {};
-
-/**
- * @param {string} text
- * @return {!Promise<void>}
- */
-Clipboard.prototype.writeText = function(text) {};
-
 /** @const {!Clipboard} */
 Navigator.prototype.clipboard;
 
 /**
- * TODO(manukh): remove this once it is added to Closure Compiler itself.
- * @see https://tc39.github.io/proposal-flatMap/#sec-Array.prototype.flatMap
- * @param {?function(this:S, T, number, !Array<T>): R} callback
- * @param {S=} opt_this
- * @return {!Array<R>}
- * @this {IArrayLike<T>|string}
- * @template T,S,R
- * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/flatMap
+ * TODO(katie): Remove this once length is added to the Closure
+ * chrome_extensions.js.
+ * An event from the TTS engine to communicate the status of an utterance.
+ * @constructor
  */
-Array.prototype.flatMap = function(callback, opt_this) {};
+function TtsEvent() {}
+
+/** @type {number} */
+TtsEvent.prototype.length;
+
+
+
+/**
+ * @param {number|ArrayBufferView|Array.<number>|ArrayBuffer} length or array
+ *     or buffer
+ * @param {number=} opt_byteOffset
+ * @param {number=} opt_length
+ * @extends {ArrayBufferView}
+ * @constructor
+ * @throws {Error}
+ * @modifies {arguments}
+ */
+function BigInt64Array(length, opt_byteOffset, opt_length) {}
+
+/** @type {number} */
+BigInt64Array.BYTES_PER_ELEMENT;
+
+/** @type {number} */
+BigInt64Array.prototype.BYTES_PER_ELEMENT;
+
+/** @type {number} */
+BigInt64Array.prototype.length;
+
+/**
+ * @param {ArrayBufferView|Array.<number>} array
+ * @param {number=} opt_offset
+ */
+BigInt64Array.prototype.set = function(array, opt_offset) {};
+
+/**
+ * @param {number} begin
+ * @param {number=} opt_end
+ * @return {!BigInt64Array}
+ * @nosideeffects
+ */
+BigInt64Array.prototype.subarray = function(begin, opt_end) {};
+
+/**
+ * @see https://drafts.css-houdini.org/css-typed-om/#stylepropertymap
+ * @typedef {{set: function(string, *):void,
+ *            append: function(string, *):void,
+ *            delete: function(string):void,
+ *            clear: function():void }}
+ * TODO(rbpotter): Remove this once it is added to Closure Compiler itself.
+ */
+class StylePropertyMap {
+  /**
+   * @param {string} property
+   * @param {*} values
+   */
+  set(property, values) {}
+
+  /**
+   * @param {string} property
+   * @param {*} values
+   */
+  append(property, values) {}
+
+  /** @param {string} property */
+  delete(property) {}
+
+  clear() {}
+}
+
+/** @type {!StylePropertyMap} */
+HTMLElement.prototype.attributeStyleMap;

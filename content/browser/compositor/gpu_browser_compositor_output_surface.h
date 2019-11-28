@@ -10,13 +10,8 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
-#include "gpu/vulkan/buildflags.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/latency/latency_tracker.h"
-
-namespace viz {
-class CompositorOverlayCandidateValidator;
-}
 
 namespace gfx {
 struct PresentationFeedback;
@@ -27,7 +22,7 @@ class CommandBufferProxyImpl;
 struct SwapBuffersCompleteParams;
 }
 
-namespace ws {
+namespace viz {
 class ContextProviderCommandBuffer;
 }
 
@@ -41,10 +36,8 @@ class GpuBrowserCompositorOutputSurface
     : public BrowserCompositorOutputSurface {
  public:
   GpuBrowserCompositorOutputSurface(
-      scoped_refptr<ws::ContextProviderCommandBuffer> context,
-      const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
-          overlay_candidate_validator);
+      scoped_refptr<viz::ContextProviderCommandBuffer> context,
+      gpu::SurfaceHandle surface_handle);
 
   ~GpuBrowserCompositorOutputSurface() override;
 
@@ -72,12 +65,12 @@ class GpuBrowserCompositorOutputSurface
   unsigned GetOverlayTextureId() const override;
   gfx::BufferFormat GetOverlayBufferFormat() const override;
   unsigned UpdateGpuFence() override;
+  void SetDisplayTransformHint(gfx::OverlayTransform transform) override;
+  gfx::OverlayTransform GetDisplayTransform() override;
 
   void SetDrawRectangle(const gfx::Rect& rect) override;
 
-#if BUILDFLAG(ENABLE_VULKAN)
-  gpu::VulkanSurface* GetVulkanSurface() override;
-#endif
+  gpu::SurfaceHandle GetSurfaceHandle() const override;
 
  protected:
   void OnPresentation(const gfx::PresentationFeedback& feedback);
@@ -95,7 +88,10 @@ class GpuBrowserCompositorOutputSurface
   ui::LatencyTracker latency_tracker_;
 
  private:
-  base::WeakPtrFactory<GpuBrowserCompositorOutputSurface> weak_ptr_factory_;
+  const gpu::SurfaceHandle surface_handle_;
+  gfx::OverlayTransform display_transform_ = gfx::OVERLAY_TRANSFORM_NONE;
+  base::WeakPtrFactory<GpuBrowserCompositorOutputSurface> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(GpuBrowserCompositorOutputSurface);
 };

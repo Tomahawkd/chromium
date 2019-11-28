@@ -4,13 +4,11 @@
 
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_animation_controller.h"
 
+#include "base/bind.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_controller.h"
 #include "content/public/browser/web_contents.h"
 
 namespace {
-
-// The duration of the toolbar show/hide animation in ms.
-const NSTimeInterval kToolbarAnimationDuration = 200;
 
 // If the fullscreen toolbar is hidden, it is difficult for the user to see
 // changes in the tabstrip. As a result, if a tab is inserted or the current
@@ -37,7 +35,7 @@ FullscreenToolbarAnimationController::FullscreenToolbarAnimationController(
                      base::Unretained(this))),
       animation_start_value_(0),
       should_hide_toolbar_after_delay_(false) {
-  animation_.SetSlideDuration(kToolbarAnimationDuration);
+  animation_.SetSlideDuration(base::TimeDelta::FromMilliseconds(200));
   animation_.SetTweenType(gfx::Tween::EASE_OUT);
 }
 
@@ -100,11 +98,6 @@ CGFloat FullscreenToolbarAnimationController::GetToolbarFractionFromProgress()
 
 bool FullscreenToolbarAnimationController::IsAnimationRunning() const {
   return animation_.is_animating();
-}
-
-void FullscreenToolbarAnimationController::SetAnimationDuration(
-    CGFloat duration) {
-  animation_.SetSlideDuration(duration);
 }
 
 //////////////////////////////////////////////////////////////////

@@ -11,8 +11,8 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
-buildflag_header("url_features") {
-  header = "url_features.h"
+buildflag_header("buildflags") {
+  header = "buildflags.h"
   flags = [ "USE_PLATFORM_ICU_ALTERNATIVES=$use_platform_icu_alternatives" ]
 }
 
@@ -57,11 +57,6 @@ component("url") {
 
   defines = [ "IS_URL_IMPL" ]
 
-  configs += [
-    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-    "//build/config/compiler:no_size_t_to_int_warning",
-  ]
-
   deps = [
     "//base",
     "//base/third_party/dynamic_annotations",
@@ -78,7 +73,7 @@ component("url") {
     if (is_android) {
       sources += [ "url_idna_icu_alternatives_android.cc" ]
       deps += [
-        ":url_features",
+        ":buildflags",
         ":url_java",
         ":url_jni_headers",
         "//base",
@@ -102,6 +97,19 @@ component("url") {
 }
 
 if (is_android) {
+  static_library("origin_android") {
+    sources = [
+      "android/origin_android.cc",
+    ]
+
+    deps = [
+      ":url",
+      ":url_jni_headers",
+      "//base",
+      "//url/mojom:url_mojom_origin",
+    ]
+  }
+
   android_library("url_java") {
     java_files = [ "android/java/src/org/chromium/url/IDNStringUtil.java" ]
     deps = [
@@ -109,11 +117,19 @@ if (is_android) {
     ]
   }
 
+  android_library("origin_java") {
+    java_files = [ "android/java/src/org/chromium/url/Origin.java" ]
+    deps = [
+      "//base:base_java",
+      "//url/mojom:url_mojom_origin_java",
+    ]
+  }
+
   generate_jni("url_jni_headers") {
     sources = [
       "android/java/src/org/chromium/url/IDNStringUtil.java",
+      "android/java/src/org/chromium/url/Origin.java",
     ]
-    jni_package = "url"
   }
 }
 
@@ -134,6 +150,7 @@ test("url_unittests") {
     ":url",
     "//base",
     "//base/test:test_support",
+    "//testing/gmock",
     "//testing/gtest",
   ]
 
@@ -164,15 +181,26 @@ test("url_unittests") {
     deps += [ "//third_party/icu:icuuc" ]
   }
 
-  # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-  configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
-
   if (!is_ios) {
     deps += [
       "//mojo/core/embedder",
       "//url/mojom:test_url_mojom_gurl",
     ]
   }
+}
+
+test("url_perftests") {
+  sources = [
+    "run_all_perftests.cc",
+    "url_parse_perftest.cc",
+  ]
+
+  deps = [
+    ":url",
+    "//base",
+    "//base/test:test_support",
+    "//testing/gtest",
+  ]
 }
 
 fuzzer_test("gurl_fuzzer") {

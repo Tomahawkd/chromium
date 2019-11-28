@@ -5,6 +5,7 @@
 #ifndef ASH_ASSISTANT_MODEL_ASSISTANT_UI_MODEL_OBSERVER_H_
 #define ASH_ASSISTANT_MODEL_ASSISTANT_UI_MODEL_OBSERVER_H_
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/observer_list_types.h"
 #include "base/optional.h"
@@ -19,10 +20,13 @@ enum class AssistantVisibility;
 
 // A checked observer which receives notification of changes to the Assistant UI
 // model.
-class AssistantUiModelObserver : public base::CheckedObserver {
+class COMPONENT_EXPORT(ASSISTANT_MODEL) AssistantUiModelObserver
+    : public base::CheckedObserver {
  public:
-  // Invoked when the UI mode is changed.
-  virtual void OnUiModeChanged(AssistantUiMode ui_mode) {}
+  // Invoked when the UI mode is changed. If |due_to_interaction| is true, the
+  // UI mode was changed as a result of an Assistant interaction.
+  virtual void OnUiModeChanged(AssistantUiMode ui_mode,
+                               bool due_to_interaction) {}
 
   // Invoked when the UI visibility is changed from |old_visibility| to
   // |new_visibility|. The |source| of the visibility change event is provided

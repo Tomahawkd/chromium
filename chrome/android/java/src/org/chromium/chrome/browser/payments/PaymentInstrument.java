@@ -5,13 +5,19 @@
 package org.chromium.chrome.browser.payments;
 
 import android.graphics.drawable.Drawable;
-import android.support.annotation.Nullable;
 
-import org.chromium.base.ThreadUtils;
+import androidx.annotation.Nullable;
+
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentItem;
+import org.chromium.payments.mojom.PaymentMethodChangeResponse;
 import org.chromium.payments.mojom.PaymentMethodData;
+import org.chromium.payments.mojom.PaymentOptions;
+import org.chromium.payments.mojom.PaymentRequestDetailsUpdate;
+import org.chromium.payments.mojom.PaymentShippingOption;
 
 import java.util.List;
 import java.util.Map;
@@ -21,6 +27,17 @@ import java.util.Set;
  * The base class for a single payment instrument, e.g., a credit card.
  */
 public abstract class PaymentInstrument extends EditableOption {
+    /**
+     * Whether complete and valid autofill data for merchant's request is available, e.g., if
+     * merchant specifies `requestPayerEmail: true`, then this variable is true only if the autofill
+     * data contains a valid email address. May be used in canMakePayment() for some types of
+     * instruments, such as AutofillPaymentInstrument.
+     */
+    protected boolean mHaveRequestedAutofillData;
+
+    /** Whether the instrument should be invoked for a microtransaction. */
+    protected boolean mIsMicrotransaction;
+
     /**
      * The interface for the requester of instrument details.
      */
@@ -34,6 +51,7 @@ public abstract class PaymentInstrument extends EditableOption {
 
         /**
          * Called after retrieving instrument details.
+         * TODO(crbug.com/984694): Remove this stub once the clank side changes are landed.
          *
          * @param methodName         Method name. For example, "visa".
          * @param stringifiedDetails JSON-serialized object. For example, {"card": "123"}.
@@ -41,9 +59,21 @@ public abstract class PaymentInstrument extends EditableOption {
         void onInstrumentDetailsReady(String methodName, String stringifiedDetails);
 
         /**
-         * Called if unable to retrieve instrument details.
+         * Called after retrieving instrument details.
+         *
+         * @param methodName         Method name. For example, "visa".
+         * @param stringifiedDetails JSON-serialized object. For example, {"card": "123"}.
+         * @param payerData          Payer's shipping address and contact information.
          */
-        void onInstrumentDetailsError();
+        void onInstrumentDetailsReady(
+                String methodName, String stringifiedDetails, PayerData payerData);
+
+        /**
+         * Called if unable to retrieve instrument details.
+         * @param errorMessage Developer-facing error message to be used when rejecting the promise
+         *                     returned from PaymentRequest.show().
+         */
+        void onInstrumentDetailsError(String errorMessage);
     }
 
     /** The interface for the requester to abort payment. */
@@ -119,14 +149,50 @@ public abstract class PaymentInstrument extends EditableOption {
      *         supported card types and networks in the data should be verified for 'basic-card'
      *         payment method.
      */
-    public boolean isValidForPaymentMethodData(String method, PaymentMethodData data) {
+    public boolean isValidForPaymentMethodData(String method, @Nullable PaymentMethodData data) {
         return getInstrumentMethodNames().contains(method);
+    }
+
+    /**
+     * @return Whether the instrument can collect and return shipping address.
+     */
+    public boolean handlesShippingAddress() {
+        return false;
+    }
+
+    /**
+     * @return Whether the instrument can collect and return payer's name.
+     */
+    public boolean handlesPayerName() {
+        return false;
+    }
+
+    /**
+     * @return Whether the instrument can collect and return payer's email.
+     */
+    public boolean handlesPayerEmail() {
+        return false;
+    }
+
+    /**
+     * @return Whether the instrument can collect and return payer's phone.
+     */
+    public boolean handlesPayerPhone() {
+        return false;
     }
 
     /** @return The country code (or null if none) associated with this payment instrument. */
     @Nullable
     public String getCountryCode() {
         return null;
+    }
+
+    /**
+     * @param haveRequestedAutofillData Whether complete and valid autofill data for merchant's
+     *                                  request is available.
+     */
+    /* package*/ void setHaveRequestedAutofillData(boolean haveRequestedAutofillData) {
+        mHaveRequestedAutofillData = haveRequestedAutofillData;
     }
 
     /**
@@ -152,6 +218,8 @@ public abstract class PaymentInstrument extends EditableOption {
      *
      * The callback will be invoked with the resulting payment details or error.
      *
+     * TODO(crbug.com/984694): Remove this stub function once the clank side changes are landed.
+     *
      * @param id               The unique identifier of the PaymentRequest.
      * @param merchantName     The name of the merchant.
      * @param origin           The origin of this merchant.
@@ -166,19 +234,89 @@ public abstract class PaymentInstrument extends EditableOption {
      * @param modifiers        The relevant payment details modifiers.
      * @param callback         The object that will receive the instrument details.
      */
-    public abstract void invokePaymentApp(String id, String merchantName, String origin,
-            String iframeOrigin, @Nullable byte[][] certificateChain,
-            Map<String, PaymentMethodData> methodDataMap, PaymentItem total,
-            List<PaymentItem> displayItems, Map<String, PaymentDetailsModifier> modifiers,
-            InstrumentDetailsCallback callback);
+    public void invokePaymentApp(String id, String merchantName, String origin, String iframeOrigin,
+            @Nullable byte[][] certificateChain, Map<String, PaymentMethodData> methodDataMap,
+            PaymentItem total, List<PaymentItem> displayItems,
+            Map<String, PaymentDetailsModifier> modifiers, InstrumentDetailsCallback callback) {
+        // Overridden by AndroidPayPaymentInstrument.java in clank.
+    }
+
+    /**
+     * Invoke the payment app to retrieve the instrument details.
+     *
+     * The callback will be invoked with the resulting payment details or error.
+     *
+     * @param id               The unique identifier of the PaymentRequest.
+     * @param merchantName     The name of the merchant.
+     * @param origin           The origin of this merchant.
+     * @param iframeOrigin     The origin of the iframe that invoked PaymentRequest.
+     * @param certificateChain The site certificate chain of the merchant. Can be null for localhost
+     *                         or local file, which are secure contexts without SSL.
+     * @param methodDataMap    The payment-method specific data for all applicable payment methods,
+     *                         e.g., whether the app should be invoked in test or production, a
+     *                         merchant identifier, or a public key.
+     * @param total            The total amount.
+     * @param displayItems     The shopping cart items.
+     * @param modifiers        The relevant payment details modifiers.
+     * @param paymentOptions   The payment options of the PaymentRequest.
+     * @param shippingOptions  The shipping options of the PaymentRequest.
+     * @param callback         The object that will receive the instrument details.
+     */
+    public void invokePaymentApp(String id, String merchantName, String origin, String iframeOrigin,
+            @Nullable byte[][] certificateChain, Map<String, PaymentMethodData> methodDataMap,
+            PaymentItem total, List<PaymentItem> displayItems,
+            Map<String, PaymentDetailsModifier> modifiers, PaymentOptions paymentOptions,
+            List<PaymentShippingOption> shippingOptions, InstrumentDetailsCallback callback) {
+        // Overridden by AndroidPaymentApp.java,
+        // ServiceWorkerPaymentApp.java,AutofillPaymentInstrument.java, and
+        // PaymentRequestTestRule.java. The stub implementation here is for
+        // AndroidPayPaymentInstrument.java. TODO(crbug.com/984694): Remove this stub implementation
+        // and make the function abstract once the clank side changes are landed.
+        invokePaymentApp(id, merchantName, origin, iframeOrigin, certificateChain, methodDataMap,
+                total, displayItems, modifiers, callback);
+    }
+
+    /**
+     * Update the payment information in response to payment method, shipping address, or shipping
+     * option change events.
+     *
+     * @param response The merchant's response to the payment method, shipping address, or shipping
+     *         option change events.
+     */
+    public void updateWith(PaymentRequestDetailsUpdate response) {}
+
+    // TODO(sahel): Remove this stub after updating clank code. crbug.com/984694
+    public void updateWith(PaymentMethodChangeResponse response) {}
+
+    /** Called when the merchant ignored the payment method change event. */
+    public void noUpdatedPaymentDetails() {}
+
+    /**
+     * @return True after changePaymentMethodFromInvokedApp(), before update updateWith() or
+     * noUpdatedPaymentDetails().
+     * TODO(sahel): Remove this stub after updating clank code. crbug.com/984694
+     */
+    public boolean isChangingPaymentMethod() {
+        return false;
+    }
+
+    /**
+     * @return True after changePaymentMethodFromInvokedApp(), changeShippingOptionFromInvokedApp(),
+     *         or changeShippingAddressFromInvokedApp() and before update updateWith() or
+     *         noUpdatedPaymentDetails().
+     */
+    public boolean isChanging() {
+        return false;
+    }
 
     /**
      * Abort invocation of the payment app.
      *
+     * @param id       The unique identifier of the PaymentRequest.
      * @param callback The callback to return abort result.
      */
-    public void abortPaymentApp(AbortCallback callback) {
-        ThreadUtils.postOnUiThread(new Runnable() {
+    public void abortPaymentApp(String id, AbortCallback callback) {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 callback.onInstrumentAbortResult(false);
@@ -191,4 +329,20 @@ public abstract class PaymentInstrument extends EditableOption {
      * connections.
      */
     public abstract void dismissInstrument();
+
+    /** @return Whether the payment instrument is ready for a microtransaction (no UI flow.) */
+    public boolean isReadyForMicrotransaction() {
+        return false;
+    }
+
+    /** @return Account balance for microtransaction flow. */
+    @Nullable
+    public String accountBalance() {
+        return null;
+    }
+
+    /** Switch the instrument into the microtransaction mode. */
+    public void setMicrontransactionMode() {
+        mIsMicrotransaction = true;
+    }
 }

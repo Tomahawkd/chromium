@@ -52,14 +52,6 @@ class TestDownloader : public PaymentManifestDownloader {
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
   ~TestDownloader() override;
 
-  // PaymentManifestDownloader implementation.
-  void DownloadPaymentMethodManifest(
-      const GURL& url,
-      PaymentManifestDownloadCallback callback) override;
-  void DownloadWebAppManifest(
-      const GURL& url,
-      PaymentManifestDownloadCallback callback) override;
-
   // Modifies the downloader to replace all instances of |prefix| with
   // |test_server_url| when downloading payment method manifests and web app
   // manifests.
@@ -95,8 +87,18 @@ class TestDownloader : public PaymentManifestDownloader {
   // AddTestServerURL("x");AddTestServerURL("xy"); is not.
   void AddTestServerURL(const std::string& prefix, const GURL& test_server_url);
 
+  // PaymentManifestDownloader:
+  //
+  // The reverse operation as AddTestServerURL: converts |url| back to a test
+  // server URL so it can be fetched as a normal resource outside of this class.
+  GURL FindTestServerURL(const GURL& url) const override;
+
  private:
-  GURL FindTestServerURL(const GURL& url) const;
+  // PaymentManifestDownloader implementation.
+  void InitiateDownload(const GURL& url,
+                        const std::string& method,
+                        int allowed_number_of_redirects,
+                        PaymentManifestDownloadCallback callback) override;
 
   // The mapping from the URL prefix to the URL of the test server to be used.
   // Example 1:

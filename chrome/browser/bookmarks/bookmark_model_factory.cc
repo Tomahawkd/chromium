@@ -16,7 +16,7 @@
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/bookmark_sync_service_factory.h"
-#include "chrome/browser/ui/webui/md_bookmarks/md_bookmarks_ui.h"
+#include "chrome/browser/ui/webui/bookmarks/bookmarks_ui.h"
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -70,11 +70,11 @@ KeyedService* BookmarkModelFactory::BuildServiceInstanceFor(
       new BookmarkModel(std::make_unique<ChromeBookmarkClient>(
           profile, ManagedBookmarkServiceFactory::GetForProfile(profile),
           BookmarkSyncServiceFactory::GetForProfile(profile)));
-  bookmark_model->Load(profile->GetPrefs(), profile->GetPath(),
-                       StartupTaskRunnerServiceFactory::GetForProfile(profile)
-                           ->GetBookmarkTaskRunner(),
-                       base::CreateSingleThreadTaskRunnerWithTraits(
-                           {content::BrowserThread::UI}));
+  bookmark_model->Load(
+      profile->GetPrefs(), profile->GetPath(),
+      StartupTaskRunnerServiceFactory::GetForProfile(profile)
+          ->GetBookmarkTaskRunner(),
+      base::CreateSingleThreadTaskRunner({content::BrowserThread::UI}));
   BookmarkUndoServiceFactory::GetForProfile(profile)->Start(bookmark_model);
 
   return bookmark_model;

@@ -36,8 +36,6 @@ class CORE_EXPORT HTMLStyleElement final : public HTMLElement,
   USING_GARBAGE_COLLECTED_MIXIN(HTMLStyleElement);
 
  public:
-  static HTMLStyleElement* Create(Document&, const CreateElementFlags);
-
   HTMLStyleElement(Document&, const CreateElementFlags);
   ~HTMLStyleElement() override;
 
@@ -46,7 +44,7 @@ class CORE_EXPORT HTMLStyleElement final : public HTMLElement,
   bool disabled() const;
   void setDisabled(bool);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   // Always call this asynchronously because this can cause synchronous

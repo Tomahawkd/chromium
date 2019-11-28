@@ -34,7 +34,7 @@
 
 namespace blink {
 
-static double MillisecondsToSeconds(unsigned long long milliseconds) {
+static double MillisecondsToSeconds(uint64_t milliseconds) {
   return static_cast<double>(milliseconds / 1000.0);
 }
 
@@ -81,7 +81,7 @@ double WebPerformance::RedirectEnd() const {
   return MillisecondsToSeconds(private_->timing()->redirectEnd());
 }
 
-unsigned short WebPerformance::RedirectCount() const {
+uint16_t WebPerformance::RedirectCount() const {
   return private_->navigation()->redirectCount();
 }
 
@@ -175,16 +175,16 @@ double WebPerformance::LargestImagePaint() const {
   return MillisecondsToSeconds(private_->timing()->LargestImagePaint());
 }
 
-double WebPerformance::LastImagePaint() const {
-  return MillisecondsToSeconds(private_->timing()->LastImagePaint());
+uint64_t WebPerformance::LargestImagePaintSize() const {
+  return private_->timing()->LargestImagePaintSize();
 }
 
 double WebPerformance::LargestTextPaint() const {
   return MillisecondsToSeconds(private_->timing()->LargestTextPaint());
 }
 
-double WebPerformance::LastTextPaint() const {
-  return MillisecondsToSeconds(private_->timing()->LastTextPaint());
+uint64_t WebPerformance::LargestTextPaintSize() const {
+  return private_->timing()->LargestTextPaintSize();
 }
 
 double WebPerformance::PageInteractive() const {

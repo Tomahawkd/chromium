@@ -16,6 +16,7 @@
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_export.h"
 #include "media/base/pipeline_status.h"
+#include "media/base/waiting.h"
 
 namespace media {
 
@@ -25,19 +26,15 @@ class CdmContext;
 class MEDIA_EXPORT AudioDecoder {
  public:
   // Callback for VideoDecoder initialization.
-  using InitCB = base::Callback<void(bool success)>;
+  using InitCB = base::OnceCallback<void(bool success)>;
 
   // Callback for AudioDecoder to return a decoded frame whenever it becomes
   // available. Only non-EOS frames should be returned via this callback.
-  using OutputCB = base::Callback<void(const scoped_refptr<AudioBuffer>&)>;
+  using OutputCB = base::RepeatingCallback<void(scoped_refptr<AudioBuffer>)>;
 
   // Callback for Decode(). Called after the decoder has accepted corresponding
   // DecoderBuffer, indicating that the pipeline can send next buffer to decode.
-  using DecodeCB = base::Callback<void(DecodeStatus)>;
-
-  // Callback for whenever the key needed to decrypt the stream is not
-  // available. May be called at any time after Initialize().
-  using WaitingForDecryptionKeyCB = base::RepeatingClosure;
+  using DecodeCB = base::RepeatingCallback<void(DecodeStatus)>;
 
   AudioDecoder();
 
@@ -67,14 +64,14 @@ class MEDIA_EXPORT AudioDecoder {
   // stream is not encrypted.
   // |init_cb| is used to return initialization status.
   // |output_cb| is called for decoded audio buffers (see Decode()).
-  // |waiting_for_decryption_key_cb| is called whenever the key needed to
-  // decrypt the stream is not available.
-  virtual void Initialize(
-      const AudioDecoderConfig& config,
-      CdmContext* cdm_context,
-      const InitCB& init_cb,
-      const OutputCB& output_cb,
-      const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb) = 0;
+  // |waiting_cb| is called whenever the decoder is stalled waiting for
+  // something, e.g. decryption key. May be called at any time after
+  // Initialize().
+  virtual void Initialize(const AudioDecoderConfig& config,
+                          CdmContext* cdm_context,
+                          InitCB init_cb,
+                          const OutputCB& output_cb,
+                          const WaitingCB& waiting_cb) = 0;
 
   // Requests samples to be decoded. Only one decode may be in flight at any
   // given time. Once the buffer is decoded the decoder calls |decode_cb|.
@@ -92,7 +89,7 @@ class MEDIA_EXPORT AudioDecoder {
 
   // Resets decoder state. All pending Decode() requests will be finished or
   // aborted before |closure| is called.
-  virtual void Reset(const base::Closure& closure) = 0;
+  virtual void Reset(base::OnceClosure closure) = 0;
 
   // Returns true if the decoder needs bitstream conversion before decoding.
   virtual bool NeedsBitstreamConversion() const;

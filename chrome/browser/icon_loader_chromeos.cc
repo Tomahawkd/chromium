@@ -13,8 +13,8 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
 #include "chrome/grit/theme_resources.h"
@@ -129,7 +129,7 @@ IconMapper::IconMapper() {
     std::make_pair(".webm", kVideoIdrs),
   };
 
-  const size_t kESize = arraysize(kExtensionIdrBySizeData);
+  const size_t kESize = base::size(kExtensionIdrBySizeData);
   ExtensionIconMap source(&kExtensionIdrBySizeData[0],
                           &kExtensionIdrBySizeData[kESize]);
   extension_icon_map_.swap(source);
@@ -195,8 +195,7 @@ IconLoader::IconGroup IconLoader::GroupForFilepath(
 scoped_refptr<base::TaskRunner> IconLoader::GetReadIconTaskRunner() {
   // ReadIcon touches non thread safe ResourceBundle images, so it must be on
   // the UI thread.
-  return base::CreateSingleThreadTaskRunnerWithTraits(
-      {content::BrowserThread::UI});
+  return base::CreateSingleThreadTaskRunner({content::BrowserThread::UI});
 }
 
 void IconLoader::ReadIcon() {
@@ -207,7 +206,7 @@ void IconLoader::ReadIcon() {
   gfx::ImageSkia image_skia(ResizeImage(*(rb.GetImageNamed(idr)).ToImageSkia(),
                                         IconSizeToDIPSize(icon_size_)));
   image_skia.MakeThreadSafe();
-  std::unique_ptr<gfx::Image> image = std::make_unique<gfx::Image>(image_skia);
+  gfx::Image image(image_skia);
   target_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(std::move(callback_), std::move(image), group_));

@@ -5,7 +5,7 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_TESTS_BINDINGS_TEST_BASE_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_TESTS_BINDINGS_TEST_BASE_H_
 
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace mojo {
@@ -34,14 +34,17 @@ class BindingsTestBase
   // Helper which other test fixtures can use.
   static void SetupSerializationBehavior(BindingsTestSerializationMode mode);
 
+ protected:
+  base::test::TaskEnvironment* task_environment() { return &task_environment_; }
+
  private:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::TaskEnvironment task_environment_;
 };
 
 }  // namespace mojo
 
-#define INSTANTIATE_MOJO_BINDINGS_TEST_CASE_P(fixture)                   \
-  INSTANTIATE_TEST_CASE_P(                                               \
+#define INSTANTIATE_MOJO_BINDINGS_TEST_SUITE_P(fixture)                  \
+  INSTANTIATE_TEST_SUITE_P(                                              \
       , fixture,                                                         \
       testing::Values(                                                   \
           mojo::BindingsTestSerializationMode::kSerializeBeforeSend,     \

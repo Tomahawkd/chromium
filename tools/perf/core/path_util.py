@@ -16,6 +16,16 @@ def GetTelemetryDir():
       GetChromiumSrcDir(), 'third_party', 'catapult', 'telemetry')
 
 
+def GetTracingDir():
+  return os.path.join(
+      GetChromiumSrcDir(), 'third_party', 'catapult', 'tracing')
+
+
+def GetPyUtilsDir():
+  return os.path.join(
+      GetChromiumSrcDir(), 'third_party', 'catapult', 'common', 'py_utils')
+
+
 def GetPerfDir():
   return os.path.join(GetChromiumSrcDir(), 'tools', 'perf')
 
@@ -24,11 +34,11 @@ def GetPerfStorySetsDir():
   return os.path.join(GetPerfDir(), 'page_sets')
 
 
-def GetPerfBenchmarksDir():
+def GetOfficialBenchmarksDir():
   return os.path.join(GetPerfDir(), 'benchmarks')
 
 
-def GetPerfContribDir():
+def GetContribDir():
   return os.path.join(GetPerfDir(), 'contrib')
 
 
@@ -42,34 +52,23 @@ def AddTelemetryToPath():
     sys.path.insert(1, telemetry_path)
 
 
+def AddTracingToPath():
+  tracing_path = GetTracingDir()
+  if tracing_path not in sys.path:
+    sys.path.insert(1, tracing_path)
+
+
 def AddPyUtilsToPath():
-  py_utils_dir = os.path.join(
-      GetChromiumSrcDir(), 'third_party', 'catapult', 'common', 'py_utils')
+  py_utils_dir = GetPyUtilsDir()
   if py_utils_dir not in sys.path:
     sys.path.insert(1, py_utils_dir)
-
-
-def GetWprDir():
-  return os.path.join(
-      GetChromiumSrcDir(), 'third_party', 'catapult', 'telemetry',
-      'third_party', 'web-page-replay')
-
-
-def AddWprToPath():
-  wpr_path = GetWprDir()
-  if wpr_path not in sys.path:
-    sys.path.insert(1, wpr_path)
-
-
-def GetWprGoDir():
-  return os.path.join(
-      GetChromiumSrcDir(), 'third_party', 'catapult', 'web_page_replay_go')
 
 
 def AddAndroidPylibToPath():
   android_pylib_path = GetAndroidPylibDir()
   if android_pylib_path not in sys.path:
     sys.path.insert(1, android_pylib_path)
+
 
 def GetExpectationsPath():
   return os.path.join(GetPerfDir(), 'expectations.config')

@@ -10,10 +10,11 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "content/public/browser/native_web_keyboard_event.h"
-#include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/views/widget/widget_delegate.h"
 
 class BrowserView;
 class DropdownBarHostDelegate;
@@ -26,7 +27,6 @@ class SlideAnimation;
 namespace views {
 class ExternalFocusTracker;
 class View;
-class Widget;
 }  // namespace views
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -40,7 +40,8 @@ class Widget;
 ////////////////////////////////////////////////////////////////////////////////
 class DropdownBarHost : public ui::AcceleratorTarget,
                         public views::FocusChangeListener,
-                        public gfx::AnimationDelegate {
+                        public views::AnimationDelegateViews,
+                        public views::WidgetDelegate {
  public:
   explicit DropdownBarHost(BrowserView* browser_view);
   ~DropdownBarHost() override;
@@ -86,7 +87,7 @@ class DropdownBarHost : public ui::AcceleratorTarget,
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override = 0;
   bool CanHandleAccelerators() const override = 0;
 
-  // gfx::AnimationDelegate implementation:
+  // views::AnimationDelegateViews implementation:
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
 
@@ -114,7 +115,8 @@ class DropdownBarHost : public ui::AcceleratorTarget,
   virtual void OnVisibilityChanged();
 
   // Returns the dropdown bar view.
-  views::View* view() const { return view_; }
+  views::View* view() { return view_; }
+  const views::View* view() const { return view_; }
 
   // Returns the focus tracker.
   views::ExternalFocusTracker* focus_tracker() const {
@@ -141,6 +143,10 @@ class DropdownBarHost : public ui::AcceleratorTarget,
   gfx::SlideAnimation* animation() {
     return animation_.get();
   }
+
+  // views::WidgetDelegate:
+  views::Widget* GetWidget() override;
+  const views::Widget* GetWidget() const override;
 
  private:
   // Set the view whose position in the |browser_view_| view hierarchy

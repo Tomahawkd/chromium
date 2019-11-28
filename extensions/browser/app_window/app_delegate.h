@@ -6,7 +6,8 @@
 #define EXTENSIONS_BROWSER_APP_WINDOW_APP_DELEGATE_H_
 
 #include "base/callback_forward.h"
-#include "content/public/common/media_stream_request.h"
+#include "content/public/browser/media_stream_request.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/window_open_disposition.h"
 
@@ -17,6 +18,7 @@ class FileChooserParams;
 }  // namespace blink
 
 namespace content {
+enum class PictureInPictureResult;
 class BrowserContext;
 class ColorChooser;
 class FileSelectListener;
@@ -81,7 +83,7 @@ class AppDelegate {
   virtual bool CheckMediaAccessPermission(
       content::RenderFrameHost* render_frame_host,
       const GURL& security_origin,
-      content::MediaStreamType type,
+      blink::mojom::MediaStreamType type,
       const Extension* extension) = 0;
   virtual int PreferredIconSize() const = 0;
 
@@ -104,10 +106,11 @@ class AppDelegate {
 
   // Notifies the Picture-in-Picture controller that there is a new player
   // entering Picture-in-Picture.
-  // Returns the size of the Picture-in-Picture window.
-  virtual gfx::Size EnterPictureInPicture(content::WebContents* web_contents,
-                                          const viz::SurfaceId& surface_id,
-                                          const gfx::Size& natural_size) = 0;
+  // Returns the result of the enter request.
+  virtual content::PictureInPictureResult EnterPictureInPicture(
+      content::WebContents* web_contents,
+      const viz::SurfaceId& surface_id,
+      const gfx::Size& natural_size) = 0;
 
   // Updates the Picture-in-Picture controller with a signal that
   // Picture-in-Picture mode has ended.

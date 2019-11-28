@@ -66,6 +66,7 @@ TEST(HttpHandlerTest, HandleNewSession) {
   net::HttpServerRequestInfo request;
   request.method = "post";
   request.path = "/base/session";
+  request.data = "{}";
   net::HttpServerResponseInfo response;
   handler.Handle(request, base::Bind(&OnResponse, &response));
   ASSERT_EQ(net::HTTP_OK, response.status_code());
@@ -99,6 +100,7 @@ TEST(HttpHandlerTest, HandleUnimplementedCommand) {
   net::HttpServerRequestInfo request;
   request.method = "post";
   request.path = "/path";
+  request.data = "{}";
   net::HttpServerResponseInfo response;
   handler.Handle(request, base::Bind(&OnResponse, &response));
   ASSERT_EQ(net::HTTP_NOT_IMPLEMENTED, response.status_code());
@@ -111,6 +113,7 @@ TEST(HttpHandlerTest, HandleCommand) {
   net::HttpServerRequestInfo request;
   request.method = "post";
   request.path = "/path";
+  request.data = "{}";
   net::HttpServerResponseInfo response;
   handler.Handle(request, base::Bind(&OnResponse, &response));
   ASSERT_EQ(net::HTTP_OK, response.status_code());
@@ -121,6 +124,13 @@ TEST(HttpHandlerTest, HandleCommand) {
   std::string json;
   base::JSONWriter::Write(body, &json);
   ASSERT_EQ(json, response.body());
+}
+
+TEST(HttpHandlerTest, StandardResponse_ErrorNoMessage) {
+  HttpHandler handler("/");
+  Status status = Status(kUnexpectedAlertOpen);
+  ASSERT_NO_FATAL_FAILURE(handler.PrepareStandardResponse(
+      "not used", status, std::make_unique<base::Value>(), "1234"));
 }
 
 TEST(MatchesCommandTest, DiffMethod) {

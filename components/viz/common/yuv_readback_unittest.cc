@@ -4,19 +4,22 @@
 
 #include <tuple>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/numerics/ranges.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/viz/common/gl_helper.h"
+#include "components/viz/test/test_gpu_service_holder.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/shared_memory_limits.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "gpu/ipc/gl_in_process_context.h"
-#include "gpu/ipc/test_gpu_thread_holder.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -46,7 +49,8 @@ class YUVReadbackTest : public testing::Test {
 
     context_ = std::make_unique<gpu::GLInProcessContext>();
     auto result = context_->Initialize(
-        gpu::GetTestGpuThreadHolder()->GetTaskExecutor(), nullptr, /* surface */
+        TestGpuServiceHolder::GetInstance()->task_executor(),
+        nullptr,                 /* surface */
         true,                    /* offscreen */
         gpu::kNullSurfaceHandle, /* window */
         attributes, gpu::SharedMemoryLimits(),
@@ -73,7 +77,7 @@ class YUVReadbackTest : public testing::Test {
   }
 
   static void TraceDataCB(
-      const base::Callback<void()>& callback,
+      base::OnceClosure quit_closure,
       std::string* output,
       const scoped_refptr<base::RefCountedString>& json_events_str,
       bool has_more_events) {
@@ -82,7 +86,7 @@ class YUVReadbackTest : public testing::Test {
     }
     output->append(json_events_str->data());
     if (!has_more_events) {
-      callback.Run();
+      std::move(quit_closure).Run();
     }
   }
 
@@ -92,15 +96,16 @@ class YUVReadbackTest : public testing::Test {
     std::string json_data = "[";
     base::trace_event::TraceLog::GetInstance()->SetDisabled();
     base::RunLoop run_loop;
-    base::trace_event::TraceLog::GetInstance()->Flush(
-        base::Bind(&YUVReadbackTest::TraceDataCB, run_loop.QuitClosure(),
-                   base::Unretained(&json_data)));
+    base::trace_event::TraceLog::GetInstance()->Flush(base::BindRepeating(
+        &YUVReadbackTest::TraceDataCB, run_loop.QuitClosure(),
+        base::Unretained(&json_data)));
     run_loop.Run();
     json_data.append("]");
 
     std::string error_msg;
     std::unique_ptr<base::Value> trace_data =
-        base::JSONReader::ReadAndReturnError(json_data, 0, nullptr, &error_msg);
+        base::JSONReader::ReadAndReturnErrorDeprecated(json_data, 0, nullptr,
+                                                       &error_msg);
     CHECK(trace_data) << "JSON parsing failed (" << error_msg
                       << ") JSON data:" << std::endl
                       << json_data;
@@ -129,14 +134,14 @@ class YUVReadbackTest : public testing::Test {
   int Channel(SkBitmap* pixels, int x, int y, int c) {
     if (pixels->bytesPerPixel() == 4) {
       uint32_t* data =
-          pixels->getAddr32(std::max(0, std::min(x, pixels->width() - 1)),
-                            std::max(0, std::min(y, pixels->height() - 1)));
+          pixels->getAddr32(base::ClampToRange(x, 0, pixels->width() - 1),
+                            base::ClampToRange(y, 0, pixels->height() - 1));
       return (*data) >> (c * 8) & 0xff;
     } else {
       DCHECK_EQ(pixels->bytesPerPixel(), 1);
       DCHECK_EQ(c, 0);
-      return *pixels->getAddr8(std::max(0, std::min(x, pixels->width() - 1)),
-                               std::max(0, std::min(y, pixels->height() - 1)));
+      return *pixels->getAddr8(base::ClampToRange(x, 0, pixels->width() - 1),
+                               base::ClampToRange(y, 0, pixels->height() - 1));
     }
   }
 
@@ -149,13 +154,13 @@ class YUVReadbackTest : public testing::Test {
     DCHECK_LT(y, pixels->height());
     if (pixels->bytesPerPixel() == 4) {
       uint32_t* data = pixels->getAddr32(x, y);
-      v = std::max(0, std::min(v, 255));
+      v = base::ClampToRange(v, 0, 255);
       *data = (*data & ~(0xffu << (c * 8))) | (v << (c * 8));
     } else {
       DCHECK_EQ(pixels->bytesPerPixel(), 1);
       DCHECK_EQ(c, 0);
       uint8_t* data = pixels->getAddr8(x, y);
-      v = std::max(0, std::min(v, 255));
+      v = base::ClampToRange(v, 0, 255);
       *data = v;
     }
   }
@@ -256,11 +261,6 @@ class YUVReadbackTest : public testing::Test {
     return ret;
   }
 
-  static void callcallback(const base::Callback<void()>& callback,
-                           bool result) {
-    callback.Run();
-  }
-
   void PrintPlane(unsigned char* plane, int xsize, int stride, int ysize) {
     for (int y = 0; y < std::min(24, ysize); y++) {
       std::string formatted;
@@ -354,13 +354,6 @@ class YUVReadbackTest : public testing::Test {
     gl_->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, xsize, ysize, 0, GL_RGBA,
                     GL_UNSIGNED_BYTE, input_pixels.getPixels());
 
-    gpu::Mailbox mailbox;
-    gl_->ProduceTextureDirectCHROMIUM(src_texture, mailbox.name);
-    EXPECT_FALSE(mailbox.IsZero());
-
-    gpu::SyncToken sync_token;
-    gl_->GenSyncTokenCHROMIUM(sync_token.GetData());
-
     std::string message = base::StringPrintf(
         "input size: %dx%d "
         "output size: %dx%d "
@@ -390,16 +383,19 @@ class YUVReadbackTest : public testing::Test {
             base::TimeDelta::FromSeconds(0));
 
     base::RunLoop run_loop;
-    yuv_reader->ReadbackYUV(mailbox, sync_token, gfx::Size(xsize, ysize),
-                            gfx::Rect(0, 0, xsize, ysize),
-                            output_frame->stride(media::VideoFrame::kYPlane),
-                            output_frame->data(media::VideoFrame::kYPlane),
-                            output_frame->stride(media::VideoFrame::kUPlane),
-                            output_frame->data(media::VideoFrame::kUPlane),
-                            output_frame->stride(media::VideoFrame::kVPlane),
-                            output_frame->data(media::VideoFrame::kVPlane),
-                            gfx::Point(xmargin, ymargin),
-                            base::Bind(&callcallback, run_loop.QuitClosure()));
+    auto run_quit_closure = [](base::OnceClosure quit_closure, bool result) {
+      std::move(quit_closure).Run();
+    };
+    yuv_reader->ReadbackYUV(
+        src_texture, gfx::Size(xsize, ysize), gfx::Rect(0, 0, xsize, ysize),
+        output_frame->stride(media::VideoFrame::kYPlane),
+        output_frame->data(media::VideoFrame::kYPlane),
+        output_frame->stride(media::VideoFrame::kUPlane),
+        output_frame->data(media::VideoFrame::kUPlane),
+        output_frame->stride(media::VideoFrame::kVPlane),
+        output_frame->data(media::VideoFrame::kVPlane),
+        gfx::Point(xmargin, ymargin),
+        base::BindOnce(run_quit_closure, run_loop.QuitClosure()));
 
     const gfx::Rect paste_rect(gfx::Point(xmargin, ymargin),
                                gfx::Size(xsize, ysize));
@@ -523,8 +519,8 @@ TEST_P(YUVReadbackPixelTest, Test) {
   unsigned int x = std::get<2>(GetParam());
   unsigned int y = std::get<3>(GetParam());
 
-  for (unsigned int ox = x; ox < arraysize(kYUVReadbackSizes); ox++) {
-    for (unsigned int oy = y; oy < arraysize(kYUVReadbackSizes); oy++) {
+  for (unsigned int ox = x; ox < base::size(kYUVReadbackSizes); ox++) {
+    for (unsigned int oy = y; oy < base::size(kYUVReadbackSizes); oy++) {
       // If output is a subsection of the destination frame, (letterbox)
       // then try different variations of where the subsection goes.
       for (Margin xm = x < ox ? MarginLeft : MarginRight; xm <= MarginRight;
@@ -549,14 +545,14 @@ TEST_P(YUVReadbackPixelTest, Test) {
 }
 
 // First argument is intentionally empty.
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     YUVReadbackPixelTest,
     ::testing::Combine(
         ::testing::Bool(),
         ::testing::Bool(),
-        ::testing::Range<unsigned int>(0, arraysize(kYUVReadbackSizes)),
-        ::testing::Range<unsigned int>(0, arraysize(kYUVReadbackSizes))));
+        ::testing::Range<unsigned int>(0, base::size(kYUVReadbackSizes)),
+        ::testing::Range<unsigned int>(0, base::size(kYUVReadbackSizes))));
 
 }  // namespace viz
 

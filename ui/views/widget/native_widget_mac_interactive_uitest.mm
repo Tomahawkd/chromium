@@ -15,7 +15,6 @@
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/test/test_widget_observer.h"
-#include "ui/views/test/views_interactive_ui_test_base.h"
 #include "ui/views/test/widget_test.h"
 
 namespace views {
@@ -33,7 +32,7 @@ class NativeWidgetMacInteractiveUITest
 
   // WidgetTest:
   void SetUp() override {
-    ViewsInteractiveUITestBase::InteractiveSetUp();
+    SetUpForInteractiveTests();
     WidgetTest::SetUp();
   }
 
@@ -72,7 +71,7 @@ class NativeWidgetMacInteractiveUITest::Observer : public TestWidgetObserver {
 // Test that showing a window causes it to attain global keyWindow status.
 TEST_P(NativeWidgetMacInteractiveUITest, ShowAttainsKeyStatus) {
   Widget* widget = MakeWidget();
-  observer_.reset(new Observer(this, widget));
+  observer_ = std::make_unique<Observer>(this, widget);
 
   EXPECT_FALSE(widget->IsActive());
   EXPECT_EQ(0, activation_count_);
@@ -117,6 +116,7 @@ TEST_P(NativeWidgetMacInteractiveUITest, ShowAttainsKeyStatus) {
 
 // Test that ShowInactive does not take keyWindow status.
 TEST_P(NativeWidgetMacInteractiveUITest, ShowInactiveIgnoresKeyStatus) {
+  WidgetTest::WaitForSystemAppActivation();
   Widget* widget = MakeWidget();
   NSWindow* widget_window = widget->GetNativeWindow().GetNativeNSWindow();
 
@@ -202,7 +202,7 @@ TEST_F(NativeWidgetMacInteractiveUITest, ParentWindowTrafficLights) {
 
   // Pop open a bubble on the parent Widget. When the visibility of Bubbles with
   // an anchor View changes, BubbleDialogDelegateView::HandleVisibilityChanged()
-  // updates Widget::SetAlwaysRenderAsActive(..) accordingly.
+  // updates Widget::ShouldPaintAsActive() accordingly.
   ShowKeyWindow(BubbleDialogDelegateView::CreateBubble(
       new TestBubbleView(parent_widget)));
 
@@ -220,7 +220,7 @@ TEST_F(NativeWidgetMacInteractiveUITest, ParentWindowTrafficLights) {
 
   // Verify that activating some other random window does change the button.
   // When the bubble loses activation, it will dismiss itself and update
-  // Widget::SetAlwaysRenderAsActive().
+  // Widget::ShouldPaintAsActive().
   Widget* other_widget = CreateTopLevelPlatformWidget();
   other_widget->SetBounds(gfx::Rect(200, 200, 100, 100));
   ShowKeyWindow(other_widget);
@@ -294,7 +294,7 @@ TEST_F(NativeWidgetMacInteractiveUITest, BubbleDismiss) {
 // away from any Widget when the window is torn down. This test ensures that
 // global references AppKit may have held on to are also updated.
 TEST_F(NativeWidgetMacInteractiveUITest, GlobalNSTextInputContextUpdates) {
-  Widget* widget = CreateNativeDesktopWidget();
+  Widget* widget = CreateTopLevelNativeWidget();
   Textfield* textfield = new Textfield;
   textfield->SetBounds(0, 0, 100, 100);
   widget->GetContentsView()->AddChildView(textfield);
@@ -323,9 +323,9 @@ TEST_F(NativeWidgetMacInteractiveUITest, GlobalNSTextInputContextUpdates) {
   base::RunLoop().RunUntilIdle();
 }
 
-INSTANTIATE_TEST_CASE_P(NativeWidgetMacInteractiveUITestInstance,
-                        NativeWidgetMacInteractiveUITest,
-                        ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(NativeWidgetMacInteractiveUITestInstance,
+                         NativeWidgetMacInteractiveUITest,
+                         ::testing::Bool());
 
 }  // namespace test
 }  // namespace views

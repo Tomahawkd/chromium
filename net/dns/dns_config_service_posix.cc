@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <type_traits>
 
 #include "base/bind.h"
 #include "base/files/file.h"
@@ -17,7 +18,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "net/base/ip_address.h"
@@ -143,7 +144,8 @@ bool IsVpnPresent() {
 #endif  // defined(OS_ANDROID)
 
 ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   dns_config->unhandled_options = false;
 #if !defined(OS_ANDROID)
   ConfigParsePosixResult result;
@@ -194,7 +196,9 @@ ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
 
   if (base::android::BuildInfo::GetInstance()->sdk_int() >=
       base::android::SDK_VERSION_MARSHMALLOW) {
-    return net::android::GetDnsServers(&dns_config->nameservers);
+    return net::android::GetDnsServers(&dns_config->nameservers,
+                                       &dns_config->dns_over_tls_active,
+                                       &dns_config->dns_over_tls_hostname);
   }
 
   if (IsVpnPresent()) {
@@ -237,8 +241,7 @@ ConfigParsePosixResult ReadDnsConfig(DnsConfig* dns_config) {
 
 class DnsConfigServicePosix::Watcher {
  public:
-  explicit Watcher(DnsConfigServicePosix* service)
-      : service_(service), weak_factory_(this) {}
+  explicit Watcher(DnsConfigServicePosix* service) : service_(service) {}
   ~Watcher() = default;
 
   bool Watch() {
@@ -271,9 +274,10 @@ class DnsConfigServicePosix::Watcher {
   void OnConfigChanged(bool succeeded) {
     // Ignore transient flutter of resolv.conf by delaying the signal a bit.
     const base::TimeDelta kDelay = base::TimeDelta::FromMilliseconds(50);
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&Watcher::OnConfigChangedDelayed,
-                              weak_factory_.GetWeakPtr(), succeeded),
+    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&Watcher::OnConfigChangedDelayed,
+                       weak_factory_.GetWeakPtr(), succeeded),
         kDelay);
   }
 
@@ -291,7 +295,7 @@ class DnsConfigServicePosix::Watcher {
   base::FilePathWatcher hosts_watcher_;
 #endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
 
-  base::WeakPtrFactory<Watcher> weak_factory_;
+  base::WeakPtrFactory<Watcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Watcher);
 };
@@ -303,6 +307,9 @@ class DnsConfigServicePosix::ConfigReader : public SerialWorker {
  public:
   explicit ConfigReader(DnsConfigServicePosix* service)
       : service_(service), success_(false) {
+    // Allow execution on another thread; nothing thread-specific about
+    // constructor.
+    DETACH_FROM_SEQUENCE(sequence_checker_);
   }
 
   void DoWork() override {
@@ -355,7 +362,11 @@ class DnsConfigServicePosix::HostsReader : public SerialWorker {
   explicit HostsReader(DnsConfigServicePosix* service)
       : service_(service),
         file_path_hosts_(service->file_path_hosts_),
-        success_(false) {}
+        success_(false) {
+    // Allow execution on another thread; nothing thread-specific about
+    // constructor.
+    DETACH_FROM_SEQUENCE(sequence_checker_);
+  }
 
  private:
   ~HostsReader() override {}
@@ -363,7 +374,7 @@ class DnsConfigServicePosix::HostsReader : public SerialWorker {
   void DoWork() override {
     base::TimeTicks start_time = base::TimeTicks::Now();
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     success_ = ParseHostsFile(file_path_hosts_, &hosts_);
     UMA_HISTOGRAM_BOOLEAN("AsyncDNS.HostParseResult", success_);
     UMA_HISTOGRAM_TIMES("AsyncDNS.HostsParseDuration",
@@ -392,13 +403,20 @@ class DnsConfigServicePosix::HostsReader : public SerialWorker {
 };
 
 DnsConfigServicePosix::DnsConfigServicePosix()
-    : file_path_hosts_(kFilePathHosts),  // Must set before |hosts_reader_|
-      config_reader_(new ConfigReader(this)),
-      hosts_reader_(new HostsReader(this)) {}
+    : file_path_hosts_(kFilePathHosts) {
+  // Allow constructing on one thread and living on another.
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
 
 DnsConfigServicePosix::~DnsConfigServicePosix() {
   config_reader_->Cancel();
   hosts_reader_->Cancel();
+}
+
+void DnsConfigServicePosix::RefreshConfig() {
+  InvalidateConfig();
+  InvalidateHosts();
+  ReadNow();
 }
 
 void DnsConfigServicePosix::ReadNow() {
@@ -407,6 +425,7 @@ void DnsConfigServicePosix::ReadNow() {
 }
 
 bool DnsConfigServicePosix::StartWatching() {
+  CreateReaders();
   // TODO(szym): re-start watcher if that makes sense. http://crbug.com/116139
   watcher_.reset(new Watcher(this));
   UMA_HISTOGRAM_ENUMERATION("AsyncDNS.WatchStatus", DNS_CONFIG_WATCH_STARTED,
@@ -440,6 +459,14 @@ void DnsConfigServicePosix::OnHostsChanged(bool succeeded) {
   }
 }
 
+void DnsConfigServicePosix::CreateReaders() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!config_reader_);
+  config_reader_ = base::MakeRefCounted<ConfigReader>(this);
+  DCHECK(!hosts_reader_);
+  hosts_reader_ = base::MakeRefCounted<HostsReader>(this);
+}
+
 #if !defined(OS_ANDROID)
 ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
                                                   DnsConfig* dns_config) {
@@ -465,8 +492,8 @@ ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
     dns_config->nameservers.push_back(ipe);
   }
 #elif defined(OS_LINUX)
-  static_assert(arraysize(res.nsaddr_list) >= MAXNS &&
-                    arraysize(res._u._ext.nsaddrs) >= MAXNS,
+  static_assert(std::extent<decltype(res.nsaddr_list)>() >= MAXNS &&
+                    std::extent<decltype(res._u._ext.nsaddrs)>() >= MAXNS,
                 "incompatible libresolv res_state");
   DCHECK_LE(res.nscount, MAXNS);
   // Initially, glibc stores IPv6 in |_ext.nsaddrs| and IPv4 in |nsaddr_list|.
@@ -551,8 +578,15 @@ ConfigParsePosixResult ConvertResStateToDnsConfig(const struct __res_state& res,
 
 // static
 std::unique_ptr<DnsConfigService> DnsConfigService::CreateSystemService() {
+  // DnsConfigService on iOS doesn't watch the config so its result can become
+  // inaccurate at any time.  Disable it to prevent promulgation of inaccurate
+  // DnsConfigs.
+#ifdef OS_IOS
+  return nullptr;
+#else   // defined(OS_IOS)
   return std::unique_ptr<DnsConfigService>(
       new internal::DnsConfigServicePosix());
+#endif  // defined(OS_IOS)
 }
 
 }  // namespace net

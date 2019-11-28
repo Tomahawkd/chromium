@@ -4,6 +4,7 @@
 
 #include "cc/test/fake_proxy.h"
 
+#include "cc/paint/paint_worklet_layer_painter.h"
 #include "cc/trees/layer_tree_mutator.h"
 
 namespace cc {
@@ -18,13 +19,12 @@ bool FakeProxy::RequestedAnimatePending() {
 
 bool FakeProxy::IsStarted() const { return true; }
 
-bool FakeProxy::CommitToActiveTree() const {
-  return false;
-}
-
 bool FakeProxy::CommitRequested() const { return false; }
 
 void FakeProxy::SetMutator(std::unique_ptr<LayerTreeMutator> mutator) {}
+
+void FakeProxy::SetPaintWorkletLayerPainter(
+    std::unique_ptr<PaintWorkletLayerPainter> painter) {}
 
 bool FakeProxy::SupportsImplScrolling() const {
   return true;

@@ -8,6 +8,7 @@
 #include "ash/shell.h"
 #include "ash/wm/window_cycle_controller.h"
 #include "ash/wm/window_cycle_list.h"
+#include "base/bind.h"
 #include "ui/events/event.h"
 
 namespace ash {
@@ -43,10 +44,11 @@ void WindowCycleEventFilter::OnKeyEvent(ui::KeyEvent* event) {
                !repeat_timer_.IsRunning()) {
       repeat_timer_.Start(
           FROM_HERE, base::TimeDelta::FromMilliseconds(180),
-          base::Bind(&WindowCycleController::HandleCycleWindow,
-                     base::Unretained(Shell::Get()->window_cycle_controller()),
-                     event->IsShiftDown() ? WindowCycleController::BACKWARD
-                                          : WindowCycleController::FORWARD));
+          base::BindRepeating(
+              &WindowCycleController::HandleCycleWindow,
+              base::Unretained(Shell::Get()->window_cycle_controller()),
+              event->IsShiftDown() ? WindowCycleController::BACKWARD
+                                   : WindowCycleController::FORWARD));
     }
   } else if (event->key_code() == ui::VKEY_ESCAPE) {
     Shell::Get()->window_cycle_controller()->CancelCycling();

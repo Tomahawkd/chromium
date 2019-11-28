@@ -4,7 +4,7 @@
 
 #import "ios/web_view/public/cwv_scroll_view.h"
 
-#import "ios/web/public/web_state/ui/crw_web_view_scroll_view_proxy.h"
+#import "ios/web/public/ui/crw_web_view_scroll_view_proxy.h"
 #import "ios/web_view/internal/cwv_scroll_view_internal.h"
 #import "ios/web_view/public/cwv_scroll_view_delegate.h"
 
@@ -71,6 +71,14 @@
 
 - (void)setScrollsToTop:(BOOL)scrollsToTop {
   _proxy.scrollsToTop = scrollsToTop;
+}
+
+- (BOOL)bounces {
+  return _proxy.bounces;
+}
+
+- (void)setBounces:(BOOL)bounces {
+  _proxy.bounces = bounces;
 }
 
 - (UIScrollViewContentInsetAdjustmentBehavior)contentInsetAdjustmentBehavior

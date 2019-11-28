@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -25,9 +25,9 @@ class AlwaysSucceeds : public AccountMigrationRunner::Step {
       : AccountMigrationRunner::Step(id), closure_(closure) {}
   ~AlwaysSucceeds() override = default;
 
-  void Run(base::OnceCallback<void(bool)> callback) override {
+  void Run() override {
     closure_.Run();
-    std::move(callback).Run(true);
+    FinishWithSuccess();
   }
 
  private:
@@ -41,9 +41,9 @@ class AlwaysFails : public AccountMigrationRunner::Step {
       : AccountMigrationRunner::Step(id), closure_(closure) {}
   ~AlwaysFails() override = default;
 
-  void Run(base::OnceCallback<void(bool)> callback) override {
+  void Run() override {
     closure_.Run();
-    std::move(callback).Run(false);
+    FinishWithFailure();
   }
 
  private:
@@ -57,9 +57,7 @@ class MustNeverRun : public AccountMigrationRunner::Step {
       : AccountMigrationRunner::Step(id) {}
   ~MustNeverRun() override = default;
 
-  void Run(base::OnceCallback<void(bool)> callback) override {
-    EXPECT_FALSE(true);
-  }
+  void Run() override { EXPECT_FALSE(true); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MustNeverRun);
@@ -69,7 +67,7 @@ class MustNeverRun : public AccountMigrationRunner::Step {
 
 class AccountMigrationRunnerTest : public testing::Test {
  protected:
-  AccountMigrationRunnerTest() : weak_factory_(this) {
+  AccountMigrationRunnerTest() {
     increment_num_steps_executed_ = base::BindRepeating(
         &AccountMigrationRunnerTest::IncrementNumStepsExecuted,
         weak_factory_.GetWeakPtr());
@@ -96,9 +94,9 @@ class AccountMigrationRunnerTest : public testing::Test {
     return migration_result;
   }
 
-  // Check base/test/scoped_task_environment.h. This must be the first member /
+  // Check base/test/task_environment.h. This must be the first member /
   // declared before any member that cares about tasks.
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   AccountMigrationRunner migration_runner_;
 
@@ -109,7 +107,7 @@ class AccountMigrationRunnerTest : public testing::Test {
  private:
   void IncrementNumStepsExecuted() { ++num_steps_executed_; }
 
-  base::WeakPtrFactory<AccountMigrationRunnerTest> weak_factory_;
+  base::WeakPtrFactory<AccountMigrationRunnerTest> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(AccountMigrationRunnerTest);
 };
 

@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
 #include "content/public/renderer/render_frame.h"
-#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 
 namespace chromecast {
@@ -20,11 +20,16 @@ CastMediaPlaybackOptions::CastMediaPlaybackOptions(
     : content::RenderFrameObserver(render_frame),
       content::RenderFrameObserverTracker<CastMediaPlaybackOptions>(
           render_frame),
-      render_frame_action_blocked_(false),
-      background_suspend_enabled_(true) {
+      render_frame_action_blocked_(false) {
+  // Override default content MediaPlaybackOptions
+  renderer_media_playback_options_
+      .is_background_video_track_optimization_supported = false;
+  render_frame->SetRenderFrameMediaPlaybackOptions(
+      renderer_media_playback_options_);
+
   render_frame->GetAssociatedInterfaceRegistry()->AddInterface(
       base::BindRepeating(
-          &CastMediaPlaybackOptions::OnMediaPlaybackOptionsAssociatedRequest,
+          &CastMediaPlaybackOptions::OnMediaPlaybackOptionsAssociatedReceiver,
           base::Unretained(this)));
 }
 
@@ -49,11 +54,6 @@ bool CastMediaPlaybackOptions::RunWhenInForeground(base::OnceClosure closure) {
   return true;
 }
 
-bool CastMediaPlaybackOptions::IsBackgroundSuspendEnabled() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return background_suspend_enabled_;
-}
-
 void CastMediaPlaybackOptions::SetMediaLoadingBlocked(bool blocked) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   render_frame_action_blocked_ = blocked;
@@ -71,13 +71,23 @@ void CastMediaPlaybackOptions::SetMediaLoadingBlocked(bool blocked) {
   LOG(INFO) << "Render frame actions are unblocked.";
 }
 
-void CastMediaPlaybackOptions::SetBackgroundSuspendEnabled(bool enabled) {
-  background_suspend_enabled_ = enabled;
+void CastMediaPlaybackOptions::SetBackgroundVideoPlaybackEnabled(bool enabled) {
+  renderer_media_playback_options_.is_background_video_playback_enabled =
+      enabled;
+  render_frame()->SetRenderFrameMediaPlaybackOptions(
+      renderer_media_playback_options_);
 }
 
-void CastMediaPlaybackOptions::OnMediaPlaybackOptionsAssociatedRequest(
-    chromecast::shell::mojom::MediaPlaybackOptionsAssociatedRequest request) {
-  bindings_.AddBinding(this, std::move(request));
+void CastMediaPlaybackOptions::SetUseCmaRenderer(bool enable) {
+  renderer_media_playback_options_.is_mojo_renderer_enabled = enable;
+  render_frame()->SetRenderFrameMediaPlaybackOptions(
+      renderer_media_playback_options_);
+}
+
+void CastMediaPlaybackOptions::OnMediaPlaybackOptionsAssociatedReceiver(
+    mojo::PendingAssociatedReceiver<
+        chromecast::shell::mojom::MediaPlaybackOptions> receiver) {
+  receivers_.Add(this, std::move(receiver));
 }
 
 }  // namespace chromecast

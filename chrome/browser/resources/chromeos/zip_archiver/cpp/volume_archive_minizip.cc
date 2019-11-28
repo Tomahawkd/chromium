@@ -14,6 +14,7 @@
 #include "base/files/file.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "third_party/minizip/src/mz.h"
 #include "third_party/minizip/src/mz_strm.h"
@@ -55,7 +56,7 @@ int32_t MinizipIsOpen(void* stream) {
   return MZ_OK;
 }
 
-};  // namespace
+}  // namespace
 
 // vtable for the archive read stream provided to minizip. Only functions which
 // are necessary to read the archive are provided.
@@ -323,6 +324,8 @@ VolumeArchive::Result VolumeArchiveMinizip::GetCurrentFileInfo(
   *is_directory = (mz_zip_entry_is_dir(zip_file_.get()) == MZ_OK);
   *modification_time = file_info->modified_date;
 
+  file_offset_map_[*pathname] = mz_zip_get_entry(zip_file_.get());
+
   return VolumeArchive::RESULT_SUCCESS;
 }
 
@@ -353,11 +356,19 @@ bool VolumeArchiveMinizip::SeekHeader(const std::string& path_name) {
   last_read_data_offset_ = 0;
   decompressed_data_size_ = 0;
 
-  // Setting nullptr to filename_compare_func falls back to strcmp, i.e. case
-  // sensitive.
-  if (mz_zip_locate_entry(zip_file_.get(), path_name.c_str(), 0) != MZ_OK) {
-    set_error_message(kArchiveNextHeaderError);
-    return false;
+  auto it = file_offset_map_.find(path_name);
+  if (it != file_offset_map_.end()) {
+    if (mz_zip_goto_entry(zip_file_.get(), it->second) != MZ_OK) {
+      set_error_message(kArchiveNextHeaderError);
+      return false;
+    }
+  } else {
+    // Setting nullptr to filename_compare_func falls back to strcmp, i.e. case
+    // sensitive.
+    if (mz_zip_locate_entry(zip_file_.get(), path_name.c_str(), 0) != MZ_OK) {
+      set_error_message(kArchiveNextHeaderError);
+      return false;
+    }
   }
 
   mz_zip_file* file_info = nullptr;
@@ -526,5 +537,13 @@ bool VolumeArchiveMinizip::CloseZipEntry() {
   if (mz_zip_entry_is_open(zip_file_.get()) != MZ_OK)
     return true;
 
-  return mz_zip_entry_close(zip_file_.get()) == MZ_OK;
+  const int32_t error = mz_zip_entry_close(zip_file_.get());
+  // If the zip entry was not read in full, then closing the entry may cause a
+  // CRC error, because the whole file may not have been decompressed and
+  // checksummed.
+  const bool ok = (error == MZ_OK || error == MZ_CRC_ERROR);
+  if (!ok) {
+    set_error_message(base::StringPrintf("mz_zip_entry_close err = %d", error));
+  }
+  return ok;
 }

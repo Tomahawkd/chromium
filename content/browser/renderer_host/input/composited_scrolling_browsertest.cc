@@ -9,6 +9,7 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/input/synthetic_gesture.h"
 #include "content/browser/renderer_host/input/synthetic_smooth_scroll_gesture.h"
@@ -21,6 +22,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/hit_test_region_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "ui/gfx/geometry/angle_conversions.h"
@@ -60,8 +62,13 @@ namespace content {
 
 class CompositedScrollingBrowserTest : public ContentBrowserTest {
  public:
-  CompositedScrollingBrowserTest() {}
-  ~CompositedScrollingBrowserTest() override {}
+  CompositedScrollingBrowserTest() {
+    // Disable scroll resampling because this is checking scroll distance.
+    scoped_feature_list_.InitAndDisableFeature(
+        features::kResamplingScrollEvents);
+  }
+
+  ~CompositedScrollingBrowserTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* cmd) override {
     cmd->AppendSwitch(switches::kEnablePreferCompositingToLCDText);
@@ -80,21 +87,19 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
  protected:
   void LoadURL() {
     const GURL data_url(kCompositedScrollingDataURL);
-    NavigateToURL(shell(), data_url);
+    EXPECT_TRUE(NavigateToURL(shell(), data_url));
 
     RenderWidgetHostImpl* host = GetWidgetHost();
-    MainThreadFrameObserver observer(host);
+    HitTestRegionObserver observer(GetWidgetHost()->GetFrameSinkId());
     host->GetView()->SetSize(gfx::Size(400, 400));
 
     base::string16 ready_title(base::ASCIIToUTF16("ready"));
     TitleWatcher watcher(shell()->web_contents(), ready_title);
     ignore_result(watcher.WaitAndGetTitle());
 
-    // We need to wait until at least one frame has been composited
-    // otherwise the injection of the synthetic gestures may get
-    // dropped because of MainThread/Impl thread sync of touch event
-    // regions.
-    observer.Wait();
+    // Wait for the hit test data to be ready after initiating URL loading
+    // before returning
+    observer.WaitForHitTestData();
   }
 
   // ContentBrowserTest:
@@ -105,14 +110,21 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
     return value;
   }
 
-  int GetScrollTop() {
-    return ExecuteScriptAndExtractInt(
+  double ExecuteScriptAndExtractDouble(const std::string& script) {
+    double value = 0;
+    EXPECT_TRUE(content::ExecuteScriptAndExtractDouble(
+        shell(), "domAutomationController.send(" + script + ")", &value));
+    return value;
+  }
+
+  double GetScrollTop() {
+    return ExecuteScriptAndExtractDouble(
         "document.getElementById(\"scroller\").scrollTop");
   }
 
   // Generate touch events for a synthetic scroll from |point| for |distance|.
   // Returns the distance scrolled.
-  int DoTouchScroll(const gfx::Point& point, const gfx::Vector2d& distance) {
+  double DoTouchScroll(const gfx::Point& point, const gfx::Vector2d& distance) {
     EXPECT_EQ(0, GetScrollTop());
 
     int scroll_height = ExecuteScriptAndExtractInt(
@@ -142,6 +154,7 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
   }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   scoped_refptr<MessageLoopRunner> runner_;
 
   DISALLOW_COPY_AND_ASSIGN(CompositedScrollingBrowserTest);
@@ -160,10 +173,10 @@ class CompositedScrollingBrowserTest : public ContentBrowserTest {
 IN_PROC_BROWSER_TEST_F(CompositedScrollingBrowserTest,
                        MAYBE_Scroll3DTransformedScroller) {
   LoadURL();
-  int scroll_distance =
+  double scroll_distance =
       DoTouchScroll(gfx::Point(50, 150), gfx::Vector2d(0, 100));
   // The scroll distance is increased due to the rotation of the scroller.
-  EXPECT_EQ(std::floor(100 / std::cos(gfx::DegToRad(30.f))), scroll_distance);
+  EXPECT_NEAR(100 / std::cos(gfx::DegToRad(30.f)), scroll_distance, 1.f);
 }
 
 }  // namespace content

@@ -58,9 +58,7 @@ const network::TestURLLoaderFactory::PendingRequest* PendingForURL(
 namespace gcm {
 
 GCMRequestTestBase::GCMRequestTestBase()
-    : task_runner_(new base::TestMockTimeTaskRunner(
-          base::TestMockTimeTaskRunner::Type::kBoundToThread)),
-      shared_factory_(
+    : shared_factory_(
           base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
               &test_url_loader_factory_)),
       retry_count_(0) {}
@@ -85,7 +83,7 @@ void GCMRequestTestBase::SetResponseForURLAndComplete(
   OnAboutToCompleteFetch();
   EXPECT_TRUE(test_url_loader_factory_.SimulateResponseForPendingRequest(
       GURL(url), network::URLLoaderCompletionStatus(net_error_code),
-      network::CreateResourceResponseHead(status_code), response_body));
+      network::CreateURLResponseHead(status_code), response_body));
 }
 
 const net::HttpRequestHeaders* GCMRequestTestBase::GetExtraHeadersForURL(
@@ -131,7 +129,7 @@ void GCMRequestTestBase::FastForwardToTriggerNextRetry() {
   int next_retry_delay_ms = kDefaultBackoffPolicy.initial_delay_ms;
   next_retry_delay_ms *=
       pow(kDefaultBackoffPolicy.multiply_factor, retry_count_);
-  task_runner_->FastForwardBy(
+  task_environment_.FastForwardBy(
       base::TimeDelta::FromMilliseconds(next_retry_delay_ms));
 }
 

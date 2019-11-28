@@ -6,20 +6,17 @@ package org.chromium.chrome.browser.toolbar.bottom;
 
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.ViewGroup;
 import android.view.ViewStub;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.appmenu.AppMenuButtonHelper;
-import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
-import org.chromium.chrome.browser.device.DeviceClassManager;
-import org.chromium.chrome.browser.modelutil.PropertyModelChangeProcessor;
-import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.ThemeColorProvider;
+import org.chromium.chrome.browser.flags.FeatureUtilities;
 import org.chromium.chrome.browser.toolbar.IncognitoStateProvider;
-import org.chromium.chrome.browser.toolbar.IncognitoToggleTabLayout;
 import org.chromium.chrome.browser.toolbar.MenuButton;
-import org.chromium.chrome.browser.toolbar.NewTabButton;
 import org.chromium.chrome.browser.toolbar.TabCountProvider;
+import org.chromium.chrome.browser.ui.appmenu.AppMenuButtonHelper;
+import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /**
  * The coordinator for the tab switcher mode bottom toolbar. This class handles all interactions
@@ -29,90 +26,86 @@ public class TabSwitcherBottomToolbarCoordinator {
     /** The mediator that handles events from outside the tab switcher bottom toolbar. */
     private final TabSwitcherBottomToolbarMediator mMediator;
 
-    /** The new tab button that lives in the bottom toolbar. */
-    private final NewTabButton mNewTabButton;
+    /** The close all tabs button that lives in the tab switcher bottom bar. */
+    private final CloseAllTabsButton mCloseAllTabsButton;
 
-    /** The incognito toggle tab layout that lives in bottom toolbar. */
-    private final IncognitoToggleTabLayout mIncognitoToggleTabLayout;
+    /** The new tab button that lives in the tab switcher bottom toolbar. */
+    private final BottomToolbarNewTabButton mNewTabButton;
 
     /** The menu button that lives in the tab switcher bottom toolbar. */
     private final MenuButton mMenuButton;
 
+    /** The model for the tab switcher bottom toolbar that holds all of its state. */
+    private final TabSwitcherBottomToolbarModel mModel;
+
     /**
      * Build the coordinator that manages the tab switcher bottom toolbar.
      * @param stub The tab switcher bottom toolbar {@link ViewStub} to inflate.
+     * @param topToolbarRoot The root {@link ViewGroup} of the top toolbar.
      * @param incognitoStateProvider Notifies components when incognito mode is entered or exited.
+     * @param themeColorProvider Notifies components when the theme color changes.
      * @param newTabClickListener An {@link OnClickListener} that is triggered when the
      *                            new tab button is clicked.
+     * @param closeTabsClickListener An {@link OnClickListener} that is triggered when the
+     *                               close all tabs button is clicked.
      * @param menuButtonHelper An {@link AppMenuButtonHelper} that is triggered when the
      *                         menu button is clicked.
-     * @param tabModelSelector A {@link TabModelSelector} that incognito toggle tab layout uses to
-     *                         switch between normal and incognito tabs.
-     * @param overviewModeBehavior The overview mode manager.
      * @param tabCountProvider Updates the tab count number in the tab switcher button and in the
      *                         incognito toggle tab layout.
      */
-    public TabSwitcherBottomToolbarCoordinator(ViewStub stub,
-            IncognitoStateProvider incognitoStateProvider, OnClickListener newTabClickListener,
-            AppMenuButtonHelper menuButtonHelper, TabModelSelector tabModelSelector,
-            OverviewModeBehavior overviewModeBehavior, TabCountProvider tabCountProvider) {
-        final View root = stub.inflate();
+    TabSwitcherBottomToolbarCoordinator(ViewStub stub, ViewGroup topToolbarRoot,
+            IncognitoStateProvider incognitoStateProvider, ThemeColorProvider themeColorProvider,
+            OnClickListener newTabClickListener, OnClickListener closeTabsClickListener,
+            AppMenuButtonHelper menuButtonHelper, TabCountProvider tabCountProvider) {
+        final ViewGroup root = (ViewGroup) stub.inflate();
 
-        TabSwitcherBottomToolbarModel model = new TabSwitcherBottomToolbarModel();
+        View toolbar = root.findViewById(R.id.bottom_toolbar_buttons);
+        ViewGroup.LayoutParams params = toolbar.getLayoutParams();
+        params.height = root.getResources().getDimensionPixelOffset(
+                FeatureUtilities.isLabeledBottomToolbarEnabled()
+                        ? R.dimen.labeled_bottom_toolbar_height
+                        : R.dimen.bottom_toolbar_height);
 
-        PropertyModelChangeProcessor.create(model, root, new TabSwitcherBottomToolbarViewBinder());
+        mModel = new TabSwitcherBottomToolbarModel();
 
-        mMediator = new TabSwitcherBottomToolbarMediator(
-                model, incognitoStateProvider, overviewModeBehavior);
+        PropertyModelChangeProcessor.create(mModel, root,
+                new TabSwitcherBottomToolbarViewBinder(
+                        topToolbarRoot, (ViewGroup) root.getParent()));
 
-        mNewTabButton = root.findViewById(R.id.new_tab_button);
-        mNewTabButton.setIncognitoStateProvider(incognitoStateProvider);
+        mMediator = new TabSwitcherBottomToolbarMediator(mModel, themeColorProvider);
+
+        mCloseAllTabsButton = root.findViewById(R.id.close_all_tabs_button);
+        mCloseAllTabsButton.setOnClickListener(closeTabsClickListener);
+        mCloseAllTabsButton.setIncognitoStateProvider(incognitoStateProvider);
+        mCloseAllTabsButton.setThemeColorProvider(themeColorProvider);
+        mCloseAllTabsButton.setTabCountProvider(tabCountProvider);
+        mCloseAllTabsButton.setVisibility(View.INVISIBLE);
+
+        mNewTabButton = root.findViewById(R.id.tab_switcher_new_tab_button);
+        mNewTabButton.setWrapperView(root.findViewById(R.id.new_tab_button_wrapper));
         mNewTabButton.setOnClickListener(newTabClickListener);
-        mNewTabButton.postNativeInitialization();
+        mNewTabButton.setIncognitoStateProvider(incognitoStateProvider);
+        mNewTabButton.setThemeColorProvider(themeColorProvider);
 
+        assert menuButtonHelper != null;
         mMenuButton = root.findViewById(R.id.menu_button_wrapper);
-        mMenuButton.setThemeColorProvider(incognitoStateProvider);
-        mMenuButton.setTouchListener(menuButtonHelper);
-        mMenuButton.setAccessibilityDelegate(menuButtonHelper);
-
-        if (!DeviceClassManager.enableAccessibilityLayout()
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID)) {
-            ViewStub incognitoToggleTabsStub = root.findViewById(R.id.incognito_tabs_stub);
-            mIncognitoToggleTabLayout =
-                    (IncognitoToggleTabLayout) incognitoToggleTabsStub.inflate();
-            mIncognitoToggleTabLayout.setTabModelSelector(tabModelSelector);
-            mIncognitoToggleTabLayout.setTabCountProvider(tabCountProvider);
-        } else {
-            mIncognitoToggleTabLayout = null;
-        }
+        mMenuButton.setWrapperView(root.findViewById(R.id.labeled_menu_button_wrapper));
+        mMenuButton.setThemeColorProvider(themeColorProvider);
+        mMenuButton.setAppMenuButtonHelper(menuButtonHelper);
     }
 
     /**
-     * Show the update badge over the bottom toolbar's app menu.
+     * @param showOnTop Whether to show the tab switcher bottom toolbar on the top of the screen.
      */
-    public void showAppMenuUpdateBadge() {
-        mMenuButton.setUpdateBadgeVisibilityIfValidState(true);
+    void showToolbarOnTop(boolean showOnTop) {
+        mMediator.showToolbarOnTop(showOnTop);
     }
 
     /**
-     * Remove the update badge.
+     * @param visible Whether to hide the tab switcher bottom toolbar
      */
-    public void removeAppMenuUpdateBadge() {
-        mMenuButton.setUpdateBadgeVisibilityIfValidState(false);
-    }
-
-    /**
-     * @return Whether the update badge is showing.
-     */
-    public boolean isShowingAppMenuUpdateBadge() {
-        return mMenuButton.isShowingAppMenuUpdateBadge();
-    }
-
-    /**
-     * @return The tab switcher mode bottom toolbar's menu button.
-     */
-    public MenuButton getMenuButton() {
-        return mMenuButton;
+    void setVisible(boolean visible) {
+        mModel.set(TabSwitcherBottomToolbarModel.IS_VISIBLE, visible);
     }
 
     /**
@@ -120,8 +113,8 @@ public class TabSwitcherBottomToolbarCoordinator {
      */
     public void destroy() {
         mMediator.destroy();
+        mCloseAllTabsButton.destroy();
         mNewTabButton.destroy();
-        if (mIncognitoToggleTabLayout != null) mIncognitoToggleTabLayout.destroy();
         mMenuButton.destroy();
     }
 }

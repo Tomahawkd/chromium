@@ -11,18 +11,21 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/fetch/blob_bytes_consumer.h"
-#include "third_party/blink/renderer/core/fetch/bytes_consumer.h"
 #include "third_party/blink/renderer/core/fetch/bytes_consumer_test_util.h"
 #include "third_party/blink/renderer/core/fetch/form_data_bytes_consumer.h"
 #include "third_party/blink/renderer/core/html/forms/form_data.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
-#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_wrapper.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_interface.h"
 #include "third_party/blink/renderer/core/streams/test_underlying_source.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
 #include "third_party/blink/renderer/platform/blob/blob_url.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/loader/fetch/bytes_consumer.h"
+#include "third_party/blink/renderer/platform/loader/fetch/text_resource_decoder_options.h"
+#include "third_party/blink/renderer/platform/loader/testing/replaying_bytes_consumer.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
@@ -35,13 +38,12 @@ using testing::Return;
 using testing::_;
 using testing::SaveArg;
 using Checkpoint = testing::StrictMock<testing::MockFunction<void(int)>>;
-using BytesConsumerCommand = BytesConsumerTestUtil::Command;
-using ReplayingBytesConsumer = BytesConsumerTestUtil::ReplayingBytesConsumer;
 using MockFetchDataLoaderClient =
     BytesConsumerTestUtil::MockFetchDataLoaderClient;
 
 class BodyStreamBufferTest : public testing::Test {
  protected:
+  using Command = ReplayingBytesConsumer::Command;
   ScriptValue Eval(ScriptState* script_state, const char* s) {
     v8::Local<v8::String> source;
     v8::Local<v8::Script> script;
@@ -58,16 +60,17 @@ class BodyStreamBufferTest : public testing::Test {
       ADD_FAILURE() << "Compilation fails";
       return ScriptValue();
     }
-    return ScriptValue(script_state, script->Run(script_state->GetContext()));
+    return ScriptValue(script_state->GetIsolate(),
+                       script->Run(script_state->GetContext()));
   }
   ScriptValue EvalWithPrintingError(ScriptState* script_state, const char* s) {
     v8::TryCatch block(script_state->GetIsolate());
     ScriptValue r = Eval(script_state, s);
     if (block.HasCaught()) {
-      ADD_FAILURE() << ToCoreString(block.Exception()->ToString(
-                                        script_state->GetIsolate()))
-                           .Utf8()
-                           .data();
+      ADD_FAILURE() << ToCoreString(block.Exception()
+                                        ->ToString(script_state->GetContext())
+                                        .ToLocalChecked())
+                           .Utf8();
       block.ReThrow();
     }
     return r;
@@ -94,8 +97,8 @@ TEST_F(BodyStreamBufferTest, Tee) {
   V8TestingScope scope;
   NonThrowableExceptionState exception_state;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client1 = MockFetchDataLoaderClient::Create();
-  MockFetchDataLoaderClient* client2 = MockFetchDataLoaderClient::Create();
+  auto* client1 = MakeGarbageCollected<MockFetchDataLoaderClient>();
+  auto* client2 = MakeGarbageCollected<MockFetchDataLoaderClient>();
 
   InSequence s;
   EXPECT_CALL(checkpoint, Call(0));
@@ -106,11 +109,11 @@ TEST_F(BodyStreamBufferTest, Tee) {
   EXPECT_CALL(checkpoint, Call(3));
   EXPECT_CALL(checkpoint, Call(4));
 
-  ReplayingBytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "hello, "));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "world"));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kDone));
+  ReplayingBytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
+  src->Add(Command(Command::kData, "hello, "));
+  src->Add(Command(Command::kData, "world"));
+  src->Add(Command(Command::kDone));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
 
@@ -123,14 +126,16 @@ TEST_F(BodyStreamBufferTest, Tee) {
   EXPECT_FALSE(buffer->HasPendingActivity());
 
   checkpoint.Call(0);
-  new1->StartLoading(FetchDataLoader::CreateLoaderAsString(), client1,
-                     exception_state);
+  new1->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                         TextResourceDecoderOptions::CreateUTF8Decode()),
+                     client1, exception_state);
   checkpoint.Call(1);
   test::RunPendingTasks();
   checkpoint.Call(2);
 
-  new2->StartLoading(FetchDataLoader::CreateLoaderAsString(), client2,
-                     exception_state);
+  new2->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                         TextResourceDecoderOptions::CreateUTF8Decode()),
+                     client2, exception_state);
   checkpoint.Call(3);
   test::RunPendingTasks();
   checkpoint.Call(4);
@@ -153,15 +158,15 @@ TEST_F(BodyStreamBufferTest, TeeFromHandleMadeFromStream) {
       scope.GetScriptState(), underlying_source, 0);
   ASSERT_TRUE(stream);
 
-  underlying_source->Enqueue(ScriptValue(scope.GetScriptState(),
-                                         ToV8(chunk1, scope.GetScriptState())));
-  underlying_source->Enqueue(ScriptValue(scope.GetScriptState(),
-                                         ToV8(chunk2, scope.GetScriptState())));
+  underlying_source->Enqueue(
+      ScriptValue(scope.GetIsolate(), ToV8(chunk1, scope.GetScriptState())));
+  underlying_source->Enqueue(
+      ScriptValue(scope.GetIsolate(), ToV8(chunk2, scope.GetScriptState())));
   underlying_source->Close();
 
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client1 = MockFetchDataLoaderClient::Create();
-  MockFetchDataLoaderClient* client2 = MockFetchDataLoaderClient::Create();
+  auto* client1 = MakeGarbageCollected<MockFetchDataLoaderClient>();
+  auto* client2 = MakeGarbageCollected<MockFetchDataLoaderClient>();
 
   InSequence s;
   EXPECT_CALL(checkpoint, Call(1));
@@ -192,14 +197,16 @@ TEST_F(BodyStreamBufferTest, TeeFromHandleMadeFromStream) {
   EXPECT_TRUE(buffer->IsStreamDisturbed(exception_state).value_or(false));
   EXPECT_FALSE(buffer->HasPendingActivity());
 
-  new1->StartLoading(FetchDataLoader::CreateLoaderAsString(), client1,
-                     exception_state);
+  new1->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                         TextResourceDecoderOptions::CreateUTF8Decode()),
+                     client1, exception_state);
   checkpoint.Call(1);
   test::RunPendingTasks();
   checkpoint.Call(2);
 
-  new2->StartLoading(FetchDataLoader::CreateLoaderAsString(), client2,
-                     exception_state);
+  new2->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                         TextResourceDecoderOptions::CreateUTF8Decode()),
+                     client2, exception_state);
   checkpoint.Call(3);
   test::RunPendingTasks();
   checkpoint.Call(4);
@@ -207,7 +214,7 @@ TEST_F(BodyStreamBufferTest, TeeFromHandleMadeFromStream) {
 
 TEST_F(BodyStreamBufferTest, DrainAsBlobDataHandle) {
   V8TestingScope scope;
-  std::unique_ptr<BlobData> data = BlobData::Create();
+  auto data = std::make_unique<BlobData>();
   data->AppendText("hello", false);
   auto size = data->length();
   scoped_refptr<BlobDataHandle> blob_data_handle =
@@ -235,8 +242,8 @@ TEST_F(BodyStreamBufferTest, DrainAsBlobDataHandle) {
 TEST_F(BodyStreamBufferTest, DrainAsBlobDataHandleReturnsNull) {
   V8TestingScope scope;
   // This BytesConsumer is not drainable.
-  BytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
+  BytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
 
@@ -280,7 +287,7 @@ TEST_F(BodyStreamBufferTest,
 
 TEST_F(BodyStreamBufferTest, DrainAsFormData) {
   V8TestingScope scope;
-  FormData* data = FormData::Create(UTF8Encoding());
+  auto* data = MakeGarbageCollected<FormData>(UTF8Encoding());
   data->append("name1", "value1");
   data->append("name2", "value2");
   scoped_refptr<EncodedFormData> input_form_data =
@@ -308,8 +315,8 @@ TEST_F(BodyStreamBufferTest, DrainAsFormData) {
 TEST_F(BodyStreamBufferTest, DrainAsFormDataReturnsNull) {
   V8TestingScope scope;
   // This BytesConsumer is not drainable.
-  BytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
+  BytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
 
@@ -349,7 +356,7 @@ TEST_F(BodyStreamBufferTest,
 TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsArrayBuffer) {
   V8TestingScope scope;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
   DOMArrayBuffer* array_buffer = nullptr;
 
   InSequence s;
@@ -358,11 +365,11 @@ TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsArrayBuffer) {
       .WillOnce(SaveArg<0>(&array_buffer));
   EXPECT_CALL(checkpoint, Call(2));
 
-  ReplayingBytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kWait));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "hello"));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kDone));
+  ReplayingBytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
+  src->Add(Command(Command::kWait));
+  src->Add(Command(Command::kData, "hello"));
+  src->Add(Command(Command::kDone));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
   buffer->StartLoading(FetchDataLoader::CreateLoaderAsArrayBuffer(), client,
@@ -381,13 +388,13 @@ TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsArrayBuffer) {
   EXPECT_FALSE(buffer->HasPendingActivity());
   ASSERT_TRUE(array_buffer);
   EXPECT_EQ("hello", String(static_cast<const char*>(array_buffer->Data()),
-                            array_buffer->ByteLength()));
+                            array_buffer->ByteLengthAsSizeT()));
 }
 
 TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsBlob) {
   V8TestingScope scope;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
   scoped_refptr<BlobDataHandle> blob_data_handle;
 
   InSequence s;
@@ -396,11 +403,11 @@ TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsBlob) {
       .WillOnce(SaveArg<0>(&blob_data_handle));
   EXPECT_CALL(checkpoint, Call(2));
 
-  ReplayingBytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kWait));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "hello"));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kDone));
+  ReplayingBytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
+  src->Add(Command(Command::kWait));
+  src->Add(Command(Command::kData, "hello"));
+  src->Add(Command(Command::kDone));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
   buffer->StartLoading(FetchDataLoader::CreateLoaderAsBlobHandle("text/plain"),
@@ -423,22 +430,23 @@ TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsBlob) {
 TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsString) {
   V8TestingScope scope;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
 
   InSequence s;
   EXPECT_CALL(checkpoint, Call(1));
   EXPECT_CALL(*client, DidFetchDataLoadedString(String("hello")));
   EXPECT_CALL(checkpoint, Call(2));
 
-  ReplayingBytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kWait));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "hello"));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kDone));
+  ReplayingBytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
+  src->Add(Command(Command::kWait));
+  src->Add(Command(Command::kData, "hello"));
+  src->Add(Command(Command::kDone));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
-  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(), client,
-                       ASSERT_NO_EXCEPTION);
+  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                           TextResourceDecoderOptions::CreateUTF8Decode()),
+                       client, ASSERT_NO_EXCEPTION);
 
   EXPECT_TRUE(buffer->IsStreamLocked(ASSERT_NO_EXCEPTION).value_or(false));
   EXPECT_TRUE(buffer->IsStreamDisturbed(ASSERT_NO_EXCEPTION).value_or(false));
@@ -456,7 +464,7 @@ TEST_F(BodyStreamBufferTest, LoadBodyStreamBufferAsString) {
 TEST_F(BodyStreamBufferTest, LoadClosedHandle) {
   V8TestingScope scope;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
 
   InSequence s;
   EXPECT_CALL(checkpoint, Call(1));
@@ -473,8 +481,9 @@ TEST_F(BodyStreamBufferTest, LoadClosedHandle) {
   EXPECT_FALSE(buffer->HasPendingActivity());
 
   checkpoint.Call(1);
-  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(), client,
-                       ASSERT_NO_EXCEPTION);
+  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                           TextResourceDecoderOptions::CreateUTF8Decode()),
+                       client, ASSERT_NO_EXCEPTION);
   checkpoint.Call(2);
 
   EXPECT_TRUE(buffer->IsStreamLocked(ASSERT_NO_EXCEPTION).value_or(false));
@@ -485,7 +494,7 @@ TEST_F(BodyStreamBufferTest, LoadClosedHandle) {
 TEST_F(BodyStreamBufferTest, LoadErroredHandle) {
   V8TestingScope scope;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
 
   InSequence s;
   EXPECT_CALL(checkpoint, Call(1));
@@ -503,8 +512,9 @@ TEST_F(BodyStreamBufferTest, LoadErroredHandle) {
   EXPECT_FALSE(buffer->HasPendingActivity());
 
   checkpoint.Call(1);
-  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(), client,
-                       ASSERT_NO_EXCEPTION);
+  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                           TextResourceDecoderOptions::CreateUTF8Decode()),
+                       client, ASSERT_NO_EXCEPTION);
   checkpoint.Call(2);
 
   EXPECT_TRUE(buffer->IsStreamLocked(ASSERT_NO_EXCEPTION).value_or(false));
@@ -515,24 +525,25 @@ TEST_F(BodyStreamBufferTest, LoadErroredHandle) {
 TEST_F(BodyStreamBufferTest, LoaderShouldBeKeptAliveByBodyStreamBuffer) {
   V8TestingScope scope;
   Checkpoint checkpoint;
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
 
   InSequence s;
   EXPECT_CALL(checkpoint, Call(1));
   EXPECT_CALL(*client, DidFetchDataLoadedString(String("hello")));
   EXPECT_CALL(checkpoint, Call(2));
 
-  ReplayingBytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kWait));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "hello"));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kDone));
+  ReplayingBytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
+  src->Add(Command(Command::kWait));
+  src->Add(Command(Command::kData, "hello"));
+  src->Add(Command(Command::kDone));
   Persistent<BodyStreamBuffer> buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
-  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(), client,
-                       ASSERT_NO_EXCEPTION);
+  buffer->StartLoading(FetchDataLoader::CreateLoaderAsString(
+                           TextResourceDecoderOptions::CreateUTF8Decode()),
+                       client, ASSERT_NO_EXCEPTION);
 
-  ThreadState::Current()->CollectAllGarbage();
+  ThreadState::Current()->CollectAllGarbageForTesting();
   checkpoint.Call(1);
   test::RunPendingTasks();
   checkpoint.Call(2);
@@ -541,13 +552,13 @@ TEST_F(BodyStreamBufferTest, LoaderShouldBeKeptAliveByBodyStreamBuffer) {
 TEST_F(BodyStreamBufferTest, SourceShouldBeCanceledWhenCanceled) {
   V8TestingScope scope;
   ReplayingBytesConsumer* consumer =
-      MakeGarbageCollected<BytesConsumerTestUtil::ReplayingBytesConsumer>(
-          scope.GetExecutionContext());
+      MakeGarbageCollected<ReplayingBytesConsumer>(
+          scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
 
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), consumer, nullptr);
-  ScriptValue reason(scope.GetScriptState(),
-                     V8String(scope.GetScriptState()->GetIsolate(), "reason"));
+  ScriptValue reason(scope.GetIsolate(),
+                     V8String(scope.GetIsolate(), "reason"));
   EXPECT_FALSE(consumer->IsCancelled());
   buffer->Cancel(scope.GetScriptState(), reason);
   EXPECT_TRUE(consumer->IsCancelled());
@@ -555,11 +566,11 @@ TEST_F(BodyStreamBufferTest, SourceShouldBeCanceledWhenCanceled) {
 
 TEST_F(BodyStreamBufferTest, NestedPull) {
   V8TestingScope scope;
-  ReplayingBytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kWait));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kData, "hello"));
-  src->Add(BytesConsumerCommand(BytesConsumerCommand::kError));
+  ReplayingBytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
+  src->Add(Command(Command::kWait));
+  src->Add(Command(Command::kData, "hello"));
+  src->Add(Command(Command::kError));
   Persistent<BodyStreamBuffer> buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
 
@@ -586,8 +597,8 @@ TEST_F(BodyStreamBufferTest, NestedPull) {
 TEST_F(BodyStreamBufferTest, NullAbortSignalIsNotAborted) {
   V8TestingScope scope;
   // This BytesConsumer is not drainable.
-  BytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
+  BytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, nullptr);
 
@@ -597,8 +608,8 @@ TEST_F(BodyStreamBufferTest, NullAbortSignalIsNotAborted) {
 TEST_F(BodyStreamBufferTest, AbortSignalMakesAborted) {
   V8TestingScope scope;
   // This BytesConsumer is not drainable.
-  BytesConsumer* src =
-      MakeGarbageCollected<ReplayingBytesConsumer>(&scope.GetDocument());
+  BytesConsumer* src = MakeGarbageCollected<ReplayingBytesConsumer>(
+      scope.GetDocument().GetTaskRunner(TaskType::kNetworking));
   auto* signal = MakeGarbageCollected<AbortSignal>(scope.GetExecutionContext());
   BodyStreamBuffer* buffer = MakeGarbageCollected<BodyStreamBuffer>(
       scope.GetScriptState(), src, signal);
@@ -613,8 +624,8 @@ TEST_F(BodyStreamBufferTest,
   V8TestingScope scope;
   Checkpoint checkpoint;
   MockFetchDataLoader* loader = MockFetchDataLoader::Create();
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
-  auto* src = BytesConsumerTestUtil::MockBytesConsumer::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
+  auto* src = MakeGarbageCollected<BytesConsumerTestUtil::MockBytesConsumer>();
 
   EXPECT_CALL(*loader, Start(_, _)).Times(0);
 
@@ -648,8 +659,8 @@ TEST_F(BodyStreamBufferTest, AbortAfterStartLoadingCallsDataLoaderClientAbort) {
   V8TestingScope scope;
   Checkpoint checkpoint;
   MockFetchDataLoader* loader = MockFetchDataLoader::Create();
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
-  auto* src = BytesConsumerTestUtil::MockBytesConsumer::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
+  auto* src = MakeGarbageCollected<BytesConsumerTestUtil::MockBytesConsumer>();
 
   InSequence s;
   EXPECT_CALL(*src, SetClient(_));
@@ -683,8 +694,8 @@ TEST_F(BodyStreamBufferTest,
   V8TestingScope scope;
   Checkpoint checkpoint;
   MockFetchDataLoader* loader = MockFetchDataLoader::Create();
-  MockFetchDataLoaderClient* client = MockFetchDataLoaderClient::Create();
-  auto* src = BytesConsumerTestUtil::MockBytesConsumer::Create();
+  auto* client = MakeGarbageCollected<MockFetchDataLoaderClient>();
+  auto* src = MakeGarbageCollected<BytesConsumerTestUtil::MockBytesConsumer>();
 
   InSequence s;
   EXPECT_CALL(*src, SetClient(_));

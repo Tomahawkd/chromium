@@ -10,6 +10,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/views/animation/ink_drop_event_handler.h"
 #include "ui/views/view.h"
 
 namespace gfx {
@@ -37,6 +38,8 @@ class InkDropHostViewTestApi;
 // A view that provides InkDropHost functionality.
 class VIEWS_EXPORT InkDropHostView : public View {
  public:
+  METADATA_HEADER(InkDropHostView);
+
   // Used in SetInkDropMode() to specify whether the ink drop effect is enabled
   // or not for the view. In case of having an ink drop, it also specifies
   // whether the default event handler for the ink drop should be installed or
@@ -95,6 +98,10 @@ class VIEWS_EXPORT InkDropHostView : public View {
   }
   float ink_drop_visible_opacity() const { return ink_drop_visible_opacity_; }
 
+  void set_ink_drop_highlight_opacity(base::Optional<float> opacity) {
+    ink_drop_highlight_opacity_ = opacity;
+  }
+
   void set_ink_drop_corner_radii(int small_radius, int large_radius) {
     ink_drop_small_corner_radius_ = small_radius;
     ink_drop_large_corner_radius_ = large_radius;
@@ -104,6 +111,16 @@ class VIEWS_EXPORT InkDropHostView : public View {
   }
   int ink_drop_large_corner_radius() const {
     return ink_drop_large_corner_radius_;
+  }
+
+  // Allows InstallableInkDrop to override our InkDropEventHandler
+  // instance.
+  //
+  // TODO(crbug.com/931964): Remove this, either by finishing refactor or by
+  // giving up.
+  void set_ink_drop_event_handler_override(
+      InkDropEventHandler* ink_drop_event_handler_override) {
+    ink_drop_event_handler_override_ = ink_drop_event_handler_override;
   }
 
   // Animates |ink_drop_| to the desired |ink_drop_state|. Caches |event| as the
@@ -117,38 +134,40 @@ class VIEWS_EXPORT InkDropHostView : public View {
 
  protected:
   // Size used for the default SquareInkDropRipple.
-  static constexpr int kDefaultInkDropSize = 24;
+  static constexpr gfx::Size kDefaultInkDropSize = gfx::Size(24, 24);
 
   // Called after a new InkDrop instance is created.
   virtual void OnInkDropCreated() {}
 
-  // View:
-  void ViewHierarchyChanged(
-      const ViewHierarchyChangedDetails& details) override;
-  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  void VisibilityChanged(View* starting_from, bool is_visible) override;
-  void OnFocus() override;
-  void OnBlur() override;
-
-  // Returns an InkDropImpl with default configuration. The base implementation
-  // of CreateInkDrop() delegates to this function.
+  // Returns an InkDropImpl suitable for use with a square ink drop.
+  // TODO(pbos): Rename to CreateDefaultSquareInkDropImpl.
   std::unique_ptr<InkDropImpl> CreateDefaultInkDropImpl();
 
   // Returns an InkDropImpl configured to work well with a flood-fill ink drop
   // ripple.
   std::unique_ptr<InkDropImpl> CreateDefaultFloodFillInkDropImpl();
 
-  // Returns the default InkDropRipple centered on |center_point|.
+  // TODO(pbos): Migrate uses to CreateSquareInkDropRipple which this calls
+  // directly.
   std::unique_ptr<InkDropRipple> CreateDefaultInkDropRipple(
       const gfx::Point& center_point,
-      const gfx::Size& size = gfx::Size(kDefaultInkDropSize,
-                                        kDefaultInkDropSize)) const;
+      const gfx::Size& size = kDefaultInkDropSize) const;
 
-  // Returns the default InkDropHighlight centered on |center_point|.
+  // Creates a SquareInkDropRipple centered on |center_point|.
+  std::unique_ptr<InkDropRipple> CreateSquareInkDropRipple(
+      const gfx::Point& center_point,
+      const gfx::Size& size) const;
+
+  // TODO(pbos): Migrate uses to CreateSquareInkDropHighlight which this calls
+  // directly.
   std::unique_ptr<InkDropHighlight> CreateDefaultInkDropHighlight(
       const gfx::PointF& center_point,
-      const gfx::Size& size = gfx::Size(kDefaultInkDropSize,
-                                        kDefaultInkDropSize)) const;
+      const gfx::Size& size = kDefaultInkDropSize) const;
+
+  // Creates a InkDropHighlight centered on |center_point|.
+  std::unique_ptr<InkDropHighlight> CreateSquareInkDropHighlight(
+      const gfx::PointF& center_point,
+      const gfx::Size& size) const;
 
   // Returns true if an ink drop instance has been created.
   bool HasInkDrop() const;
@@ -156,7 +175,11 @@ class VIEWS_EXPORT InkDropHostView : public View {
   // Provides access to |ink_drop_|. Implements lazy initialization of
   // |ink_drop_| so as to avoid virtual method calls during construction since
   // subclasses should be able to call SetInkDropMode() during construction.
-  InkDrop* GetInkDrop();
+  //
+  // WARNING: please don't override this; this is only virtual for the
+  // InstallableInkDrop refactor. TODO(crbug.com/931964): make non-virtual when
+  // this isn't necessary anymore.
+  virtual InkDrop* GetInkDrop();
 
   // Returns the point of the |last_ripple_triggering_event_| if it was a
   // LocatedEvent, otherwise the center point of the local bounds is returned.
@@ -173,11 +196,26 @@ class VIEWS_EXPORT InkDropHostView : public View {
   static gfx::Size CalculateLargeInkDropSize(const gfx::Size& small_size);
 
  private:
-  class InkDropEventHandler;
   friend class test::InkDropHostViewTestApi;
 
-  // The last user Event to trigger an ink drop ripple animation.
-  std::unique_ptr<ui::LocatedEvent> last_ripple_triggering_event_;
+  class InkDropHostViewEventHandlerDelegate
+      : public InkDropEventHandler::Delegate {
+   public:
+    explicit InkDropHostViewEventHandlerDelegate(InkDropHostView* host_view);
+
+    // InkDropEventHandler:
+    InkDrop* GetInkDrop() override;
+    bool HasInkDrop() const override;
+
+    bool SupportsGestureEvents() const override;
+
+   private:
+    // The host view.
+    InkDropHostView* const host_view_;
+  };
+
+  const InkDropEventHandler* GetEventHandler() const;
+  InkDropEventHandler* GetEventHandler();
 
   // Defines what type of |ink_drop_| to create.
   InkDropMode ink_drop_mode_ = InkDropMode::OFF;
@@ -187,17 +225,20 @@ class VIEWS_EXPORT InkDropHostView : public View {
 
   // Intentionally declared after |ink_drop_| so that it doesn't access a
   // destroyed |ink_drop_| during destruction.
-  const std::unique_ptr<InkDropEventHandler> ink_drop_event_handler_;
+  InkDropHostViewEventHandlerDelegate ink_drop_event_handler_delegate_;
+  InkDropEventHandler ink_drop_event_handler_;
+
+  InkDropEventHandler* ink_drop_event_handler_override_ = nullptr;
 
   float ink_drop_visible_opacity_ = 0.175f;
+
+  // TODO(pbos): Audit call sites to make sure highlight opacity is either
+  // always set or using the default value. Then make this a non-optional float.
+  base::Optional<float> ink_drop_highlight_opacity_;
 
   // Radii used for the SquareInkDropRipple.
   int ink_drop_small_corner_radius_ = 2;
   int ink_drop_large_corner_radius_ = 4;
-
-  // Determines whether the view was already painting to layer before adding ink
-  // drop layer.
-  bool old_paint_to_layer_ = false;
 
   bool destroying_ = false;
 

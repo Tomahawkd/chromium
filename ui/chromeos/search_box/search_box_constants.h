@@ -24,11 +24,17 @@ SEARCH_BOX_EXPORT constexpr SkColor kSearchBoxBackgroundDefault = SK_ColorWHITE;
 // The background border corner radius of the search box.
 SEARCH_BOX_EXPORT constexpr int kSearchBoxBorderCornerRadius = 24;
 
+// The background border corner radius of the expanded search box.
+SEARCH_BOX_EXPORT constexpr int kSearchBoxBorderCornerRadiusSearchResult = 20;
+
 // Preferred height of search box.
 SEARCH_BOX_EXPORT constexpr int kSearchBoxPreferredHeight = 48;
 
-// The size of the search icon in the search box.
-SEARCH_BOX_EXPORT constexpr int kSearchIconSize = 24;
+// The size of the icon in the search box.
+SEARCH_BOX_EXPORT constexpr int kIconSize = 24;
+
+// The size of the image button in the search box.
+SEARCH_BOX_EXPORT constexpr int kButtonSizeDip = 40;
 
 }  // namespace search_box
 

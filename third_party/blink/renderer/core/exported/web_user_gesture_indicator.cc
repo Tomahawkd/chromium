@@ -39,13 +39,7 @@ namespace blink {
 
 bool WebUserGestureIndicator::IsProcessingUserGesture(WebLocalFrame* frame) {
   return LocalFrame::HasTransientUserActivation(
-      frame ? ToWebLocalFrameImpl(frame)->GetFrame() : nullptr);
-}
-
-bool WebUserGestureIndicator::IsProcessingUserGestureThreadSafe(
-    WebLocalFrame* frame) {
-  return LocalFrame::HasTransientUserActivation(
-      frame ? ToWebLocalFrameImpl(frame)->GetFrame() : nullptr, true);
+      frame ? To<WebLocalFrameImpl>(frame)->GetFrame() : nullptr);
 }
 
 // TODO(csharrison): consumeUserGesture() and currentUserGestureToken() use
@@ -55,7 +49,7 @@ bool WebUserGestureIndicator::ConsumeUserGesture(
     WebLocalFrame* frame,
     UserActivationUpdateSource update_source) {
   return LocalFrame::ConsumeTransientUserActivation(
-      frame ? ToWebLocalFrameImpl(frame)->GetFrame() : nullptr, true,
+      frame ? To<WebLocalFrameImpl>(frame)->GetFrame() : nullptr,
       update_source);
 
   ;
@@ -64,15 +58,7 @@ bool WebUserGestureIndicator::ConsumeUserGesture(
 bool WebUserGestureIndicator::ProcessedUserGestureSinceLoad(
     WebLocalFrame* frame) {
   DCHECK(frame);
-  return ToWebLocalFrameImpl(frame)->GetFrame()->HasBeenActivated();
-}
-
-WebUserGestureToken WebUserGestureIndicator::CurrentUserGestureToken() {
-  return WebUserGestureToken(UserGestureIndicator::CurrentTokenThreadSafe());
-}
-
-void WebUserGestureIndicator::ExtendTimeout() {
-  UserGestureIndicator::SetTimeoutPolicy(UserGestureToken::kOutOfProcess);
+  return To<WebLocalFrameImpl>(frame)->GetFrame()->HasBeenActivated();
 }
 
 }  // namespace blink

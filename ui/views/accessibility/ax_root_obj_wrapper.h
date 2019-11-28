@@ -11,22 +11,19 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "ui/accessibility/platform/ax_unique_id.h"
-#include "ui/aura/env_observer.h"
 #include "ui/display/display_observer.h"
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
 
 class VIEWS_EXPORT AXRootObjWrapper : public views::AXAuraObjWrapper,
-                                      display::DisplayObserver,
-                                      aura::EnvObserver {
+                                      display::DisplayObserver {
  public:
-  explicit AXRootObjWrapper(views::AXAuraObjCache::Delegate* delegate);
+  AXRootObjWrapper(views::AXAuraObjCache::Delegate* delegate,
+                   views::AXAuraObjCache* cache);
+  AXRootObjWrapper(const AXRootObjWrapper&) = delete;
+  AXRootObjWrapper& operator=(const AXRootObjWrapper&) = delete;
   ~AXRootObjWrapper() override;
-
-  // Returns an AXAuraObjWrapper for an alert window with title set to |text|.
-  views::AXAuraObjWrapper* GetAlertForText(const std::string& text);
 
   // Convenience method to check for existence of a child.
   bool HasChild(views::AXAuraObjWrapper* child);
@@ -44,17 +41,9 @@ class VIEWS_EXPORT AXRootObjWrapper : public views::AXAuraObjWrapper,
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t changed_metrics) override;
 
-  // aura::EnvObserver:
-  void OnWindowInitialized(aura::Window* window) override;
-  void OnWillDestroyEnv() override;
-
   ui::AXUniqueId unique_id_;
 
-  std::unique_ptr<aura::Window> alert_window_;
-
   views::AXAuraObjCache::Delegate* delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(AXRootObjWrapper);
 };
 
 #endif  // UI_VIEWS_ACCESSIBILITY_AX_ROOT_OBJ_WRAPPER_H_

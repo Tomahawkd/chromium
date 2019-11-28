@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -28,7 +28,6 @@ TEST(BookmarksFileImporterTest, CanImportURL) {
     { "chrome://version", true },
     { "chrome://chrome-urls", true },
     { "chrome://kill", true },
-    { "chrome://chrome", true },
     { "chrome://about", true },
     { "about:version", true },
     { "about:blank", true },
@@ -39,7 +38,7 @@ TEST(BookmarksFileImporterTest, CanImportURL) {
     { "about:moon", false },
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     EXPECT_EQ(test_cases[i].can_be_imported,
               internal::CanImportURL(GURL(test_cases[i].url)));
   }

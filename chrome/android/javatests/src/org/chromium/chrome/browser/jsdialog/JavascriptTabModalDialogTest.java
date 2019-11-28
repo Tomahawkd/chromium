@@ -25,7 +25,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
@@ -33,16 +32,16 @@ import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.modaldialog.ModalDialogProperties;
-import org.chromium.chrome.browser.modaldialog.ModalDialogView;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnEvaluateJavaScriptResultHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.base.PageTransition;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.UiRestriction;
 
 import java.util.concurrent.ExecutionException;
@@ -65,7 +64,7 @@ public class JavascriptTabModalDialogTest {
     private ChromeTabbedActivity mActivity;
 
     @Before
-    public void setUp() throws InterruptedException {
+    public void setUp() {
         mActivityTestRule.startMainActivityWithURL(EMPTY_PAGE);
         mActivity = mActivityTestRule.getActivity();
     }
@@ -77,8 +76,7 @@ public class JavascriptTabModalDialogTest {
     @Test
     @MediumTest
     @Feature({"Browser", "Main"})
-    public void testAlertModalDialog()
-            throws InterruptedException, TimeoutException, ExecutionException {
+    public void testAlertModalDialog() throws TimeoutException, ExecutionException {
         final OnEvaluateJavaScriptResultHelper scriptEvent =
                 executeJavaScriptAndWaitForDialog("alert('Hello Android!');");
 
@@ -96,17 +94,16 @@ public class JavascriptTabModalDialogTest {
     @Test
     @MediumTest
     @Feature({"Browser", "Main"})
-    public void testAlertModalDialogWithTwoClicks()
-            throws InterruptedException, TimeoutException, ExecutionException {
+    public void testAlertModalDialogWithTwoClicks() throws TimeoutException, ExecutionException {
         OnEvaluateJavaScriptResultHelper scriptEvent =
                 executeJavaScriptAndWaitForDialog("alert('Hello Android');");
         JavascriptTabModalDialog jsDialog = getCurrentDialog();
         Assert.assertNotNull("No dialog showing.", jsDialog);
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             PropertyModel model = mActivity.getModalDialogManager().getCurrentDialogForTest();
-            jsDialog.onClick(model, ModalDialogView.ButtonType.POSITIVE);
-            jsDialog.onClick(model, ModalDialogView.ButtonType.POSITIVE);
+            jsDialog.onClick(model, ModalDialogProperties.ButtonType.POSITIVE);
+            jsDialog.onClick(model, ModalDialogProperties.ButtonType.POSITIVE);
         });
 
         Assert.assertTrue("JavaScript execution should continue after closing prompt.",
@@ -120,8 +117,7 @@ public class JavascriptTabModalDialogTest {
     @Test
     @MediumTest
     @Feature({"Browser", "Main"})
-    public void testConfirmModalDialog()
-            throws InterruptedException, TimeoutException, ExecutionException {
+    public void testConfirmModalDialog() throws TimeoutException, ExecutionException {
         OnEvaluateJavaScriptResultHelper scriptEvent =
                 executeJavaScriptAndWaitForDialog("confirm('Android');");
 
@@ -157,8 +153,7 @@ public class JavascriptTabModalDialogTest {
     @Test
     @MediumTest
     @Feature({"Browser", "Main"})
-    public void testPromptModalDialog()
-            throws InterruptedException, TimeoutException, ExecutionException {
+    public void testPromptModalDialog() throws TimeoutException, ExecutionException {
         final String promptText = "Hello Android!";
         final OnEvaluateJavaScriptResultHelper scriptEvent =
                 executeJavaScriptAndWaitForDialog("prompt('Android', 'default');");
@@ -184,8 +179,7 @@ public class JavascriptTabModalDialogTest {
     @Test
     @MediumTest
     @Feature({"Browser", "Main"})
-    public void testAlertModalDialogMessageFocus()
-            throws InterruptedException, TimeoutException, ExecutionException {
+    public void testAlertModalDialogMessageFocus() throws TimeoutException, ExecutionException {
         assertScrollViewFocusabilityInAlertDialog("alert('Short message!');", false);
 
         // Test on landscape mode so that the message is long enough to make scroll view scrollable
@@ -198,9 +192,8 @@ public class JavascriptTabModalDialogTest {
         mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
     }
 
-    private void assertScrollViewFocusabilityInAlertDialog(
-            final String jsAlertScript, final boolean expectedFocusability)
-            throws InterruptedException, TimeoutException, ExecutionException {
+    private void assertScrollViewFocusabilityInAlertDialog(final String jsAlertScript,
+            final boolean expectedFocusability) throws TimeoutException, ExecutionException {
         final OnEvaluateJavaScriptResultHelper scriptEvent =
                 executeJavaScriptAndWaitForDialog(jsAlertScript);
 
@@ -226,7 +219,7 @@ public class JavascriptTabModalDialogTest {
     public void testDialogDismissedAfterClosingTab() {
         executeJavaScriptAndWaitForDialog("alert('Android')");
 
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> { mActivity.getCurrentTabModel().closeTab(mActivity.getActivityTab()); });
 
         // Closing the tab should have dismissed the dialog.
@@ -261,7 +254,7 @@ public class JavascriptTabModalDialogTest {
     public void testDialogDismissedAfterUrlUpdated() {
         executeJavaScriptAndWaitForDialog("alert('Android')");
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             mActivity.getActivityTab().loadUrl(new LoadUrlParams(OTHER_PAGE, PageTransition.LINK));
         });
 
@@ -310,7 +303,7 @@ public class JavascriptTabModalDialogTest {
      * showing.
      */
     private JavascriptTabModalDialog getCurrentDialog() throws ExecutionException {
-        return (JavascriptTabModalDialog) ThreadUtils.runOnUiThreadBlocking(() -> {
+        return (JavascriptTabModalDialog) TestThreadUtils.runOnUiThreadBlocking(() -> {
             PropertyModel model = mActivity.getModalDialogManager().getCurrentDialogForTest();
             return model != null ? model.get(ModalDialogProperties.CONTROLLER) : null;
         });

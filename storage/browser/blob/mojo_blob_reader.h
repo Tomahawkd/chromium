@@ -6,6 +6,8 @@
 #define STORAGE_BROWSER_BLOB_MOJO_BLOB_READER_H_
 
 #include <memory>
+
+#include "base/component_export.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "mojo/public/cpp/system/data_pipe.h"
@@ -13,11 +15,6 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_byte_range.h"
 #include "storage/browser/blob/blob_reader.h"
-#include "storage/browser/storage_browser_export.h"
-
-namespace net {
-class IOBufferWithSize;
-}
 
 namespace network {
 class NetToMojoPendingBuffer;
@@ -28,7 +25,7 @@ class BlobDataHandle;
 
 // Reads a blob into a data pipe. Owns itself, and owns its delegate. Self
 // destructs when reading is complete.
-class STORAGE_EXPORT MojoBlobReader {
+class COMPONENT_EXPORT(STORAGE_BROWSER) MojoBlobReader {
  public:
   // Methods on this delegate are called in the order they are defined here.
   // With the exception of DidRead, each method is called at most once.
@@ -54,9 +51,8 @@ class STORAGE_EXPORT MojoBlobReader {
                                              uint64_t content_size) = 0;
 
     // Called if DidCalculateSize returned |REQUEST_SIDE_DATA|, with the side
-    // data associated with the blob being read. If the blob doesn't have side
-    // data this method is called with null.
-    virtual void DidReadSideData(net::IOBufferWithSize* data) {}
+    // data associated with the blob being read, if any.
+    virtual void DidReadSideData(base::Optional<mojo_base::BigBuffer> data) {}
 
     // Called whenever some amount of data is read from the blob and about to be
     // written to the data pipe.
@@ -132,7 +128,7 @@ class STORAGE_EXPORT MojoBlobReader {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<MojoBlobReader> weak_factory_;
+  base::WeakPtrFactory<MojoBlobReader> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MojoBlobReader);
 };

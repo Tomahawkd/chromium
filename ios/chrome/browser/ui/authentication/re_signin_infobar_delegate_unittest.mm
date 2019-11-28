@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
@@ -18,7 +19,7 @@
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
 #import "ios/chrome/browser/ui/signin_interaction/public/signin_presenter.h"
 #include "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/public/test/web_task_environment.h"
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "third_party/ocmock/OCMock/OCMock.h"
@@ -58,10 +59,10 @@ class ReSignInInfoBarDelegateTest : public PlatformTest {
     AuthenticationService* authentication_service =
         AuthenticationServiceFactory::GetForBrowserState(
             chrome_browser_state_.get());
-    authentication_service->SignIn(chrome_identity, std::string());
+    authentication_service->SignIn(chrome_identity);
   }
 
-  web::TestWebThreadBundle thread_bundle_;
+  web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestChromeBrowserState> chrome_browser_state_;
 };
 
@@ -71,7 +72,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenNotPrompting) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(false);
+  authentication_service->ResetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), nil);
@@ -86,7 +87,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenNotSignedIn) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), nil);
@@ -101,7 +102,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenAlreadySignedIn) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), nil);
@@ -116,7 +117,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestCreateWhenIncognito) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
   std::unique_ptr<ReSignInInfoBarDelegate> infobar_delegate =
       ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_->GetOffTheRecordChromeBrowserState(), nil);
@@ -142,7 +143,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestAccept) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
 
   id presenter = OCMProtocolMock(@protocol(SigninPresenter));
   [[presenter expect]
@@ -169,7 +170,7 @@ TEST_F(ReSignInInfoBarDelegateTest, TestInfoBarDismissed) {
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
           chrome_browser_state_.get());
-  authentication_service->SetPromptForSignIn(true);
+  authentication_service->SetPromptForSignIn();
 
   id presenter = OCMProtocolMock(@protocol(SigninPresenter));
   [[presenter reject] showSignin:[OCMArg any]];

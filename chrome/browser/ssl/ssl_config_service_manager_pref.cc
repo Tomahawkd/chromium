@@ -10,11 +10,12 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/metrics/field_trial_params.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
@@ -23,7 +24,8 @@
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "mojo/public/cpp/bindings/interface_ptr_set.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/remote_set.h"
 #include "net/cert/cert_verifier.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_config_service.h"
@@ -113,8 +115,6 @@ std::vector<std::string> CanonicalizeHostnamePatterns(
   return out;
 }
 
-const char kTLS13VariantExperimentName[] = "TLS13Variant";
-
 ////////////////////////////////////////////////////////////////////////////////
 //  SSLConfigServiceManagerPref
 
@@ -152,16 +152,15 @@ class SSLConfigServiceManagerPref : public SSLConfigServiceManager {
   // The local_state prefs.
   BooleanPrefMember rev_checking_enabled_;
   BooleanPrefMember rev_checking_required_local_anchors_;
-  BooleanPrefMember symantec_legacy_infrastructure_enabled_;
+  BooleanPrefMember tls13_hardening_for_local_anchors_enabled_;
   StringPrefMember ssl_version_min_;
   StringPrefMember ssl_version_max_;
-  StringPrefMember tls13_variant_;
   StringListPrefMember h2_client_cert_coalescing_host_patterns_;
 
   // The cached list of disabled SSL cipher suites.
   std::vector<uint16_t> disabled_cipher_suites_;
 
-  mojo::InterfacePtrSet<network::mojom::SSLConfigClient> ssl_config_client_set_;
+  mojo::RemoteSet<network::mojom::SSLConfigClient> ssl_config_client_set_;
 
   DISALLOW_COPY_AND_ASSIGN(SSLConfigServiceManagerPref);
 };
@@ -170,28 +169,10 @@ SSLConfigServiceManagerPref::SSLConfigServiceManagerPref(
     PrefService* local_state) {
   DCHECK(local_state);
 
-  const std::string tls13_variant =
-      base::GetFieldTrialParamValue(kTLS13VariantExperimentName, "variant");
-  const char* tls13_value = nullptr;
-  const char* version_value = nullptr;
-  if (tls13_variant == "disabled") {
-    tls13_value = switches::kTLS13VariantDisabled;
-  } else if (tls13_variant == "draft23") {
-    tls13_value = switches::kTLS13VariantDraft23;
-    version_value = switches::kSSLVersionTLSv13;
-  } else if (tls13_variant == "final") {
-    tls13_value = switches::kTLS13VariantFinal;
-    version_value = switches::kSSLVersionTLSv13;
-  }
-
-  if (tls13_value) {
-    local_state->SetDefaultPrefValue(prefs::kTLS13Variant,
-                                     base::Value(tls13_value));
-  }
-  if (version_value) {
-    local_state->SetDefaultPrefValue(prefs::kSSLVersionMax,
-                                     base::Value(version_value));
-  }
+  local_state->SetDefaultPrefValue(
+      prefs::kTLS13HardeningForLocalAnchorsEnabled,
+      base::Value(base::FeatureList::IsEnabled(
+          features::kTLS13HardeningForLocalAnchors)));
 
   PrefChangeRegistrar::NamedChangeCallback local_state_callback =
       base::BindRepeating(&SSLConfigServiceManagerPref::OnPreferenceChanged,
@@ -202,14 +183,13 @@ SSLConfigServiceManagerPref::SSLConfigServiceManagerPref(
   rev_checking_required_local_anchors_.Init(
       prefs::kCertRevocationCheckingRequiredLocalAnchors, local_state,
       local_state_callback);
-  symantec_legacy_infrastructure_enabled_.Init(
-      prefs::kCertEnableSymantecLegacyInfrastructure, local_state,
+  tls13_hardening_for_local_anchors_enabled_.Init(
+      prefs::kTLS13HardeningForLocalAnchorsEnabled, local_state,
       local_state_callback);
   ssl_version_min_.Init(prefs::kSSLVersionMin, local_state,
                         local_state_callback);
   ssl_version_max_.Init(prefs::kSSLVersionMax, local_state,
                         local_state_callback);
-  tls13_variant_.Init(prefs::kTLS13Variant, local_state, local_state_callback);
   h2_client_cert_coalescing_host_patterns_.Init(
       prefs::kH2ClientCertCoalescingHosts, local_state, local_state_callback);
 
@@ -223,19 +203,18 @@ SSLConfigServiceManagerPref::SSLConfigServiceManagerPref(
 
 // static
 void SSLConfigServiceManagerPref::RegisterPrefs(PrefRegistrySimple* registry) {
-  net::SSLConfig default_config;
   net::CertVerifier::Config default_verifier_config;
   registry->RegisterBooleanPref(prefs::kCertRevocationCheckingEnabled,
                                 default_verifier_config.enable_rev_checking);
   registry->RegisterBooleanPref(
       prefs::kCertRevocationCheckingRequiredLocalAnchors,
       default_verifier_config.require_rev_checking_local_anchors);
+  net::SSLContextConfig default_context_config;
   registry->RegisterBooleanPref(
-      prefs::kCertEnableSymantecLegacyInfrastructure,
-      default_verifier_config.disable_symantec_enforcement);
+      prefs::kTLS13HardeningForLocalAnchorsEnabled,
+      default_context_config.tls13_hardening_for_local_anchors_enabled);
   registry->RegisterStringPref(prefs::kSSLVersionMin, std::string());
   registry->RegisterStringPref(prefs::kSSLVersionMax, std::string());
-  registry->RegisterStringPref(prefs::kTLS13Variant, std::string());
   registry->RegisterListPref(prefs::kCipherSuiteBlacklist);
   registry->RegisterListPref(prefs::kH2ClientCertCoalescingHosts);
 }
@@ -243,10 +222,10 @@ void SSLConfigServiceManagerPref::RegisterPrefs(PrefRegistrySimple* registry) {
 void SSLConfigServiceManagerPref::AddToNetworkContextParams(
     network::mojom::NetworkContextParams* network_context_params) {
   network_context_params->initial_ssl_config = GetSSLConfigFromPrefs();
-  network::mojom::SSLConfigClientPtr ssl_config_client;
-  network_context_params->ssl_config_client_request =
-      mojo::MakeRequest(&ssl_config_client);
-  ssl_config_client_set_.AddPtr(std::move(ssl_config_client));
+  mojo::Remote<network::mojom::SSLConfigClient> ssl_config_client;
+  network_context_params->ssl_config_client_receiver =
+      ssl_config_client.BindNewPipeAndPassReceiver();
+  ssl_config_client_set_.Add(std::move(ssl_config_client));
 }
 
 void SSLConfigServiceManagerPref::FlushForTesting() {
@@ -263,12 +242,11 @@ void SSLConfigServiceManagerPref::OnPreferenceChanged(
   network::mojom::SSLConfigPtr new_config = GetSSLConfigFromPrefs();
   network::mojom::SSLConfig* raw_config = new_config.get();
 
-  ssl_config_client_set_.ForAllPtrs(
-      [raw_config](network::mojom::SSLConfigClient* client) {
-        // Mojo calls consume all InterfacePtrs passed to them, so have to
-        // clone the config for each call.
-        client->OnSSLConfigUpdated(raw_config->Clone());
-      });
+  for (const auto& client : ssl_config_client_set_) {
+    // Mojo calls consume all InterfacePtrs passed to them, so have to
+    // clone the config for each call.
+    client->OnSSLConfigUpdated(raw_config->Clone());
+  }
 }
 
 network::mojom::SSLConfigPtr
@@ -283,11 +261,10 @@ SSLConfigServiceManagerPref::GetSSLConfigFromPrefs() const {
     config->rev_checking_enabled = false;
   config->rev_checking_required_local_anchors =
       rev_checking_required_local_anchors_.GetValue();
-  config->symantec_enforcement_disabled =
-      symantec_legacy_infrastructure_enabled_.GetValue();
+  config->tls13_hardening_for_local_anchors_enabled =
+      tls13_hardening_for_local_anchors_enabled_.GetValue();
   std::string version_min_str = ssl_version_min_.GetValue();
   std::string version_max_str = ssl_version_max_.GetValue();
-  std::string tls13_variant_str = tls13_variant_.GetValue();
 
   network::mojom::SSLVersion version_min;
   if (SSLProtocolVersionFromString(version_min_str, &version_min))
@@ -297,15 +274,6 @@ SSLConfigServiceManagerPref::GetSSLConfigFromPrefs() const {
   if (SSLProtocolVersionFromString(version_max_str, &version_max) &&
       version_max >= network::mojom::SSLVersion::kTLS12) {
     config->version_max = version_max;
-  }
-
-  if (tls13_variant_str == switches::kTLS13VariantDisabled) {
-    if (config->version_max > network::mojom::SSLVersion::kTLS12)
-      config->version_max = network::mojom::SSLVersion::kTLS12;
-  } else if (tls13_variant_str == switches::kTLS13VariantDraft23) {
-    config->tls13_variant = network::mojom::TLS13Variant::kDraft23;
-  } else if (tls13_variant_str == switches::kTLS13VariantFinal) {
-    config->tls13_variant = network::mojom::TLS13Variant::kFinal;
   }
 
   config->disabled_cipher_suites = disabled_cipher_suites_;

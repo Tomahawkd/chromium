@@ -5,6 +5,7 @@
 #ifndef IOS_CHROME_BROWSER_UI_TAB_GRID_GRID_GRID_CONSTANTS_H_
 #define IOS_CHROME_BROWSER_UI_TAB_GRID_GRID_GRID_CONSTANTS_H_
 
+#include <CoreGraphics/CoreGraphics.h>
 #import <UIKit/UIKit.h>
 
 // Accessibility identifier prefix of a grid cell. To reference a specific cell,
@@ -16,12 +17,8 @@ extern NSString* const kGridCellIdentifierPrefix;
 // Accessibility identifier for the close button in a grid cell.
 extern NSString* const kGridCellCloseButtonIdentifier;
 
-// All kxxxColor constants are RGB values stored in a Hex integer. These will be
-// converted into UIColors using the UIColorFromRGB() function, from
-// uikit_ui_util.h
-
 // Grid styling.
-extern const int kGridBackgroundColor;
+extern NSString* const kGridBackgroundColor;
 
 // GridLayout.
 // Extra-small screens require a slightly different layout configuration (e.g.,
@@ -55,30 +52,27 @@ extern const CGFloat kReorderingInactiveCellOpacity;
 extern const CGFloat kReorderingActiveCellScale;
 
 // GridCell styling.
-// Common colors.
-extern const int kGridCellIconBackgroundColor;
-extern const int kGridCellSnapshotBackgroundColor;
-// Light theme colors.
-extern const int kGridLightThemeCellTitleColor;
-extern const int kGridLightThemeCellHeaderColor;
-extern const int kGridLightThemeCellSelectionColor;
-extern const int kGridLightThemeCellCloseButtonTintColor;
-// Dark theme colors.
+// All kxxxColor constants after this are RGB values stored in a Hex integer.
+// These will be converted into UIColors using the UIColorFromRGB() function,
+// from uikit_ui_util.h.
+// TODO(crbug.com/981889): remove with iOS 12.
+// Extra dark theme colors until iOS 12 gets removed.
 extern const int kGridDarkThemeCellTitleColor;
-extern const int kGridDarkThemeCellHeaderColor;
-extern const int kGridDarkThemeCellSelectionColor;
-extern const int kGridDarkThemeCellCloseButtonTintColor;
-extern const CGFloat kGridDarkThemeCellHighlightColorAlpha;
-extern const int kGridDarkThemeCellSeparatorColor;
+extern const int kGridDarkThemeCellDetailColor;
+extern const CGFloat kGridDarkThemeCellDetailAlpha;
+extern const int kGridDarkThemeCellTintColor;
+extern const int kGridDarkThemeCellSolidButtonTextColor;
 
 // GridCell dimensions.
 extern const CGSize kGridCellSizeSmall;
 extern const CGSize kGridCellSizeMedium;
 extern const CGSize kGridCellSizeLarge;
+extern const CGSize kGridCellSizeAccessibility;
 extern const CGFloat kGridCellCornerRadius;
 extern const CGFloat kGridCellIconCornerRadius;
 // The cell header contains the icon, title, and close button.
 extern const CGFloat kGridCellHeaderHeight;
+extern const CGFloat kGridCellHeaderAccessibilityHeight;
 extern const CGFloat kGridCellHeaderLeadingInset;
 extern const CGFloat kGridCellCloseTapTargetWidthHeight;
 extern const CGFloat kGridCellCloseButtonContentInset;

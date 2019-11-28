@@ -4,7 +4,15 @@
 
 #include "chrome/browser/web_applications/extensions/web_app_extension_shortcut_mac.h"
 
+#include <utility>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/command_line.h"
+#include "base/files/file_util.h"
 #include "base/task/post_task.h"
+#include "base/task/task_traits.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
@@ -16,8 +24,10 @@
 #import "chrome/common/mac/app_mode_common.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/constants.h"
 
 using content::BrowserThread;
 
@@ -59,8 +69,8 @@ namespace web_app {
 
 void RevealAppShimInFinderForAppOnFileThread(
     const base::FilePath& app_path,
-    const web_app::ShortcutInfo& shortcut_info) {
-  web_app::WebAppShortcutCreator shortcut_creator(app_path, &shortcut_info);
+    const ShortcutInfo& shortcut_info) {
+  WebAppShortcutCreator shortcut_creator(app_path, &shortcut_info);
   shortcut_creator.RevealAppShimInFinder();
 }
 
@@ -71,10 +81,8 @@ void RevealAppShimInFinderForApp(Profile* profile,
       ShortcutInfoForExtensionAndProfile(app, profile));
 }
 
-void RebuildAppAndLaunch(std::unique_ptr<web_app::ShortcutInfo> shortcut_info) {
+void RebuildAppAndLaunch(std::unique_ptr<ShortcutInfo> shortcut_info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (shortcut_info->extension_id == app_mode::kAppListModeId)
-    return;
 
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   Profile* profile =
@@ -88,24 +96,29 @@ void RebuildAppAndLaunch(std::unique_ptr<web_app::ShortcutInfo> shortcut_info) {
       shortcut_info->extension_id, extensions::ExtensionRegistry::ENABLED);
   if (!extension || !extension->is_platform_app())
     return;
-
-  web_app::GetShortcutInfoForApp(extension, profile,
-                                 base::BindOnce(&UpdateAndLaunchShim));
+  base::OnceCallback<void(base::Process)> launched_callback = base::DoNothing();
+  base::OnceClosure terminated_callback = base::DoNothing();
+  GetShortcutInfoForApp(
+      extension, profile,
+      base::BindOnce(
+          &LaunchShim, LaunchShimUpdateBehavior::RECREATE_IF_INSTALLED,
+          std::move(launched_callback), std::move(terminated_callback)));
 }
 
 bool MaybeRebuildShortcut(const base::CommandLine& command_line) {
   if (!command_line.HasSwitch(app_mode::kAppShimError))
     return false;
 
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&RecordAppShimErrorAndBuildShortcutInfo,
                      command_line.GetSwitchValuePath(app_mode::kAppShimError)),
       base::BindOnce(&RebuildAppAndLaunch));
   return true;
 }
 
-// Mac-specific version of web_app::ShouldCreateShortcutFor() used during batch
+// Mac-specific version of ShouldCreateShortcutFor() used during batch
 // upgrades to ensure all shortcuts a user may still have are repaired when
 // required by a Chrome upgrade.
 bool ShouldUpgradeShortcutFor(Profile* profile,
@@ -134,8 +147,8 @@ void UpdateShortcutsForAllApps(Profile* profile, base::OnceClosure callback) {
   for (auto& extension_refptr : *candidates) {
     const extensions::Extension* extension = extension_refptr.get();
     if (ShouldUpgradeShortcutFor(profile, extension)) {
-      web_app::UpdateAllShortcuts(base::string16(), profile, extension,
-                                  latch->NoOpClosure());
+      UpdateAllShortcuts(base::string16(), profile, extension,
+                         latch->NoOpClosure());
     }
   }
 }
@@ -152,7 +165,8 @@ void ShowCreateChromeAppShortcutsDialog(
   // On Mac, the Applications folder is the only option, so don't bother asking
   // the user anything. Just create shortcuts.
   CreateShortcuts(web_app::SHORTCUT_CREATION_BY_USER,
-                  web_app::ShortcutLocations(), profile, app);
+                  web_app::ShortcutLocations(), profile, app,
+                  base::DoNothing());
   if (!close_callback.is_null())
     close_callback.Run(true);
 }

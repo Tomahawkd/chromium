@@ -6,12 +6,8 @@
 
 #include <vector>
 
-#include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/lazy_instance.h"
-#include "ui/message_center/public/cpp/features.h"
 #include "ui/message_center/public/cpp/notification_types.h"
-#include "ui/message_center/views/notification_view.h"
 #include "ui/message_center/views/notification_view_md.h"
 
 namespace message_center {
@@ -43,11 +39,7 @@ MessageView* MessageViewFactory::Create(const Notification& notification) {
     case NOTIFICATION_TYPE_MULTIPLE:
     case NOTIFICATION_TYPE_SIMPLE:
     case NOTIFICATION_TYPE_PROGRESS:
-      // All above roads lead to the generic NotificationView.
-      if (base::FeatureList::IsEnabled(message_center::kNewStyleNotifications))
-        notification_view = new NotificationViewMD(notification);
-      else
-        notification_view = new NotificationView(notification);
+      // Rely on default construction after the switch.
       break;
     case NOTIFICATION_TYPE_CUSTOM:
       notification_view = GetCustomNotificationView(notification).release();
@@ -61,8 +53,12 @@ MessageView* MessageViewFactory::Create(const Notification& notification) {
       LOG(WARNING) << "Unable to fulfill request for unrecognized or"
                    << "unsupported notification type " << notification.type()
                    << ". Falling back to simple notification type.";
-      notification_view = new NotificationView(notification);
+      break;
   }
+
+  if (!notification_view)
+    notification_view = new NotificationViewMD(notification);
+
   return notification_view;
 }
 

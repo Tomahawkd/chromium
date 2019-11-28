@@ -111,8 +111,7 @@ WallpaperResizer::WallpaperResizer(const gfx::ImageSkia& image,
       original_image_id_(GetImageId(image_)),
       target_size_(target_size),
       wallpaper_info_(wallpaper_info),
-      task_runner_(std::move(task_runner)),
-      weak_ptr_factory_(this) {
+      task_runner_(std::move(task_runner)) {
   image_.MakeThreadSafe();
 }
 
@@ -124,11 +123,11 @@ void WallpaperResizer::StartResize() {
   SkBitmap* resized_bitmap = new SkBitmap;
   if (!task_runner_->PostTaskAndReply(
           FROM_HERE,
-          base::Bind(&Resize, image_, target_size_, wallpaper_info_.layout,
-                     resized_bitmap, base::RetainedRef(task_runner_)),
-          base::Bind(&WallpaperResizer::OnResizeFinished,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     base::Owned(resized_bitmap)))) {
+          base::BindOnce(&Resize, image_, target_size_, wallpaper_info_.layout,
+                         resized_bitmap, base::RetainedRef(task_runner_)),
+          base::BindOnce(&WallpaperResizer::OnResizeFinished,
+                         weak_ptr_factory_.GetWeakPtr(),
+                         base::Owned(resized_bitmap)))) {
     LOG(WARNING) << "PostSequencedWorkerTask failed. "
                  << "Wallpaper may not be resized.";
   }

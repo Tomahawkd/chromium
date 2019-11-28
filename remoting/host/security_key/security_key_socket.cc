@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "base/callback_helpers.h"
-#include "base/macros.h"
+#include "base/bind.h"
+#include "base/stl_util.h"
 #include "base/timer/timer.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -74,7 +74,7 @@ void SecurityKeySocket::SendResponse(const std::string& response_data) {
 void SecurityKeySocket::SendSshError() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  SendResponse(std::string(kSshError, arraysize(kSshError)));
+  SendResponse(std::string(kSshError, base::size(kSshError)));
 }
 
 void SecurityKeySocket::StartReadingRequest(
@@ -151,7 +151,7 @@ void SecurityKeySocket::OnDataRead(int result) {
       socket_read_error_ = true;
     }
     waiting_for_request_ = false;
-    base::ResetAndReturn(&request_received_callback_).Run();
+    std::move(request_received_callback_).Run();
     return;
   }
 
@@ -164,7 +164,7 @@ void SecurityKeySocket::OnDataRead(int result) {
                        read_buffer_->data() + result);
   if (IsRequestComplete()) {
     waiting_for_request_ = false;
-    base::ResetAndReturn(&request_received_callback_).Run();
+    std::move(request_received_callback_).Run();
     return;
   }
 

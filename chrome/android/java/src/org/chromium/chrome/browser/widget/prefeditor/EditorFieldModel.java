@@ -4,14 +4,15 @@
 
 package org.chromium.chrome.browser.widget.prefeditor;
 
-import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.Pair;
 
+import androidx.annotation.Nullable;
+
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
-import org.chromium.chrome.browser.preferences.autofill.AutofillProfileBridge.DropdownKeyValue;
+import org.chromium.chrome.browser.settings.autofill.AutofillProfileBridge.DropdownKeyValue;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -138,6 +139,8 @@ public class EditorFieldModel {
     private CharSequence mRequiredErrorMessage;
     @Nullable
     private CharSequence mInvalidErrorMessage;
+    @Nullable
+    private CharSequence mCustomErrorMessage;
     @Nullable
     private CharSequence mErrorMessage;
     @Nullable
@@ -536,6 +539,11 @@ public class EditorFieldModel {
         return mErrorMessage;
     }
 
+    /** Updates the custom error message */
+    public void setCustomErrorMessage(@Nullable CharSequence errorMessage) {
+        mCustomErrorMessage = errorMessage;
+    }
+
     /** @return The value that the user has typed into the field or the key of the value that the
      *          user has selected in the dropdown. Can be null. */
     @Nullable
@@ -593,6 +601,11 @@ public class EditorFieldModel {
      * @return Whether the field value is valid.
      */
     public boolean isValid() {
+        if (!TextUtils.isEmpty(mCustomErrorMessage)) {
+            mErrorMessage = mCustomErrorMessage;
+            return false;
+        }
+
         if (isRequired()
                 && (TextUtils.isEmpty(mValue) || TextUtils.getTrimmedLength(mValue) == 0)) {
             mErrorMessage = mRequiredErrorMessage;

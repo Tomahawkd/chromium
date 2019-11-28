@@ -5,7 +5,7 @@ for the [Web Bluetooth specification]. It uses the Web Bluetooth Service
 [mojom] to communicate with the [Web Bluetooth Service].
 
 [Web Bluetooth specification]: https://webbluetoothcg.github.io/web-bluetooth/
-[mojom]: ../../../public/platform/modules/bluetooth/web_bluetooth.mojom
+[mojom]: ../../../public/mojom/bluetooth/web_bluetooth.mojom
 [Web Bluetooth Service]: /content/browser/bluetooth/
 
 
@@ -36,9 +36,9 @@ Web Bluetooth implementation details are tested at several layers:
         (as opposed to untrusted renderer process).
 *   `web_tests/bluetooth/*/*.html`
     *   `blink/tools/run_layout_tests.sh bluetooth`
-    *   Layout tests in `web_tests/bluetooth/` rely on
+    *   Web tests in `web_tests/bluetooth/` rely on
         fake Bluetooth implementation classes constructed in
-        `content/shell/browser/layout_test/layout_test_bluetooth_adapter_provider`.
+        `content/shell/browser/web_test/web_test_bluetooth_adapter_provider`.
         These tests span JavaScript binding to the `device/bluetooth` platform
         abstraction layer.
 *   `testing/clusterfuzz`

@@ -22,7 +22,9 @@
 
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "util/misc/from_pointer_cast.h"
 #include "util/misc/time.h"
 #include "util/win/nt_internals.h"
@@ -121,12 +123,12 @@ void ProcessSnapshotWin::GetCrashpadOptions(
   *options = options_;
 }
 
-pid_t ProcessSnapshotWin::ProcessID() const {
+crashpad::ProcessID ProcessSnapshotWin::ProcessID() const {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
   return process_reader_.GetProcessInfo().ProcessID();
 }
 
-pid_t ProcessSnapshotWin::ParentProcessID() const {
+crashpad::ProcessID ProcessSnapshotWin::ParentProcessID() const {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
   return process_reader_.GetProcessInfo().ParentProcessID();
 }
@@ -276,7 +278,7 @@ void ProcessSnapshotWin::InitializeUnloadedModules() {
   // and 32-reading-32, so at the moment, we simply do not retrieve unloaded
   // modules for 64-reading-32. See https://crashpad.chromium.org/bug/89.
 
-#if defined(ARCH_CPU_X86_64)
+#if defined(ARCH_CPU_X86_64) || defined(ARCH_CPU_ARM64)
   if (!process_reader_.Is64Bit()) {
     LOG(ERROR)
         << "reading unloaded modules across bitness not currently supported";
@@ -333,7 +335,7 @@ void ProcessSnapshotWin::InitializeUnloadedModules() {
           uet.TimeDateStamp,
           base::UTF16ToUTF8(base::StringPiece16(
               uet.ImageName,
-              wcsnlen(uet.ImageName, arraysize(uet.ImageName))))));
+              wcsnlen(uet.ImageName, base::size(uet.ImageName))))));
     }
   }
 }
@@ -457,7 +459,7 @@ void ProcessSnapshotWin::InitializePebData(
 void ProcessSnapshotWin::AddMemorySnapshot(
     WinVMAddress address,
     WinVMSize size,
-    std::vector<std::unique_ptr<internal::MemorySnapshotWin>>* into) {
+    std::vector<std::unique_ptr<internal::MemorySnapshotGeneric>>* into) {
   if (size == 0)
     return;
 
@@ -478,14 +480,14 @@ void ProcessSnapshotWin::AddMemorySnapshot(
     }
   }
 
-  into->push_back(std::make_unique<internal::MemorySnapshotWin>());
-  into->back()->Initialize(&process_reader_, address, size);
+  into->push_back(std::make_unique<internal::MemorySnapshotGeneric>());
+  into->back()->Initialize(process_reader_.Memory(), address, size);
 }
 
 template <class Traits>
 void ProcessSnapshotWin::AddMemorySnapshotForUNICODE_STRING(
     const process_types::UNICODE_STRING<Traits>& us,
-    std::vector<std::unique_ptr<internal::MemorySnapshotWin>>* into) {
+    std::vector<std::unique_ptr<internal::MemorySnapshotGeneric>>* into) {
   AddMemorySnapshot(us.Buffer, us.Length, into);
 }
 
@@ -493,7 +495,7 @@ template <class Traits>
 void ProcessSnapshotWin::AddMemorySnapshotForLdrLIST_ENTRY(
     const process_types::LIST_ENTRY<Traits>& le,
     size_t offset_of_member,
-    std::vector<std::unique_ptr<internal::MemorySnapshotWin>>* into) {
+    std::vector<std::unique_ptr<internal::MemorySnapshotGeneric>>* into) {
   // Walk the doubly-linked list of entries, adding the list memory itself, as
   // well as pointed-to strings.
   typename Traits::Pointer last = le.Blink;
@@ -533,9 +535,9 @@ WinVMSize ProcessSnapshotWin::DetermineSizeOfEnvironmentBlock(
   env_block.resize(
       static_cast<unsigned int>(bytes_read / sizeof(env_block[0])));
   static constexpr wchar_t terminator[] = {0, 0};
-  size_t at = env_block.find(std::wstring(terminator, arraysize(terminator)));
+  size_t at = env_block.find(std::wstring(terminator, base::size(terminator)));
   if (at != std::wstring::npos)
-    env_block.resize(at + arraysize(terminator));
+    env_block.resize(at + base::size(terminator));
 
   return env_block.size() * sizeof(env_block[0]);
 }
@@ -543,7 +545,7 @@ WinVMSize ProcessSnapshotWin::DetermineSizeOfEnvironmentBlock(
 template <class Traits>
 void ProcessSnapshotWin::ReadLock(
     WinVMAddress start,
-    std::vector<std::unique_ptr<internal::MemorySnapshotWin>>* into) {
+    std::vector<std::unique_ptr<internal::MemorySnapshotGeneric>>* into) {
   // We're walking the RTL_CRITICAL_SECTION_DEBUG ProcessLocksList, but starting
   // from an actual RTL_CRITICAL_SECTION, so start by getting to the first
   // RTL_CRITICAL_SECTION_DEBUG.

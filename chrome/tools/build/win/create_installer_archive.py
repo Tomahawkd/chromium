@@ -17,7 +17,6 @@ import fnmatch
 import glob
 import optparse
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -25,7 +24,7 @@ import sys
 
 ARCHIVE_DIR = "installer_archive"
 
-# suffix to uncompresed full archive file, appended to options.output_name
+# suffix to uncompressed full archive file, appended to options.output_name
 ARCHIVE_SUFFIX = ".7z"
 BSDIFF_EXEC = "bsdiff.exe"
 CHROME_DIR = "Chrome-bin"
@@ -95,22 +94,32 @@ def CompressUsingLZMA(build_dir, compressed_file, input_file, verbose):
 
 
 def CopyAllFilesToStagingDir(config, distribution, staging_dir, build_dir,
-                             enable_hidpi):
+                             enable_hidpi, include_snapshotblob, verbose):
   """Copies the files required for installer archive.
   Copies all common files required for various distributions of Chromium and
   also files for the specific Chromium build specified by distribution.
   """
-  CopySectionFilesToStagingDir(config, 'GENERAL', staging_dir, build_dir)
+  CopySectionFilesToStagingDir(config, 'GENERAL', staging_dir, build_dir,
+                               verbose)
   if distribution:
     if len(distribution) > 1 and distribution[0] == '_':
       distribution = distribution[1:]
-    CopySectionFilesToStagingDir(config, distribution.upper(),
-                                 staging_dir, build_dir)
+
+    distribution = distribution.upper()
+    if config.has_section(distribution):
+      CopySectionFilesToStagingDir(config, distribution,
+                                   staging_dir, build_dir, verbose)
   if enable_hidpi == '1':
-    CopySectionFilesToStagingDir(config, 'HIDPI', staging_dir, build_dir)
+    CopySectionFilesToStagingDir(config, 'HIDPI', staging_dir, build_dir,
+                                 verbose)
+
+  if include_snapshotblob == '1':
+    CopySectionFilesToStagingDir(config, 'SNAPSHOTBLOB', staging_dir, build_dir,
+                                 verbose)
 
 
-def CopySectionFilesToStagingDir(config, section, staging_dir, src_dir):
+def CopySectionFilesToStagingDir(config, section, staging_dir, src_dir,
+                                 verbose):
   """Copies installer archive files specified in section from src_dir to
   staging_dir. This method reads section from config and copies all the
   files specified from src_dir to staging dir.
@@ -119,9 +128,12 @@ def CopySectionFilesToStagingDir(config, section, staging_dir, src_dir):
     if option.endswith('dir'):
       continue
 
+    src_subdir = option.replace('\\', os.sep)
     dst_dir = os.path.join(staging_dir, config.get(section, option))
     dst_dir = dst_dir.replace('\\', os.sep)
-    src_paths = glob.glob(os.path.join(src_dir, option))
+    src_paths = glob.glob(os.path.join(src_dir, src_subdir))
+    if verbose and not src_paths:
+      print('No matches found for %s' % option)
     if src_paths and not os.path.exists(dst_dir):
       os.makedirs(dst_dir)
     for src_path in src_paths:
@@ -190,14 +202,14 @@ def RunSystemCommand(cmd, verbose):
   captures its output and only emits it on failure.
   """
   if verbose:
-    print 'Running', cmd
+    print('Running %s' % ' '.join(cmd))
 
   try:
     # Run |cmd|, redirecting stderr to stdout in order for captured errors to be
     # inline with corresponding stdout.
     output = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
     if verbose:
-      print output
+      print(output)
   except subprocess.CalledProcessError as e:
     raise Exception("Error while running cmd: %s\n"
                     "Exit code: %s\n"
@@ -431,36 +443,6 @@ def CopyIfChanged(src, target_dir):
     shutil.copyfile(src, dest)
 
 
-# Taken and modified from:
-# third_party\blink\tools\blinkpy\web_tests\port\factory.py
-def _read_configuration_from_gn(build_dir):
-  """Return the configuration to used based on args.gn, if possible."""
-  path = os.path.join(build_dir, 'args.gn')
-  if not os.path.exists(path):
-    path = os.path.join(build_dir, 'toolchain.ninja')
-    if not os.path.exists(path):
-      # This does not appear to be a GN-based build directory, so we don't
-      # know how to interpret it.
-      return None
-
-    # toolchain.ninja exists, but args.gn does not; this can happen when
-    # `gn gen` is run with no --args.
-    return 'Debug'
-
-  args = open(path).read()
-  for l in args.splitlines():
-    # See the original of this function and then gn documentation for why this
-    # regular expression is correct:
-    # https://chromium.googlesource.com/chromium/src/+/master/tools/gn/docs/reference.md#GN-build-language-grammar
-    m = re.match('^\s*is_debug\s*=\s*false(\s*$|\s*#.*$)', l)
-    if m:
-      return 'Release'
-
-  # if is_debug is set to anything other than false, or if it
-  # does not exist at all, we should use the default value (True).
-  return 'Debug'
-
-
 def ParseDLLsFromDeps(build_dir, runtime_deps_file):
   """Parses the runtime_deps file and returns the set of DLLs in it, relative
   to build_dir."""
@@ -543,7 +525,9 @@ def main(options):
   # Copy the files from the build dir.
   CopyAllFilesToStagingDir(config, options.distribution,
                            staging_dir, options.build_dir,
-                           options.enable_hidpi)
+                           options.enable_hidpi,
+                           options.include_snapshotblob,
+                           options.verbose)
 
   if options.component_build == '1':
     DoComponentBuildTasks(staging_dir, options.build_dir,
@@ -604,6 +588,8 @@ def _ParseOptions():
       help='Name used to prefix names of generated archives.')
   parser.add_option('--enable_hidpi', default='0',
       help='Whether to include HiDPI resource files.')
+  parser.add_option('--include_snapshotblob', default='0',
+      help='Whether to include the V8 snapshot blob.')
   parser.add_option('--component_build', default='0',
       help='Whether this archive is packaging a component build.')
   parser.add_option('--skip_archive_compression',
@@ -657,5 +643,5 @@ def _ParseOptions():
 if '__main__' == __name__:
   options = _ParseOptions()
   if options.verbose:
-    print sys.argv
+    print(sys.argv)
   sys.exit(main(options))

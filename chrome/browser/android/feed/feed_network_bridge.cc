@@ -12,12 +12,13 @@
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/trace_event/trace_event.h"
+#include "chrome/android/chrome_jni_headers/FeedNetworkBridge_jni.h"
 #include "chrome/browser/android/feed/feed_host_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
 #include "components/feed/content/feed_host_service.h"
 #include "components/feed/core/feed_networking_host.h"
-#include "jni/FeedNetworkBridge_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
@@ -26,8 +27,7 @@ using base::android::ScopedJavaGlobalRef;
 
 namespace feed {
 
-FeedNetworkBridge::FeedNetworkBridge(const JavaParamRef<jobject>& j_profile)
-    : weak_factory_(this) {
+FeedNetworkBridge::FeedNetworkBridge(const JavaParamRef<jobject>& j_profile) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(j_profile);
   FeedHostService* host_service =
       FeedHostServiceFactory::GetForBrowserContext(profile);
@@ -75,12 +75,15 @@ void FeedNetworkBridge::CancelRequests(JNIEnv* env,
 void FeedNetworkBridge::OnResult(const ScopedJavaGlobalRef<jobject>& j_callback,
                                  int32_t http_code,
                                  std::vector<uint8_t> response_bytes) {
+  // TODO(ssid): Remove after fixing https://crbug.com/916791.
+  TRACE_EVENT0("browser", "FeedNetworkBridge::OnResult");
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jbyteArray> j_response_bytes =
       base::android::ToJavaByteArray(env, response_bytes);
   ScopedJavaLocalRef<jobject> j_http_response =
       Java_FeedNetworkBridge_createHttpResponse(env, http_code,
                                                 j_response_bytes);
+  TRACE_EVENT0("browser", "FeedNetworkBridge::OnResult_Callback");
   base::android::RunObjectCallbackAndroid(j_callback, j_http_response);
 }
 

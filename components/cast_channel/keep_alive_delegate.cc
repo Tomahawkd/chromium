@@ -7,12 +7,13 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "components/cast_channel/cast_channel_enum.h"
 #include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/logger.h"
-#include "components/cast_channel/proto/cast_channel.pb.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
 
@@ -31,8 +32,7 @@ KeepAliveDelegate::KeepAliveDelegate(
       liveness_timeout_(liveness_timeout),
       ping_interval_(ping_interval),
       ping_message_(CreateKeepAlivePingMessage()),
-      pong_message_(CreateKeepAlivePongMessage()),
-      weak_factory_(this) {
+      pong_message_(CreateKeepAlivePongMessage()) {
   DCHECK(ping_interval_ < liveness_timeout_);
   DCHECK(inner_delegate_);
   DCHECK(socket_);
@@ -89,22 +89,21 @@ void KeepAliveDelegate::ResetTimers() {
 void KeepAliveDelegate::SendKeepAliveMessage(const CastMessage& message,
                                              CastMessageType message_type) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  DVLOG(2) << "Sending " << CastMessageTypeToString(message_type);
+  DVLOG(2) << "Sending " << ToString(message_type);
 
   socket_->transport()->SendMessage(
-      message, base::Bind(&KeepAliveDelegate::SendKeepAliveMessageComplete,
-                          weak_factory_.GetWeakPtr(), message_type));
+      message, base::BindOnce(&KeepAliveDelegate::SendKeepAliveMessageComplete,
+                              weak_factory_.GetWeakPtr(), message_type));
 }
 
 void KeepAliveDelegate::SendKeepAliveMessageComplete(
     CastMessageType message_type,
     int rv) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  DVLOG(2) << "Sending " << CastMessageTypeToString(message_type)
-           << " complete, rv=" << rv;
+  DVLOG(2) << "Sending " << ToString(message_type) << " complete, rv=" << rv;
   if (rv != net::OK) {
     // An error occurred while sending the ping response.
-    DVLOG(1) << "Error sending " << CastMessageTypeToString(message_type);
+    DVLOG(1) << "Error sending " << ToString(message_type);
     logger_->LogSocketEventWithRv(socket_->id(), ChannelEvent::PING_WRITE_ERROR,
                                   rv);
     OnError(ChannelError::CAST_SOCKET_ERROR);
@@ -141,16 +140,14 @@ void KeepAliveDelegate::OnMessage(const CastMessage& message) {
   // here. All other messages are passed through to |inner_delegate_|.
   // Keep-alive messages are assumed to be in the form { "type": "PING|PONG" }.
   if (message.namespace_() == kHeartbeatNamespace) {
-    const char* ping_message_type =
-        CastMessageTypeToString(CastMessageType::kPing);
+    const char* ping_message_type = ToString(CastMessageType::kPing);
     if (message.payload_utf8().find(ping_message_type) != std::string::npos) {
       DVLOG(2) << "Received PING.";
       if (started_)
         SendKeepAliveMessage(pong_message_, CastMessageType::kPong);
     } else {
       DCHECK_NE(std::string::npos,
-                message.payload_utf8().find(
-                    CastMessageTypeToString(CastMessageType::kPong)));
+                message.payload_utf8().find(ToString(CastMessageType::kPong)));
       DVLOG(2) << "Received PONG.";
     }
   } else {

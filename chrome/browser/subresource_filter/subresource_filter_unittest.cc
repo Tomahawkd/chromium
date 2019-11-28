@@ -21,7 +21,7 @@
 #include "components/subresource_filter/core/common/activation_list.h"
 #include "components/subresource_filter/core/common/activation_scope.h"
 #include "components/subresource_filter/core/common/load_policy.h"
-#include "components/subresource_filter/mojom/subresource_filter.mojom.h"
+#include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -228,33 +228,32 @@ TEST_F(SubresourceFilterTest, NotifySafeBrowsing) {
        subresource_filter::ActivationList::SUBRESOURCE_FILTER,
        false},
       {AdBlockOnAbusiveSitesTest::kDisabled,
-       {{{Type::ABUSIVE, Level::ENFORCE}}, base::KEEP_FIRST_OF_DUPES},
+       {{Type::ABUSIVE, Level::ENFORCE}},
        subresource_filter::ActivationList::NONE,
        false},
       {AdBlockOnAbusiveSitesTest::kDisabled,
-       {{{Type::ABUSIVE, Level::WARN}}, base::KEEP_FIRST_OF_DUPES},
+       {{Type::ABUSIVE, Level::WARN}},
        subresource_filter::ActivationList::NONE,
        false},
       {AdBlockOnAbusiveSitesTest::kDisabled,
-       {{{Type::BETTER_ADS, Level::ENFORCE}}, base::KEEP_FIRST_OF_DUPES},
+       {{Type::BETTER_ADS, Level::ENFORCE}},
        subresource_filter::ActivationList::BETTER_ADS,
        false},
       {AdBlockOnAbusiveSitesTest::kDisabled,
-       {{{Type::BETTER_ADS, Level::WARN}}, base::KEEP_FIRST_OF_DUPES},
+       {{Type::BETTER_ADS, Level::WARN}},
        subresource_filter::ActivationList::BETTER_ADS,
        true},
       {AdBlockOnAbusiveSitesTest::kDisabled,
-       {{{Type::BETTER_ADS, Level::ENFORCE}, {Type::ABUSIVE, Level::ENFORCE}},
-        base::KEEP_FIRST_OF_DUPES},
+       {{Type::BETTER_ADS, Level::ENFORCE}, {Type::ABUSIVE, Level::ENFORCE}},
        subresource_filter::ActivationList::BETTER_ADS,
        false},
       // AdBlockOnAbusiveSitesTest::kEnabled
       {AdBlockOnAbusiveSitesTest::kEnabled,
-       {{{Type::ABUSIVE, Level::ENFORCE}}, base::KEEP_FIRST_OF_DUPES},
+       {{Type::ABUSIVE, Level::ENFORCE}},
        subresource_filter::ActivationList::ABUSIVE,
        false},
       {AdBlockOnAbusiveSitesTest::kEnabled,
-       {{{Type::ABUSIVE, Level::WARN}}, base::KEEP_FIRST_OF_DUPES},
+       {{Type::ABUSIVE, Level::WARN}},
        subresource_filter::ActivationList::ABUSIVE,
        true}};
 

@@ -8,6 +8,7 @@
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -17,6 +18,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "components/services/app_service/public/cpp/file_handler_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -34,7 +36,8 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/granted_file_entry.h"
-#include "extensions/browser/lazy_background_task_queue.h"
+#include "extensions/browser/lazy_context_id.h"
+#include "extensions/browser/lazy_context_task_queue.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/api/app_runtime.h"
 #include "extensions/common/extension.h"
@@ -52,7 +55,6 @@ namespace app_runtime = extensions::api::app_runtime;
 
 using content::BrowserThread;
 using extensions::AppRuntimeEventRouter;
-using extensions::api::app_runtime::PlayStoreStatus;
 using extensions::app_file_handler_util::CreateFileEntry;
 using extensions::app_file_handler_util::FileHandlerCanHandleEntry;
 using extensions::app_file_handler_util::FileHandlerForId;
@@ -144,8 +146,8 @@ class PlatformAppPathLauncher
 
     is_directory_collector_.CollectForEntriesPaths(
         entry_paths_,
-        base::Bind(&PlatformAppPathLauncher::OnAreDirectoriesCollected, this,
-                   HasFileSystemWritePermission(app)));
+        base::BindOnce(&PlatformAppPathLauncher::OnAreDirectoriesCollected,
+                       this, HasFileSystemWritePermission(app)));
   }
 
   void LaunchWithHandler(const std::string& handler_id) {
@@ -154,12 +156,12 @@ class PlatformAppPathLauncher
   }
 
   void LaunchWithRelativePath(const base::FilePath& current_directory) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE,
-        {base::TaskPriority::USER_VISIBLE, base::MayBlock(),
+        {base::ThreadPool(), base::TaskPriority::USER_VISIBLE, base::MayBlock(),
          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-        base::Bind(&PlatformAppPathLauncher::MakePathAbsolute, this,
-                   current_directory));
+        base::BindOnce(&PlatformAppPathLauncher::MakePathAbsolute, this,
+                       current_directory));
   }
 
  private:
@@ -172,7 +174,7 @@ class PlatformAppPathLauncher
          it != entry_paths_.end(); ++it) {
       if (!DoMakePathAbsolute(current_directory, &*it)) {
         LOG(WARNING) << "Cannot make absolute path from " << it->value();
-        base::PostTaskWithTraits(
+        base::PostTask(
             FROM_HERE, {BrowserThread::UI},
             base::BindOnce(&PlatformAppPathLauncher::LaunchWithBasicData,
                            this));
@@ -180,17 +182,16 @@ class PlatformAppPathLauncher
       }
     }
 
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        base::Bind(&PlatformAppPathLauncher::Launch, this));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&PlatformAppPathLauncher::Launch, this));
   }
 
   void OnFilesValid(std::unique_ptr<std::set<base::FilePath>> directory_paths) {
     mime_type_collector_.CollectForLocalPaths(
         entry_paths_,
-        base::Bind(
+        base::BindOnce(
             &PlatformAppPathLauncher::OnAreDirectoriesAndMimeTypesCollected,
-            this, base::Passed(std::move(directory_paths))));
+            this, std::move(directory_paths)));
   }
 
   void OnFilesInvalid(const base::FilePath& /* error_path */) {
@@ -223,9 +224,9 @@ class PlatformAppPathLauncher
           directory_paths.get();
       PrepareFilesForWritableApp(
           entry_paths_, context_, *directory_paths_ptr,
-          base::Bind(&PlatformAppPathLauncher::OnFilesValid, this,
-                     base::Passed(std::move(directory_paths))),
-          base::Bind(&PlatformAppPathLauncher::OnFilesInvalid, this));
+          base::BindOnce(&PlatformAppPathLauncher::OnFilesValid, this,
+                         std::move(directory_paths)),
+          base::BindOnce(&PlatformAppPathLauncher::OnFilesInvalid, this));
       return;
     }
 
@@ -251,7 +252,7 @@ class PlatformAppPathLauncher
       return;
 
     // Find file handler from the platform app for the file being opened.
-    const extensions::FileHandlerInfo* handler = NULL;
+    const FileHandlerInfo* handler = nullptr;
     if (!handler_id_.empty()) {
       handler = FileHandlerForId(*app, handler_id_);
       if (handler) {
@@ -260,17 +261,17 @@ class PlatformAppPathLauncher
             LOG(WARNING)
                 << "Extension does not provide a valid file handler for "
                 << entry_paths_[i].value();
-            handler = NULL;
+            handler = nullptr;
             break;
           }
         }
       }
     } else {
-      const std::vector<const extensions::FileHandlerInfo*>& handlers =
-          extensions::app_file_handler_util::FindFileHandlersForEntries(
+      const std::vector<extensions::FileHandlerMatch> handlers =
+          extensions::app_file_handler_util::FindFileHandlerMatchesForEntries(
               *app, entries_);
       if (!handlers.empty())
-        handler = handlers[0];
+        handler = handlers[0].handler;
     }
 
     // If this app doesn't have a file handler that supports the file, launch
@@ -289,13 +290,13 @@ class PlatformAppPathLauncher
     // available, or it might be in the process of being unloaded, in which case
     // the lazy background task queue is used to load the extension and then
     // call back to us.
-    extensions::LazyBackgroundTaskQueue* const queue =
-        extensions::LazyBackgroundTaskQueue::Get(context_);
+    const extensions::LazyContextId context_id(context_, extension_id);
+    extensions::LazyContextTaskQueue* const queue = context_id.GetTaskQueue();
     if (queue->ShouldEnqueueTask(context_, app)) {
       queue->AddPendingTask(
-          context_, extension_id,
-          base::Bind(&PlatformAppPathLauncher::GrantAccessToFilesAndLaunch,
-                     this));
+          context_id,
+          base::BindOnce(&PlatformAppPathLauncher::GrantAccessToFilesAndLaunch,
+                         this));
       return;
     }
 
@@ -304,25 +305,28 @@ class PlatformAppPathLauncher
     ExtensionHost* const host =
         process_manager->GetBackgroundHostForExtension(extension_id);
     DCHECK(host);
-    GrantAccessToFilesAndLaunch(host);
+    GrantAccessToFilesAndLaunch(
+        std::make_unique<extensions::LazyContextTaskQueue::ContextInfo>(host));
   }
 
-  void GrantAccessToFilesAndLaunch(ExtensionHost* host) {
+  void GrantAccessToFilesAndLaunch(
+      std::unique_ptr<extensions::LazyContextTaskQueue::ContextInfo>
+          context_info) {
     const Extension* app = GetExtension();
     if (!app)
       return;
 
-    // If there was an error loading the app page, |host| will be NULL.
-    if (!host) {
+    // If there was an error loading the app page, |context_info| will be NULL.
+    if (!context_info) {
       LOG(ERROR) << "Could not load app page for " << extension_id;
       return;
     }
 
     std::vector<GrantedFileEntry> granted_entries;
     for (size_t i = 0; i < entry_paths_.size(); ++i) {
-      granted_entries.push_back(
-          CreateFileEntry(context_, app, host->render_process_host()->GetID(),
-                          entries_[i].path, entries_[i].is_directory));
+      granted_entries.push_back(CreateFileEntry(
+          context_, app, context_info->render_process_host->GetID(),
+          entries_[i].path, entries_[i].is_directory));
     }
 
     AppRuntimeEventRouter::DispatchOnLaunchedEventWithFileEntries(
@@ -341,7 +345,8 @@ class PlatformAppPathLauncher
   // not kept as the extension may be unloaded and deleted during the course of
   // the launch.
   const std::string extension_id;
-  extensions::AppLaunchSource launch_source_ = extensions::SOURCE_FILE_HANDLER;
+  extensions::AppLaunchSource launch_source_ =
+      extensions::AppLaunchSource::kSourceFileHandler;
   std::unique_ptr<app_runtime::ActionData> action_data_;
   // A list of files and directories to be passed through to the app.
   std::vector<base::FilePath> entry_paths_;
@@ -363,11 +368,9 @@ void LaunchPlatformAppWithCommandLine(content::BrowserContext* context,
                                       const extensions::Extension* app,
                                       const base::CommandLine& command_line,
                                       const base::FilePath& current_directory,
-                                      extensions::AppLaunchSource source,
-                                      PlayStoreStatus play_store_status) {
+                                      extensions::AppLaunchSource source) {
   LaunchPlatformAppWithCommandLineAndLaunchId(context, app, "", command_line,
-                                              current_directory, source,
-                                              play_store_status);
+                                              current_directory, source);
 }
 
 void LaunchPlatformAppWithCommandLineAndLaunchId(
@@ -376,8 +379,7 @@ void LaunchPlatformAppWithCommandLineAndLaunchId(
     const std::string& launch_id,
     const base::CommandLine& command_line,
     const base::FilePath& current_directory,
-    extensions::AppLaunchSource source,
-    PlayStoreStatus play_store_status) {
+    extensions::AppLaunchSource source) {
   // An app with "kiosk_only" should not be installed and launched
   // outside of ChromeOS kiosk mode in the first place. This is a defensive
   // check in case this scenario does occur.
@@ -410,8 +412,6 @@ void LaunchPlatformAppWithCommandLineAndLaunchId(
                        args[0] == about_blank_url)) {
     std::unique_ptr<app_runtime::LaunchData> launch_data =
         std::make_unique<app_runtime::LaunchData>();
-    if (play_store_status != PlayStoreStatus::PLAY_STORE_STATUS_UNKNOWN)
-      launch_data->play_store_status = play_store_status;
     if (!launch_id.empty())
       launch_data->id.reset(new std::string(launch_id));
     AppRuntimeEventRouter::DispatchOnLaunchedEvent(context, app, source,
@@ -447,7 +447,7 @@ void LaunchPlatformAppWithAction(
   scoped_refptr<PlatformAppPathLauncher> launcher =
       new PlatformAppPathLauncher(context, app, file_path);
   launcher->set_action_data(std::move(action_data));
-  launcher->set_launch_source(extensions::AppLaunchSource::SOURCE_UNTRACKED);
+  launcher->set_launch_source(extensions::AppLaunchSource::kSourceUntracked);
   launcher->Launch();
 }
 
@@ -489,7 +489,7 @@ void RestartPlatformApp(content::BrowserContext* context,
 
   if (listening_to_launch && had_windows) {
     AppRuntimeEventRouter::DispatchOnLaunchedEvent(
-        context, app, extensions::SOURCE_RESTART, nullptr);
+        context, app, extensions::AppLaunchSource::kSourceRestart, nullptr);
   }
 }
 

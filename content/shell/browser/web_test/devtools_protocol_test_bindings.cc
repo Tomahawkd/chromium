@@ -4,6 +4,8 @@
 
 #include "content/shell/browser/web_test/devtools_protocol_test_bindings.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/json/string_escape.h"
@@ -26,7 +28,7 @@ namespace {
 // This constant should be in sync with
 // the constant
 // kMaxMessageChunkSize in chrome/browser/devtools/devtools_ui_bindings.cc.
-constexpr size_t kLayoutTestMaxMessageChunkSize =
+constexpr size_t kWebTestMaxMessageChunkSize =
     IPC::Channel::kMaximumMessageSize / 4;
 }  // namespace
 
@@ -72,9 +74,10 @@ void DevToolsProtocolTestBindings::ReadyToCommitNavigation(
   content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
   if (frame->GetParent())
     return;
-  frontend_host_.reset(DevToolsFrontendHost::Create(
-      frame, base::Bind(&DevToolsProtocolTestBindings::HandleMessageFromTest,
-                        base::Unretained(this))));
+  frontend_host_ = DevToolsFrontendHost::Create(
+      frame,
+      base::BindRepeating(&DevToolsProtocolTestBindings::HandleMessageFromTest,
+                          base::Unretained(this)));
 #endif
 }
 
@@ -90,7 +93,8 @@ void DevToolsProtocolTestBindings::HandleMessageFromTest(
   std::string method;
   base::ListValue* params = nullptr;
   base::DictionaryValue* dict = nullptr;
-  std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> parsed_message =
+      base::JSONReader::ReadDeprecated(message);
   if (!parsed_message || !parsed_message->GetAsDictionary(&dict) ||
       !dict->GetString("method", &method)) {
     return;
@@ -113,25 +117,27 @@ void DevToolsProtocolTestBindings::HandleMessageFromTest(
 void DevToolsProtocolTestBindings::DispatchProtocolMessage(
     DevToolsAgentHost* agent_host,
     const std::string& message) {
-  if (message.length() < kLayoutTestMaxMessageChunkSize) {
+  if (message.length() < kWebTestMaxMessageChunkSize) {
     std::string param;
     base::EscapeJSONString(message, true, &param);
     std::string code = "DevToolsAPI.dispatchMessage(" + param + ");";
     base::string16 javascript = base::UTF8ToUTF16(code);
-    web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(javascript);
+    web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
+        javascript, base::NullCallback());
     return;
   }
 
   size_t total_size = message.length();
   for (size_t pos = 0; pos < message.length();
-       pos += kLayoutTestMaxMessageChunkSize) {
+       pos += kWebTestMaxMessageChunkSize) {
     std::string param;
-    base::EscapeJSONString(message.substr(pos, kLayoutTestMaxMessageChunkSize),
+    base::EscapeJSONString(message.substr(pos, kWebTestMaxMessageChunkSize),
                            true, &param);
     std::string code = "DevToolsAPI.dispatchMessageChunk(" + param + "," +
                        std::to_string(pos ? 0 : total_size) + ");";
     base::string16 javascript = base::UTF8ToUTF16(code);
-    web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(javascript);
+    web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
+        javascript, base::NullCallback());
   }
 }
 

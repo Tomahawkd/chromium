@@ -6,13 +6,14 @@
 #define CHROMEOS_NETWORK_MANAGED_NETWORK_CONFIGURATION_HANDLER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
 #include "components/onc/onc_constants.h"
@@ -21,11 +22,15 @@ namespace base {
 class DictionaryValue;
 class ListValue;
 class Value;
-}
+}  // namespace base
 
 namespace chromeos {
 
+class NetworkConfigurationHandler;
+class NetworkDeviceHandler;
 class NetworkPolicyObserver;
+class NetworkProfileHandler;
+class NetworkStateHandler;
 
 // The ManagedNetworkConfigurationHandler class is used to create and configure
 // networks in ChromeOS using ONC and takes care of network policies.
@@ -51,7 +56,7 @@ class NetworkPolicyObserver;
 // error, including a symbolic name for the error and often some error message
 // that is suitable for logging. None of the error message text is meant for
 // user consumption.
-class CHROMEOS_EXPORT ManagedNetworkConfigurationHandler {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) ManagedNetworkConfigurationHandler {
  public:
   using GuidToPolicyMap =
       std::map<std::string, std::unique_ptr<base::DictionaryValue>>;
@@ -177,6 +182,13 @@ class CHROMEOS_EXPORT ManagedNetworkConfigurationHandler {
 
   // Return the list of blacklisted WiFi networks (identified by HexSSIDs).
   virtual std::vector<std::string> GetBlacklistedHexSSIDs() const = 0;
+
+  static std::unique_ptr<ManagedNetworkConfigurationHandler>
+  InitializeForTesting(
+      NetworkStateHandler* network_state_handler,
+      NetworkProfileHandler* network_profile_handler,
+      NetworkDeviceHandler* network_device_handler,
+      NetworkConfigurationHandler* network_configuration_handler);
 
  private:
   DISALLOW_ASSIGN(ManagedNetworkConfigurationHandler);

@@ -6,7 +6,7 @@
 #define IOS_WEB_PUBLIC_TEST_FAKES_CRW_TEST_WEB_STATE_OBSERVER_H_
 
 #include "ios/web/public/test/fakes/test_web_state_observer_util.h"
-#import "ios/web/public/web_state/web_state_observer_bridge.h"
+#import "ios/web/public/web_state_observer_bridge.h"
 
 // Test implementation of CRWWebStateObserver protocol.
 @interface CRWTestWebStateObserver : NSObject<CRWWebStateObserver>
@@ -24,9 +24,6 @@
 // Arguments passed to |webState:didFinishNavigation:|.
 @property(nonatomic, readonly)
     web::TestDidFinishNavigationInfo* didFinishNavigationInfo;
-// Arguments passed to |webState:didCommitNavigationWithDetails:|.
-@property(nonatomic, readonly)
-    web::TestCommitNavigationInfo* commitNavigationInfo;
 // Arguments passed to |webState:didLoadPageWithSuccess:|.
 @property(nonatomic, readonly) web::TestLoadPageInfo* loadPageInfo;
 // Arguments passed to |webState:didChangeLoadingProgress:|.

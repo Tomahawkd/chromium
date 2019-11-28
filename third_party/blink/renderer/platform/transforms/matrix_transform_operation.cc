@@ -25,6 +25,41 @@
 
 namespace blink {
 
+scoped_refptr<TransformOperation> MatrixTransformOperation::Accumulate(
+    const TransformOperation& other_op) {
+  DCHECK(other_op.IsSameType(*this));
+  const MatrixTransformOperation& other = ToMatrixTransformOperation(other_op);
+
+  TransformationMatrix from_t(other.a_, other.b_, other.c_, other.d_, other.e_,
+                              other.f_);
+  TransformationMatrix to_t(a_, b_, c_, d_, e_, f_);
+
+  // If either matrix is non-invertible, fail and fallback to replace.
+  if (!from_t.IsInvertible() || !to_t.IsInvertible())
+    return nullptr;
+
+  // Similar to interpolation, accumulating matrices is done by decomposing
+  // them, accumulating the individual functions, and then recomposing.
+
+  TransformationMatrix::Decomposed2dType from_decomp;
+  TransformationMatrix::Decomposed2dType to_decomp;
+  if (!from_t.Decompose2D(from_decomp) || !to_t.Decompose2D(to_decomp)) {
+    return nullptr;
+  }
+
+  // For a 2D matrix, the components can just be naively summed, noting that
+  // scale uses 1-based addition.
+  from_decomp.scale_x += to_decomp.scale_x - 1;
+  from_decomp.scale_y += to_decomp.scale_y - 1;
+  from_decomp.skew_xy += to_decomp.skew_xy;
+  from_decomp.translate_x += to_decomp.translate_x;
+  from_decomp.translate_y += to_decomp.translate_y;
+  from_decomp.angle += to_decomp.angle;
+
+  from_t.Recompose2D(from_decomp);
+  return MatrixTransformOperation::Create(from_t);
+}
+
 scoped_refptr<TransformOperation> MatrixTransformOperation::Blend(
     const TransformOperation* from,
     double progress,
@@ -35,10 +70,14 @@ scoped_refptr<TransformOperation> MatrixTransformOperation::Blend(
   // convert the TransformOperations into matrices
   TransformationMatrix from_t;
   TransformationMatrix to_t(a_, b_, c_, d_, e_, f_);
+  if (!to_t.IsInvertible())
+    return nullptr;
   if (from) {
     const MatrixTransformOperation* m =
         static_cast<const MatrixTransformOperation*>(from);
     from_t.SetMatrix(m->a_, m->b_, m->c_, m->d_, m->e_, m->f_);
+    if (!from_t.IsInvertible())
+      return nullptr;
   }
 
   if (blend_to_identity)

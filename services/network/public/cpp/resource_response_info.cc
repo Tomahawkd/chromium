@@ -11,7 +11,6 @@ namespace network {
 ResourceResponseInfo::ResourceResponseInfo()
     : ct_policy_compliance(net::ct::CTPolicyCompliance::
                                CT_POLICY_COMPLIANCE_DETAILS_NOT_AVAILABLE),
-      is_legacy_symantec_cert(false),
       content_length(-1),
       encoded_data_length(-1),
       encoded_body_length(-1),
@@ -24,7 +23,6 @@ ResourceResponseInfo::ResourceResponseInfo()
       was_fetched_via_service_worker(false),
       was_fallback_required_by_service_worker(false),
       response_type(mojom::FetchResponseType::kDefault),
-      effective_connection_type(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN),
       cert_status(0),
       did_service_worker_navigation_preload(false),
       should_report_corb_blocking(false),

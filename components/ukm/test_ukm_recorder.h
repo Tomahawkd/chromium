@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <map>
 #include <memory>
 #include <set>
 #include <utility>
@@ -46,8 +47,12 @@ class TestUkmRecorder : public UkmRecorderImpl {
     return sources();
   }
 
-  // Gets UkmSource data for a single SourceId.
+  // Gets UkmSource data for a single SourceId. Returns null if not found.
   const UkmSource* GetSourceForSourceId(ukm::SourceId source_id) const;
+
+  // Gets DocumentCreatedEntry for a single SourceId. Returns null if not found.
+  const ukm::mojom::UkmEntry* GetDocumentCreatedEntryForSourceId(
+      ukm::SourceId source_id) const;
 
   // Sets a callback that will be called when recording an entry for entry name.
   void SetOnAddEntryCallback(base::StringPiece entry_name,
@@ -95,7 +100,7 @@ class TestAutoSetUkmRecorder : public TestUkmRecorder {
   ~TestAutoSetUkmRecorder() override;
 
  private:
-  base::WeakPtrFactory<TestAutoSetUkmRecorder> self_ptr_factory_;
+  base::WeakPtrFactory<TestAutoSetUkmRecorder> self_ptr_factory_{this};
 };
 
 }  // namespace ukm

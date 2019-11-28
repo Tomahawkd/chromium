@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 
-namespace app_list {
+namespace ash {
 
 class SearchResultActionsViewDelegate {
  public:
@@ -15,10 +15,14 @@ class SearchResultActionsViewDelegate {
   // in SearchResultActionsView.
   virtual void OnSearchResultActionActivated(size_t index, int event_flags) = 0;
 
+  // Returns true if the associated search result is hovered by mouse, or
+  // or selected by keyboard.
+  virtual bool IsSearchResultHoveredOrSelected() = 0;
+
  protected:
   virtual ~SearchResultActionsViewDelegate() {}
 };
 
-}  // namespace app_list
+}  // namespace ash
 
 #endif  // ASH_APP_LIST_VIEWS_SEARCH_RESULT_ACTIONS_VIEW_DELEGATE_H_

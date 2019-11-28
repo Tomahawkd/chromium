@@ -28,8 +28,7 @@ DelayBasedTimeSource::DelayBasedTimeSource(
       interval_(BeginFrameArgs::DefaultInterval()),
       last_tick_time_(base::TimeTicks() - interval_),
       next_tick_time_(base::TimeTicks()),
-      task_runner_(task_runner),
-      weak_factory_(this) {}
+      task_runner_(task_runner) {}
 
 DelayBasedTimeSource::~DelayBasedTimeSource() = default;
 
@@ -155,8 +154,8 @@ void DelayBasedTimeSource::PostNextTickTask(base::TimeTicks now) {
       next_tick_time_ += interval_;
     DCHECK_GT(next_tick_time_, now);
   }
-  tick_closure_.Reset(base::Bind(&DelayBasedTimeSource::OnTimerTick,
-                                 weak_factory_.GetWeakPtr()));
+  tick_closure_.Reset(base::BindOnce(&DelayBasedTimeSource::OnTimerTick,
+                                     weak_factory_.GetWeakPtr()));
   task_runner_->PostDelayedTask(FROM_HERE, tick_closure_.callback(),
                                 next_tick_time_ - now);
 }

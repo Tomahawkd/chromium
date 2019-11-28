@@ -11,10 +11,10 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "net/base/chunked_upload_data_stream.h"
 #include "net/base/completion_repeating_callback.h"
@@ -58,14 +58,12 @@ class TestCallback {
 class ThrottlingControllerTestHelper {
  public:
   ThrottlingControllerTestHelper()
-      : task_runner_(base::MakeRefCounted<base::TestMockTimeTaskRunner>()),
-        completion_callback_(base::BindRepeating(&TestCallback::Run,
+      : completion_callback_(base::BindRepeating(&TestCallback::Run,
                                                  base::Unretained(&callback_))),
         mock_transaction_(kSimpleGET_Transaction),
         buffer_(base::MakeRefCounted<net::IOBuffer>(64)),
-        net_log_(std::make_unique<net::NetLog>()),
         net_log_with_source_(
-            net::NetLogWithSource::Make(net_log_.get(),
+            net::NetLogWithSource::Make(net::NetLog::Get(),
                                         net::NetLogSourceType::URL_REQUEST)),
         profile_id_(base::UnguessableToken::Create()) {
     mock_transaction_.test_mode = TEST_MODE_SYNC_NET_START;
@@ -77,7 +75,6 @@ class ThrottlingControllerTestHelper {
                                      &network_transaction);
     transaction_.reset(
         new ThrottlingNetworkTransaction(std::move(network_transaction)));
-    message_loop_.SetTaskRunner(task_runner_);
   }
 
   void SetNetworkState(bool offline, double download, double upload) {
@@ -100,7 +97,7 @@ class ThrottlingControllerTestHelper {
     if (with_upload) {
       upload_data_stream_.reset(
           new net::ChunkedUploadDataStream(kUploadIdentifier));
-      upload_data_stream_->AppendData(kUploadData, arraysize(kUploadData),
+      upload_data_stream_->AppendData(kUploadData, base::size(kUploadData),
                                       true);
       request_->upload_data_stream = upload_data_stream_.get();
     }
@@ -145,12 +142,12 @@ class ThrottlingControllerTestHelper {
   ThrottlingNetworkTransaction* transaction() { return transaction_.get(); }
 
   void FastForwardUntilNoTasksRemain() {
-    task_runner_->FastForwardUntilNoTasksRemain();
+    task_environment_.FastForwardUntilNoTasksRemain();
   }
 
  private:
-  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME};
   MockNetworkLayer network_layer_;
   TestCallback callback_;
   net::CompletionRepeatingCallback completion_callback_;
@@ -159,7 +156,6 @@ class ThrottlingControllerTestHelper {
   scoped_refptr<net::IOBuffer> buffer_;
   std::unique_ptr<net::ChunkedUploadDataStream> upload_data_stream_;
   std::unique_ptr<MockHttpRequest> request_;
-  std::unique_ptr<net::NetLog> net_log_;
   std::unique_ptr<network::ScopedThrottlingToken> throttling_token_;
   const net::NetLogWithSource net_log_with_source_;
   const base::UnguessableToken profile_id_;
@@ -292,7 +288,7 @@ TEST(ThrottlingControllerTest, UploadDoesNotFail) {
   int rv = helper.Start(true);
   EXPECT_EQ(rv, net::ERR_INTERNET_DISCONNECTED);
   rv = helper.ReadUploadData();
-  EXPECT_EQ(rv, static_cast<int>(arraysize(kUploadData)));
+  EXPECT_EQ(rv, static_cast<int>(base::size(kUploadData)));
 }
 
 TEST(ThrottlingControllerTest, DownloadOnly) {
@@ -336,7 +332,7 @@ TEST(ThrottlingControllerTest, UploadOnly) {
   EXPECT_EQ(callback->run_count(), 1);
   helper.FastForwardUntilNoTasksRemain();
   EXPECT_EQ(callback->run_count(), 2);
-  EXPECT_EQ(callback->value(), static_cast<int>(arraysize(kUploadData)));
+  EXPECT_EQ(callback->value(), static_cast<int>(base::size(kUploadData)));
 }
 
 }  // namespace network

@@ -11,6 +11,7 @@
 #include "components/download/internal/background_service/blob_task_proxy.h"
 #include "net/base/load_flags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_storage_context.h"
 
@@ -20,30 +21,30 @@ InMemoryDownload::InMemoryDownload(const std::string& guid)
     : guid_(guid),
       state_(State::INITIAL),
       paused_(false),
-      bytes_downloaded_(0u) {}
+      bytes_downloaded_(0u),
+      bytes_uploaded_(0u) {}
 
 InMemoryDownload::~InMemoryDownload() = default;
 
 InMemoryDownloadImpl::InMemoryDownloadImpl(
     const std::string& guid,
     const RequestParams& request_params,
+    scoped_refptr<network::ResourceRequestBody> request_body,
     const net::NetworkTrafficAnnotationTag& traffic_annotation,
     Delegate* delegate,
     network::mojom::URLLoaderFactory* url_loader_factory,
-    BlobTaskProxy::BlobContextGetter blob_context_getter,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner)
     : InMemoryDownload(guid),
       request_params_(request_params),
+      request_body_(std::move(request_body)),
       traffic_annotation_(traffic_annotation),
       url_loader_factory_(url_loader_factory),
-      blob_task_proxy_(
-          BlobTaskProxy::Create(blob_context_getter, io_task_runner)),
       io_task_runner_(io_task_runner),
       delegate_(delegate),
       completion_notified_(false),
-      started_(false),
-      weak_ptr_factory_(this) {
+      started_(false) {
   DCHECK(!guid_.empty());
+  DCHECK(delegate_);
 }
 
 InMemoryDownloadImpl::~InMemoryDownloadImpl() {
@@ -52,6 +53,17 @@ InMemoryDownloadImpl::~InMemoryDownloadImpl() {
 
 void InMemoryDownloadImpl::Start() {
   DCHECK(state_ == State::INITIAL) << "Only call Start() for new download.";
+  state_ = State::RETRIEVE_BLOB_CONTEXT;
+  delegate_->RetrieveBlobContextGetter(
+      base::BindOnce(&InMemoryDownloadImpl::OnRetrievedBlobContextGetter,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void InMemoryDownloadImpl::OnRetrievedBlobContextGetter(
+    BlobContextGetter blob_context_getter) {
+  DCHECK(state_ == State::RETRIEVE_BLOB_CONTEXT);
+  blob_task_proxy_ =
+      BlobTaskProxy::Create(blob_context_getter, io_task_runner_);
   SendRequest();
   state_ = State::IN_PROGRESS;
 }
@@ -66,7 +78,7 @@ void InMemoryDownloadImpl::Resume() {
 
   switch (state_) {
     case State::INITIAL:
-      NOTREACHED();
+    case State::RETRIEVE_BLOB_CONTEXT:
       return;
     case State::IN_PROGRESS:
       // Let the network pipe continue to read data.
@@ -112,8 +124,7 @@ void InMemoryDownloadImpl::OnDataReceived(base::StringPiece string_piece,
   std::move(resume).Run();
 
   // TODO(xingliu): Throttle the update frequency. See https://crbug.com/809674.
-  if (delegate_)
-    delegate_->OnDownloadProgress(this);
+  delegate_->OnDownloadProgress(this);
 }
 
 void InMemoryDownloadImpl::OnComplete(bool success) {
@@ -130,7 +141,7 @@ void InMemoryDownloadImpl::OnComplete(bool success) {
   // OnComplete() called without OnResponseStarted(). This will happen when the
   // request was aborted.
   if (!started_)
-    OnResponseStarted(GURL(), network::ResourceResponseHead());
+    OnResponseStarted(GURL(), network::mojom::URLResponseHead());
 
   NotifyDelegateDownloadComplete();
 }
@@ -180,8 +191,7 @@ void InMemoryDownloadImpl::NotifyDelegateDownloadComplete() {
     return;
   completion_notified_ = true;
 
-  if (delegate_)
-    delegate_->OnDownloadComplete(this);
+  delegate_->OnDownloadComplete(this);
 }
 
 void InMemoryDownloadImpl::SendRequest() {
@@ -190,6 +200,10 @@ void InMemoryDownloadImpl::SendRequest() {
   request->method = request_params_.method;
   request->headers = request_params_.request_headers;
   request->load_flags = net::LOAD_DISABLE_CACHE;
+  if (request_body_) {
+    request->request_body = std::move(request_body_);
+    request->enable_upload_progress = true;
+  }
 
   url_chain_.push_back(request_params_.url);
 
@@ -200,6 +214,8 @@ void InMemoryDownloadImpl::SendRequest() {
   loader_->SetOnResponseStartedCallback(
       base::BindRepeating(&InMemoryDownloadImpl::OnResponseStarted,
                           weak_ptr_factory_.GetWeakPtr()));
+  loader_->SetOnUploadProgressCallback(base::BindRepeating(
+      &InMemoryDownloadImpl::OnUploadProgress, weak_ptr_factory_.GetWeakPtr()));
 
   // TODO(xingliu): Use SimpleURLLoader's retry when it won't hit CHECK in
   // SharedURLLoaderFactory.
@@ -208,19 +224,23 @@ void InMemoryDownloadImpl::SendRequest() {
 
 void InMemoryDownloadImpl::OnRedirect(
     const net::RedirectInfo& redirect_info,
-    const network::ResourceResponseHead& response_head,
+    const network::mojom::URLResponseHead& response_head,
     std::vector<std::string>* to_be_removed_headers) {
   url_chain_.push_back(redirect_info.new_url);
 }
 
 void InMemoryDownloadImpl::OnResponseStarted(
     const GURL& final_url,
-    const network::ResourceResponseHead& response_head) {
+    const network::mojom::URLResponseHead& response_head) {
   started_ = true;
   response_headers_ = response_head.headers;
 
-  if (delegate_)
-    delegate_->OnDownloadStarted(this);
+  delegate_->OnDownloadStarted(this);
+}
+
+void InMemoryDownloadImpl::OnUploadProgress(uint64_t position, uint64_t total) {
+  bytes_uploaded_ = position;
+  delegate_->OnUploadProgress(this);
 }
 
 void InMemoryDownloadImpl::Reset() {

@@ -17,12 +17,14 @@ MockDownloadItemImpl::MockDownloadItemImpl(DownloadItemImplDelegate* delegate)
                        GURL(),
                        GURL(),
                        GURL(),
+                       url::Origin(),
                        "application/octet-stream",
                        "application/octet-stream",
                        base::Time(),
                        base::Time(),
                        std::string(),
                        std::string(),
+                       0,
                        0,
                        0,
                        std::string(),
@@ -31,9 +33,11 @@ MockDownloadItemImpl::MockDownloadItemImpl(DownloadItemImplDelegate* delegate)
                        DOWNLOAD_INTERRUPT_REASON_NONE,
                        false,
                        false,
+                       false,
                        base::Time(),
                        true,
-                       DownloadItem::ReceivedSlices()) {}
+                       DownloadItem::ReceivedSlices(),
+                       nullptr /* download_entry */) {}
 
 MockDownloadItemImpl::~MockDownloadItemImpl() = default;
 

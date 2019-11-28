@@ -68,6 +68,9 @@ jumbo_source_set("capture_device_specific") {
     "video/file_video_capture_device.h",
     "video/file_video_capture_device_factory.cc",
     "video/file_video_capture_device_factory.h",
+    "video/gpu_memory_buffer_utils.cc",
+    "video/gpu_memory_buffer_utils.h",
+    "video/video_capture_buffer_handle.cc",
     "video/video_capture_buffer_handle.h",
     "video/video_capture_device.cc",
     "video/video_capture_device.h",
@@ -82,10 +85,12 @@ jumbo_source_set("capture_device_specific") {
     "//base",
     "//base:i18n",
     "//gpu/command_buffer/client",
+    "//gpu/ipc/common:common",
     "//media",
     "//media/capture/mojom:image_capture",
     "//media/capture/mojom:image_capture_types",
-    "//media/mojo/interfaces:interfaces",
+    "//media/mojo/mojom",
+    "//media/parsers",
     "//third_party/libyuv",
     "//ui/gfx",
   ]
@@ -99,8 +104,6 @@ jumbo_component("capture_lib") {
     "video/scoped_buffer_pool_reservation.h",
     "video/shared_memory_buffer_tracker.cc",
     "video/shared_memory_buffer_tracker.h",
-    "video/shared_memory_handle_provider.cc",
-    "video/shared_memory_handle_provider.h",
     "video/video_capture_buffer_pool.h",
     "video/video_capture_buffer_pool_impl.cc",
     "video/video_capture_buffer_pool_impl.h",
@@ -110,9 +113,6 @@ jumbo_component("capture_lib") {
     "video/video_capture_buffer_tracker_factory_impl.h",
     "video/video_capture_device_client.cc",
     "video/video_capture_device_client.h",
-    "video/video_capture_jpeg_decoder.h",
-    "video/video_capture_jpeg_decoder_impl.cc",
-    "video/video_capture_jpeg_decoder_impl.h",
     "video/video_capture_system.h",
     "video/video_capture_system_impl.cc",
     "video/video_capture_system_impl.h",
@@ -135,8 +135,7 @@ jumbo_component("capture_lib") {
     "//media/capture/mojom:image_capture",
     "//media/capture/mojom:image_capture_types",
     "//media/capture/mojom:video_capture",
-    "//media/mojo/clients:jpeg_decode_accelerator",
-    "//media/mojo/interfaces:interfaces",
+    "//media/mojo/mojom",
     "//services/service_manager/public/cpp",
     "//third_party/libyuv",
     "//ui/display",
@@ -165,7 +164,10 @@ jumbo_component("capture_lib") {
       "video/mac/video_capture_device_mac.h",
       "video/mac/video_capture_device_mac.mm",
     ]
-    deps += [ "//third_party/decklink" ]
+    deps += [
+      "//services/video_capture/public/uma",
+      "//third_party/decklink",
+    ]
     libs = [
       "AVFoundation.framework",
       "CoreFoundation.framework",
@@ -200,7 +202,7 @@ jumbo_component("capture_lib") {
       "video/win/video_capture_device_win.cc",
       "video/win/video_capture_device_win.h",
     ]
-    deps += [ "//media/base/win" ]
+    deps += [ "//media/base/win:media_foundation_util" ]
     libs = [
       "mf.lib",
       "mfplat.lib",
@@ -242,6 +244,12 @@ jumbo_component("capture_lib") {
     sources += [
       "video/chromeos/camera_3a_controller.cc",
       "video/chromeos/camera_3a_controller.h",
+      "video/chromeos/camera_app_device_bridge_impl.cc",
+      "video/chromeos/camera_app_device_bridge_impl.h",
+      "video/chromeos/camera_app_device_impl.cc",
+      "video/chromeos/camera_app_device_impl.h",
+      "video/chromeos/camera_app_device_provider_impl.cc",
+      "video/chromeos/camera_app_device_provider_impl.h",
       "video/chromeos/camera_buffer_factory.cc",
       "video/chromeos/camera_buffer_factory.h",
       "video/chromeos/camera_device_context.cc",
@@ -256,20 +264,36 @@ jumbo_component("capture_lib") {
       "video/chromeos/camera_metadata_utils.h",
       "video/chromeos/display_rotation_observer.cc",
       "video/chromeos/display_rotation_observer.h",
+      "video/chromeos/gpu_memory_buffer_tracker.cc",
+      "video/chromeos/gpu_memory_buffer_tracker.h",
       "video/chromeos/pixel_format_utils.cc",
       "video/chromeos/pixel_format_utils.h",
+      "video/chromeos/request_builder.cc",
+      "video/chromeos/request_builder.h",
+      "video/chromeos/request_manager.cc",
+      "video/chromeos/request_manager.h",
+      "video/chromeos/scoped_video_capture_jpeg_decoder.cc",
+      "video/chromeos/scoped_video_capture_jpeg_decoder.h",
       "video/chromeos/stream_buffer_manager.cc",
       "video/chromeos/stream_buffer_manager.h",
+      "video/chromeos/vendor_tag_ops_delegate.cc",
+      "video/chromeos/vendor_tag_ops_delegate.h",
       "video/chromeos/video_capture_device_chromeos_halv3.cc",
       "video/chromeos/video_capture_device_chromeos_halv3.h",
       "video/chromeos/video_capture_device_factory_chromeos.cc",
       "video/chromeos/video_capture_device_factory_chromeos.h",
+      "video/chromeos/video_capture_jpeg_decoder.h",
+      "video/chromeos/video_capture_jpeg_decoder_impl.cc",
+      "video/chromeos/video_capture_jpeg_decoder_impl.h",
     ]
     public_deps += [ "//media/capture/video/chromeos/public" ]
     deps += [
       "//build/config/linux/libdrm",
-      "//chromeos:chromeos",
-      "//media/capture/video/chromeos/mojo:cros_camera",
+      "//chromeos/dbus/power",
+      "//components/chromeos_camera:mojo_mjpeg_decode_accelerator",
+      "//components/chromeos_camera/common",
+      "//gpu/ipc/common:common",
+      "//media/capture/video/chromeos/mojom:cros_camera",
       "//third_party/libsync",
     ]
   }
@@ -281,6 +305,7 @@ jumbo_component("capture_lib") {
     ]
   }
 }
+
 source_set("test_support") {
   testonly = true
 
@@ -325,7 +350,6 @@ test("capture_unittests") {
     "video/mac/video_capture_device_factory_mac_unittest.mm",
     "video/mock_gpu_memory_buffer_manager.cc",
     "video/mock_gpu_memory_buffer_manager.h",
-    "video/shared_memory_handle_provider_unittest.cc",
     "video/video_capture_device_client_unittest.cc",
     "video/video_capture_device_unittest.cc",
     "video_capture_types_unittest.cc",
@@ -377,23 +401,29 @@ test("capture_unittests") {
     configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
   }
 
+  if (is_linux) {
+    deps += [ "//media/gpu/test:local_gpu_memory_buffer_manager" ]
+  }
+
   if (is_chromeos) {
     sources += [
       "video/chromeos/camera_3a_controller_unittest.cc",
       "video/chromeos/camera_device_delegate_unittest.cc",
       "video/chromeos/camera_hal_delegate_unittest.cc",
       "video/chromeos/camera_hal_dispatcher_impl_unittest.cc",
-      "video/chromeos/local_gpu_memory_buffer_manager.cc",
       "video/chromeos/mock_camera_module.cc",
       "video/chromeos/mock_camera_module.h",
+      "video/chromeos/mock_vendor_tag_ops.cc",
+      "video/chromeos/mock_vendor_tag_ops.h",
       "video/chromeos/mock_video_capture_client.cc",
       "video/chromeos/mock_video_capture_client.h",
-      "video/chromeos/stream_buffer_manager_unittest.cc",
+      "video/chromeos/request_manager_unittest.cc",
     ]
     deps += [
       "//build/config/linux/libdrm",
-      "//chromeos:chromeos",
-      "//media/capture/video/chromeos/mojo:cros_camera",
+      "//chromeos/dbus/power",
+      "//media/capture/video/chromeos/mojom:cros_camera",
+      "//media/capture/video/chromeos/public",
       "//mojo/core/embedder",
       "//third_party/libsync",
       "//third_party/minigbm",

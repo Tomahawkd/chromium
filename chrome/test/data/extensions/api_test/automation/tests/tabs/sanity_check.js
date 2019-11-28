@@ -18,9 +18,7 @@ var allTests = [
     assertEq('Automation Tests', title);
 
     var state = RemoveUntestedStates(rootNode.state);
-    assertEq(
-        {focusable: true, focused: true},
-        state);
+    assertEq({focusable: true, focused: true}, state);
     assertEq(undefined, rootNode.restriction);
 
     var children = rootNode.children;
@@ -36,7 +34,7 @@ var allTests = [
     var okButton = contentChildren[0];
     assertEq('Ok', okButton.name);
     state = RemoveUntestedStates(okButton.state);
-    assertEq({default: true, focusable: true}, state);
+    assertEq({focusable: true}, state);
     assertEq(undefined, okButton.restriction);
     var userNameInput = contentChildren[1];
     assertEq(undefined, userNameInput.restriction);
@@ -47,7 +45,7 @@ var allTests = [
     assertEq('Cancel',
              cancelButton.name);
     state = RemoveUntestedStates(cancelButton.state);
-    assertEq({default: true, focusable: true}, state);
+    assertEq({focusable: true}, state);
     assertEq(undefined, cancelButton.restriction);
 
     // Traversal.
@@ -65,9 +63,9 @@ var allTests = [
     assertEq(body, cancelButton.parent);
 
     assertEq(undefined, okButton.previousSibling);
-    assertEq(undefined, okButton.firstChild);
+    assertEq({}, okButton.firstChild);
     assertEq(userNameInput, okButton.nextSibling);
-    assertEq(undefined, okButton.lastChild);
+    assertEq({}, okButton.lastChild);
 
     assertEq(okButton, userNameInput.previousSibling);
     assertEq(cancelButton, userNameInput.nextSibling);

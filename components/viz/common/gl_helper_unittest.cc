@@ -2,10 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
+#include "components/viz/common/gl_helper.h"
 
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
@@ -19,20 +16,20 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/numerics/ranges.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "components/viz/common/gl_helper.h"
 #include "components/viz/common/gl_helper_scaling.h"
+#include "components/viz/test/test_gpu_service_holder.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/shared_memory_limits.h"
 #include "gpu/ipc/gl_in_process_context.h"
-#include "gpu/ipc/test_gpu_thread_holder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkTypes.h"
@@ -66,7 +63,8 @@ class GLHelperTest : public testing::Test {
 
     context_ = std::make_unique<gpu::GLInProcessContext>();
     auto result = context_->Initialize(
-        gpu::GetTestGpuThreadHolder()->GetTaskExecutor(), nullptr, /* surface */
+        TestGpuServiceHolder::GetInstance()->task_executor(),
+        nullptr,                 /* surface */
         true,                    /* offscreen */
         gpu::kNullSurfaceHandle, /* window */
         attributes, gpu::SharedMemoryLimits(),
@@ -107,14 +105,14 @@ class GLHelperTest : public testing::Test {
   int Channel(SkBitmap* pixels, int x, int y, int c) {
     if (pixels->bytesPerPixel() == 4) {
       uint32_t* data =
-          pixels->getAddr32(std::max(0, std::min(x, pixels->width() - 1)),
-                            std::max(0, std::min(y, pixels->height() - 1)));
+          pixels->getAddr32(base::ClampToRange(x, 0, pixels->width() - 1),
+                            base::ClampToRange(y, 0, pixels->height() - 1));
       return (*data) >> (c * 8) & 0xff;
     } else {
       DCHECK_EQ(pixels->bytesPerPixel(), 1);
       DCHECK_EQ(c, 0);
-      return *pixels->getAddr8(std::max(0, std::min(x, pixels->width() - 1)),
-                               std::max(0, std::min(y, pixels->height() - 1)));
+      return *pixels->getAddr8(base::ClampToRange(x, 0, pixels->width() - 1),
+                               base::ClampToRange(y, 0, pixels->height() - 1));
     }
   }
 
@@ -127,13 +125,13 @@ class GLHelperTest : public testing::Test {
     DCHECK_LT(y, pixels->height());
     if (pixels->bytesPerPixel() == 4) {
       uint32_t* data = pixels->getAddr32(x, y);
-      v = std::max(0, std::min(v, 255));
+      v = base::ClampToRange(v, 0, 255);
       *data = (*data & ~(0xffu << (c * 8))) | (v << (c * 8));
     } else {
       DCHECK_EQ(pixels->bytesPerPixel(), 1);
       DCHECK_EQ(c, 0);
       uint8_t* data = pixels->getAddr8(x, y);
-      v = std::max(0, std::min(v, 255));
+      v = base::ClampToRange(v, 0, 255);
       *data = v;
     }
   }
@@ -1011,7 +1009,7 @@ class GLHelperTest : public testing::Test {
     base::RunLoop run_loop;
     bool success = false;
     helper_->ReadbackTextureAsync(
-        src_texture, src_size, pixels, color_type,
+        src_texture, GL_TEXTURE_2D, src_size, pixels, color_type,
         base::BindOnce(
             [](bool* success, base::OnceClosure callback, bool result) {
               *success = result;
@@ -1329,24 +1327,24 @@ TEST_P(GLHelperPixelReadbackTest, DISABLED_ScalePatching) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     GLHelperPixelReadbackTest,
     ::testing::Combine(
-        ::testing::Range<unsigned int>(0, arraysize(kQualities)),
-        ::testing::Range<unsigned int>(0, arraysize(kRGBReadBackSizes)),
-        ::testing::Range<unsigned int>(0, arraysize(kRGBReadBackSizes)),
-        ::testing::Range<unsigned int>(0, arraysize(kRGBReadBackSizes)),
-        ::testing::Range<unsigned int>(0, arraysize(kRGBReadBackSizes))));
+        ::testing::Range<unsigned int>(0, base::size(kQualities)),
+        ::testing::Range<unsigned int>(0, base::size(kRGBReadBackSizes)),
+        ::testing::Range<unsigned int>(0, base::size(kRGBReadBackSizes)),
+        ::testing::Range<unsigned int>(0, base::size(kRGBReadBackSizes)),
+        ::testing::Range<unsigned int>(0, base::size(kRGBReadBackSizes))));
 
 // Validate that all scaling generates valid pipelines.
 TEST_F(GLHelperTest, ValidateScalerPipelines) {
   int sizes[] = {7, 99, 128, 256, 512, 719, 720, 721, 1920, 2011, 3217, 4096};
-  for (size_t q = 0; q < arraysize(kQualities); q++) {
-    for (size_t x = 0; x < arraysize(sizes); x++) {
-      for (size_t y = 0; y < arraysize(sizes); y++) {
-        for (size_t dst_x = 0; dst_x < arraysize(sizes); dst_x++) {
-          for (size_t dst_y = 0; dst_y < arraysize(sizes); dst_y++) {
+  for (size_t q = 0; q < base::size(kQualities); q++) {
+    for (size_t x = 0; x < base::size(sizes); x++) {
+      for (size_t y = 0; y < base::size(sizes); y++) {
+        for (size_t dst_x = 0; dst_x < base::size(sizes); dst_x++) {
+          for (size_t dst_y = 0; dst_y < base::size(sizes); dst_y++) {
             TestScalerPipeline(q, sizes[x], sizes[y], sizes[dst_x],
                                sizes[dst_y]);
             if (HasFailure()) {

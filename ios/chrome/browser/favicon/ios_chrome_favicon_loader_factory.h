@@ -8,14 +8,10 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
 
 class FaviconLoader;
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 namespace ios {
 class ChromeBrowserState;
@@ -30,9 +26,12 @@ class IOSChromeFaviconLoaderFactory : public BrowserStateKeyedServiceFactory {
   static FaviconLoader* GetForBrowserStateIfExists(
       ios::ChromeBrowserState* browser_state);
   static IOSChromeFaviconLoaderFactory* GetInstance();
+  // Returns the default factory used to build FaviconLoader. Can be registered
+  // with SetTestingFactory to use the FaviconService instance during testing.
+  static TestingFactory GetDefaultFactory();
 
  private:
-  friend struct base::DefaultSingletonTraits<IOSChromeFaviconLoaderFactory>;
+  friend class base::NoDestructor<IOSChromeFaviconLoaderFactory>;
 
   IOSChromeFaviconLoaderFactory();
   ~IOSChromeFaviconLoaderFactory() override;

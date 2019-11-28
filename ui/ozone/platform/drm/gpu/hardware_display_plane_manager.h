@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <xf86drmMode.h>
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -71,6 +72,9 @@ class HardwareDisplayPlaneManager {
   // on the CRTC with ID |crtc_id|.
   bool SetColorMatrix(uint32_t crtc_id, const std::vector<float>& color_matrix);
 
+  // Sets the background color on the CRTC object with ID |crtc_id|.
+  void SetBackgroundColor(uint32_t crtc_id, const uint64_t background_color);
+
   // Sets the degamma/gamma luts on the CRTC object with ID |crtc_id|.
   bool SetGammaCorrection(
       uint32_t crtc_id,
@@ -113,7 +117,7 @@ class HardwareDisplayPlaneManager {
   virtual bool ValidatePrimarySize(const DrmOverlayPlane& primary,
                                    const drmModeModeInfo& mode) = 0;
 
-  const std::vector<std::unique_ptr<HardwareDisplayPlane>>& planes() {
+  const std::vector<std::unique_ptr<HardwareDisplayPlane>>& planes() const {
     return planes_;
   }
 
@@ -127,7 +131,8 @@ class HardwareDisplayPlaneManager {
   // Returns all formats which can be scanned out by this PlaneManager.
   const std::vector<uint32_t>& GetSupportedFormats() const;
 
-  std::vector<uint64_t> GetFormatModifiers(uint32_t crtc_id, uint32_t format);
+  std::vector<uint64_t> GetFormatModifiers(uint32_t crtc_id,
+                                           uint32_t format) const;
 
  protected:
   struct CrtcProperties {
@@ -141,6 +146,7 @@ class HardwareDisplayPlaneManager {
     DrmDevice::Property degamma_lut;
     DrmDevice::Property degamma_lut_size;
     DrmDevice::Property out_fence_ptr;
+    DrmDevice::Property background_color;
   };
 
   struct CrtcState {

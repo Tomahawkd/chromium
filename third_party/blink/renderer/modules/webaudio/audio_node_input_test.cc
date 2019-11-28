@@ -9,13 +9,14 @@
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
+#include "third_party/blink/renderer/modules/webaudio/audio_node_wiring.h"
 #include "third_party/blink/renderer/modules/webaudio/delay_node.h"
 #include "third_party/blink/renderer/modules/webaudio/offline_audio_context.h"
 
 namespace blink {
 
 TEST(AudioNodeInputTest, InputDestroyedBeforeOutput) {
-  auto page = DummyPageHolder::Create();
+  auto page = std::make_unique<DummyPageHolder>();
   OfflineAudioContext* context = OfflineAudioContext::Create(
       &page->GetDocument(), 2, 1, 48000, ASSERT_NO_EXCEPTION);
   DelayNode* node1 = context->createDelay(ASSERT_NO_EXCEPTION);
@@ -23,12 +24,12 @@ TEST(AudioNodeInputTest, InputDestroyedBeforeOutput) {
   DelayNode* node2 = context->createDelay(ASSERT_NO_EXCEPTION);
   auto& handler2 = node2->Handler();
 
-  auto input = AudioNodeInput::Create(handler1);
-  auto output = AudioNodeOutput::Create(&handler2, 0);
+  auto input = std::make_unique<AudioNodeInput>(handler1);
+  auto output = std::make_unique<AudioNodeOutput>(&handler2, 0);
 
   {
     BaseAudioContext::GraphAutoLocker graph_lock(context);
-    input->Connect(*output);
+    AudioNodeWiring::Connect(*output, *input);
     ASSERT_TRUE(output->IsConnected());
 
     // This should not crash.
@@ -39,7 +40,7 @@ TEST(AudioNodeInputTest, InputDestroyedBeforeOutput) {
 }
 
 TEST(AudioNodeInputTest, OutputDestroyedBeforeInput) {
-  auto page = DummyPageHolder::Create();
+  auto page = std::make_unique<DummyPageHolder>();
   OfflineAudioContext* context = OfflineAudioContext::Create(
       &page->GetDocument(), 2, 1, 48000, ASSERT_NO_EXCEPTION);
   DelayNode* node1 = context->createDelay(ASSERT_NO_EXCEPTION);
@@ -47,12 +48,12 @@ TEST(AudioNodeInputTest, OutputDestroyedBeforeInput) {
   DelayNode* node2 = context->createDelay(ASSERT_NO_EXCEPTION);
   auto& handler2 = node2->Handler();
 
-  auto input = AudioNodeInput::Create(handler1);
-  auto output = AudioNodeOutput::Create(&handler2, 0);
+  auto input = std::make_unique<AudioNodeInput>(handler1);
+  auto output = std::make_unique<AudioNodeOutput>(&handler2, 0);
 
   {
     BaseAudioContext::GraphAutoLocker graph_lock(context);
-    input->Connect(*output);
+    AudioNodeWiring::Connect(*output, *input);
     ASSERT_TRUE(output->IsConnected());
 
     // This should not crash.

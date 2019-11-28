@@ -16,9 +16,9 @@ namespace bookmarks {
 #if defined(TOOLKIT_VIEWS)
 
 // static
-const ui::Clipboard::FormatType& BookmarkNodeData::GetBookmarkFormatType() {
-  static const base::NoDestructor<ui::Clipboard::FormatType> format(
-      ui::Clipboard::GetFormatType(
+const ui::ClipboardFormatType& BookmarkNodeData::GetBookmarkFormatType() {
+  static const base::NoDestructor<ui::ClipboardFormatType> format(
+      ui::ClipboardFormatType::GetType(
           base::SysNSStringToUTF8(kUTTypeChromiumBookmarkDictionaryList)));
 
   return *format;
@@ -29,17 +29,18 @@ const ui::Clipboard::FormatType& BookmarkNodeData::GetBookmarkFormatType() {
 // static
 bool BookmarkNodeData::ClipboardContainsBookmarks() {
   NSPasteboard* pb =
-      ui::ClipboardUtil::PasteboardFromType(ui::CLIPBOARD_TYPE_COPY_PASTE);
+      ui::ClipboardUtil::PasteboardFromBuffer(ui::ClipboardBuffer::kCopyPaste);
   return PasteboardContainsBookmarks(pb);
 }
 
-void BookmarkNodeData::WriteToClipboard(ui::ClipboardType type) {
-  NSPasteboard* pb = ui::ClipboardUtil::PasteboardFromType(type);
+void BookmarkNodeData::WriteToClipboard() {
+  NSPasteboard* pb =
+      ui::ClipboardUtil::PasteboardFromBuffer(ui::ClipboardBuffer::kCopyPaste);
   WriteBookmarksToPasteboard(pb, elements, profile_path_);
 }
 
-bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardType type) {
-  NSPasteboard* pb = ui::ClipboardUtil::PasteboardFromType(type);
+bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardBuffer buffer) {
+  NSPasteboard* pb = ui::ClipboardUtil::PasteboardFromBuffer(buffer);
   base::FilePath file_path;
   if (ReadBookmarksFromPasteboard(pb, &elements, &file_path)) {
     profile_path_ = file_path;

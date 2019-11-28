@@ -12,9 +12,9 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 
+#include <bitset>
 #include <list>
 #include <map>
-#include <memory>
 #include <utility>
 #include <vector>
 
@@ -22,7 +22,6 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop_current.h"
 #include "base/metrics/histogram_macros.h"
@@ -194,19 +193,6 @@ unsigned int GetMaxCursorSize() {
   return min_dimension > 0 ? min_dimension : 64;
 }
 
-struct XImageDeleter {
-  void operator()(XImage* image) const { XDestroyImage(image); }
-};
-
-// Custom release function that will be passed to Skia so that it deletes the
-// image when the SkBitmap goes out of scope.
-// |address| is the pointer to the data inside the XImage.
-// |context| is the pointer to the XImage.
-void ReleaseXImage(void* address, void* context) {
-  if (context)
-    XDestroyImage(static_cast<XImage*>(context));
-}
-
 // A process wide singleton cache for custom X cursors.
 class XCustomCursorCache {
  public:
@@ -270,9 +256,7 @@ class XCustomCursorCache {
       return false;
     }
 
-    const XcursorImage* image() const {
-      return image_;
-    };
+    const XcursorImage* image() const { return image_; }
 
    private:
     XcursorImage* image_;
@@ -302,8 +286,21 @@ bool QueryRenderSupport(Display* dpy) {
   // We don't care about the version of Xrender since all the features which
   // we use are included in every version.
   static bool render_supported = XRenderQueryExtension(dpy, &dummy, &dummy);
-
   return render_supported;
+}
+
+bool QueryShmSupport() {
+  int major;
+  int minor;
+  x11::Bool pixmaps;
+  static bool supported =
+      XShmQueryVersion(gfx::GetXDisplay(), &major, &minor, &pixmaps);
+  return supported;
+}
+
+int ShmEventBase() {
+  static int event_base = XShmGetEventBase(gfx::GetXDisplay());
+  return event_base;
 }
 
 ::Cursor CreateReffedCustomXCursor(XcursorImage* image) {
@@ -539,7 +536,7 @@ bool IsWindowVisible(XID window) {
   std::vector<XAtom> wm_states;
   if (GetAtomArrayProperty(window, "_NET_WM_STATE", &wm_states)) {
     XAtom hidden_atom = gfx::GetAtom("_NET_WM_STATE_HIDDEN");
-    if (base::ContainsValue(wm_states, hidden_atom))
+    if (base::Contains(wm_states, hidden_atom))
       return false;
   }
 
@@ -627,8 +624,7 @@ bool WindowContainsPoint(XID window, gfx::Point screen_loc) {
   // included in both the default input region and the client bounding region
   // will not be included in the effective input region on the screen.
   int rectangle_kind[] = {ShapeInput, ShapeBounding};
-  for (size_t kind_index = 0;
-       kind_index < arraysize(rectangle_kind);
+  for (size_t kind_index = 0; kind_index < base::size(rectangle_kind);
        kind_index++) {
     int dummy;
     int shape_rects_size = 0;
@@ -664,7 +660,7 @@ bool PropertyExists(XID window, const std::string& property_name) {
   XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
-  unsigned char* property = NULL;
+  unsigned char* property = nullptr;
 
   int result = GetProperty(window, property_name, 1,
                            &type, &format, &num_items, &property);
@@ -685,7 +681,7 @@ bool GetRawBytesOfProperty(XID window,
   unsigned long nbytes = 0;
   XAtom prop_type = x11::None;
   int prop_format = 0;
-  unsigned char* property_data = NULL;
+  unsigned char* property_data = nullptr;
   if (XGetWindowProperty(gfx::GetXDisplay(), window, property, 0, kLongLength,
                          x11::False, AnyPropertyType, &prop_type, &prop_format,
                          &nitems, &nbytes, &property_data) != x11::Success) {
@@ -698,7 +694,7 @@ bool GetRawBytesOfProperty(XID window,
 
   size_t bytes = 0;
   // So even though we should theoretically have nbytes (and we can't
-  // pass NULL there), we need to manually calculate the byte length here
+  // pass nullptr there), we need to manually calculate the byte length here
   // because nbytes always returns zero.
   switch (prop_format) {
     case 8:
@@ -731,7 +727,7 @@ bool GetIntProperty(XID window, const std::string& property_name, int* value) {
   XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
-  unsigned char* property = NULL;
+  unsigned char* property = nullptr;
 
   int result = GetProperty(window, property_name, 1,
                            &type, &format, &num_items, &property);
@@ -750,7 +746,7 @@ bool GetXIDProperty(XID window, const std::string& property_name, XID* value) {
   XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
-  unsigned char* property = NULL;
+  unsigned char* property = nullptr;
 
   int result = GetProperty(window, property_name, 1,
                            &type, &format, &num_items, &property);
@@ -771,7 +767,7 @@ bool GetIntArrayProperty(XID window,
   XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
-  unsigned char* properties = NULL;
+  unsigned char* properties = nullptr;
 
   int result = GetProperty(window, property_name,
                            (~0L), // (all of them)
@@ -797,7 +793,7 @@ bool GetAtomArrayProperty(XID window,
   XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
-  unsigned char* properties = NULL;
+  unsigned char* properties = nullptr;
 
   int result = GetProperty(window, property_name,
                            (~0L), // (all of them)
@@ -820,7 +816,7 @@ bool GetStringProperty(
   XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
-  unsigned char* property = NULL;
+  unsigned char* property = nullptr;
 
   int result = GetProperty(window, property_name, 1024,
                            &type, &format, &num_items, &property);
@@ -960,6 +956,32 @@ void SetWMSpecState(XID window, bool enabled, XAtom state1, XAtom state2) {
              SubstructureRedirectMask | SubstructureNotifyMask, &xclient);
 }
 
+void DoWMMoveResize(XDisplay* display,
+                    XID root_window,
+                    XID window,
+                    const gfx::Point& location_px,
+                    int direction) {
+  // This handler is usually sent when the window has the implicit grab.  We
+  // need to dump it because what we're about to do is tell the window manager
+  // that it's now responsible for moving the window around; it immediately
+  // grabs when it receives the event below.
+  XUngrabPointer(display, x11::CurrentTime);
+
+  XEvent event;
+  memset(&event, 0, sizeof(event));
+  event.xclient.type = ClientMessage;
+  event.xclient.display = display;
+  event.xclient.window = window;
+  event.xclient.message_type = gfx::GetAtom("_NET_WM_MOVERESIZE");
+  event.xclient.format = 32;
+  event.xclient.data.l[0] = location_px.x();
+  event.xclient.data.l[1] = location_px.y();
+  event.xclient.data.l[2] = direction;
+
+  XSendEvent(display, root_window, x11::False,
+             SubstructureRedirectMask | SubstructureNotifyMask, &event);
+}
+
 bool HasWMSpecProperty(const base::flat_set<XAtom>& properties, XAtom atom) {
   return properties.find(atom) != properties.end();
 }
@@ -1002,7 +1024,7 @@ bool GetWindowDesktop(XID window, int* desktop) {
 
 std::string GetX11ErrorString(XDisplay* display, int err) {
   char buffer[256];
-  XGetErrorText(display, err, buffer, arraysize(buffer));
+  XGetErrorText(display, err, buffer, base::size(buffer));
   return buffer;
 }
 
@@ -1097,7 +1119,7 @@ bool GetXWindowStack(Window window, std::vector<XID>* windows) {
   Atom type;
   int format;
   unsigned long count;
-  unsigned char *data = NULL;
+  unsigned char* data = nullptr;
   if (GetProperty(window, "_NET_CLIENT_LIST_STACKING", ~0L, &type, &format,
                   &count, &data) != x11::Success) {
     return false;
@@ -1113,51 +1135,6 @@ bool GetXWindowStack(Window window, std::vector<XID>* windows) {
   }
 
   return result;
-}
-
-bool CopyAreaToCanvas(XID drawable,
-                      gfx::Rect source_bounds,
-                      gfx::Point dest_offset,
-                      gfx::Canvas* canvas) {
-  std::unique_ptr<XImage, XImageDeleter> image(XGetImage(
-      gfx::GetXDisplay(), drawable, source_bounds.x(), source_bounds.y(),
-      source_bounds.width(), source_bounds.height(), AllPlanes, ZPixmap));
-  if (!image) {
-    LOG(ERROR) << "XGetImage failed";
-    return false;
-  }
-
-  if (image->bits_per_pixel == 32) {
-    if ((0xff << SK_R32_SHIFT) != image->red_mask ||
-        (0xff << SK_G32_SHIFT) != image->green_mask ||
-        (0xff << SK_B32_SHIFT) != image->blue_mask) {
-      LOG(WARNING) << "XImage and Skia byte orders differ";
-      return false;
-    }
-
-    // Set the alpha channel before copying to the canvas.  Otherwise, areas of
-    // the framebuffer that were cleared by ply-image rather than being obscured
-    // by an image during boot may end up transparent.
-    // TODO(derat|marcheu): Remove this if/when ply-image has been updated to
-    // set the framebuffer's alpha channel regardless of whether the device
-    // claims to support alpha or not.
-    for (int i = 0; i < image->width * image->height * 4; i += 4)
-      image->data[i + 3] = 0xff;
-
-    SkBitmap bitmap;
-    bitmap.installPixels(
-        SkImageInfo::MakeN32Premul(image->width, image->height), image->data,
-        image->bytes_per_line, &ReleaseXImage, image.release());
-    gfx::ImageSkia image_skia;
-    gfx::ImageSkiaRep image_rep(bitmap, canvas->image_scale());
-    image_skia.AddRepresentation(image_rep);
-    canvas->DrawImageInt(image_skia, dest_offset.x(), dest_offset.y());
-  } else {
-    NOTIMPLEMENTED() << "Unsupported bits-per-pixel " << image->bits_per_pixel;
-    return false;
-  }
-
-  return true;
 }
 
 WindowManagerName GuessWindowManager() {
@@ -1227,7 +1204,7 @@ bool IsCompositingManagerPresent() {
 }
 
 void SetDefaultX11ErrorHandlers() {
-  SetX11ErrorHandlers(NULL, NULL);
+  SetX11ErrorHandlers(nullptr, nullptr);
 }
 
 bool IsX11WindowFullScreen(XID window) {
@@ -1240,7 +1217,7 @@ bool IsX11WindowFullScreen(XID window) {
     if (GetAtomArrayProperty(window,
                              "_NET_WM_STATE",
                              &atom_properties)) {
-      return base::ContainsValue(atom_properties, fullscreen_atom);
+      return base::Contains(atom_properties, fullscreen_atom);
     }
   }
 
@@ -1271,7 +1248,7 @@ bool WmSupportsHint(XAtom atom) {
     return false;
   }
 
-  return base::ContainsValue(supported_atoms, atom);
+  return base::Contains(supported_atoms, atom);
 }
 
 gfx::ICCProfile GetICCProfileForMonitor(int monitor) {
@@ -1301,6 +1278,42 @@ gfx::ICCProfile GetICCProfileForMonitor(int monitor) {
     }
   }
   return icc_profile;
+}
+
+bool IsSyncExtensionAvailable() {
+  auto* display = gfx::GetXDisplay();
+  int unused;
+  static bool result = XSyncQueryExtension(display, &unused, &unused) &&
+                       XSyncInitialize(display, &unused, &unused);
+  return result;
+}
+
+SkColorType ColorTypeForVisual(void* visual) {
+  struct {
+    SkColorType color_type;
+    unsigned long red_mask;
+    unsigned long green_mask;
+    unsigned long blue_mask;
+  } color_infos[] = {
+      {kRGB_565_SkColorType, 0xf800, 0x7e0, 0x1f},
+      {kARGB_4444_SkColorType, 0xf000, 0xf00, 0xf0},
+      {kRGBA_8888_SkColorType, 0xff, 0xff00, 0xff0000},
+      {kBGRA_8888_SkColorType, 0xff0000, 0xff00, 0xff},
+      {kRGBA_1010102_SkColorType, 0x3ff, 0xffc00, 0x3ff00000},
+  };
+  Visual* vis = reinterpret_cast<Visual*>(visual);
+  for (const auto& color_info : color_infos) {
+    if (vis->red_mask == color_info.red_mask &&
+        vis->green_mask == color_info.green_mask &&
+        vis->blue_mask == color_info.blue_mask) {
+      return color_info.color_type;
+    }
+  }
+  LOG(FATAL) << "Unsupported visual with rgb mask 0x" << std::hex
+             << vis->red_mask << ", 0x" << vis->green_mask << ", 0x"
+             << vis->blue_mask
+             << ".  Please report this to https://crbug.com/1025266";
+  return kUnknown_SkColorType;
 }
 
 XRefcountedMemory::XRefcountedMemory(unsigned char* x11_data, size_t length)
@@ -1337,6 +1350,10 @@ void XScopedCursor::reset(::Cursor cursor) {
   cursor_ = cursor;
 }
 
+void XImageDeleter::operator()(XImage* image) const {
+  XDestroyImage(image);
+}
+
 namespace test {
 
 const XcursorImage* GetCachedXcursorImage(::Cursor cursor) {
@@ -1348,7 +1365,7 @@ const XcursorImage* GetCachedXcursorImage(::Cursor cursor) {
 // These functions are declared in x11_util_internal.h because they require
 // XLib.h to be included, and it conflicts with many other headers.
 XRenderPictFormat* GetRenderARGB32Format(XDisplay* dpy) {
-  static XRenderPictFormat* pictformat = NULL;
+  static XRenderPictFormat* pictformat = nullptr;
   if (pictformat)
     return pictformat;
 
@@ -1399,7 +1416,7 @@ void LogErrorEventDescription(XDisplay* dpy,
 
   strncpy(request_str, "Unknown", sizeof(request_str));
   if (error_event.request_code < 128) {
-    std::string num = base::UintToString(error_event.request_code);
+    std::string num = base::NumberToString(error_event.request_code);
     XGetErrorDatabaseText(
         dpy, "XRequest", num.c_str(), "Unknown", request_str,
         sizeof(request_str));
@@ -1452,7 +1469,8 @@ XVisualManager::XVisualManager()
   gfx::XScopedPtr<XVisualInfo[]> visual_list(XGetVisualInfo(
       display_, VisualScreenMask, &visual_template, &visuals_len));
   for (int i = 0; i < visuals_len; ++i)
-    visuals_[visual_list[i].visualid].reset(new XVisualData(visual_list[i]));
+    visuals_[visual_list[i].visualid] =
+        std::make_unique<XVisualData>(visual_list[i]);
 
   XAtom NET_WM_CM_S0 = gfx::GetAtom("_NET_WM_CM_S0");
   using_compositing_wm_ =
@@ -1488,26 +1506,27 @@ void XVisualManager::ChooseVisualForWindow(bool want_argb_visual,
                                            Visual** visual,
                                            int* depth,
                                            Colormap* colormap,
-                                           bool* using_argb_visual) {
+                                           bool* visual_has_alpha) {
   base::AutoLock lock(lock_);
   bool use_argb = want_argb_visual && using_compositing_wm_ &&
                   (using_software_rendering_ || have_gpu_argb_visual_);
   VisualID visual_id = use_argb && transparent_visual_id_
                            ? transparent_visual_id_
                            : system_visual_id_;
-  XVisualData& visual_data = *visuals_[visual_id];
-  const XVisualInfo& visual_info = visual_data.visual_info;
 
-  bool is_default_visual = visual_id == default_visual_id_;
+  bool success =
+      GetVisualInfoImpl(visual_id, visual, depth, colormap, visual_has_alpha);
+  DCHECK(success);
+}
 
-  if (visual)
-    *visual = visual_info.visual;
-  if (depth)
-    *depth = visual_info.depth;
-  if (colormap)
-    *colormap = is_default_visual ? CopyFromParent : visual_data.GetColormap();
-  if (using_argb_visual)
-    *using_argb_visual = use_argb;
+bool XVisualManager::GetVisualInfo(VisualID visual_id,
+                                   Visual** visual,
+                                   int* depth,
+                                   Colormap* colormap,
+                                   bool* visual_has_alpha) {
+  base::AutoLock lock(lock_);
+  return GetVisualInfoImpl(visual_id, visual, depth, colormap,
+                           visual_has_alpha);
 }
 
 bool XVisualManager::OnGPUInfoChanged(bool software_rendering,
@@ -1532,6 +1551,37 @@ bool XVisualManager::ArgbVisualAvailable() const {
   base::AutoLock lock(lock_);
   return using_compositing_wm_ &&
          (using_software_rendering_ || have_gpu_argb_visual_);
+}
+
+bool XVisualManager::GetVisualInfoImpl(VisualID visual_id,
+                                       Visual** visual,
+                                       int* depth,
+                                       Colormap* colormap,
+                                       bool* visual_has_alpha) {
+  auto it = visuals_.find(visual_id);
+  if (it == visuals_.end())
+    return false;
+  XVisualData& visual_data = *it->second;
+  const XVisualInfo& visual_info = visual_data.visual_info;
+
+  bool is_default_visual = visual_id == default_visual_id_;
+
+  if (visual)
+    *visual = visual_info.visual;
+  if (depth)
+    *depth = visual_info.depth;
+  if (colormap)
+    *colormap = is_default_visual ? CopyFromParent : visual_data.GetColormap();
+  if (visual_has_alpha) {
+    auto popcount = [](auto x) {
+      return std::bitset<8 * sizeof(decltype(x))>(x).count();
+    };
+    *visual_has_alpha = popcount(visual_info.red_mask) +
+                            popcount(visual_info.green_mask) +
+                            popcount(visual_info.blue_mask) <
+                        static_cast<std::size_t>(visual_info.depth);
+  }
+  return true;
 }
 
 XVisualManager::XVisualData::XVisualData(XVisualInfo visual_info)

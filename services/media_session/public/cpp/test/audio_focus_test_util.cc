@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "services/media_session/public/cpp/test/audio_focus_test_util.h"
+#include "base/bind.h"
 
 namespace media_session {
 namespace test {
@@ -18,14 +19,12 @@ void ReceivedSessionInfo(media_session::mojom::MediaSessionInfoPtr* info_out,
 
 }  // namespace
 
-TestAudioFocusObserver::TestAudioFocusObserver() : binding_(this) {}
+TestAudioFocusObserver::TestAudioFocusObserver() {}
 
 TestAudioFocusObserver::~TestAudioFocusObserver() = default;
 
 void TestAudioFocusObserver::OnFocusGained(
-    media_session::mojom::MediaSessionInfoPtr session,
-    media_session::mojom::AudioFocusType type) {
-  focus_gained_type_ = type;
+    media_session::mojom::AudioFocusRequestStatePtr session) {
   focus_gained_session_ = std::move(session);
   notifications_.push_back(NotificationType::kFocusGained);
 
@@ -34,18 +33,12 @@ void TestAudioFocusObserver::OnFocusGained(
 }
 
 void TestAudioFocusObserver::OnFocusLost(
-    media_session::mojom::MediaSessionInfoPtr session) {
+    media_session::mojom::AudioFocusRequestStatePtr session) {
   focus_lost_session_ = std::move(session);
   notifications_.push_back(NotificationType::kFocusLost);
 
   if (wait_for_lost_)
     run_loop_.Quit();
-}
-
-void TestAudioFocusObserver::OnActiveSessionChanged(
-    media_session::mojom::AudioFocusRequestStatePtr session) {
-  active_session_ = std::move(session);
-  notifications_.push_back(NotificationType::kActiveSessionChanged);
 }
 
 void TestAudioFocusObserver::WaitForGainedEvent() {
@@ -64,9 +57,9 @@ void TestAudioFocusObserver::WaitForLostEvent() {
   run_loop_.Run();
 }
 
-void TestAudioFocusObserver::BindToMojoRequest(
-    media_session::mojom::AudioFocusObserverRequest request) {
-  binding_.Bind(std::move(request));
+mojo::PendingRemote<media_session::mojom::AudioFocusObserver>
+TestAudioFocusObserver::BindNewPipeAndPassRemote() {
+  return receiver_.BindNewPipeAndPassRemote();
 }
 
 media_session::mojom::MediaSessionInfoPtr GetMediaSessionInfoSync(

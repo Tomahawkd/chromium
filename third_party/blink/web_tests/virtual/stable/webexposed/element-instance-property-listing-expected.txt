@@ -2,7 +2,6 @@ This test documents all properties on all element instances.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
 
-
 [HTML NAMESPACE ELEMENT PROPERTIES]
 namespace http://www.w3.org/1999/xhtml
 <common>
@@ -31,10 +30,12 @@ namespace http://www.w3.org/1999/xhtml
     property append
     property appendChild
     property assignedSlot
+    property attachInternals
     property attachShadow
     property attributeStyleMap
     property attributes
     property autocapitalize
+    property autofocus
     property baseURI
     property before
     property blur
@@ -54,11 +55,12 @@ namespace http://www.w3.org/1999/xhtml
     property computedStyleMap
     property contains
     property contentEditable
-    property createShadowRoot
     property dataset
     property dir
     property dispatchEvent
     property draggable
+    property elementTiming
+    property enterKeyHint
     property firstChild
     property firstElementChild
     property focus
@@ -69,7 +71,6 @@ namespace http://www.w3.org/1999/xhtml
     property getAttributeNodeNS
     property getBoundingClientRect
     property getClientRects
-    property getDestinationInsertionPoints
     property getElementsByClassName
     property getElementsByTagName
     property getElementsByTagNameNS
@@ -114,6 +115,9 @@ namespace http://www.w3.org/1999/xhtml
     property offsetTop
     property offsetWidth
     property onabort
+    property onanimationend
+    property onanimationiteration
+    property onanimationstart
     property onauxclick
     property onbeforecopy
     property onbeforecut
@@ -142,6 +146,7 @@ namespace http://www.w3.org/1999/xhtml
     property onended
     property onerror
     property onfocus
+    property onformdata
     property onfullscreenchange
     property onfullscreenerror
     property ongotpointercapture
@@ -174,6 +179,7 @@ namespace http://www.w3.org/1999/xhtml
     property onpointermove
     property onpointerout
     property onpointerover
+    property onpointerrawupdate
     property onpointerup
     property onprogress
     property onratechange
@@ -195,6 +201,7 @@ namespace http://www.w3.org/1999/xhtml
     property ontouchend
     property ontouchmove
     property ontouchstart
+    property ontransitionend
     property onvolumechange
     property onwaiting
     property onwebkitfullscreenchange
@@ -205,6 +212,7 @@ namespace http://www.w3.org/1999/xhtml
     property ownerDocument
     property parentElement
     property parentNode
+    property part
     property prefix
     property prepend
     property previousElementSibling
@@ -391,7 +399,6 @@ html element body
 html element br
     property clear
 html element button
-    property autofocus
     property checkValidity
     property disabled
     property form
@@ -504,6 +511,7 @@ html element form
     property name
     property noValidate
     property reportValidity
+    property requestSubmit
     property reset
     property submit
     property target
@@ -569,9 +577,11 @@ html element iframe
     property contentDocument
     property contentWindow
     property csp
+    property featurePolicy
     property frameBorder
     property getSVGDocument
     property height
+    property loading
     property longDesc
     property marginHeight
     property marginWidth
@@ -594,6 +604,7 @@ html element img
     property height
     property hspace
     property isMap
+    property loading
     property longDesc
     property lowsrc
     property name
@@ -613,7 +624,6 @@ html element input
     property align
     property alt
     property autocomplete
-    property autofocus
     property checkValidity
     property checked
     property defaultChecked
@@ -688,7 +698,8 @@ html element link
     property disabled
     property href
     property hreflang
-    property import
+    property imageSizes
+    property imageSrcset
     property integrity
     property media
     property referrerPolicy
@@ -841,7 +852,6 @@ html element section
 html element select
     property add
     property autocomplete
-    property autofocus
     property checkValidity
     property disabled
     property form
@@ -939,7 +949,6 @@ html element template
     property content
 html element textarea
     property autocomplete
-    property autofocus
     property checkValidity
     property cols
     property defaultValue
@@ -1076,6 +1085,7 @@ html element video
     property play
     property playbackRate
     property played
+    property playsInline
     property poster
     property preload
     property readyState
@@ -1136,6 +1146,7 @@ namespace http://www.w3.org/2000/svg
     property attachShadow
     property attributeStyleMap
     property attributes
+    property autofocus
     property baseURI
     property before
     property blur
@@ -1153,9 +1164,9 @@ namespace http://www.w3.org/2000/svg
     property compareDocumentPosition
     property computedStyleMap
     property contains
-    property createShadowRoot
     property dataset
     property dispatchEvent
+    property elementTiming
     property firstChild
     property firstElementChild
     property focus
@@ -1166,7 +1177,6 @@ namespace http://www.w3.org/2000/svg
     property getAttributeNodeNS
     property getBoundingClientRect
     property getClientRects
-    property getDestinationInsertionPoints
     property getElementsByClassName
     property getElementsByTagName
     property getElementsByTagNameNS
@@ -1201,6 +1211,9 @@ namespace http://www.w3.org/2000/svg
     property nonce
     property normalize
     property onabort
+    property onanimationend
+    property onanimationiteration
+    property onanimationstart
     property onauxclick
     property onbeforecopy
     property onbeforecut
@@ -1229,6 +1242,7 @@ namespace http://www.w3.org/2000/svg
     property onended
     property onerror
     property onfocus
+    property onformdata
     property onfullscreenchange
     property onfullscreenerror
     property ongotpointercapture
@@ -1261,6 +1275,7 @@ namespace http://www.w3.org/2000/svg
     property onpointermove
     property onpointerout
     property onpointerover
+    property onpointerrawupdate
     property onpointerup
     property onprogress
     property onratechange
@@ -1282,6 +1297,7 @@ namespace http://www.w3.org/2000/svg
     property ontouchend
     property ontouchmove
     property ontouchstart
+    property ontransitionend
     property onvolumechange
     property onwaiting
     property onwebkitfullscreenchange
@@ -1292,6 +1308,7 @@ namespace http://www.w3.org/2000/svg
     property ownerSVGElement
     property parentElement
     property parentNode
+    property part
     property prefix
     property prepend
     property previousElementSibling

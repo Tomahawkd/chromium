@@ -39,7 +39,7 @@ class ChromeNativeAppWindowViews
   // ui::BaseWindow implementation.
   gfx::Rect GetRestoredBounds() const override;
   ui::WindowShowState GetRestoredState() const override;
-  bool IsAlwaysOnTop() const override;
+  ui::ZOrderLevel GetZOrderLevel() const override;
 
   // WidgetDelegate implementation.
   gfx::ImageSkia GetWindowAppIcon() override;
@@ -47,7 +47,7 @@ class ChromeNativeAppWindowViews
   views::NonClientFrameView* CreateNonClientFrameView(
       views::Widget* widget) override;
   bool WidgetHasHitTestMask() const override;
-  void GetWidgetHitTestMask(gfx::Path* mask) const override;
+  void GetWidgetHitTestMask(SkPath* mask) const override;
 
   // views::View implementation.
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;

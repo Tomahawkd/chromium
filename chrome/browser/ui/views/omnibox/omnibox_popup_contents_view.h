@@ -20,16 +20,18 @@ struct AutocompleteMatch;
 class LocationBarView;
 class OmniboxEditModel;
 class OmniboxResultView;
-enum class OmniboxTint;
-class OmniboxView;
+class OmniboxViewViews;
 
 // A view representing the contents of the autocomplete popup.
 class OmniboxPopupContentsView : public views::View, public OmniboxPopupView {
  public:
-  OmniboxPopupContentsView(OmniboxView* omnibox_view,
+  OmniboxPopupContentsView(OmniboxViewViews* omnibox_view,
                            OmniboxEditModel* edit_model,
-                           LocationBarView* location_bar_view);
+                           LocationBarView* location_bar_view,
+                           const ui::ThemeProvider* theme_provider);
   ~OmniboxPopupContentsView() override;
+
+  OmniboxPopupModel* model() const { return model_.get(); }
 
   // Opens a match from the list specified by |index| with the type of tab or
   // window specified by |disposition|.
@@ -43,9 +45,6 @@ class OmniboxPopupContentsView : public views::View, public OmniboxPopupView {
   // available as a vector icon, it will be |vector_icon_color|.
   gfx::Image GetMatchIcon(const AutocompleteMatch& match,
                           SkColor vector_icon_color) const;
-
-  // Returns the theme color tint (e.g. dark or light).
-  OmniboxTint GetTint() const;
 
   // Sets the line specified by |index| as selected.
   virtual void SetSelectedLine(size_t index);
@@ -61,20 +60,23 @@ class OmniboxPopupContentsView : public views::View, public OmniboxPopupView {
   // Called by the active result view to inform model (due to mouse event).
   void UnselectButton();
 
-  // Called to inform result view of button focus.
-  void ProvideButtonFocusHint(size_t line);
+  // Gets the OmniboxResultView for match |i|.
+  OmniboxResultView* result_view_at(size_t i);
+
+  // Returns whether we're in experimental keyword mode and the input gives
+  // sufficient confidence that the user wants keyword mode.
+  bool InExplicitExperimentalKeywordMode();
 
   // OmniboxPopupView:
   bool IsOpen() const override;
   void InvalidateLine(size_t line) override;
   void OnLineSelected(size_t line) override;
   void UpdatePopupAppearance() override;
+  void ProvideButtonFocusHint(size_t line) override;
   void OnMatchIconUpdated(size_t match_index) override;
-  void PaintUpdatesNow() override;
   void OnDragCanceled() override;
 
   // views::View:
-  void Layout() override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
@@ -87,9 +89,6 @@ class OmniboxPopupContentsView : public views::View, public OmniboxPopupView {
   // of |location_bar_view_|.
   gfx::Rect GetTargetBounds();
 
-  // Size our children to the available content area.
-  void LayoutChildren();
-
   // Returns true if the model has a match at the specified index.
   bool HasMatchAt(size_t index) const;
 
@@ -100,8 +99,6 @@ class OmniboxPopupContentsView : public views::View, public OmniboxPopupView {
   // coordinates. Returns OmniboxPopupModel::kNoMatch if there isn't a match at
   // the specified point.
   size_t GetIndexForPoint(const gfx::Point& point);
-
-  OmniboxResultView* result_view_at(size_t i);
 
   LocationBarView* location_bar_view() { return location_bar_view_; }
 
@@ -117,9 +114,11 @@ class OmniboxPopupContentsView : public views::View, public OmniboxPopupView {
   base::WeakPtr<AutocompletePopupWidget> popup_;
 
   // The edit view that invokes us.
-  OmniboxView* omnibox_view_;
+  OmniboxViewViews* omnibox_view_;
 
   LocationBarView* location_bar_view_;
+
+  const ui::ThemeProvider* theme_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxPopupContentsView);
 };

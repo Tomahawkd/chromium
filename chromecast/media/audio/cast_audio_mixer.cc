@@ -26,12 +26,10 @@ class CastAudioMixer::MixerProxyStream
  public:
   MixerProxyStream(const ::media::AudioParameters& input_params,
                    const ::media::AudioParameters& output_params,
-                   const std::string& device_id,
                    CastAudioMixer* audio_mixer)
       : audio_mixer_(audio_mixer),
         input_params_(input_params),
         output_params_(output_params),
-        device_id_(device_id),
         opened_(false),
         volume_(1.0),
         source_callback_(nullptr) {
@@ -42,10 +40,10 @@ class CastAudioMixer::MixerProxyStream
     DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
   }
 
-  void OnError() {
+  void OnError(ErrorType type) {
     DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
     if (source_callback_)
-      source_callback_->OnError();
+      source_callback_->OnError(type);
   }
 
  private:
@@ -98,7 +96,7 @@ class CastAudioMixer::MixerProxyStream
     DCHECK_GE(input_params_.channels(), 1);
     DCHECK_LE(input_params_.channels(), 2);
 
-    return opened_ = audio_mixer_->Register(this, device_id_);
+    return opened_ = audio_mixer_->Register(this);
   }
 
   void Close() override {
@@ -139,6 +137,9 @@ class CastAudioMixer::MixerProxyStream
     source_callback_ = nullptr;
   }
 
+  // There is nothing to flush since the proxy stream is removed during Stop().
+  void Flush() override {}
+
   void SetVolume(double volume) override {
     DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
 
@@ -170,7 +171,6 @@ class CastAudioMixer::MixerProxyStream
   CastAudioMixer* const audio_mixer_;
   const ::media::AudioParameters input_params_;
   const ::media::AudioParameters output_params_;
-  const std::string device_id_;
 
   bool opened_;
   double volume_;
@@ -195,16 +195,14 @@ CastAudioMixer::CastAudioMixer(CastAudioManager* audio_manager)
 CastAudioMixer::~CastAudioMixer() {}
 
 ::media::AudioOutputStream* CastAudioMixer::MakeStream(
-    const ::media::AudioParameters& params,
-    const std::string& device_id) {
+    const ::media::AudioParameters& params) {
   DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
-  return new MixerProxyStream(params, output_params_, device_id, this);
+  return new MixerProxyStream(params, output_params_, this);
 }
 
-bool CastAudioMixer::Register(MixerProxyStream* proxy_stream,
-                              const std::string& device_id) {
+bool CastAudioMixer::Register(MixerProxyStream* proxy_stream) {
   DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
-  DCHECK(!base::ContainsKey(proxy_streams_, proxy_stream));
+  DCHECK(!base::Contains(proxy_streams_, proxy_stream));
 
   // Do not allow opening new streams while in error state.
   if (error_)
@@ -215,8 +213,7 @@ bool CastAudioMixer::Register(MixerProxyStream* proxy_stream,
   // is not opened properly.
   if (proxy_streams_.empty()) {
     DCHECK(!output_stream_);
-    output_stream_ =
-        audio_manager_->MakeMixerOutputStream(output_params_, device_id);
+    output_stream_ = audio_manager_->MakeMixerOutputStream(output_params_);
     if (!output_stream_->Open()) {
       output_stream_->Close();
       output_stream_ = nullptr;
@@ -230,7 +227,7 @@ bool CastAudioMixer::Register(MixerProxyStream* proxy_stream,
 
 void CastAudioMixer::Unregister(MixerProxyStream* proxy_stream) {
   DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
-  DCHECK(base::ContainsKey(proxy_streams_, proxy_stream));
+  DCHECK(base::Contains(proxy_streams_, proxy_stream));
 
   proxy_streams_.erase(proxy_stream);
 
@@ -283,19 +280,19 @@ int CastAudioMixer::OnMoreData(base::TimeDelta delay,
   return dest->frames();
 }
 
-void CastAudioMixer::OnError() {
+void CastAudioMixer::OnError(ErrorType type) {
   // Called on backend thread.
   audio_manager_->GetTaskRunner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&CastAudioMixer::HandleError, base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&CastAudioMixer::HandleError,
+                                base::Unretained(this), type));
 }
 
-void CastAudioMixer::HandleError() {
+void CastAudioMixer::HandleError(ErrorType type) {
   DCHECK_CALLED_ON_VALID_THREAD(audio_thread_checker_);
 
   error_ = true;
   for (auto it = proxy_streams_.begin(); it != proxy_streams_.end(); ++it)
-    (*it)->OnError();
+    (*it)->OnError(type);
 }
 
 }  // namespace media

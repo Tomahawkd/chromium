@@ -9,8 +9,8 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
-#include "services/network/public/mojom/referrer_policy.mojom-shared.h"
-#include "third_party/blink/public/mojom/messaging/transferable_message.mojom-blink.h"
+#include "services/network/public/mojom/referrer_policy.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/messaging/transferable_message.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/messaging/message_port.h"
 #include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
@@ -39,12 +39,17 @@ class CORE_EXPORT DedicatedWorkerMessagingProxy
       std::unique_ptr<GlobalScopeCreationParams>,
       const WorkerOptions*,
       const KURL& script_url,
-      FetchClientSettingsObjectSnapshot* outside_settings_object,
+      const FetchClientSettingsObjectSnapshot& outside_settings_object,
       const v8_inspector::V8StackTraceId&,
       const String& source_code);
   void PostMessageToWorkerGlobalScope(BlinkTransferableMessage);
 
   bool HasPendingActivity() const;
+
+  // This is called from DedicatedWorkerObjectProxy when off-the-main-thread
+  // worker script fetch is enabled. Otherwise, this is called from
+  // DedicatedWorker.
+  void DidFailToFetchScript();
 
   // These methods come from worker context thread via
   // DedicatedWorkerObjectProxy and are called on the parent context thread.
@@ -53,6 +58,9 @@ class CORE_EXPORT DedicatedWorkerMessagingProxy
   void DispatchErrorEvent(const String& error_message,
                           std::unique_ptr<SourceLocation>,
                           int exception_id);
+
+  void Freeze();
+  void Resume();
 
   DedicatedWorkerObjectProxy& WorkerObjectProxy() {
     return *worker_object_proxy_.get();

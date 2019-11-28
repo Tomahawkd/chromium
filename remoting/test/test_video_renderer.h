@@ -49,7 +49,7 @@ class TestVideoRenderer : public protocol::VideoRenderer,
 
   // protocol::VideoStub interface.
   void ProcessVideoPacket(std::unique_ptr<VideoPacket> video_packet,
-                          const base::Closure& done) override;
+                          base::OnceClosure done) override;
 
   // Initialize a decoder to decode video packets.
   void SetCodecForDecoding(const protocol::ChannelConfig::Codec codec);
@@ -88,7 +88,7 @@ class TestVideoRenderer : public protocol::VideoRenderer,
 
   // Used to weakly bind |this| to methods.
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<TestVideoRenderer> weak_factory_;
+  base::WeakPtrFactory<TestVideoRenderer> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestVideoRenderer);
 };

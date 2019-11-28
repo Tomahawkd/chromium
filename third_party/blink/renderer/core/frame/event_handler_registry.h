@@ -24,7 +24,7 @@ typedef HashCountedSet<UntracedMember<EventTarget>> EventTargetSet;
 // event targets for a frame may only be registered with the
 // EventHandlerRegistry of its corresponding local root.
 class CORE_EXPORT EventHandlerRegistry final
-    : public GarbageCollectedFinalized<EventHandlerRegistry> {
+    : public GarbageCollected<EventHandlerRegistry> {
  public:
   explicit EventHandlerRegistry(LocalFrame&);
   virtual ~EventHandlerRegistry();
@@ -41,8 +41,9 @@ class CORE_EXPORT EventHandlerRegistry final
     kTouchStartOrMoveEventPassive,
     kTouchEndOrCancelEventBlocking,
     kTouchEndOrCancelEventPassive,
-    kPointerEvent,  // This includes all pointerevents excluding pointerrawmove.
-    kPointerRawMoveEvent,
+    kPointerEvent,  // This includes all pointerevents excluding
+                    // pointerrawupdate.
+    kPointerRawUpdateEvent,
 #if DCHECK_IS_ON()
     // Additional event categories for verifying handler tracking logic.
     kEventsForTesting,
@@ -78,7 +79,6 @@ class CORE_EXPORT EventHandlerRegistry final
   void DocumentDetached(Document&);
 
   void Trace(blink::Visitor*);
-  void ClearWeakMembers(Visitor*);
 
  private:
   enum ChangeOperation {
@@ -100,12 +100,12 @@ class CORE_EXPORT EventHandlerRegistry final
                                  EventTarget*);
 
   // Called on the EventHandlerRegistry of the root Document to notify
-  // clients when we have added the first handler or removed the last one for
-  // a given event class. |hasActiveHandlers| can be used to distinguish
-  // between the two cases.
-  void NotifyHasHandlersChanged(EventTarget*,
-                                EventHandlerClass,
-                                bool has_active_handlers);
+  // clients when we have added or remove a handler for a given event class.
+  // |hasActiveHandlers| can be used to distinguish between having and not
+  // having an active handler.
+  void NotifyHandlersChanged(EventTarget*,
+                             EventHandlerClass,
+                             bool has_active_handlers);
 
   // Called to notify clients whenever a single event handler target is
   // registered or unregistered. If several handlers are registered for the
@@ -128,6 +128,8 @@ class CORE_EXPORT EventHandlerRegistry final
   void CheckConsistency(EventHandlerClass) const;
 
   Page* GetPage() const;
+
+  void ProcessCustomWeakness(const WeakCallbackInfo&);
 
   Member<LocalFrame> frame_;
   EventTargetSet targets_[kEventHandlerClassCount];

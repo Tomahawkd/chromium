@@ -18,6 +18,7 @@
 #include "net/base/io_buffer.h"
 #include "net/disk_cache/blockfile/in_flight_io.h"
 #include "net/disk_cache/blockfile/rankings.h"
+#include "net/disk_cache/disk_cache.h"
 
 namespace base {
 class Location;
@@ -26,7 +27,6 @@ class Location;
 namespace disk_cache {
 
 class BackendImpl;
-class Entry;
 class EntryImpl;
 
 // This class represents a single asynchronous disk cache IO operation while it
@@ -36,6 +36,10 @@ class BackendIO : public BackgroundIO {
   BackendIO(InFlightIO* controller,
             BackendImpl* backend,
             net::CompletionOnceCallback callback);
+
+  BackendIO(InFlightIO* controller,
+            BackendImpl* backend,
+            EntryResultCallback callback);
 
   // Runs the actual operation on the background thread.
   void ExecuteOperation();
@@ -53,17 +57,23 @@ class BackendIO : public BackgroundIO {
   bool has_callback() const { return !callback_.is_null(); }
   void RunCallback(int result);
 
+  bool has_entry_result_callback() const {
+    return !entry_result_callback_.is_null();
+  }
+  void RunEntryResultCallback();
+
   // The operations we proxy:
   void Init();
-  void OpenEntry(const std::string& key, Entry** entry);
-  void CreateEntry(const std::string& key, Entry** entry);
+  void OpenOrCreateEntry(const std::string& key);
+  void OpenEntry(const std::string& key);
+  void CreateEntry(const std::string& key);
   void DoomEntry(const std::string& key);
   void DoomAllEntries();
   void DoomEntriesBetween(const base::Time initial_time,
                           const base::Time end_time);
   void DoomEntriesSince(const base::Time initial_time);
   void CalculateSizeOfAllEntries();
-  void OpenNextEntry(Rankings::Iterator* iterator, Entry** next_entry);
+  void OpenNextEntry(Rankings::Iterator* iterator);
   void EndEnumeration(std::unique_ptr<Rankings::Iterator> iterator);
   void OnExternalCacheHit(const std::string& key);
   void CloseEntryImpl(EntryImpl* entry);
@@ -90,6 +100,8 @@ class BackendIO : public BackgroundIO {
   void ReadyForSparseIO(EntryImpl* entry);
 
  private:
+  BackendIO(InFlightIO* controller, BackendImpl* backend);
+
   // There are two types of operations to proxy: regular backend operations are
   // executed sequentially (queued by the message loop). On the other hand,
   // operations targeted to a given entry can be long lived and support multiple
@@ -98,6 +110,7 @@ class BackendIO : public BackgroundIO {
   enum Operation {
     OP_NONE = 0,
     OP_INIT,
+    OP_OPEN_OR_CREATE,
     OP_OPEN,
     OP_CREATE,
     OP_DOOM,
@@ -137,9 +150,13 @@ class BackendIO : public BackgroundIO {
   net::CompletionOnceCallback callback_;
   Operation operation_;
 
+  // Used for ops that open or create entries.
+  EntryResultCallback entry_result_callback_;
+  Entry* out_entry_;  // if set, already has the user's ref added.
+  bool out_entry_opened_;
+
   // The arguments of all the operations we proxy:
   std::string key_;
-  Entry** entry_ptr_;
   base::Time initial_time_;
   base::Time end_time_;
   Rankings::Iterator* iterator_;
@@ -168,12 +185,9 @@ class InFlightBackendIO : public InFlightIO {
 
   // Proxied operations.
   void Init(net::CompletionOnceCallback callback);
-  void OpenEntry(const std::string& key,
-                 Entry** entry,
-                 net::CompletionOnceCallback callback);
-  void CreateEntry(const std::string& key,
-                   Entry** entry,
-                   net::CompletionOnceCallback callback);
+  void OpenOrCreateEntry(const std::string& key, EntryResultCallback callback);
+  void OpenEntry(const std::string& key, EntryResultCallback callback);
+  void CreateEntry(const std::string& key, EntryResultCallback callback);
   void DoomEntry(const std::string& key, net::CompletionOnceCallback callback);
   void DoomAllEntries(net::CompletionOnceCallback callback);
   void DoomEntriesBetween(const base::Time initial_time,
@@ -183,8 +197,7 @@ class InFlightBackendIO : public InFlightIO {
                         net::CompletionOnceCallback callback);
   void CalculateSizeOfAllEntries(net::CompletionOnceCallback callback);
   void OpenNextEntry(Rankings::Iterator* iterator,
-                     Entry** next_entry,
-                     net::CompletionOnceCallback callback);
+                     EntryResultCallback callback);
   void EndEnumeration(std::unique_ptr<Rankings::Iterator> iterator);
   void OnExternalCacheHit(const std::string& key);
   void CloseEntryImpl(EntryImpl* entry);
@@ -243,7 +256,7 @@ class InFlightBackendIO : public InFlightIO {
   void PostOperation(const base::Location& from_here, BackendIO* operation);
   BackendImpl* backend_;
   scoped_refptr<base::SingleThreadTaskRunner> background_thread_;
-  base::WeakPtrFactory<InFlightBackendIO> ptr_factory_;
+  base::WeakPtrFactory<InFlightBackendIO> ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InFlightBackendIO);
 };

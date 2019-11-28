@@ -16,12 +16,6 @@
 #error "This file requires ARC support."
 #endif
 
-namespace {
-// Tag for the account link in the info bar message. Set to 10 to avoid conflict
-// with tags from superclass ConfirmInfoBarController, which uses tags 1-4.
-NSUInteger kAccountTag = 10;
-}
-
 @interface UpdatePasswordInfoBarController ()<SelectorCoordinatorDelegate> {
   IOSChromeUpdatePasswordInfoBarDelegate* _delegate;
 }
@@ -52,31 +46,7 @@ initWithBaseViewController:(UIViewController*)baseViewController
   return self;
 }
 
-- (void)updateInfobarLabel:(ConfirmInfoBarView*)view {
-  [super updateInfobarLabel:view];
-
-  // Get the message text with current links marked.
-  base::string16 messageText = base::SysNSStringToUTF16(view.markedLabel);
-  // If there are multiple possible credentials, turn the account string into a
-  // link.
-  if (_delegate->ShowMultipleAccounts()) {
-    base::string16 usernameLink = base::SysNSStringToUTF16([[view class]
-        stringAsLink:base::SysUTF16ToNSString(_delegate->selected_account())
-                 tag:kAccountTag]);
-    base::ReplaceFirstSubstringAfterOffset(
-        &messageText, 0, _delegate->selected_account(), usernameLink);
-  }
-
-  __weak UpdatePasswordInfoBarController* weakSelf = self;
-  [view addLabel:base::SysUTF16ToNSString(messageText)
-          action:^(NSUInteger tag) {
-            [weakSelf infobarLinkDidPress:tag];
-          }];
-}
-
 - (void)infobarLinkDidPress:(NSUInteger)tag {
-  DCHECK_EQ(kAccountTag, tag);
-
   DCHECK(self.baseViewController);
   self.selectorCoordinator = [[SelectorCoordinator alloc]
       initWithBaseViewController:self.baseViewController];

@@ -72,9 +72,7 @@
 #include "third_party/blink/renderer/platform/graphics/filters/filter.h"
 #include "third_party/blink/renderer/platform/graphics/filters/source_graphic.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
-
-#include <math.h>
-#include <memory>
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -353,16 +351,15 @@ static WTF::TextStream& operator<<(WTF::TextStream& ts,
     WriteNameValuePair(ts, "height",
                        length_context.ValueForLength(style.Height(), style,
                                                      SVGLengthMode::kHeight));
-  } else if (IsSVGLineElement(*svg_element)) {
-    SVGLineElement& element = ToSVGLineElement(*svg_element);
+  } else if (auto* element = DynamicTo<SVGLineElement>(*svg_element)) {
     WriteNameValuePair(ts, "x1",
-                       element.x1()->CurrentValue()->Value(length_context));
+                       element->x1()->CurrentValue()->Value(length_context));
     WriteNameValuePair(ts, "y1",
-                       element.y1()->CurrentValue()->Value(length_context));
+                       element->y1()->CurrentValue()->Value(length_context));
     WriteNameValuePair(ts, "x2",
-                       element.x2()->CurrentValue()->Value(length_context));
+                       element->x2()->CurrentValue()->Value(length_context));
     WriteNameValuePair(ts, "y2",
-                       element.y2()->CurrentValue()->Value(length_context));
+                       element->y2()->CurrentValue()->Value(length_context));
   } else if (IsSVGEllipseElement(*svg_element)) {
     WriteNameValuePair(ts, "cx",
                        length_context.ValueForLength(svg_style.Cx(), style,
@@ -418,7 +415,7 @@ static void WriteLayoutSVGTextBox(WTF::TextStream& ts,
     return;
 
   // FIXME: Remove this hack, once the new text layout engine is completly
-  // landed. We want to preserve the old layout test results for now.
+  // landed. We want to preserve the old web test results for now.
   ts << " contains 1 chunk(s)";
 
   if (text.Parent() && (text.Parent()->ResolveColor(GetCSSPropertyColor()) !=
@@ -451,7 +448,7 @@ static inline void WriteSVGInlineTextBox(WTF::TextStream& ts,
     unsigned end_offset = fragment.character_offset + fragment.length;
 
     // FIXME: Remove this hack, once the new text layout engine is completly
-    // landed. We want to preserve the old layout test results for now.
+    // landed. We want to preserve the old web test results for now.
     ts << "chunk 1 ";
     ETextAnchor anchor = svg_style.TextAnchor();
     bool is_vertical_text =
@@ -547,7 +544,7 @@ void WriteSVGResourceContainer(WTF::TextStream& ts,
                                int indent) {
   WriteStandardPrefix(ts, object, indent);
 
-  Element* element = ToElement(object.GetNode());
+  auto* element = To<Element>(object.GetNode());
   const AtomicString& id = element->GetIdAttribute();
   WriteNameAndQuotedValue(ts, "id", id);
 
@@ -567,8 +564,8 @@ void WriteSVGResourceContainer(WTF::TextStream& ts,
     ts << "\n";
     // Creating a placeholder filter which is passed to the builder.
     FloatRect dummy_rect;
-    Filter* dummy_filter =
-        Filter::Create(dummy_rect, dummy_rect, 1, Filter::kBoundingBox);
+    auto* dummy_filter = MakeGarbageCollected<Filter>(dummy_rect, dummy_rect, 1,
+                                                      Filter::kBoundingBox);
     SVGFilterBuilder builder(dummy_filter->GetSourceGraphic());
     builder.BuildGraph(dummy_filter, ToSVGFilterElement(*filter->GetElement()),
                        dummy_rect);
@@ -616,7 +613,7 @@ void WriteSVGResourceContainer(WTF::TextStream& ts,
     // gradients using xlink:href, we need to build the full inheritance chain,
     // aka. collectGradientProperties()
     LinearGradientAttributes attributes;
-    ToSVGLinearGradientElement(gradient->GetElement())
+    To<SVGLinearGradientElement>(gradient->GetElement())
         ->CollectGradientAttributes(attributes);
     WriteCommonGradientProperties(ts, attributes);
 
@@ -734,7 +731,7 @@ void WriteResources(WTF::TextStream& ts,
     DCHECK(style.ClipPath());
     DCHECK_EQ(style.ClipPath()->GetType(), ClipPathOperation::REFERENCE);
     const ReferenceClipPathOperation& clip_path_reference =
-        ToReferenceClipPathOperation(*style.ClipPath());
+        To<ReferenceClipPathOperation>(*style.ClipPath());
     AtomicString id = SVGURIReference::FragmentIdentifierFromIRIString(
         clip_path_reference.Url(), tree_scope);
     WriteIndent(ts, indent);
@@ -750,7 +747,7 @@ void WriteResources(WTF::TextStream& ts,
     const FilterOperation& filter_operation = *style.Filter().at(0);
     DCHECK_EQ(filter_operation.GetType(), FilterOperation::REFERENCE);
     const auto& reference_filter_operation =
-        ToReferenceFilterOperation(filter_operation);
+        To<ReferenceFilterOperation>(filter_operation);
     AtomicString id = SVGURIReference::FragmentIdentifierFromIRIString(
         reference_filter_operation.Url(), tree_scope);
     WriteIndent(ts, indent);

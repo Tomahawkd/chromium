@@ -81,9 +81,6 @@ void ScopedStyleResolver::AddFontFaceRules(const RuleSet& rule_set) {
   }
   if (font_face_rules.size() && document.GetStyleResolver())
     document.GetStyleResolver()->InvalidateMatchedPropertiesCache();
-
-  for (const auto& rule : rule_set.FontFeatureValuesRules())
-    document.GetStyleEngine().AddDefaultFontDisplay(rule);
 }
 
 void ScopedStyleResolver::AppendActiveStyleSheets(
@@ -117,8 +114,7 @@ void ScopedStyleResolver::CollectFeaturesTo(
       device_dependent_media_query_results_);
 
   for (auto sheet : author_style_sheets_) {
-    if (!RuntimeEnabledFeatures::ConstructableStylesheetsEnabled())
-      DCHECK(sheet->ownerNode());
+    DCHECK(sheet->ownerNode() || sheet->IsConstructed());
     StyleSheetContents* contents = sheet->Contents();
     if (contents->HasOneClient() ||
         visited_shared_style_sheet_contents.insert(contents).is_new_entry)
@@ -172,11 +168,12 @@ void ScopedStyleResolver::AddKeyframeStyle(StyleRuleKeyframes* rule) {
   }
 }
 
-ContainerNode& ScopedStyleResolver::InvalidationRootForTreeScope(
+Element& ScopedStyleResolver::InvalidationRootForTreeScope(
     const TreeScope& tree_scope) {
+  DCHECK(tree_scope.GetDocument().documentElement());
   if (tree_scope.RootNode() == tree_scope.GetDocument())
-    return tree_scope.GetDocument();
-  return ToShadowRoot(tree_scope.RootNode()).host();
+    return *tree_scope.GetDocument().documentElement();
+  return To<ShadowRoot>(tree_scope.RootNode()).host();
 }
 
 void ScopedStyleResolver::KeyframesRulesAdded(const TreeScope& tree_scope) {
@@ -184,6 +181,8 @@ void ScopedStyleResolver::KeyframesRulesAdded(const TreeScope& tree_scope) {
   // TreeScope. @keyframes rules may apply to animations on elements in the
   // same TreeScope as the stylesheet, or the host element in the parent
   // TreeScope if the TreeScope is a shadow tree.
+  if (!tree_scope.GetDocument().documentElement())
+    return;
 
   ScopedStyleResolver* resolver = tree_scope.GetScopedStyleResolver();
   ScopedStyleResolver* parent_resolver =
@@ -222,8 +221,7 @@ void ScopedStyleResolver::CollectMatchingAuthorRules(
     ShadowV0CascadeOrder cascade_order) {
   wtf_size_t sheet_index = 0;
   for (auto sheet : author_style_sheets_) {
-    if (!RuntimeEnabledFeatures::ConstructableStylesheetsEnabled())
-      DCHECK(sheet->ownerNode());
+    DCHECK(sheet->ownerNode() || sheet->IsConstructed());
     MatchRequest match_request(&sheet->Contents()->GetRuleSet(),
                                &scope_->RootNode(), sheet, sheet_index++);
     collector.CollectMatchingRules(match_request, cascade_order);
@@ -235,8 +233,7 @@ void ScopedStyleResolver::CollectMatchingShadowHostRules(
     ShadowV0CascadeOrder cascade_order) {
   wtf_size_t sheet_index = 0;
   for (auto sheet : author_style_sheets_) {
-    if (!RuntimeEnabledFeatures::ConstructableStylesheetsEnabled())
-      DCHECK(sheet->ownerNode());
+    DCHECK(sheet->ownerNode() || sheet->IsConstructed());
     MatchRequest match_request(&sheet->Contents()->GetRuleSet(),
                                &scope_->RootNode(), sheet, sheet_index++);
     collector.CollectMatchingShadowHostRules(match_request, cascade_order);
@@ -273,12 +270,9 @@ void ScopedStyleResolver::CollectMatchingPartPseudoRules(
     ElementRuleCollector& collector,
     PartNames& part_names,
     ShadowV0CascadeOrder cascade_order) {
-  if (!RuntimeEnabledFeatures::CSSPartPseudoElementEnabled())
-    return;
   wtf_size_t sheet_index = 0;
   for (auto sheet : author_style_sheets_) {
-    if (!RuntimeEnabledFeatures::ConstructableStylesheetsEnabled())
-      DCHECK(sheet->ownerNode());
+    DCHECK(sheet->ownerNode() || sheet->IsConstructed());
     MatchRequest match_request(&sheet->Contents()->GetRuleSet(),
                                &scope_->RootNode(), sheet, sheet_index++);
     collector.CollectMatchingPartPseudoRules(match_request, part_names,
@@ -321,7 +315,7 @@ void ScopedStyleResolver::AddTreeBoundaryCrossingRules(
   if (!author_rules.DeepCombinatorOrShadowPseudoRules().IsEmpty())
     has_deep_or_shadow_selector_ = true;
 
-  RuleSet* rule_set_for_scope = RuleSet::Create();
+  auto* rule_set_for_scope = MakeGarbageCollected<RuleSet>();
   AddRules(rule_set_for_scope,
            author_rules.DeepCombinatorOrShadowPseudoRules());
 
@@ -335,8 +329,8 @@ void ScopedStyleResolver::AddTreeBoundaryCrossingRules(
         GetTreeScope());
   }
 
-  tree_boundary_crossing_rule_set_->push_back(
-      RuleSubSet::Create(parent_style_sheet, sheet_index, rule_set_for_scope));
+  tree_boundary_crossing_rule_set_->push_back(MakeGarbageCollected<RuleSubSet>(
+      parent_style_sheet, sheet_index, rule_set_for_scope));
 }
 
 void ScopedStyleResolver::V0ShadowAddedOnV1Document() {
@@ -361,7 +355,7 @@ void ScopedStyleResolver::AddSlottedRules(const RuleSet& author_rules,
   if (is_document_scope || author_rules.SlottedPseudoElementRules().IsEmpty())
     return;
 
-  RuleSet* slotted_rule_set = RuleSet::Create();
+  auto* slotted_rule_set = MakeGarbageCollected<RuleSet>();
   AddRules(slotted_rule_set, author_rules.SlottedPseudoElementRules());
 
   // In case ::slotted rule is used in V0/V1 mixed document, put ::slotted
@@ -382,13 +376,14 @@ void ScopedStyleResolver::AddSlottedRules(const RuleSet& author_rules,
           .AddTreeBoundaryCrossingScope(GetTreeScope());
     }
     tree_boundary_crossing_rule_set_->push_back(
-        RuleSubSet::Create(parent_style_sheet, sheet_index, slotted_rule_set));
+        MakeGarbageCollected<RuleSubSet>(parent_style_sheet, sheet_index,
+                                         slotted_rule_set));
     return;
   }
   if (!slotted_rule_set_)
     slotted_rule_set_ = MakeGarbageCollected<CSSStyleSheetRuleSubSet>();
-  slotted_rule_set_->push_back(
-      RuleSubSet::Create(parent_style_sheet, sheet_index, slotted_rule_set));
+  slotted_rule_set_->push_back(MakeGarbageCollected<RuleSubSet>(
+      parent_style_sheet, sheet_index, slotted_rule_set));
 }
 
 void ScopedStyleResolver::RuleSubSet::Trace(blink::Visitor* visitor) {

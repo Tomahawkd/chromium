@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include <memory>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -93,8 +94,9 @@ InMemoryURLIndex::InMemoryURLIndex(bookmarks::BookmarkModel* bookmark_model,
       private_data_(new URLIndexPrivateData),
       restore_cache_observer_(nullptr),
       save_cache_observer_(nullptr),
-      task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BEST_EFFORT})),
+      task_runner_(
+          base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock(),
+                                           base::TaskPriority::BEST_EFFORT})),
       shutdown_(false),
       restored_(false),
       needs_to_be_cached_(false),
@@ -247,10 +249,9 @@ void InMemoryURLIndex::PostRestoreFromCacheFileTask() {
   }
 
   base::PostTaskAndReplyWithResult(
-      task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&URLIndexPrivateData::RestoreFromFile, path),
-      base::Bind(&InMemoryURLIndex::OnCacheLoadDone, AsWeakPtr()));
+      task_runner_.get(), FROM_HERE,
+      base::BindOnce(&URLIndexPrivateData::RestoreFromFile, path),
+      base::BindOnce(&InMemoryURLIndex::OnCacheLoadDone, AsWeakPtr()));
 }
 
 void InMemoryURLIndex::OnCacheLoadDone(
@@ -351,11 +352,10 @@ void InMemoryURLIndex::PostSaveToCacheFileTask() {
     scoped_refptr<URLIndexPrivateData> private_data_copy =
         private_data_->Duplicate();
     base::PostTaskAndReplyWithResult(
-        task_runner_.get(),
-        FROM_HERE,
-        base::Bind(&URLIndexPrivateData::WritePrivateDataToCacheFileTask,
-                   private_data_copy, path),
-        base::Bind(&InMemoryURLIndex::OnCacheSaveDone, AsWeakPtr()));
+        task_runner_.get(), FROM_HERE,
+        base::BindOnce(&URLIndexPrivateData::WritePrivateDataToCacheFileTask,
+                       private_data_copy, path),
+        base::BindOnce(&InMemoryURLIndex::OnCacheSaveDone, AsWeakPtr()));
   } else {
     // If there is no data in our index then delete any existing cache file.
     task_runner_->PostTask(

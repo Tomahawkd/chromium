@@ -5,7 +5,6 @@
 #include "third_party/blink/renderer/core/html/custom/custom_element_reaction_stack.h"
 
 #include <initializer_list>
-#include <vector>
 
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -17,7 +16,7 @@
 namespace blink {
 
 TEST(CustomElementReactionStackTest, one) {
-  std::vector<char> log;
+  Vector<char> log;
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -25,16 +24,16 @@ TEST(CustomElementReactionStackTest, one) {
   HeapVector<Member<Command>>* commands =
       MakeGarbageCollected<HeapVector<Member<Command>>>();
   commands->push_back(MakeGarbageCollected<Log>('a', log));
-  stack->EnqueueToCurrentQueue(CreateElement("a"),
-                               MakeGarbageCollected<TestReaction>(commands));
+  stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                               *MakeGarbageCollected<TestReaction>(commands));
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>({'a'}))
+  EXPECT_EQ(log, Vector<char>({'a'}))
       << "popping the reaction stack should run reactions";
 }
 
 TEST(CustomElementReactionStackTest, multipleElements) {
-  std::vector<char> log;
+  Vector<char> log;
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -43,24 +42,24 @@ TEST(CustomElementReactionStackTest, multipleElements) {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('a', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('b', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>({'a', 'b'}))
+  EXPECT_EQ(log, Vector<char>({'a', 'b'}))
       << "reactions should run in the order the elements queued";
 }
 
 TEST(CustomElementReactionStackTest, popTopEmpty) {
-  std::vector<char> log;
+  Vector<char> log;
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -68,17 +67,17 @@ TEST(CustomElementReactionStackTest, popTopEmpty) {
   HeapVector<Member<Command>>* commands =
       MakeGarbageCollected<HeapVector<Member<Command>>>();
   commands->push_back(MakeGarbageCollected<Log>('a', log));
-  stack->EnqueueToCurrentQueue(CreateElement("a"),
-                               MakeGarbageCollected<TestReaction>(commands));
+  stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                               *MakeGarbageCollected<TestReaction>(commands));
   stack->Push();
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>())
+  EXPECT_EQ(log, Vector<char>())
       << "popping the empty top-of-stack should not run any reactions";
 }
 
 TEST(CustomElementReactionStackTest, popTop) {
-  std::vector<char> log;
+  Vector<char> log;
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -87,27 +86,27 @@ TEST(CustomElementReactionStackTest, popTop) {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('a', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->Push();
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('b', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>({'b'}))
+  EXPECT_EQ(log, Vector<char>({'b'}))
       << "popping the top-of-stack should only run top-of-stack reactions";
 }
 
 TEST(CustomElementReactionStackTest, requeueingDoesNotReorderElements) {
-  std::vector<char> log;
+  Vector<char> log;
 
-  Element* element = CreateElement("a");
+  Element& element = *CreateElement("a");
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -117,32 +116,32 @@ TEST(CustomElementReactionStackTest, requeueingDoesNotReorderElements) {
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('a', log));
     stack->EnqueueToCurrentQueue(element,
-                                 MakeGarbageCollected<TestReaction>(commands));
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('z', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('b', log));
     stack->EnqueueToCurrentQueue(element,
-                                 MakeGarbageCollected<TestReaction>(commands));
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>({'a', 'b', 'z'}))
+  EXPECT_EQ(log, Vector<char>({'a', 'b', 'z'}))
       << "reactions should run together in the order elements were queued";
 }
 
 TEST(CustomElementReactionStackTest, oneReactionQueuePerElement) {
-  std::vector<char> log;
+  Vector<char> log;
 
-  Element* element = CreateElement("a");
+  Element& element = *CreateElement("a");
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -152,55 +151,55 @@ TEST(CustomElementReactionStackTest, oneReactionQueuePerElement) {
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('a', log));
     stack->EnqueueToCurrentQueue(element,
-                                 MakeGarbageCollected<TestReaction>(commands));
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('z', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->Push();
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('y', log));
-    stack->EnqueueToCurrentQueue(CreateElement("a"),
-                                 MakeGarbageCollected<TestReaction>(commands));
+    stack->EnqueueToCurrentQueue(*CreateElement("a"),
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   {
     HeapVector<Member<Command>>* commands =
         MakeGarbageCollected<HeapVector<Member<Command>>>();
     commands->push_back(MakeGarbageCollected<Log>('b', log));
     stack->EnqueueToCurrentQueue(element,
-                                 MakeGarbageCollected<TestReaction>(commands));
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>({'y', 'a', 'b'}))
+  EXPECT_EQ(log, Vector<char>({'y', 'a', 'b'}))
       << "reactions should run together in the order elements were queued";
 
   log.clear();
   stack->PopInvokingReactions();
-  EXPECT_EQ(log, std::vector<char>({'z'})) << "reactions should be run once";
+  EXPECT_EQ(log, Vector<char>({'z'})) << "reactions should be run once";
 }
 
 class EnqueueToStack : public Command {
  public:
   EnqueueToStack(CustomElementReactionStack* stack,
-                 Element* element,
+                 Element& element,
                  CustomElementReaction* reaction)
       : stack_(stack), element_(element), reaction_(reaction) {}
   ~EnqueueToStack() override = default;
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     Command::Trace(visitor);
     visitor->Trace(stack_);
     visitor->Trace(element_);
     visitor->Trace(reaction_);
   }
-  void Run(Element*) override {
-    stack_->EnqueueToCurrentQueue(element_, reaction_);
+  void Run(Element&) override {
+    stack_->EnqueueToCurrentQueue(*element_, *reaction_);
   }
 
  private:
@@ -212,9 +211,9 @@ class EnqueueToStack : public Command {
 };
 
 TEST(CustomElementReactionStackTest, enqueueFromReaction) {
-  std::vector<char> log;
+  Vector<char> log;
 
-  Element* element = CreateElement("a");
+  Element& element = *CreateElement("a");
 
   CustomElementReactionStack* stack =
       MakeGarbageCollected<CustomElementReactionStack>();
@@ -228,13 +227,13 @@ TEST(CustomElementReactionStackTest, enqueueFromReaction) {
     commands->push_back(MakeGarbageCollected<EnqueueToStack>(
         stack, element, MakeGarbageCollected<TestReaction>(subcommands)));
     stack->EnqueueToCurrentQueue(element,
-                                 MakeGarbageCollected<TestReaction>(commands));
+                                 *MakeGarbageCollected<TestReaction>(commands));
   }
   stack->PopInvokingReactions();
 
-  EXPECT_EQ(log, std::vector<char>({'a'})) << "enqueued reaction from another "
-                                              "reaction should run in the same "
-                                              "invoke";
+  EXPECT_EQ(log, Vector<char>({'a'})) << "enqueued reaction from another "
+                                         "reaction should run in the same "
+                                         "invoke";
 }
 
 }  // namespace blink

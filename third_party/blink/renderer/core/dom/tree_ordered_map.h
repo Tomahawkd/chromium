@@ -33,7 +33,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_TREE_ORDERED_MAP_H_
 
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
@@ -48,8 +48,6 @@ class TreeScope;
 
 class TreeOrderedMap : public GarbageCollected<TreeOrderedMap> {
  public:
-  static TreeOrderedMap* Create();
-
   TreeOrderedMap();
 
   void Add(const AtomicString&, Element&);
@@ -67,7 +65,7 @@ class TreeOrderedMap : public GarbageCollected<TreeOrderedMap> {
   // TreeOrderedMap exactly.
   Element* GetCachedFirstElementWithoutAccessingNodeTree(const AtomicString&);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
 #if DCHECK_IS_ON()
   // While removing a ContainerNode, ID lookups won't be precise should the tree
@@ -101,7 +99,7 @@ class TreeOrderedMap : public GarbageCollected<TreeOrderedMap> {
     explicit MapEntry(Element& first_element)
         : element(first_element), count(1) {}
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
 
     Member<Element> element;
     unsigned count;

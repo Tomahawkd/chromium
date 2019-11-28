@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_PROFILES_AVATAR_TOOLBAR_BUTTON_H_
 #define CHROME_BROWSER_UI_VIEWS_PROFILES_AVATAR_TOOLBAR_BUTTON_H_
 
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "build/build_config.h"
@@ -14,8 +15,9 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/gaia_cookie_manager_service.h"
+#include "chrome/browser/ui/views/toolbar/toolbar_icon_container_view.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/material_design/material_design_controller_observer.h"
 #include "ui/events/event.h"
 
@@ -25,21 +27,63 @@ class AvatarToolbarButton : public ToolbarButton,
                             public AvatarButtonErrorControllerDelegate,
                             public BrowserListObserver,
                             public ProfileAttributesStorage::Observer,
-                            public GaiaCookieManagerService::Observer,
-                            public AccountTrackerService::Observer,
-                            public ui::MaterialDesignControllerObserver {
+                            public signin::IdentityManager::Observer,
+                            public ui::MaterialDesignControllerObserver,
+                            ToolbarIconContainerView::Observer {
  public:
+  class Observer {
+   public:
+    virtual ~Observer() = default;
+
+    virtual void OnAvatarHighlightAnimationFinished() = 0;
+  };
+
+  // TODO(crbug.com/922525): Remove this constructor when this button always has
+  // ToolbarIconContainerView as a parent.
   explicit AvatarToolbarButton(Browser* browser);
+  AvatarToolbarButton(Browser* browser, ToolbarIconContainerView* parent);
   ~AvatarToolbarButton() override;
 
   void UpdateIcon();
   void UpdateText();
+  void ShowAvatarHighlightAnimation();
+
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
+  // views::View:
+  const char* GetClassName() const override;
+
+  static const char kAvatarToolbarButtonClassName[];
 
  private:
-  enum class SyncState { kNormal, kPaused, kError };
+  FRIEND_TEST_ALL_PREFIXES(AvatarToolbarButtonTest,
+                           HighlightMeetsMinimumContrast);
+
+  // States of the button ordered in priority of getting displayed.
+  enum class State {
+    kIncognitoProfile,
+    kGuestSession,
+    kGenericProfile,
+    kAnimatedUserIdentity,
+    kSyncPaused,
+    kSyncError,
+    kNormal
+  };
+
+  enum class IdentityAnimationState {
+    kNotShowing,
+    kWaitingForImage,
+    kShowingUntilTimeout,
+    kShowingUntilNoLongerInUse
+  };
 
   // ToolbarButton:
   void NotifyClick(const ui::Event& event) override;
+  void OnMouseExited(const ui::MouseEvent& event) override;
+  void OnBlur() override;
+  void OnThemeChanged() override;
+  void AddedToWidget() override;
 
   // AvatarButtonErrorControllerDelegate:
   void OnAvatarErrorChanged() override;
@@ -58,47 +102,73 @@ class AvatarToolbarButton : public ToolbarButton,
   void OnProfileNameChanged(const base::FilePath& profile_path,
                             const base::string16& old_profile_name) override;
 
-  // GaiaCookieManagerService::Observer:
+  // IdentityManager::Observer:
   // Needed if the first sync promo account should be displayed.
-  void OnGaiaAccountsInCookieUpdated(
-      const std::vector<gaia::ListedAccount>& accounts,
-      const std::vector<gaia::ListedAccount>& signed_out_accounts,
+  void OnUnconsentedPrimaryAccountChanged(
+      const CoreAccountInfo& unconsented_primary_account_info) override;
+  void OnRefreshTokensLoaded() override;
+  void OnAccountsInCookieUpdated(
+      const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
       const GoogleServiceAuthError& error) override;
-
-  // AccountTrackerService::Observer:
-  // Needed if the first sync promo account should be displayed.
-  void OnAccountImageUpdated(const std::string& account_id,
-                             const gfx::Image& image) override;
-  void OnAccountRemoved(const AccountInfo& info) override;
+  void OnExtendedAccountInfoUpdated(const AccountInfo& info) override;
+  void OnExtendedAccountInfoRemoved(const AccountInfo& info) override;
 
   // ui::MaterialDesignControllerObserver:
   void OnTouchUiChanged() override;
 
-  bool IsIncognito() const;
-  bool IsIncognitoCounterActive() const;
-  bool ShouldShowGenericIcon() const;
+  // ToolbarIconContainerView::Observer:
+  void OnHighlightChanged() override;
+
+  void ShowIdentityAnimation();
+  void OnIdentityAnimationTimeout();
+  void MaybeHideIdentityAnimation();
+
   base::string16 GetAvatarTooltipText() const;
-  gfx::ImageSkia GetAvatarIcon() const;
-  gfx::Image GetIconImageFromProfile() const;
-  SyncState GetSyncState() const;
+  base::string16 GetProfileName() const;
+  gfx::ImageSkia GetAvatarIcon(const gfx::Image& user_identity_image) const;
+
+  // Returns the image of the unconsented primary account (if exists and already
+  // loaded), otherwise empty.
+  gfx::Image GetUserIdentityImage() const;
+
+  State GetState() const;
 
   void SetInsets();
 
-  Browser* const browser_;
-  Profile* const profile_;
+  // Initiates showing the identity |user_identity| (if non-empty).
+  void OnUserIdentityChanged(const CoreAccountInfo& user_identity,
+                             const base::Feature& triggering_feature);
+
+  void ShowHighlightAnimation();
+  void HideHighlightAnimation();
 
 #if !defined(OS_CHROMEOS)
   AvatarButtonErrorController error_controller_;
 #endif  // !defined(OS_CHROMEOS)
-  ScopedObserver<BrowserList, BrowserListObserver> browser_list_observer_;
-  ScopedObserver<ProfileAttributesStorage, AvatarToolbarButton>
-      profile_observer_;
-  ScopedObserver<GaiaCookieManagerService, AvatarToolbarButton>
-      cookie_manager_service_observer_;
-  ScopedObserver<AccountTrackerService, AvatarToolbarButton>
-      account_tracker_service_observer_;
-  ScopedObserver<ui::MaterialDesignController, AvatarToolbarButton>
+
+  Browser* const browser_;
+  Profile* const profile_;
+  ToolbarIconContainerView* const parent_;
+
+  // Whether the avatar highlight animation is visible. The animation is shown
+  // when an Autofill datatype is saved. When this is true the avatar button
+  // sync paused/error state will be disabled.
+  bool highlight_animation_visible_ = false;
+
+  IdentityAnimationState identity_animation_state_ =
+      IdentityAnimationState::kNotShowing;
+
+  ScopedObserver<ProfileAttributesStorage, ProfileAttributesStorage::Observer>
+      profile_observer_{this};
+  ScopedObserver<signin::IdentityManager, signin::IdentityManager::Observer>
+      identity_manager_observer_{this};
+  ScopedObserver<ui::MaterialDesignController,
+                 ui::MaterialDesignControllerObserver>
       md_observer_{this};
+
+  base::ObserverList<Observer>::Unchecked observer_list_;
+
+  base::WeakPtrFactory<AvatarToolbarButton> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AvatarToolbarButton);
 };

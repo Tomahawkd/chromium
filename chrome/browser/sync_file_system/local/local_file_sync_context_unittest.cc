@@ -13,7 +13,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -27,12 +26,12 @@
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "storage/browser/blob/scoped_file.h"
-#include "storage/browser/fileapi/file_system_context.h"
-#include "storage/browser/fileapi/file_system_operation_runner.h"
-#include "storage/browser/fileapi/isolated_context.h"
-#include "storage/browser/test/mock_blob_url_request_context.h"
+#include "storage/browser/file_system/file_system_context.h"
+#include "storage/browser/file_system/file_system_operation_runner.h"
+#include "storage/browser/file_system/isolated_context.h"
+#include "storage/browser/test/mock_blob_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
 
@@ -59,7 +58,7 @@ const char kOrigin2[] = "http://chromium.org";
 class LocalFileSyncContextTest : public testing::Test {
  protected:
   LocalFileSyncContextTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD),
+      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD),
         status_(SYNC_FILE_ERROR_FAILED),
         file_error_(base::File::FILE_ERROR_FAILED),
         async_modify_finished_(false),
@@ -71,10 +70,8 @@ class LocalFileSyncContextTest : public testing::Test {
     in_memory_env_ = leveldb_chrome::NewMemEnv("LocalFileSyncContextTest");
 
     ui_task_runner_ = base::ThreadTaskRunnerHandle::Get();
-    io_task_runner_ =
-        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO});
-    file_task_runner_ =
-        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO});
+    io_task_runner_ = base::CreateSingleThreadTaskRunner({BrowserThread::IO});
+    file_task_runner_ = base::CreateSingleThreadTaskRunner({BrowserThread::IO});
   }
 
   void TearDown() override { RevokeSyncableFileSystem(); }
@@ -349,7 +346,7 @@ class LocalFileSyncContextTest : public testing::Test {
   std::unique_ptr<leveldb::Env> in_memory_env_;
 
   // These need to remain until the very end.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
@@ -406,7 +403,7 @@ TEST_F(LocalFileSyncContextTest, InitializeFileSystemContext) {
   FileSystemURLSet urls;
   file_system.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(1U, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, kURL));
+  EXPECT_TRUE(base::Contains(urls, kURL));
 
   // Finishing the test.
   sync_context_->ShutdownOnUIThread();
@@ -448,7 +445,7 @@ TEST_F(LocalFileSyncContextTest, MultipleFileSystemContexts) {
   FileSystemURLSet urls;
   file_system1.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(1U, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, kURL1));
+  EXPECT_TRUE(base::Contains(urls, kURL1));
 
   // file_system1's tracker must have no change.
   urls.clear();
@@ -462,13 +459,13 @@ TEST_F(LocalFileSyncContextTest, MultipleFileSystemContexts) {
   urls.clear();
   file_system1.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(1U, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, kURL1));
+  EXPECT_TRUE(base::Contains(urls, kURL1));
 
   // file_system2's tracker now must have the change for kURL2.
   urls.clear();
   file_system2.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(1U, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, kURL2));
+  EXPECT_TRUE(base::Contains(urls, kURL2));
 
   SyncFileMetadata metadata;
   FileChangeList changes;
@@ -628,9 +625,9 @@ TEST_F(LocalFileSyncContextTest, ApplyRemoteChangeForDeletion) {
   FileSystemURLSet urls;
   file_system.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(3U, urls.size());
-  ASSERT_TRUE(base::ContainsKey(urls, kFile));
-  ASSERT_TRUE(base::ContainsKey(urls, kDir));
-  ASSERT_TRUE(base::ContainsKey(urls, kChild));
+  ASSERT_TRUE(base::Contains(urls, kFile));
+  ASSERT_TRUE(base::Contains(urls, kDir));
+  ASSERT_TRUE(base::Contains(urls, kChild));
   for (auto iter = urls.begin(); iter != urls.end(); ++iter) {
     file_system.ClearChangeForURLInTracker(*iter);
   }
@@ -776,7 +773,7 @@ TEST_F(LocalFileSyncContextTest, ApplyRemoteChangeForAddOrUpdate) {
 
   // Create kFile1 and populate it with kTestFileData0.
   EXPECT_EQ(base::File::FILE_OK, file_system.CreateFile(kFile1));
-  EXPECT_EQ(static_cast<int64_t>(arraysize(kTestFileData0) - 1),
+  EXPECT_EQ(static_cast<int64_t>(base::size(kTestFileData0) - 1),
             file_system.WriteString(kFile1, kTestFileData0));
 
   // kFile2 and kDir are not there yet.
@@ -789,19 +786,19 @@ TEST_F(LocalFileSyncContextTest, ApplyRemoteChangeForAddOrUpdate) {
   FileSystemURLSet urls;
   file_system.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(1U, urls.size());
-  EXPECT_TRUE(base::ContainsKey(urls, kFile1));
+  EXPECT_TRUE(base::Contains(urls, kFile1));
   file_system.ClearChangeForURLInTracker(*urls.begin());
 
   // Prepare temporary files which represent the remote file data.
   const base::FilePath kFilePath1(temp_dir.GetPath().Append(FPL("file1")));
   const base::FilePath kFilePath2(temp_dir.GetPath().Append(FPL("file2")));
 
-  ASSERT_EQ(static_cast<int>(arraysize(kTestFileData1) - 1),
+  ASSERT_EQ(static_cast<int>(base::size(kTestFileData1) - 1),
             base::WriteFile(kFilePath1, kTestFileData1,
-                            arraysize(kTestFileData1) - 1));
-  ASSERT_EQ(static_cast<int>(arraysize(kTestFileData2) - 1),
+                            base::size(kTestFileData1) - 1));
+  ASSERT_EQ(static_cast<int>(base::size(kTestFileData2) - 1),
             base::WriteFile(kFilePath2, kTestFileData2,
-                            arraysize(kTestFileData2) - 1));
+                            base::size(kTestFileData2) - 1));
 
   // Record the usage.
   int64_t usage = -1, new_usage = -1;
@@ -832,7 +829,7 @@ TEST_F(LocalFileSyncContextTest, ApplyRemoteChangeForAddOrUpdate) {
 
   // Check if the usage has been increased by (kTestFileData1 - kTestFileData0).
   const int updated_size =
-      arraysize(kTestFileData1) - arraysize(kTestFileData0);
+      base::size(kTestFileData1) - base::size(kTestFileData0);
   EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk,
             file_system.GetUsageAndQuota(&new_usage, &quota));
   EXPECT_EQ(updated_size, new_usage - usage);
@@ -883,7 +880,7 @@ TEST_F(LocalFileSyncContextTest, ApplyRemoteChangeForAddOrUpdate) {
   EXPECT_EQ(blink::mojom::QuotaStatusCode::kOk,
             file_system.GetUsageAndQuota(&new_usage, &quota));
   EXPECT_GT(new_usage,
-            static_cast<int64_t>(usage + arraysize(kTestFileData2) - 1));
+            static_cast<int64_t>(usage + base::size(kTestFileData2) - 1));
 
   // The changes applied by ApplyRemoteChange should not be recorded in
   // the change tracker.
@@ -927,9 +924,9 @@ TEST_F(LocalFileSyncContextTest, ApplyRemoteChangeForAddOrUpdate_NoParent) {
 
   // Prepare a temporary file which represents remote file data.
   const base::FilePath kFilePath(temp_dir.GetPath().Append(FPL("file")));
-  ASSERT_EQ(static_cast<int>(arraysize(kTestFileData) - 1),
-            base::WriteFile(kFilePath, kTestFileData,
-                            arraysize(kTestFileData) - 1));
+  ASSERT_EQ(
+      static_cast<int>(base::size(kTestFileData) - 1),
+      base::WriteFile(kFilePath, kTestFileData, base::size(kTestFileData) - 1));
 
   // Calling ApplyChange's with kFilePath should create
   // kFile along with kDir.

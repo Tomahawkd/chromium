@@ -3,6 +3,7 @@
 <script src="../../../resources/testharnessreport.js"></script>
 <script src="../../assert_selection.js"></script>
 <script>
+
 selection_test(
   '<div contenteditable dir="ltr">|abc\u05D0\u05D1\u05D2\u05D3\u05D4\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),
@@ -30,36 +31,36 @@ selection_test(
 selection_test(
   '<div contenteditable dir="ltr">abc\u05D0|\u05D1\u05D2\u05D3\u05D4\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">abc\u05D0\u05D1|\u05D2\u05D3\u05D4\u05D5</div>',
+  '<div contenteditable dir="ltr">abc|\u05D0\u05D1\u05D2\u05D3\u05D4\u05D5</div>',
   '7-4 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">abc\u05D0\u05D1|\u05D2\u05D3\u05D4\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2|\u05D3\u05D4\u05D5</div>',
+  '<div contenteditable dir="ltr">abc\u05D0|\u05D1\u05D2\u05D3\u05D4\u05D5</div>',
   '7-5 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2|\u05D3\u05D4\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3|\u05D4\u05D5</div>',
+  '<div contenteditable dir="ltr">abc\u05D0\u05D1|\u05D2\u05D3\u05D4\u05D5</div>',
   '7-6 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3|\u05D4\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3\u05D4|\u05D5</div>',
+  '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2|\u05D3\u05D4\u05D5</div>',
   '7-7 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3\u05D4|\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">abc|\u05D0\u05D1\u05D2\u05D3\u05D4\u05D5</div>',
+  '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3|\u05D4\u05D5</div>',
   '7-8 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3\u05D4\u05D5|</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">abc\u05D0|\u05D1\u05D2\u05D3\u05D4\u05D5</div>',
+  '<div contenteditable dir="ltr">abc\u05D0\u05D1\u05D2\u05D3\u05D4|\u05D5</div>',
   '7-9 ltr left character');
 </script>

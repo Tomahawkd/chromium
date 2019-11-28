@@ -5,13 +5,13 @@
 package org.chromium.chrome.browser.offlinepages.indicator;
 
 import android.app.Activity;
-import android.support.annotation.Nullable;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 
+import androidx.annotation.Nullable;
+
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.FullscreenActivity;
 import org.chromium.chrome.browser.snackbar.Snackbar;
 import org.chromium.chrome.browser.snackbar.SnackbarView;
 
@@ -57,8 +57,6 @@ public class TopSnackbarView extends SnackbarView {
 
     private int getOffsetFromTop() {
         if (!(mActivity instanceof ChromeActivity)) return 0;
-
-        if (mActivity instanceof FullscreenActivity) return 0;
 
         ChromeActivity chromeActivity = (ChromeActivity) mActivity;
 

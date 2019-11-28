@@ -5,14 +5,15 @@
 #include <drm_fourcc.h>
 #include <stdint.h>
 #include <unistd.h>
-
 #include <memory>
+#include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/platform_file.h"
 #include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/gpu_fence.h"
@@ -40,6 +41,7 @@ constexpr uint32_t kDegammaLutPropId = 306;
 constexpr uint32_t kDegammaLutSizePropId = 307;
 constexpr uint32_t kOutFencePtrPropId = 308;
 constexpr uint32_t kInFormatsBlobPropId = 400;
+constexpr uint32_t kBackgroundColorPropId = 401;
 
 const gfx::Size kDefaultBufferSize(2, 2);
 
@@ -164,6 +166,7 @@ void HardwareDisplayPlaneManagerTest::InitializeDrmState(
   property_names_.insert({kDegammaLutPropId, "DEGAMMA_LUT"});
   property_names_.insert({kDegammaLutSizePropId, "DEGAMMA_LUT_SIZE"});
   property_names_.insert({kOutFencePtrPropId, "OUT_FENCE_PTR"});
+  property_names_.insert({kBackgroundColorPropId, "BACKGROUND_COLOR"});
 }
 
 void HardwareDisplayPlaneManagerTest::PerformPageFlip(
@@ -300,7 +303,7 @@ TEST_P(HardwareDisplayPlaneManagerLegacyTest, MultiplePlanesAndCrtcs) {
 TEST_P(HardwareDisplayPlaneManagerLegacyTest, CheckFramebufferFormatMatch) {
   ui::DrmOverlayPlaneList assigns;
   scoped_refptr<ui::DrmFramebuffer> buffer =
-      CreateBufferWithFormat(kDefaultBufferSize, DRM_FORMAT_UYVY);
+      CreateBufferWithFormat(kDefaultBufferSize, DRM_FORMAT_NV12);
   assigns.push_back(ui::DrmOverlayPlane(buffer, nullptr));
 
   InitializeDrmState(/*crtc_count=*/2, /*planes_per_crtc=*/1);
@@ -686,6 +689,39 @@ TEST_P(HardwareDisplayPlaneManagerTest, SetGammaCorrection_Success) {
   }
 }
 
+TEST_P(HardwareDisplayPlaneManagerTest, SetBackgroundColor_Success) {
+  InitializeDrmState(/*crtc_count=*/1, /*planes_per_crtc=*/1);
+  crtc_properties_[0].properties.push_back(
+      {/* .id = */ kBackgroundColorPropId, /* .value = */ 0});
+  fake_drm_->InitializeState(crtc_properties_, plane_properties_,
+                             property_names_, use_atomic_);
+  fake_drm_->plane_manager()->SetBackgroundColor(crtc_properties_[0].id, 0);
+  if (use_atomic_) {
+    ui::HardwareDisplayPlaneList state;
+    PerformPageFlip(/*crtc_idx=*/0, &state);
+    EXPECT_EQ(1, fake_drm_->get_commit_count());
+    EXPECT_EQ(0u, GetCrtcPropertyValue(crtc_properties_[0].id,
+                                       "BACKGROUND_COLOR"));
+  } else {
+    EXPECT_EQ(0, fake_drm_->get_set_object_property_count());
+  }
+
+  crtc_properties_[0].properties.push_back(
+      {/* .id = */ kBackgroundColorPropId, /* .value = */ 1});
+  fake_drm_->InitializeState(crtc_properties_, plane_properties_,
+                             property_names_, use_atomic_);
+  fake_drm_->plane_manager()->SetBackgroundColor(crtc_properties_[0].id, 1);
+  if (use_atomic_) {
+    ui::HardwareDisplayPlaneList state;
+    PerformPageFlip(/*crtc_idx=*/0, &state);
+    EXPECT_EQ(2, fake_drm_->get_commit_count());
+    EXPECT_EQ(1u, GetCrtcPropertyValue(crtc_properties_[0].id,
+                                       "BACKGROUND_COLOR"));
+  } else {
+    EXPECT_EQ(0, fake_drm_->get_set_object_property_count());
+  }
+}
+
 TEST_P(HardwareDisplayPlaneManagerAtomicTest,
        CommitReturnsNullOutFenceIfOutFencePtrNotSupported) {
   scoped_refptr<ui::DrmFramebuffer> fake_buffer2 =
@@ -744,18 +780,18 @@ TEST_P(HardwareDisplayPlaneManagerTest,
       crtc_properties_, plane_properties_, property_names_, use_atomic_));
 }
 
-INSTANTIATE_TEST_CASE_P(/* no prefix */,
-                        HardwareDisplayPlaneManagerTest,
-                        testing::Values(false, true));
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         HardwareDisplayPlaneManagerTest,
+                         testing::Values(false, true));
 
 // TODO(dnicoara): Migrate as many tests as possible to the general list above.
-INSTANTIATE_TEST_CASE_P(/* no prefix */,
-                        HardwareDisplayPlaneManagerLegacyTest,
-                        testing::Values(false));
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         HardwareDisplayPlaneManagerLegacyTest,
+                         testing::Values(false));
 
-INSTANTIATE_TEST_CASE_P(/* no prefix */,
-                        HardwareDisplayPlaneManagerAtomicTest,
-                        testing::Values(true));
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         HardwareDisplayPlaneManagerAtomicTest,
+                         testing::Values(true));
 
 class FakeFenceFD {
  public:
@@ -832,9 +868,9 @@ class HardwareDisplayPlaneManagerPlanesReadyTest : public testing::Test {
   scoped_refptr<ui::MockDrmDevice> fake_drm_;
   std::unique_ptr<ui::HardwareDisplayPlaneManager> plane_manager_;
   bool callback_called = false;
-  base::test::ScopedTaskEnvironment task_env_{
-      base::test::ScopedTaskEnvironment::MainThreadType::DEFAULT,
-      base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED};
+  base::test::TaskEnvironment task_env_{
+      base::test::TaskEnvironment::MainThreadType::DEFAULT,
+      base::test::TaskEnvironment::ThreadPoolExecutionMode::QUEUED};
   scoped_refptr<ui::DrmFramebuffer> drm_framebuffer_;
   const FakeFenceFD fake_fence_fd1_;
   const FakeFenceFD fake_fence_fd2_;

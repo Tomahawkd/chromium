@@ -5,20 +5,15 @@
 package org.chromium.chrome.browser.feed;
 
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Mockito.anyString;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.app.Activity;
-import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
-import com.google.android.libraries.feed.api.lifecycle.AppLifecycleListener;
-import com.google.android.libraries.feed.feedapplifecyclelistener.FeedAppLifecycleListener;
-import com.google.android.libraries.feed.host.network.NetworkClient;
-
-import org.junit.Assert;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -28,29 +23,36 @@ import org.mockito.MockitoAnnotations;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.ThreadUtils;
-import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.DeferredStartupHandler;
 import org.chromium.chrome.browser.feed.FeedAppLifecycle.AppLifecycleEvent;
+import org.chromium.chrome.browser.feed.library.api.client.lifecycle.AppLifecycleListener;
+import org.chromium.chrome.browser.feed.library.api.host.network.NetworkClient;
+import org.chromium.chrome.browser.feed.library.hostimpl.storage.testing.InMemoryContentStorage;
+import org.chromium.chrome.browser.feed.library.hostimpl.storage.testing.InMemoryJournalStorage;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.multiwindow.MultiWindowTestHelper;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -58,10 +60,10 @@ import java.util.concurrent.TimeoutException;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
-@EnableFeatures({ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS})
 public class FeedAppLifecycleTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+
     @Mock
     private FeedScheduler mFeedScheduler;
     @Mock
@@ -70,74 +72,84 @@ public class FeedAppLifecycleTest {
     private FeedOfflineIndicator mOfflineIndicator;
     @Mock
     private AppLifecycleListener mAppLifecycleListener;
-    @Mock
-    private Map<String, Boolean> mMockFeatureList;
+
+    private TestDeferredStartupHandler mTestDeferredStartupHandler =
+            new TestDeferredStartupHandler();
+
     private ChromeTabbedActivity mActivity;
     private FeedAppLifecycle mAppLifecycle;
     private FeedLifecycleBridge mLifecycleBridge;
     private final String mHistogramAppLifecycleEvents =
             "ContentSuggestions.Feed.AppLifecycle.Events";
 
+    private static class TestDeferredStartupHandler extends DeferredStartupHandler {
+        private List<Runnable> mDeferredTaskQueue = new ArrayList<>();
+        @Override
+        public void addDeferredTask(Runnable deferredTask) {
+            mDeferredTaskQueue.add(deferredTask);
+        }
+        public void runAllTasks() {
+            TestThreadUtils.runOnUiThreadBlocking(() -> {
+                for (Runnable deferredTask : mDeferredTaskQueue) {
+                    deferredTask.run();
+                }
+            });
+        }
+    }
+
     @Before
-    public void setUp() throws InterruptedException, TimeoutException {
+    public void setUp() throws InterruptedException {
         MockitoAnnotations.initMocks(this);
-        when(mMockFeatureList.get(anyString())).thenReturn(true);
-        ChromeFeatureList.setTestFeatures(mMockFeatureList);
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            try {
-                ChromeBrowserInitializer.getInstance(InstrumentationRegistry.getTargetContext())
-                        .handleSynchronousStartup();
-            } catch (ProcessInitException e) {
-                Assert.fail("Native initialization failed");
-            }
+
+        DeferredStartupHandler.setInstanceForTests(mTestDeferredStartupHandler);
+
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            ChromeBrowserInitializer.getInstance().handleSynchronousStartup();
             Profile profile = Profile.getLastUsedProfile().getOriginalProfile();
             mLifecycleBridge = new FeedLifecycleBridge(profile);
             mAppLifecycle =
                     new FeedAppLifecycle(mAppLifecycleListener, mLifecycleBridge, mFeedScheduler);
             FeedProcessScopeFactory.createFeedProcessScopeForTesting(mFeedScheduler, mNetworkClient,
-                    mOfflineIndicator, mAppLifecycle,
-                    new FeedAppLifecycleListener(
-                            new com.google.android.libraries.feed.api.common.ThreadUtils()),
-                    new FeedLoggingBridge(profile));
+                    mOfflineIndicator, mAppLifecycle, new FeedLoggingBridge(profile),
+                    new InMemoryContentStorage(), new InMemoryJournalStorage());
         });
 
         mActivityTestRule.startMainActivityOnBlankPage();
         mActivity = mActivityTestRule.getActivity();
     }
 
+    @After
+    public void tearDown() {
+        DeferredStartupHandler.setInstanceForTests(null);
+    }
+
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
+    @Feature({"Feed"})
     public void testConstructionChecksActiveTabbedActivities() {
         verify(mAppLifecycleListener, times(1)).onEnterForeground();
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testActivityStateChangesIncrementStateCounters()
-            throws InterruptedException, TimeoutException {
-        assertEquals(0,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.ENTER_BACKGROUND));
+    @Feature({"Feed"})
+    public void testActivityStateChangesIncrementStateCounters() throws TimeoutException {
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.ENTER_BACKGROUND, 0);
         verify(mAppLifecycleListener, times(1)).onEnterForeground();
         signalActivityStop(mActivity);
         signalActivityStart(mActivity);
 
         verify(mAppLifecycleListener, times(1)).onEnterBackground();
         verify(mAppLifecycleListener, times(2)).onEnterForeground();
-        assertEquals(1,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.ENTER_BACKGROUND));
-        assertEquals(2,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.ENTER_FOREGROUND));
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.ENTER_BACKGROUND, 1);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.ENTER_FOREGROUND, 2);
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testNtpOpeningTriggersInitializeOnlyOnce() throws InterruptedException {
+    @Feature({"Feed"})
+    @EnableFeatures({ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS})
+    public void testNtpOpeningTriggersInitializeOnlyOnce() {
         // We open to about:blank initially so we shouldn't have called initialize() yet.
         verify(mAppLifecycleListener, times(0)).initialize();
         mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
@@ -146,68 +158,103 @@ public class FeedAppLifecycleTest {
         // Opening the NTP again shouldn't trigger another call to initialize().
         mActivityTestRule.loadUrlInNewTab(UrlConstants.NTP_URL);
         verify(mAppLifecycleListener, times(1)).initialize();
-        assertEquals(1,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.INITIALIZE));
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.INITIALIZE, 1);
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testHistoryDeletionTriggersClearAll() throws InterruptedException {
+    @Feature({"Feed"})
+    public void testOnHistoryDeleted() {
         verify(mAppLifecycleListener, times(0)).onClearAll();
+        verify(mAppLifecycleListener, times(0)).onClearAllWithRefresh();
+        verify(mFeedScheduler, times(0)).onArticlesCleared(anyBoolean());
+        // Note that typically calling onArticlesCleared(true) will not return true, but the
+        // FeedAppLifecycle should not necessarily care.
+        when(mFeedScheduler.onArticlesCleared(anyBoolean())).thenReturn(true).thenReturn(false);
+
+        mAppLifecycle.onHistoryDeleted();
+        verify(mAppLifecycleListener, times(1)).onClearAllWithRefresh();
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 1);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.HISTORY_DELETED, 1);
+        verify(mFeedScheduler, times(1)).onArticlesCleared(true);
+
         mAppLifecycle.onHistoryDeleted();
         verify(mAppLifecycleListener, times(1)).onClearAll();
-        assertEquals(1,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL));
-        verify(mFeedScheduler, times(1)).onArticlesCleared(true);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 2);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.HISTORY_DELETED, 2);
+        verify(mFeedScheduler, times(2)).onArticlesCleared(true);
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testCachedDataRemovalTriggersClearAll() throws InterruptedException {
+    @Feature({"Feed"})
+    public void testOnCachedDataCleared() {
         verify(mAppLifecycleListener, times(0)).onClearAll();
+        verify(mAppLifecycleListener, times(0)).onClearAllWithRefresh();
+        verify(mFeedScheduler, times(0)).onArticlesCleared(anyBoolean());
+        when(mFeedScheduler.onArticlesCleared(anyBoolean())).thenReturn(true).thenReturn(false);
+
+        mAppLifecycle.onCachedDataCleared();
+        verify(mAppLifecycleListener, times(1)).onClearAllWithRefresh();
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 1);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CACHED_DATA_CLEARED, 1);
+        verify(mFeedScheduler, times(1)).onArticlesCleared(false);
+
         mAppLifecycle.onCachedDataCleared();
         verify(mAppLifecycleListener, times(1)).onClearAll();
-        assertEquals(1,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL));
-        verify(mFeedScheduler, times(1)).onArticlesCleared(false);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 2);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CACHED_DATA_CLEARED, 2);
+        verify(mFeedScheduler, times(2)).onArticlesCleared(false);
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testSignoutTriggersClearAll() throws InterruptedException {
+    @Feature({"Feed"})
+    public void testOnSignedOut() {
         verify(mAppLifecycleListener, times(0)).onClearAll();
+        verify(mAppLifecycleListener, times(0)).onClearAllWithRefresh();
+        verify(mFeedScheduler, times(0)).onArticlesCleared(anyBoolean());
+        when(mFeedScheduler.onArticlesCleared(anyBoolean())).thenReturn(true).thenReturn(false);
+
+        mAppLifecycle.onSignedOut();
+        verify(mAppLifecycleListener, times(1)).onClearAllWithRefresh();
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 1);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.SIGN_OUT, 1);
+        verify(mFeedScheduler, times(1)).onArticlesCleared(false);
+
         mAppLifecycle.onSignedOut();
         verify(mAppLifecycleListener, times(1)).onClearAll();
-        assertEquals(1,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL));
-        verify(mFeedScheduler, times(1)).onArticlesCleared(false);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 2);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.SIGN_OUT, 2);
+        verify(mFeedScheduler, times(2)).onArticlesCleared(false);
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testSigninTriggersClearAll() throws InterruptedException {
+    @Feature({"Feed"})
+    public void testOnSignedIn() {
         verify(mAppLifecycleListener, times(0)).onClearAll();
+        verify(mAppLifecycleListener, times(0)).onClearAllWithRefresh();
+        verify(mFeedScheduler, times(0)).onArticlesCleared(anyBoolean());
+        when(mFeedScheduler.onArticlesCleared(anyBoolean())).thenReturn(true).thenReturn(false);
+
+        mAppLifecycle.onSignedIn();
+        verify(mAppLifecycleListener, times(1)).onClearAllWithRefresh();
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 1);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.SIGN_IN, 1);
+        verify(mFeedScheduler, times(1)).onArticlesCleared(false);
+
         mAppLifecycle.onSignedIn();
         verify(mAppLifecycleListener, times(1)).onClearAll();
-        assertEquals(1,
-                RecordHistogram.getHistogramValueCountForTesting(
-                        mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL));
-        verify(mFeedScheduler, times(1)).onArticlesCleared(false);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.CLEAR_ALL, 2);
+        verifyHistogram(mHistogramAppLifecycleEvents, AppLifecycleEvent.SIGN_IN, 2);
+        verify(mFeedScheduler, times(2)).onArticlesCleared(false);
     }
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testSecondWindowDoesNotTriggerForegroundOrBackground()
-            throws InterruptedException, TimeoutException {
+    @Feature({"Feed"})
+    public void testSecondWindowDoesNotTriggerForegroundOrBackground() throws TimeoutException {
         verify(mAppLifecycleListener, times(1)).onEnterForeground();
 
         MultiWindowUtils.getInstance().setIsInMultiWindowModeForTesting(true);
@@ -230,8 +277,9 @@ public class FeedAppLifecycleTest {
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testMultiWindowDoesNotCauseMultipleInitialize() throws InterruptedException {
+    @Feature({"Feed"})
+    @EnableFeatures({ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS})
+    public void testMultiWindowDoesNotCauseMultipleInitialize() {
         mActivityTestRule.loadUrl(UrlConstants.NTP_URL);
         verify(mAppLifecycleListener, times(1)).initialize();
 
@@ -244,9 +292,8 @@ public class FeedAppLifecycleTest {
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
-    public void testResumeTriggersSchedulerForegrounded()
-            throws InterruptedException, TimeoutException {
+    @Feature({"Feed"})
+    public void testResumeTriggersSchedulerForegrounded() throws TimeoutException {
         verify(mFeedScheduler, times(1)).onForegrounded();
         signalActivityResume(mActivity);
         verify(mFeedScheduler, times(2)).onForegrounded();
@@ -254,9 +301,9 @@ public class FeedAppLifecycleTest {
 
     @Test
     @SmallTest
-    @Feature({"InterestFeedContentSuggestions"})
+    @Feature({"Feed"})
     public void testClearDataAfterDisablingDoesNotCrash() {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             FeedProcessScopeFactory.clearFeedProcessScopeForTesting();
             PrefServiceBridge.getInstance().setBoolean(Pref.NTP_ARTICLES_SECTION_ENABLED, false);
             FeedLifecycleBridge.onCachedDataCleared();
@@ -264,32 +311,79 @@ public class FeedAppLifecycleTest {
         });
     }
 
-    private void signalActivityStart(Activity activity)
-            throws InterruptedException, TimeoutException {
+    @Test
+    @SmallTest
+    @Feature({"Feed"})
+    public void testDelayedInitNoParam() {
+        verify(mAppLifecycleListener, times(1)).onEnterForeground();
+        mTestDeferredStartupHandler.runAllTasks();
+        verify(mAppLifecycleListener, times(0)).initialize();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Feed"})
+    @CommandLineFlags.
+    Add({"enable-features=InterestFeedContentSuggestions<Trial", "force-fieldtrials=Trial/Group",
+            "force-fieldtrial-params=Trial.Group:init_feed_after_startup/true"})
+    public void
+    testDelayedInitWithParamTrue() {
+        verify(mAppLifecycleListener, times(1)).onEnterForeground();
+        verify(mAppLifecycleListener, times(0)).initialize();
+        mTestDeferredStartupHandler.runAllTasks();
+        verify(mAppLifecycleListener, times(1)).initialize();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Feed"})
+    @CommandLineFlags.
+    Add({"enable-features=InterestFeedContentSuggestions<Trial", "force-fieldtrials=Trial/Group",
+            "force-fieldtrial-params=Trial.Group:init_feed_after_startup/false"})
+    public void
+    testDelayedInitZeroParamFalse() {
+        verify(mAppLifecycleListener, times(1)).onEnterForeground();
+        mTestDeferredStartupHandler.runAllTasks();
+        verify(mAppLifecycleListener, times(0)).initialize();
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Feed"})
+    @CommandLineFlags.
+    Add({"enable-features=InterestFeedContentSuggestions<Trial", "force-fieldtrials=Trial/Group",
+            "force-fieldtrial-params=Trial.Group:init_feed_after_startup/notboolean"})
+    public void
+    testDelayedInitZeroParamNotBoolean() {
+        verify(mAppLifecycleListener, times(1)).onEnterForeground();
+        mTestDeferredStartupHandler.runAllTasks();
+        verify(mAppLifecycleListener, times(0)).initialize();
+    }
+
+    private void signalActivityStart(Activity activity) throws TimeoutException {
         signalActivityState(activity, ActivityState.STARTED);
     }
 
-    private void signalActivityResume(Activity activity)
-            throws InterruptedException, TimeoutException {
+    private void signalActivityResume(Activity activity) throws TimeoutException {
         signalActivityState(activity, ActivityState.RESUMED);
     }
 
-    private void signalActivityStop(Activity activity)
-            throws InterruptedException, TimeoutException {
+    private void signalActivityStop(Activity activity) throws TimeoutException {
         signalActivityState(activity, ActivityState.STOPPED);
     }
 
     private void signalActivityState(final Activity activity,
-            final @ActivityState int activityState) throws InterruptedException, TimeoutException {
+            final @ActivityState int activityState) throws TimeoutException {
         final CallbackHelper waitForStateChangeHelper = new CallbackHelper();
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                ApplicationStatus.onStateChangeForTesting(activity, activityState);
-                waitForStateChangeHelper.notifyCalled();
-            }
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+            ApplicationStatus.onStateChangeForTesting(activity, activityState);
+            waitForStateChangeHelper.notifyCalled();
         });
 
         waitForStateChangeHelper.waitForCallback(0);
+    }
+
+    private void verifyHistogram(String name, @AppLifecycleEvent int sample, int expectedCount) {
+        assertEquals(expectedCount, RecordHistogram.getHistogramValueCountForTesting(name, sample));
     }
 }

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_PASSWORDS_PASSWORD_AUTO_SIGN_IN_VIEW_H_
 
 #include "base/scoped_observer.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/ui/views/passwords/password_bubble_view_base.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget.h"
@@ -16,10 +17,9 @@
 class PasswordAutoSignInView : public PasswordBubbleViewBase,
                                public views::ButtonListener {
  public:
-  explicit PasswordAutoSignInView(content::WebContents* web_contents,
-                                  views::View* anchor_view,
-                                  const gfx::Point& anchor_point,
-                                  DisplayReason reason);
+  PasswordAutoSignInView(content::WebContents* web_contents,
+                         views::View* anchor_view,
+                         DisplayReason reason);
 
 #if defined(UNIT_TEST)
   static void set_auto_signin_toast_timeout(int seconds) {
@@ -31,7 +31,6 @@ class PasswordAutoSignInView : public PasswordBubbleViewBase,
   ~PasswordAutoSignInView() override;
 
   // LocationBarBubbleDelegateView:
-  int GetDialogButtons() const override;
   gfx::Size CalculatePreferredSize() const override;
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
 

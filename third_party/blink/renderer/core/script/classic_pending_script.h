@@ -10,13 +10,13 @@
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
 #include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/script/pending_script.h"
+#include "third_party/blink/renderer/platform/instrumentation/memory_pressure_listener.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
-#include "third_party/blink/renderer/platform/memory_coordinator.h"
 
 namespace blink {
 
 // PendingScript for a classic script
-// https://html.spec.whatwg.org/multipage/webappapis.html#classic-script.
+// https://html.spec.whatwg.org/C/#classic-script.
 //
 // TODO(kochi): The comment below is from pre-oilpan age and may not be correct
 // now.
@@ -25,11 +25,11 @@ namespace blink {
 // guarantee that the data buffer will not be purged.
 class CORE_EXPORT ClassicPendingScript final : public PendingScript,
                                                public ResourceClient,
-                                               public MemoryCoordinatorClient {
+                                               public MemoryPressureListener {
   USING_GARBAGE_COLLECTED_MIXIN(ClassicPendingScript);
 
  public:
-  // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-script
+  // https://html.spec.whatwg.org/C/#fetch-a-classic-script
   //
   // For a script from an external file, calls ScriptResource::Fetch() and
   // creates ClassicPendingScript. Returns nullptr if Fetch() returns nullptr.
@@ -44,11 +44,15 @@ class CORE_EXPORT ClassicPendingScript final : public PendingScript,
   // For an inline script.
   static ClassicPendingScript* CreateInline(ScriptElementBase*,
                                             const TextPosition&,
+                                            const KURL& base_url,
+                                            const String& source_text,
                                             ScriptSourceLocationType,
                                             const ScriptFetchOptions&);
 
   ClassicPendingScript(ScriptElementBase*,
                        const TextPosition&,
+                       const KURL& base_url_for_inline_script,
+                       const String& source_text_for_inline_script,
                        ScriptSourceLocationType,
                        const ScriptFetchOptions&,
                        bool is_external);
@@ -58,7 +62,7 @@ class CORE_EXPORT ClassicPendingScript final : public PendingScript,
   void SetStreamer(ScriptStreamer*);
   void StreamingFinished();
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   mojom::ScriptType GetScriptType() const override {
     return mojom::ScriptType::kClassic;
@@ -70,8 +74,7 @@ class CORE_EXPORT ClassicPendingScript final : public PendingScript,
   bool IsReady() const override;
   bool IsExternal() const override { return is_external_; }
   bool WasCanceled() const override;
-  bool StartStreamingIfPossible(base::OnceClosure) override;
-  bool IsCurrentlyStreaming() const override;
+  void StartStreamingIfPossible() override;
   KURL UrlForTracing() const override;
   void DisposeInternal() override;
 
@@ -106,19 +109,21 @@ class CORE_EXPORT ClassicPendingScript final : public PendingScript,
       bool can_use_streamer,
       ScriptStreamer::NotStreamingReason reason);
 
-  // MemoryCoordinatorClient
+  // MemoryPressureListener
   void OnPurgeMemory() override;
 
   const ScriptFetchOptions options_;
 
   // "base url" snapshot taken at #prepare-a-script timing.
-  // https://html.spec.whatwg.org/multipage/scripting.html#prepare-a-script
+  // https://html.spec.whatwg.org/C/#prepare-a-script
   // which will eventually be used as #concept-script-base-url.
-  // https://html.spec.whatwg.org/multipage/webappapis.html#concept-script-base-url
+  // https://html.spec.whatwg.org/C/#concept-script-base-url
+  // This is a null URL for external scripts and is not used.
   const KURL base_url_for_inline_script_;
 
   // "element's child text content" snapshot taken at
   // #prepare-a-script (Step 4).
+  // This is a null string for external scripts and is not used.
   const String source_text_for_inline_script_;
 
   const ScriptSourceLocationType source_location_type_;
@@ -128,22 +133,6 @@ class CORE_EXPORT ClassicPendingScript final : public PendingScript,
 
   // The request is intervened by document.write() intervention.
   bool intervened_ = false;
-
-  base::OnceClosure streamer_done_;
-
-  // This flag tracks whether streamer_ is currently streaming. It is used
-  // mainly to prevent re-streaming a script while it is being streamed.
-  //
-  // ReadyState unfortunately doesn't contain this information, because
-  // 1, the WaitingFor* states can occur with or without streaming, and
-  // 2, during the state transition, we need to first transition ready_state_,
-  //    then run callbacks, and only then consider the streaming done. So
-  //    during AdvanceReadyState and callback processing, the ready state
-  //    and is_currently_streaming_ are temporarily different. (They must
-  //    be consistent before and after AdvanceReadyState.)
-  //
-  // (See also: crbug.com/754360)
-  bool is_currently_streaming_;
 
   // Specifies the reason that script was never streamed.
   ScriptStreamer::NotStreamingReason not_streamed_reason_;

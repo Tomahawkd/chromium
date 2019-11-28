@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "ash/test/ash_test_base.h"
+#include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
@@ -17,9 +17,10 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -142,10 +143,9 @@ class MockScreenshotDelegate : public DeviceCommandScreenshotJob::Delegate {
   ~MockScreenshotDelegate() override;
 
   bool IsScreenshotAllowed() override;
-  void TakeSnapshot(
-      gfx::NativeWindow window,
-      const gfx::Rect& source_rect,
-      const ui::GrabWindowSnapshotAsyncPNGCallback& callback) override;
+  void TakeSnapshot(gfx::NativeWindow window,
+                    const gfx::Rect& source_rect,
+                    ui::GrabWindowSnapshotAsyncPNGCallback callback) override;
   std::unique_ptr<UploadJob> CreateUploadJob(const GURL&,
                                              UploadJob::Delegate*) override;
 
@@ -170,13 +170,13 @@ bool MockScreenshotDelegate::IsScreenshotAllowed() {
 void MockScreenshotDelegate::TakeSnapshot(
     gfx::NativeWindow window,
     const gfx::Rect& source_rect,
-    const ui::GrabWindowSnapshotAsyncPNGCallback& callback) {
+    ui::GrabWindowSnapshotAsyncPNGCallback callback) {
   const int width = source_rect.width();
   const int height = source_rect.height();
   scoped_refptr<base::RefCountedBytes> test_png =
       GenerateTestPNG(width, height);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, test_png));
+      FROM_HERE, base::BindOnce(std::move(callback), test_png));
 }
 
 std::unique_ptr<UploadJob> MockScreenshotDelegate::CreateUploadJob(
@@ -188,7 +188,7 @@ std::unique_ptr<UploadJob> MockScreenshotDelegate::CreateUploadJob(
 
 }  // namespace
 
-class DeviceCommandScreenshotTest : public ash::AshTestBase {
+class DeviceCommandScreenshotTest : public ChromeAshTestBase {
  public:
   void VerifyResults(RemoteCommandJob* job,
                      RemoteCommandJob::Status expected_status,
@@ -197,7 +197,7 @@ class DeviceCommandScreenshotTest : public ash::AshTestBase {
  protected:
   DeviceCommandScreenshotTest();
 
-  // ash::AshTestBase:
+  // ChromeAshTestBase:
   void SetUp() override;
 
   void InitializeScreenshotJob(RemoteCommandJob* job,
@@ -222,7 +222,7 @@ DeviceCommandScreenshotTest::DeviceCommandScreenshotTest()
 }
 
 void DeviceCommandScreenshotTest::SetUp() {
-  ash::AshTestBase::SetUp();
+  ChromeAshTestBase::SetUp();
   test_start_time_ = base::TimeTicks::Now();
 }
 
@@ -234,7 +234,8 @@ void DeviceCommandScreenshotTest::InitializeScreenshotJob(
   EXPECT_TRUE(job->Init(
       base::TimeTicks::Now(),
       GenerateScreenshotCommandProto(
-          unique_id, base::TimeTicks::Now() - issued_time, upload_url)));
+          unique_id, base::TimeTicks::Now() - issued_time, upload_url),
+      nullptr));
   EXPECT_EQ(unique_id, job->unique_id());
   EXPECT_EQ(RemoteCommandJob::NOT_STARTED, job->status());
 }
@@ -268,7 +269,7 @@ TEST_F(DeviceCommandScreenshotTest, Success) {
   InitializeScreenshotJob(job.get(), kUniqueID, test_start_time_,
                           kMockUploadUrl);
   bool success = job->Run(
-      base::TimeTicks::Now(),
+      base::Time::Now(), base::TimeTicks::Now(),
       base::Bind(
           &DeviceCommandScreenshotTest::VerifyResults, base::Unretained(this),
           base::Unretained(job.get()), RemoteCommandJob::SUCCEEDED,
@@ -283,7 +284,7 @@ TEST_F(DeviceCommandScreenshotTest, FailureUserInput) {
   InitializeScreenshotJob(job.get(), kUniqueID, test_start_time_,
                           kMockUploadUrl);
   bool success =
-      job->Run(base::TimeTicks::Now(),
+      job->Run(base::Time::Now(), base::TimeTicks::Now(),
                base::Bind(&DeviceCommandScreenshotTest::VerifyResults,
                           base::Unretained(this), base::Unretained(job.get()),
                           RemoteCommandJob::FAILED,
@@ -302,7 +303,7 @@ TEST_F(DeviceCommandScreenshotTest, Failure) {
   InitializeScreenshotJob(job.get(), kUniqueID, test_start_time_,
                           kMockUploadUrl);
   bool success = job->Run(
-      base::TimeTicks::Now(),
+      base::Time::Now(), base::TimeTicks::Now(),
       base::Bind(&DeviceCommandScreenshotTest::VerifyResults,
                  base::Unretained(this), base::Unretained(job.get()),
                  RemoteCommandJob::FAILED,

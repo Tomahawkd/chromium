@@ -10,8 +10,8 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -29,11 +29,11 @@
 #include "content/public/common/content_client.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
-#include "storage/browser/fileapi/external_mount_points.h"
+#include "storage/browser/file_system/external_mount_points.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
-#include "storage/common/fileapi/file_system_types.h"
+#include "storage/common/file_system/file_system_types.h"
 #else
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #endif
 
 namespace platform_util {
@@ -58,8 +58,7 @@ class PlatformUtilTestContentBrowserClient : public ChromeContentBrowserClient {
     // New FileSystemBackend that uses our MockSpecialStoragePolicy.
     additional_backends->push_back(
         std::make_unique<chromeos::FileSystemBackend>(
-            nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-            external_mount_points,
+            nullptr, nullptr, nullptr, nullptr, nullptr, external_mount_points,
             storage::ExternalMountPoints::GetSystemInstance()));
   }
 };
@@ -114,6 +113,11 @@ class PlatformUtilTestBase : public BrowserWithTestWindowTest {
     extensions::ExtensionRegistry::Get(GetProfile())->AddEnabled(extension);
   }
 
+  void SetUp() override {
+    BrowserWithTestWindowTest::SetUp();
+    base::RunLoop().RunUntilIdle();
+  }
+
   void TearDown() override {
     content::ContentBrowserClient* content_browser_client =
         content::SetBrowserClientForTesting(old_content_browser_client_);
@@ -139,7 +143,7 @@ class PlatformUtilTestBase : public testing::Test {
   void SetUpPlatformFixture(const base::FilePath&) {}
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 #endif
@@ -150,9 +154,9 @@ class PlatformUtilTest : public PlatformUtilTestBase {
     ASSERT_NO_FATAL_FAILURE(PlatformUtilTestBase::SetUp());
 
     static const char kTestFileData[] = "Cow says moo!";
-    const int kTestFileDataLength = arraysize(kTestFileData) - 1;
+    const int kTestFileDataLength = base::size(kTestFileData) - 1;
 
-    // This prevents platfrom_util from invoking any shell or external APIs
+    // This prevents platform_util from invoking any shell or external APIs
     // during tests. Doing so may result in external applications being launched
     // and intefering with tests.
     internal::DisableShellOperationsForTesting();

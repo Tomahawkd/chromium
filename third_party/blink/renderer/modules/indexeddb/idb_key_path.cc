@@ -26,9 +26,9 @@
 #include "third_party/blink/renderer/modules/indexeddb/idb_key_path.h"
 
 #include "third_party/blink/public/common/indexeddb/web_idb_types.h"
-#include "third_party/blink/renderer/platform/wtf/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/dtoa.h"
+#include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
 
@@ -131,37 +131,6 @@ IDBKeyPath::IDBKeyPath(const StringOrStringSequence& key_path) {
       DCHECK(!element.IsNull());
 #endif
   }
-}
-
-IDBKeyPath::IDBKeyPath(const WebIDBKeyPath& key_path) {
-  type_ = key_path.KeyPathType();
-  switch (key_path.KeyPathType()) {
-    case mojom::IDBKeyPathType::Null:
-      return;
-
-    case mojom::IDBKeyPathType::String:
-      string_ = key_path.String();
-      return;
-
-    case mojom::IDBKeyPathType::Array:
-      for (size_t i = 0, size = key_path.Array().size(); i < size; ++i)
-        array_.push_back(key_path.Array()[i]);
-      return;
-  }
-  NOTREACHED();
-}
-
-IDBKeyPath::operator WebIDBKeyPath() const {
-  switch (type_) {
-    case mojom::IDBKeyPathType::Null:
-      return WebIDBKeyPath();
-    case mojom::IDBKeyPathType::String:
-      return WebIDBKeyPath(WebString(string_));
-    case mojom::IDBKeyPathType::Array:
-      return WebIDBKeyPath(array_);
-  }
-  NOTREACHED();
-  return WebIDBKeyPath();
 }
 
 bool IDBKeyPath::IsValid() const {

@@ -17,11 +17,13 @@
 #include "chrome/browser/sync_file_system/sync_file_system_service.h"
 #include "chrome/browser/sync_file_system/sync_file_system_service_factory.h"
 #include "components/drive/service/fake_drive_service.h"
-#include "components/signin/core/browser/account_info.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "services/identity/public/cpp/identity_manager.h"
-#include "services/identity/public/cpp/identity_test_environment.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
 
@@ -29,7 +31,6 @@ namespace sync_file_system {
 
 namespace {
 
-const char kGaiaId[] = "gaia_id";
 const char kEmail[] = "email@example.com";
 
 class FakeDriveServiceFactory
@@ -41,7 +42,7 @@ class FakeDriveServiceFactory
   ~FakeDriveServiceFactory() override {}
 
   std::unique_ptr<drive::DriveServiceInterface> CreateDriveService(
-      identity::IdentityManager* identity_manager,
+      signin::IdentityManager* identity_manager,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       base::SequencedTaskRunner* blocking_task_runner) override {
     std::unique_ptr<drive::FakeDriveService> drive_service(
@@ -64,8 +65,9 @@ class SyncFileSystemTest : public extensions::PlatformAppBrowserTest,
   SyncFileSystemTest() : remote_service_(nullptr) {}
 
   scoped_refptr<base::SequencedTaskRunner> MakeSequencedTaskRunner() {
-    return base::CreateSequencedTaskRunnerWithTraits(
-        {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
+    return base::CreateSequencedTaskRunner(
+        {base::ThreadPool(), base::MayBlock(),
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   }
 
   void SetUpOnMainThread() override {
@@ -79,11 +81,13 @@ class SyncFileSystemTest : public extensions::PlatformAppBrowserTest,
     content::BrowserContext* context = browser()->profile();
     extensions::ExtensionServiceInterface* extension_service =
         extensions::ExtensionSystem::Get(context)->extension_service();
+    extensions::ExtensionRegistry* extension_registry =
+        extensions::ExtensionRegistry::Get(context);
 
     std::unique_ptr<drive_backend::SyncEngine::DriveServiceFactory>
         drive_service_factory(new FakeDriveServiceFactory(this));
 
-    identity_test_env_.reset(new identity::IdentityTestEnvironment);
+    identity_test_env_.reset(new signin::IdentityTestEnvironment);
 
     remote_service_ = new drive_backend::SyncEngine(
         base::ThreadTaskRunnerHandle::Get(),  // ui_task_runner
@@ -91,7 +95,7 @@ class SyncFileSystemTest : public extensions::PlatformAppBrowserTest,
         base_dir_.GetPath(),
         nullptr,  // task_logger
         nullptr,  // notification_manager
-        extension_service,
+        extension_service, extension_registry,
         identity_test_env_->identity_manager(),  // identity_manager
         nullptr,                                 // url_loader_factory
         std::move(drive_service_factory), in_memory_env_.get());
@@ -137,11 +141,15 @@ class SyncFileSystemTest : public extensions::PlatformAppBrowserTest,
     run_loop.Run();
   }
 
+  signin::IdentityManager* identity_manager() const {
+    return identity_test_env_->identity_manager();
+  }
+
  private:
   base::ScopedTempDir base_dir_;
   std::unique_ptr<leveldb::Env> in_memory_env_;
 
-  std::unique_ptr<identity::IdentityTestEnvironment> identity_test_env_;
+  std::unique_ptr<signin::IdentityTestEnvironment> identity_test_env_;
 
   drive_backend::SyncEngine* remote_service_;
 
@@ -175,10 +183,8 @@ IN_PROC_BROWSER_TEST_F(SyncFileSystemTest, AuthorizationTest) {
   // service.  Wait for the completion and resume the app.
   WaitUntilIdle();
 
-  AccountInfo info;
-  info.account_id = kGaiaId;
-  info.account_id = kEmail;
-  sync_engine()->OnPrimaryAccountCleared(info);
+  sync_engine()->OnPrimaryAccountCleared(
+      identity_manager()->GetPrimaryAccountInfo());
   foo_created.Reply("resume");
 
   ASSERT_TRUE(bar_created.WaitUntilSatisfied());
@@ -191,7 +197,8 @@ IN_PROC_BROWSER_TEST_F(SyncFileSystemTest, AuthorizationTest) {
   EXPECT_EQ(REMOTE_SERVICE_AUTHENTICATION_REQUIRED,
             sync_engine()->GetCurrentState());
 
-  sync_engine()->OnPrimaryAccountSet(info);
+  sync_engine()->OnPrimaryAccountSet(
+      identity_manager()->GetPrimaryAccountInfo());
   WaitUntilIdle();
 
   bar_created.Reply("resume");

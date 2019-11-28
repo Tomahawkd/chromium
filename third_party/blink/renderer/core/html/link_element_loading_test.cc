@@ -15,11 +15,11 @@ class LinkElementLoadingTest : public SimTest {};
 TEST_F(LinkElementLoadingTest,
        ShouldCancelLoadingStyleSheetIfLinkElementIsDisconnected) {
   SimRequest main_resource("https://example.com/test.html", "text/html");
-  SimRequest css_resource("https://example.com/test.css", "text/css");
+  SimSubresourceRequest css_resource("https://example.com/test.css",
+                                     "text/css");
 
   LoadURL("https://example.com/test.html");
 
-  main_resource.Start();
   main_resource.Write(
       "<!DOCTYPE html><link id=link rel=stylesheet href=test.css>");
 
@@ -27,8 +27,7 @@ TEST_F(LinkElementLoadingTest,
   css_resource.Start();
 
   // Remove a link element from a document
-  HTMLLinkElement* link =
-      ToHTMLLinkElement(GetDocument().getElementById("link"));
+  auto* link = To<HTMLLinkElement>(GetDocument().getElementById("link"));
   EXPECT_NE(nullptr, link);
   link->remove();
 

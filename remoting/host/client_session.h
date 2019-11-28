@@ -18,6 +18,7 @@
 #include "base/timer/timer.h"
 #include "remoting/host/client_session_control.h"
 #include "remoting/host/client_session_details.h"
+#include "remoting/host/desktop_display_info.h"
 #include "remoting/host/desktop_environment_options.h"
 #include "remoting/host/host_experiment_session_plugin.h"
 #include "remoting/host/host_extension_session_manager.h"
@@ -28,6 +29,7 @@
 #include "remoting/protocol/clipboard_stub.h"
 #include "remoting/protocol/connection_to_client.h"
 #include "remoting/protocol/data_channel_manager.h"
+#include "remoting/protocol/display_size.h"
 #include "remoting/protocol/host_stub.h"
 #include "remoting/protocol/input_event_tracker.h"
 #include "remoting/protocol/input_filter.h"
@@ -35,7 +37,9 @@
 #include "remoting/protocol/mouse_input_filter.h"
 #include "remoting/protocol/pairing_registry.h"
 #include "remoting/protocol/video_stream.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
+#include "ui/events/event.h"
 
 namespace remoting {
 
@@ -113,6 +117,8 @@ class ClientSession : public protocol::HostStub,
   void RequestPairing(
       const remoting::protocol::PairingRequest& pairing_request) override;
   void DeliverClientMessage(const protocol::ExtensionMessage& message) override;
+  void SelectDesktopDisplay(
+      const protocol::SelectDesktopDisplayRequest& select_display) override;
 
   // protocol::ConnectionToClient::EventHandler interface.
   void OnConnectionAuthenticating() override;
@@ -129,7 +135,9 @@ class ClientSession : public protocol::HostStub,
   // ClientSessionControl interface.
   const std::string& client_jid() const override;
   void DisconnectSession(protocol::ErrorCode error) override;
-  void OnLocalMouseMoved(const webrtc::DesktopVector& position) override;
+  void OnLocalKeyPressed(uint32_t usb_keycode) override;
+  void OnLocalPointerMoved(const webrtc::DesktopVector& position,
+                           ui::EventType type) override;
   void SetDisableInputs(bool disable_inputs) override;
   void OnDesktopDisplayChanged(
       std::unique_ptr<protocol::VideoLayout> layout) override;
@@ -155,9 +163,14 @@ class ClientSession : public protocol::HostStub,
       scoped_refptr<protocol::InputEventTimestampsSource>
           event_timestamp_source);
 
+  // Public for tests.
+  void UpdateMouseClampingFilterOffset();
+
  private:
   // Creates a proxy for sending clipboard events to the client.
   std::unique_ptr<protocol::ClipboardStub> CreateClipboardProxy();
+
+  void SetMouseClampingFilter(const DisplaySize& size);
 
   // protocol::VideoStream::Observer implementation.
   void OnVideoSizeChanged(protocol::VideoStream* stream,
@@ -243,6 +256,17 @@ class ClientSession : public protocol::HostStub,
   // Used to apply client-requested changes in screen resolution.
   std::unique_ptr<ScreenControls> screen_controls_;
 
+  // Contains the most recently gathered info about the desktop displays;
+  DesktopDisplayInfo desktop_display_info_;
+
+  // Default DPI values to use if a display reports 0 for DPI.
+  int default_x_dpi_;
+  int default_y_dpi_;
+
+  // The id of the desktop display to show to the user.
+  // Default is webrtc::kFullDesktopScreenId which shows all displays.
+  webrtc::ScreenId show_display_id_ = webrtc::kFullDesktopScreenId;
+
   // The pairing registry for PIN-less authentication.
   scoped_refptr<protocol::PairingRegistry> pairing_registry_;
 
@@ -276,7 +300,7 @@ class ClientSession : public protocol::HostStub,
 
   // Used to disable callbacks to |this| once DisconnectSession() has been
   // called.
-  base::WeakPtrFactory<ClientSessionControl> weak_factory_;
+  base::WeakPtrFactory<ClientSessionControl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ClientSession);
 };

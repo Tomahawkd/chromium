@@ -11,12 +11,15 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "google_apis/gaia/oauth2_token_service.h"
+#include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/backoff_entry.h"
 #include "services/network/public/cpp/network_connection_tracker.h"
 
-class Profile;
-class SigninManager;
+namespace signin {
+class IdentityManager;
+class PrimaryAccountAccessTokenFetcher;
+struct AccessTokenInfo;
+}  // namespace signin
 
 extern const char kForceSigninVerificationMetricsName[];
 extern const char kForceSigninVerificationSuccessTimeMetricsName[];
@@ -26,18 +29,13 @@ extern const char kForceSigninVerificationFailureTimeMetricsName[];
 // into memory by the first time via gaia server. It will retry on any transient
 // error.
 class ForceSigninVerifier
-    : public OAuth2TokenService::Consumer,
-      public network::NetworkConnectionTracker::NetworkConnectionObserver {
+    : public network::NetworkConnectionTracker::NetworkConnectionObserver {
  public:
-  explicit ForceSigninVerifier(Profile* profile);
+  explicit ForceSigninVerifier(signin::IdentityManager* identity_manager);
   ~ForceSigninVerifier() override;
 
-  // override OAuth2TokenService::Consumer
-  void OnGetTokenSuccess(
-      const OAuth2TokenService::Request* request,
-      const OAuth2AccessTokenConsumer::TokenResponse& token_response) override;
-  void OnGetTokenFailure(const OAuth2TokenService::Request* request,
-                         const GoogleServiceAuthError& error) override;
+  void OnAccessTokenFetchComplete(GoogleServiceAuthError error,
+                                  signin::AccessTokenInfo token_info);
 
   // override network::NetworkConnectionTracker::NetworkConnectionObserver
   void OnConnectionChanged(network::mojom::ConnectionType type) override;
@@ -66,22 +64,22 @@ class ForceSigninVerifier
 
   virtual void CloseAllBrowserWindows();
 
-  OAuth2TokenService::Request* GetRequestForTesting();
+  signin::PrimaryAccountAccessTokenFetcher* GetAccessTokenFetcherForTesting();
   net::BackoffEntry* GetBackoffEntryForTesting();
   base::OneShotTimer* GetOneShotTimerForTesting();
 
  private:
-  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher>
+      access_token_fetcher_;
 
   // Indicates whether the verification is finished successfully or with a
   // persistent error.
-  bool has_token_verified_;
+  bool has_token_verified_ = false;
   net::BackoffEntry backoff_entry_;
   base::OneShotTimer backoff_request_timer_;
   base::TimeTicks creation_time_;
 
-  OAuth2TokenService* oauth2_token_service_;
-  SigninManager* signin_manager_;
+  signin::IdentityManager* identity_manager_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ForceSigninVerifier);
 };

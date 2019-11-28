@@ -11,13 +11,11 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "base/values.h"
+#include "build/build_config.h"
 #include "printing/native_drawing_context.h"
 #include "printing/print_settings.h"
 #include "ui/gfx/native_widget_types.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace printing {
 
@@ -83,8 +81,8 @@ class PRINTING_EXPORT PrintingContext {
                                        int page_count) = 0;
 
   // Updates Print Settings. |job_settings| contains all print job
-  // settings information. |ranges| has the new page range settings.
-  Result UpdatePrintSettings(const base::DictionaryValue& job_settings);
+  // settings information.
+  Result UpdatePrintSettings(base::Value job_settings);
 
 #if defined(OS_CHROMEOS)
   // Updates Print Settings.
@@ -127,9 +125,9 @@ class PRINTING_EXPORT PrintingContext {
   void set_margin_type(MarginType type);
   void set_is_modifiable(bool is_modifiable);
 
-  const PrintSettings& settings() const {
-    return settings_;
-  }
+  const PrintSettings& settings() const;
+
+  std::unique_ptr<PrintSettings> TakeAndResetSettings();
 
   int job_id() const { return job_id_; }
 
@@ -143,7 +141,7 @@ class PRINTING_EXPORT PrintingContext {
   PrintingContext::Result OnError();
 
   // Complete print context settings.
-  PrintSettings settings_;
+  std::unique_ptr<PrintSettings> settings_;
 
   // Printing context delegate.
   Delegate* const delegate_;

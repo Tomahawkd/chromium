@@ -7,7 +7,6 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <errno.h>
 #include <stddef.h>
-#include <sys/socket.h>
 #include <sys/un.h>
 
 #include <memory>
@@ -92,13 +91,11 @@ MockLaunchd::MockLaunchd(
     const base::FilePath& file,
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
     base::OnceClosure quit_closure,
-    bool create_socket,
     bool as_service)
     : file_(file),
       pipe_name_(GetServiceProcessServerName()),
       main_task_runner_(std::move(main_task_runner)),
       quit_closure_(std::move(quit_closure)),
-      create_socket_(create_socket),
       as_service_(as_service),
       restart_called_(false),
       remove_called_(false),
@@ -108,105 +105,18 @@ MockLaunchd::MockLaunchd(
 
 MockLaunchd::~MockLaunchd() {}
 
-CFDictionaryRef MockLaunchd::CopyJobDictionary(CFStringRef label) {
+bool MockLaunchd::GetJobInfo(const std::string& label,
+                             mac::services::JobInfo* info) {
   if (!as_service_) {
     std::unique_ptr<MultiProcessLock> running_lock(
         TakeNamedLock(pipe_name_, false));
     if (running_lock.get())
-      return NULL;
+      return false;
   }
 
-  CFStringRef program = CFSTR(LAUNCH_JOBKEY_PROGRAM);
-  CFStringRef program_pid = CFSTR(LAUNCH_JOBKEY_PID);
-  const void* keys[] = {program, program_pid};
-  base::ScopedCFTypeRef<CFStringRef> path(
-      base::SysUTF8ToCFStringRef(file_.value()));
-  int process_id = base::GetCurrentProcId();
-  base::ScopedCFTypeRef<CFNumberRef> pid(
-      CFNumberCreate(NULL, kCFNumberIntType, &process_id));
-  const void* values[] = {path, pid};
-  static_assert(base::size(keys) == base::size(values),
-                "keys must have the same number of elements as values");
-  return CFDictionaryCreate(kCFAllocatorDefault, keys, values, base::size(keys),
-                            &kCFTypeDictionaryKeyCallBacks,
-                            &kCFTypeDictionaryValueCallBacks);
-}
-
-CFDictionaryRef MockLaunchd::CopyDictionaryByCheckingIn(CFErrorRef* error) {
-  checkin_called_ = true;
-  CFStringRef program = CFSTR(LAUNCH_JOBKEY_PROGRAM);
-  CFStringRef program_args = CFSTR(LAUNCH_JOBKEY_PROGRAMARGUMENTS);
-  base::ScopedCFTypeRef<CFStringRef> path(
-      base::SysUTF8ToCFStringRef(file_.value()));
-  const void* array_values[] = {path.get()};
-  base::ScopedCFTypeRef<CFArrayRef> args(CFArrayCreate(
-      kCFAllocatorDefault, array_values, 1, &kCFTypeArrayCallBacks));
-
-  if (!create_socket_) {
-    const void* keys[] = {program, program_args};
-    const void* values[] = {path, args};
-    static_assert(base::size(keys) == base::size(values),
-                  "keys must have the same number of elements as values");
-    return CFDictionaryCreate(kCFAllocatorDefault, keys, values,
-                              base::size(keys), &kCFTypeDictionaryKeyCallBacks,
-                              &kCFTypeDictionaryValueCallBacks);
-  }
-
-  CFStringRef socket_key = CFSTR(LAUNCH_JOBKEY_SOCKETS);
-  int local_pipe = -1;
-  EXPECT_TRUE(as_service_);
-
-  // Create unix_addr structure.
-  struct sockaddr_un unix_addr = {0};
-  unix_addr.sun_family = AF_UNIX;
-  size_t path_len = base::strlcpy(unix_addr.sun_path, pipe_name_.c_str(),
-                                  sizeof(unix_addr.sun_path));
-  DCHECK_EQ(pipe_name_.length(), path_len);
-  unix_addr.sun_len = SUN_LEN(&unix_addr);
-
-  CFSocketSignature signature;
-  signature.protocolFamily = PF_UNIX;
-  signature.socketType = SOCK_STREAM;
-  signature.protocol = 0;
-  size_t unix_addr_len = offsetof(struct sockaddr_un, sun_path) + path_len + 1;
-  base::ScopedCFTypeRef<CFDataRef> address(
-      CFDataCreate(NULL, reinterpret_cast<UInt8*>(&unix_addr), unix_addr_len));
-  signature.address = address;
-
-  CFSocketRef socket =
-      CFSocketCreateWithSocketSignature(NULL, &signature, 0, NULL, NULL);
-
-  local_pipe = CFSocketGetNative(socket);
-  EXPECT_NE(-1, local_pipe);
-  if (local_pipe == -1) {
-    if (error) {
-      *error =
-          CFErrorCreate(kCFAllocatorDefault, kCFErrorDomainPOSIX, errno, NULL);
-    }
-    return NULL;
-  }
-
-  base::ScopedCFTypeRef<CFNumberRef> socket_fd(
-      CFNumberCreate(NULL, kCFNumberIntType, &local_pipe));
-  const void* socket_array_values[] = {socket_fd};
-  base::ScopedCFTypeRef<CFArrayRef> sockets(CFArrayCreate(
-      kCFAllocatorDefault, socket_array_values, 1, &kCFTypeArrayCallBacks));
-  CFStringRef socket_dict_key = CFSTR("ServiceProcessSocket");
-  const void* socket_keys[] = {socket_dict_key};
-  const void* socket_values[] = {sockets};
-  static_assert(base::size(socket_keys) == base::size(socket_values),
-                "socket_keys must have the same number of elements "
-                "as socket_values");
-  base::ScopedCFTypeRef<CFDictionaryRef> socket_dict(CFDictionaryCreate(
-      kCFAllocatorDefault, socket_keys, socket_values, base::size(socket_keys),
-      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-  const void* keys[] = {program, program_args, socket_key};
-  const void* values[] = {path, args, socket_dict};
-  static_assert(base::size(keys) == base::size(values),
-                "keys must have the same number of elements as values");
-  return CFDictionaryCreate(kCFAllocatorDefault, keys, values, base::size(keys),
-                            &kCFTypeDictionaryKeyCallBacks,
-                            &kCFTypeDictionaryValueCallBacks);
+  info->program = file_.value();
+  info->pid = base::GetCurrentProcId();
+  return true;
 }
 
 bool MockLaunchd::RemoveJob(const std::string& label) {
@@ -227,8 +137,16 @@ bool MockLaunchd::RestartJob(Domain domain,
 CFMutableDictionaryRef MockLaunchd::CreatePlistFromFile(Domain domain,
                                                         Type type,
                                                         CFStringRef name) {
-  base::ScopedCFTypeRef<CFDictionaryRef> dict(CopyDictionaryByCheckingIn(NULL));
-  return CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, dict);
+  NSString* ns_program = base::SysUTF8ToNSString(file_.value());
+
+  NSMutableDictionary* dict = [NSMutableDictionary dictionaryWithDictionary:@{
+    @LAUNCH_JOBKEY_PROGRAM : ns_program,
+    @LAUNCH_JOBKEY_PROGRAMARGUMENTS : @[ ns_program ],
+  }];
+
+  // Callers expect to be given a reference but dictionaryWithDictionary: is
+  // autoreleased, so it's necessary to do a manual retain here.
+  return base::mac::NSToCFCast([dict retain]);
 }
 
 bool MockLaunchd::WritePlistToFile(Domain domain,

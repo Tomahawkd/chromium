@@ -19,16 +19,14 @@
 #include "media/cast/cast_sender.h"
 #include "media/cast/logging/logging_defines.h"
 #include "media/cast/net/cast_transport.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
-
-class Profile;
 
 namespace cast {
 
 class CastTransportHostFilter : public content::BrowserMessageFilter {
  public:
-  explicit CastTransportHostFilter(Profile* profile);
+  CastTransportHostFilter();
 
   // Used by unit test only.
   void InitializeNoOpWakeLockForTesting();
@@ -104,7 +102,7 @@ class CastTransportHostFilter : public content::BrowserMessageFilter {
   // hold a wake lock. This prevents Chrome from being suspended while remoting
   // content. If any wake lock is held upon destruction, it's implicitly
   // canceled when this object is destroyed.
-  device::mojom::WakeLockPtr wake_lock_;
+  mojo::Remote<device::mojom::WakeLock> wake_lock_;
 
   // This map records all active remoting senders. It uses the unique RTP
   // stream ID as the key.
@@ -115,9 +113,7 @@ class CastTransportHostFilter : public content::BrowserMessageFilter {
   // channel ID as the key.
   std::multimap<int32_t, int32_t> stream_id_map_;
 
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
-
-  base::WeakPtrFactory<CastTransportHostFilter> weak_factory_;
+  base::WeakPtrFactory<CastTransportHostFilter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastTransportHostFilter);
 };

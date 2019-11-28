@@ -20,7 +20,6 @@
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/history/core/browser/history_service.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
@@ -75,10 +74,10 @@ ShortcutsBackend::ShortcutsBackend(
     : template_url_service_(template_url_service),
       search_terms_data_(std::move(search_terms_data)),
       current_state_(NOT_INITIALIZED),
-      history_service_observer_(this),
       main_runner_(base::ThreadTaskRunnerHandle::Get()),
-      db_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      db_runner_(base::CreateSequencedTaskRunner(
+          {base::ThreadPool(), base::MayBlock(),
+           base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       no_db_access_(suppress_db) {
   if (!suppress_db)
@@ -146,13 +145,7 @@ void ShortcutsBackend::AddOrUpdateShortcut(const base::string16& text,
 }
 
 ShortcutsBackend::~ShortcutsBackend() {
-  if (db_) {
-    auto* db = db_.get();
-    db->AddRef();
-    db_ = nullptr;
-    if (!db_runner_->ReleaseSoon(FROM_HERE, db))
-      db->Release();
-  }
+  db_runner_->ReleaseSoon(FROM_HERE, std::move(db_));
 }
 
 // static
@@ -177,6 +170,7 @@ ShortcutsDatabase::Shortcut::MatchCore ShortcutsBackend::MatchToMatchCore(
 
   return ShortcutsDatabase::Shortcut::MatchCore(
       normalized_match->fill_into_edit, normalized_match->destination_url,
+      static_cast<int>(normalized_match->document_type),
       normalized_match->contents,
       StripMatchMarkers(normalized_match->contents_class),
       normalized_match->description,

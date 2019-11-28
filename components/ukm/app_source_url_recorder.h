@@ -13,14 +13,20 @@
 
 class GURL;
 
+namespace app_list {
+class AppLaunchEventLogger;
+}  // namespace app_list
+
 namespace ukm {
 
 const base::Feature kUkmAppLogging{"UkmAppLogging",
-                                   base::FEATURE_DISABLED_BY_DEFAULT};
+                                   base::FEATURE_ENABLED_BY_DEFAULT};
 
 class AppSourceUrlRecorder {
  private:
   friend class AppSourceUrlRecorderTest;
+
+  friend class app_list::AppLaunchEventLogger;
 
   // Get a UKM SourceId for a Chrome app.
   static SourceId GetSourceIdForChromeApp(const std::string& id);
@@ -28,7 +34,7 @@ class AppSourceUrlRecorder {
   // Get a UKM SourceId for an Arc app.
   static SourceId GetSourceIdForArc(const std::string& package_name);
 
-  // Get a UKM SourceId for a PWA.
+  // Get a UKM SourceId for a PWA or bookmark app.
   static SourceId GetSourceIdForPWA(const GURL& url);
 
   // For internal use only.

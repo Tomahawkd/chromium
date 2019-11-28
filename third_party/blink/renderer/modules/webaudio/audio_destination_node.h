@@ -47,6 +47,8 @@ class AudioDestinationHandler : public AudioHandler {
 
   virtual void StartRendering() = 0;
   virtual void StopRendering() = 0;
+  virtual void Pause() = 0;
+  virtual void Resume() = 0;
 
   // The render thread needs to be changed after Worklet JS code is loaded by
   // AudioWorklet. This method ensures the switching of render thread and the
@@ -102,6 +104,11 @@ class AudioDestinationNode : public AudioNode {
   // Returns its own handler object instead of a generic one from
   // AudioNode::Handler().
   AudioDestinationHandler& GetAudioDestinationHandler() const;
+
+  // InspectorHelperMixin: Note that this node belongs to BaseAudioContext,
+  // so these methods are invoked by the parent context.
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
 
  protected:
   AudioDestinationNode(BaseAudioContext&);

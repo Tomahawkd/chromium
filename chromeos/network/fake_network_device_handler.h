@@ -9,15 +9,16 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/network_device_handler.h"
 
 namespace chromeos {
 
 // This is a fake implementation which does nothing. Use this as a base class
 // for concrete fake handlers.
-class CHROMEOS_EXPORT FakeNetworkDeviceHandler : public NetworkDeviceHandler {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) FakeNetworkDeviceHandler
+    : public NetworkDeviceHandler {
  public:
   FakeNetworkDeviceHandler();
   ~FakeNetworkDeviceHandler() override;
@@ -35,20 +36,9 @@ class CHROMEOS_EXPORT FakeNetworkDeviceHandler : public NetworkDeviceHandler {
       const base::Closure& callback,
       const network_handler::ErrorCallback& error_callback) override;
 
-  void RequestRefreshIPConfigs(
-      const std::string& device_path,
-      const base::Closure& callback,
-      const network_handler::ErrorCallback& error_callback) override;
-
   void RegisterCellularNetwork(
       const std::string& device_path,
       const std::string& network_id,
-      const base::Closure& callback,
-      const network_handler::ErrorCallback& error_callback) override;
-
-  void SetCarrier(
-      const std::string& device_path,
-      const std::string& carrier,
       const base::Closure& callback,
       const network_handler::ErrorCallback& error_callback) override;
 
@@ -78,6 +68,8 @@ class CHROMEOS_EXPORT FakeNetworkDeviceHandler : public NetworkDeviceHandler {
                  const network_handler::ErrorCallback& error_callback) override;
 
   void SetCellularAllowRoaming(bool allow_roaming) override;
+
+  void SetUsbEthernetMacAddressSource(const std::string& source) override;
 
   void SetWifiTDLSEnabled(
       const std::string& ip_or_mac_address,

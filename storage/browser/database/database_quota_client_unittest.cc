@@ -6,6 +6,7 @@
 
 #include <map>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
@@ -14,7 +15,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
@@ -70,7 +71,7 @@ class MockDatabaseTracker : public DatabaseTracker {
     return true;
   }
 
-  int DeleteDataForOrigin(const std::string& origin_identifier,
+  int DeleteDataForOrigin(const url::Origin& origin,
                           net::CompletionOnceCallback callback) override {
     ++delete_called_count_;
     if (async_delete()) {
@@ -109,7 +110,7 @@ class MockDatabaseTracker : public DatabaseTracker {
 
     void AddMockDatabase(const base::string16& name, int size) {
       EXPECT_TRUE(database_info_.find(name) == database_info_.end());
-      database_info_[name].first = size;
+      database_info_[name].size = size;
       total_size_ += size;
     }
   };
@@ -131,8 +132,7 @@ class DatabaseQuotaClientTest : public testing::Test {
         kOriginB(url::Origin::Create(GURL("http://host:8000"))),
         kOriginOther(url::Origin::Create(GURL("http://other"))),
         usage_(0),
-        mock_tracker_(new MockDatabaseTracker),
-        weak_factory_(this) {}
+        mock_tracker_(new MockDatabaseTracker) {}
 
   int64_t GetOriginUsage(storage::QuotaClient* client,
                          const url::Origin& origin,
@@ -198,12 +198,12 @@ class DatabaseQuotaClientTest : public testing::Test {
     delete_status_ = status;
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   int64_t usage_;
   std::set<url::Origin> origins_;
   blink::mojom::QuotaStatusCode delete_status_;
   scoped_refptr<MockDatabaseTracker> mock_tracker_;
-  base::WeakPtrFactory<DatabaseQuotaClientTest> weak_factory_;
+  base::WeakPtrFactory<DatabaseQuotaClientTest> weak_factory_{this};
 };
 
 TEST_F(DatabaseQuotaClientTest, GetOriginUsage) {

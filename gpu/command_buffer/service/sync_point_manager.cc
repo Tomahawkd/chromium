@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 
 namespace gpu {
 
@@ -45,7 +46,10 @@ SyncPointOrderData::OrderFence::~OrderFence() = default;
 
 SyncPointOrderData::SyncPointOrderData(SyncPointManager* sync_point_manager,
                                        SequenceId sequence_id)
-    : sync_point_manager_(sync_point_manager), sequence_id_(sequence_id) {}
+    : sync_point_manager_(sync_point_manager), sequence_id_(sequence_id) {
+  // Creation could happen outside of GPU thread.
+  DETACH_FROM_THREAD(processing_thread_checker_);
+}
 
 SyncPointOrderData::~SyncPointOrderData() {
   DCHECK(destroyed_);
@@ -262,8 +266,12 @@ void SyncPointClientState::ReleaseFenceSyncHelper(uint64_t release) {
   {
     base::AutoLock auto_lock(fence_sync_lock_);
 
-    DLOG_IF(ERROR, release <= fence_sync_release_)
-        << "Client submitted fence releases out of order.";
+    if (release <= fence_sync_release_) {
+      DLOG(ERROR) << "Client submitted fence releases out of order.";
+      DCHECK(release_callback_queue_.empty() ||
+             release_callback_queue_.top().release_count > release);
+      return;
+    }
     fence_sync_release_ = release;
 
     while (!release_callback_queue_.empty() &&
@@ -362,7 +370,8 @@ SyncPointManager::CreateSyncPointClientState(
   {
     base::AutoLock auto_lock(lock_);
     DCHECK_GE(namespace_id, 0);
-    DCHECK_LT(static_cast<size_t>(namespace_id), arraysize(client_state_maps_));
+    DCHECK_LT(static_cast<size_t>(namespace_id),
+              base::size(client_state_maps_));
     DCHECK(!client_state_maps_[namespace_id].count(command_buffer_id));
     client_state_maps_[namespace_id].insert(
         std::make_pair(command_buffer_id, client_state));
@@ -376,7 +385,7 @@ void SyncPointManager::DestroyedSyncPointClientState(
     CommandBufferId command_buffer_id) {
   base::AutoLock auto_lock(lock_);
   DCHECK_GE(namespace_id, 0);
-  DCHECK_LT(static_cast<size_t>(namespace_id), arraysize(client_state_maps_));
+  DCHECK_LT(static_cast<size_t>(namespace_id), base::size(client_state_maps_));
   DCHECK(client_state_maps_[namespace_id].count(command_buffer_id));
   client_state_maps_[namespace_id].erase(command_buffer_id);
 }
@@ -466,7 +475,8 @@ scoped_refptr<SyncPointClientState> SyncPointManager::GetSyncPointClientState(
     CommandBufferNamespace namespace_id,
     CommandBufferId command_buffer_id) {
   if (namespace_id >= 0) {
-    DCHECK_LT(static_cast<size_t>(namespace_id), arraysize(client_state_maps_));
+    DCHECK_LT(static_cast<size_t>(namespace_id),
+              base::size(client_state_maps_));
     base::AutoLock auto_lock(lock_);
     ClientStateMap& client_state_map = client_state_maps_[namespace_id];
     auto it = client_state_map.find(command_buffer_id);

@@ -14,9 +14,9 @@
 #import "ios/chrome/browser/ui/material_components/chrome_app_bar_view_controller.h"
 #import "ios/chrome/browser/ui/settings/bar_button_activity_indicator.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
-#import "ios/chrome/browser/ui/settings/settings_utils.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/Collections/src/MaterialCollections.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -55,12 +55,15 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
       self.collectionViewAccessibilityIdentifier;
 
   // Customize collection view settings.
-  self.collectionView.backgroundColor = [UIColor groupTableViewBackgroundColor];
+  self.collectionView.backgroundColor = UIColor.cr_systemGroupedBackgroundColor;
   self.styler.cellStyle = MDCCollectionViewCellStyleGrouped;
   self.styler.separatorColor = UIColorFromRGB(kUIKitSeparatorColor);
   self.appBarViewController.headerView.backgroundColor =
-      [UIColor groupTableViewBackgroundColor];
+      UIColor.cr_systemGroupedBackgroundColor;
   self.styler.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
+
+  self.navigationItem.largeTitleDisplayMode =
+      UINavigationItemLargeTitleDisplayModeNever;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -69,6 +72,14 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
   if (!self.navigationItem.rightBarButtonItem && doneButton) {
     self.navigationItem.rightBarButtonItem = doneButton;
   }
+}
+
+- (UIViewController*)childViewControllerForStatusBarHidden {
+  return nil;
+}
+
+- (UIViewController*)childViewControllerForStatusBarStyle {
+  return nil;
 }
 
 - (UIBarButtonItem*)doneButtonIfNeeded {

@@ -16,14 +16,6 @@ namespace blink {
 class CORE_EXPORT AddEventListenerOptionsResolved
     : public AddEventListenerOptions {
  public:
-  static AddEventListenerOptionsResolved* Create() {
-    return MakeGarbageCollected<AddEventListenerOptionsResolved>();
-  }
-  static AddEventListenerOptionsResolved* Create(
-      const AddEventListenerOptions* options) {
-    return MakeGarbageCollected<AddEventListenerOptionsResolved>(options);
-  }
-
   AddEventListenerOptionsResolved();
   AddEventListenerOptionsResolved(const AddEventListenerOptions*);
   ~AddEventListenerOptionsResolved() override;
@@ -40,7 +32,7 @@ class CORE_EXPORT AddEventListenerOptionsResolved
   void SetPassiveSpecified(bool specified) { passive_specified_ = specified; }
   bool PassiveSpecified() const { return passive_specified_; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   bool passive_forced_for_document_target_;

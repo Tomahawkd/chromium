@@ -6,8 +6,9 @@
 #define ASH_SYSTEM_UNIFIED_UNIFIED_SYSTEM_TRAY_MODEL_H_
 
 #include "ash/ash_export.h"
+#include "ash/public/cpp/pagination/pagination_model.h"
 #include "base/observer_list.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 
 namespace ash {
 
@@ -16,6 +17,16 @@ namespace ash {
 // SystemTrayModel.
 class ASH_EXPORT UnifiedSystemTrayModel {
  public:
+  enum class NotificationTargetMode {
+    // Notification list scrolls to the last notification.
+    LAST_NOTIFICATION,
+    // Notification list scrolls to the last scroll position.
+    LAST_POSITION,
+    // Notification list scrolls to the specified notification defined by
+    // |SetTargetNotification(notification_id)|.
+    NOTIFICATION_ID,
+  };
+
   class Observer {
    public:
     virtual ~Observer() {}
@@ -25,7 +36,7 @@ class ASH_EXPORT UnifiedSystemTrayModel {
     virtual void OnKeyboardBrightnessChanged(bool by_user) {}
   };
 
-  UnifiedSystemTrayModel();
+  explicit UnifiedSystemTrayModel(views::View* owner_view);
   ~UnifiedSystemTrayModel();
 
   void AddObserver(Observer* observer);
@@ -49,6 +60,10 @@ class ASH_EXPORT UnifiedSystemTrayModel {
   // Clears all changes by SetNotificatinExpanded().
   void ClearNotificationChanges();
 
+  // Set the notification id of the target. This sets target mode as
+  // NOTIFICATION_ID.
+  void SetTargetNotification(const std::string& notification_id);
+
   float display_brightness() const { return display_brightness_; }
   float keyboard_brightness() const { return keyboard_brightness_; }
 
@@ -56,11 +71,33 @@ class ASH_EXPORT UnifiedSystemTrayModel {
     expanded_on_open_ = expanded_on_open;
   }
 
+  void set_notification_target_mode(NotificationTargetMode mode) {
+    notification_target_mode_ = mode;
+  }
+
+  NotificationTargetMode notification_target_mode() const {
+    return notification_target_mode_;
+  }
+
+  const std::string& notification_target_id() const {
+    return notification_target_id_;
+  }
+
+  PaginationModel* pagination_model() { return pagination_model_.get(); }
+
  private:
   class DBusObserver;
 
   void DisplayBrightnessChanged(float brightness, bool by_user);
   void KeyboardBrightnessChanged(float brightness, bool by_user);
+
+  // Target mode which is used to decide the scroll position of the message
+  // center on opening. See the comment in |NotificationTargetMode|.
+  NotificationTargetMode notification_target_mode_ =
+      NotificationTargetMode::LAST_NOTIFICATION;
+  // Set the notification id of the target. This id is used if the target mode
+  // is NOTIFICATION_ID.
+  std::string notification_target_id_;
 
   // If UnifiedSystemTray bubble is expanded on its open. It's expanded by
   // default, and if a user collapses manually, it remembers previous state.
@@ -80,6 +117,8 @@ class ASH_EXPORT UnifiedSystemTrayModel {
   std::unique_ptr<DBusObserver> dbus_observer_;
 
   base::ObserverList<Observer>::Unchecked observers_;
+
+  std::unique_ptr<PaginationModel> pagination_model_;
 
   DISALLOW_COPY_AND_ASSIGN(UnifiedSystemTrayModel);
 };

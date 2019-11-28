@@ -8,21 +8,20 @@ import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
 import android.support.test.filters.SmallTest;
 
-import com.google.android.libraries.feed.common.Result;
-import com.google.android.libraries.feed.common.functional.Consumer;
-import com.google.android.libraries.feed.host.storage.CommitResult;
-import com.google.android.libraries.feed.host.storage.JournalMutation;
-import com.google.android.libraries.feed.testing.conformance.storage.JournalStorageConformanceTest;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.chrome.browser.feed.library.api.host.storage.CommitResult;
+import org.chromium.chrome.browser.feed.library.api.host.storage.JournalMutation;
+import org.chromium.chrome.browser.feed.library.common.Result;
+import org.chromium.chrome.browser.feed.library.common.functional.Consumer;
+import org.chromium.chrome.browser.feed.library.testing.conformance.storage.JournalStorageConformanceTest;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.List;
 
@@ -83,17 +82,17 @@ public final class FeedJournalStorageConformanceTest extends JournalStorageConfo
     public final ChromeBrowserTestRule mRule = new ChromeBrowserTestRule();
 
     @Before
-    public void setUp() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+    public void setUp() {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             // journalStorage is declared and tested in JournalStorageConformanceTest.
-            journalStorage = new JournalStorageWrapper(Profile.getLastUsedProfile());
+            mJournalStorage = new JournalStorageWrapper(Profile.getLastUsedProfile());
         });
     }
 
     @After
     public void tearDown() {
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> { ((JournalStorageWrapper) journalStorage).destroy(); });
-        journalStorage = null;
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { ((JournalStorageWrapper) mJournalStorage).destroy(); });
+        mJournalStorage = null;
     }
 }

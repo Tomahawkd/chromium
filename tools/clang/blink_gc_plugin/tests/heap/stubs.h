@@ -196,17 +196,18 @@ using namespace WTF;
  public:                                                                \
   virtual void AdjustAndMark(Visitor*) const override {}                \
   virtual bool IsHeapObjectAlive(Visitor*) const override { return 0; } \
-  void* mixin_constructor_marker_;
+  void* mixin_constructor_marker_
 
-#define EAGERLY_FINALIZED() typedef int IsEagerlyFinalizedMarker
+#define USING_GARBAGE_COLLECTED_MIXIN_NEW(type)                         \
+ public:                                                                \
+  virtual void AdjustAndMark(Visitor*) const override {}                \
+  virtual bool IsHeapObjectAlive(Visitor*) const override { return 0; } \
+  typedef int HasUsingGarbageCollectedMixinMacro
 
 template<typename T> class GarbageCollected { };
 
-template<typename T>
-class GarbageCollectedFinalized : public GarbageCollected<T> { };
-
-template<typename T>
-class RefCountedGarbageCollected : public GarbageCollectedFinalized<T> { };
+template <typename T>
+class RefCountedGarbageCollected : public GarbageCollected<T> {};
 
 template<typename T> class Member {
 public:
@@ -249,9 +250,6 @@ public:
     T* operator->() { return 0; }
     bool operator!() const { return false; }
 };
-
-template <class T>
-class TraceWrapperMember : public Member<T> {};
 
 template <typename T>
 class TraceWrapperV8Reference {

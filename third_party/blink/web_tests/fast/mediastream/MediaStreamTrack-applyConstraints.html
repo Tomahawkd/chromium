@@ -96,7 +96,6 @@ promise_test(() => {
     facingMode: { ideal: "user" },
     aspectRatio: { ideal: 1.3333333, exact: 1.4444 },
 
-    volume: 1.0,
     sampleRate: { ideal: 42, min: 31, max: 54 },
     sampleSize: 3,
     echoCancellation: { ideal: false, exact: true },
@@ -216,6 +215,41 @@ promise_test(async t => {
     assert_equals(e.constraint, 'width');
   }
 }, "applyConstraints() supports resizeMode in getUserMedia() tracks");
+
+function constraintSyntaxTestContradictingProperties(
+    name, constraintName, constraints, contradictingConstraints) {
+  promise_test(async t => {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    const tracks = stream.getTracks();
+    assert_equals(tracks.length, 1);
+
+    const track = tracks[0];
+    t.add_cleanup(()=>track.stop());
+    try {
+      await track.applyConstraints(contradictingConstraints);
+    } catch(e) {
+      assert_equals(e.name, 'OverconstrainedError');
+      assert_equals(e.constraint, constraintName);
+      return;
+    }
+    assert_unreached('applyConstraints should not have succeeded');
+  }, name);
+}
+
+constraintSyntaxTestContradictingProperties(
+    'Contradicting echoCancellation constraints', 'echoCancellation',
+    {audio: {echoCancellation: {exact: true}}},
+    {echoCancellation: {exact: false}});
+
+constraintSyntaxTestContradictingProperties(
+    'Contradicting noiseSuppression constraints', 'noiseSuppression',
+    {audio: {noiseSuppression: {exact: true}}},
+    {noiseSuppression: {exact: false}});
+
+constraintSyntaxTestContradictingProperties(
+    'Contradicting autoGainControl constraints', 'autoGainControl',
+    {audio: {autoGainControl: {exact: true}}},
+    {autoGainControl: {exact: false}});
 
 </script>
 </body>

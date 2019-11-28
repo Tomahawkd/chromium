@@ -9,23 +9,26 @@
 
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
-#include "base/callback_list.h"
+#include "base/containers/flat_map.h"
 #include "base/containers/id_map.h"
 #include "base/macros.h"
-#include "base/observer_list.h"
 #include "base/optional.h"
+#include "base/timer/timer.h"
 #include "content/browser/media/session/audio_focus_delegate.h"
 #include "content/browser/media/session/media_session_uma_helper.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/media_session.h"
-#include "content/public/browser/media_session_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
 #include "mojo/public/cpp/bindings/interface_ptr_set.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/remote_set.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
+#include "third_party/blink/public/mojom/mediasession/media_session.mojom.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/scoped_java_ref.h"
@@ -47,7 +50,6 @@ class AudioFocusManagerTest;
 class MediaSessionImplServiceRoutingTest;
 class MediaSessionImplStateObserver;
 class MediaSessionImplVisibilityBrowserTest;
-class MediaSessionObserver;
 class MediaSessionPlayerObserver;
 class MediaSessionServiceImpl;
 class MediaSessionServiceImplBrowserTest;
@@ -91,10 +93,7 @@ class MediaSessionImpl : public MediaSession,
   }
 #endif  // defined(OS_ANDROID)
 
-  void NotifyMediaSessionMetadataChange(
-      const base::Optional<media_session::MediaMetadata>& metadata);
-  void NotifyMediaSessionActionsChange(
-      const std::set<media_session::mojom::MediaSessionAction>& actions);
+  void NotifyMediaSessionMetadataChange();
 
   // Adds the given player to the current media session. Returns whether the
   // player was successfully added. If it returns false, AddPlayer() should be
@@ -121,8 +120,8 @@ class MediaSessionImpl : public MediaSession,
   CONTENT_EXPORT void OnPlayerPaused(MediaSessionPlayerObserver* observer,
                                      int player_id);
 
-  void AddObserver(MediaSessionObserver* observer) override;
-  void RemoveObserver(MediaSessionObserver* observer) override;
+  // Called when the position state of the session might have changed.
+  CONTENT_EXPORT void RebuildAndNotifyMediaPositionChanged();
 
   // Returns if the session is currently active.
   CONTENT_EXPORT bool IsActive() const;
@@ -131,13 +130,16 @@ class MediaSessionImpl : public MediaSession,
   CONTENT_EXPORT bool IsSuspended() const;
 
   // Returns whether the session has Pepper instances.
-  bool HasPepper() const;
+  CONTENT_EXPORT bool HasPepper() const;
 
   // WebContentsObserver implementation
   void WebContentsDestroyed() override;
   void RenderFrameDeleted(RenderFrameHost* rfh) override;
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
-  void OnWebContentsFocused(RenderWidgetHost* render_widget_host) override;
+  void OnWebContentsFocused(RenderWidgetHost*) override;
+  void OnWebContentsLostFocus(RenderWidgetHost*) override;
+  void TitleWasSet(NavigationEntry* entry) override;
+  void DidUpdateFaviconURL(const std::vector<FaviconURL>& candidates) override;
 
   // MediaSessionService-related methods
 
@@ -165,11 +167,14 @@ class MediaSessionImpl : public MediaSession,
       media_session::mojom::AudioFocusType audio_focus_type);
 
   // Creates a binding between |this| and |request|.
-  void BindToMojoRequest(
-      mojo::InterfaceRequest<media_session::mojom::MediaSession> request);
+  mojo::PendingRemote<media_session::mojom::MediaSession> AddRemote();
 
   // Returns information about the MediaSession.
-  media_session::mojom::MediaSessionInfoPtr GetMediaSessionInfoSync();
+  CONTENT_EXPORT media_session::mojom::MediaSessionInfoPtr
+  GetMediaSessionInfoSync();
+
+  // Returns if the session can be controlled by the user.
+  CONTENT_EXPORT bool IsControllable() const;
 
   // MediaSession overrides ---------------------------------------------------
 
@@ -183,13 +188,6 @@ class MediaSessionImpl : public MediaSession,
 
   // Seek the media session.
   CONTENT_EXPORT void Seek(base::TimeDelta seek_time) override;
-
-  // Returns if the session can be controlled by the user.
-  CONTENT_EXPORT bool IsControllable() const override;
-
-  // Compute if the actual playback state is paused by combining the
-  // MediaSessionService declared state and guessed state (audio_focus_state_).
-  CONTENT_EXPORT bool IsActuallyPaused() const override;
 
   // Called when a MediaSessionAction is received. The action will be forwarded
   // to blink::MediaSession corresponding to the current routed service.
@@ -226,7 +224,8 @@ class MediaSessionImpl : public MediaSession,
 
   // Adds a mojo based observer to listen to events related to this session.
   void AddObserver(
-      media_session::mojom::MediaSessionObserverPtr observer) override;
+      mojo::PendingRemote<media_session::mojom::MediaSessionObserver> observer)
+      override;
 
   // Called by |AudioFocusDelegate| when an async audio focus request is
   // completed.
@@ -240,9 +239,37 @@ class MediaSessionImpl : public MediaSession,
   // Skip to the next track.
   CONTENT_EXPORT void NextTrack() override;
 
+  // Skip ad.
+  CONTENT_EXPORT void SkipAd() override;
+
+  // Seek the media session to a specific time.
+  void SeekTo(base::TimeDelta seek_time) override;
+
+  // Scrub ("fast seek") the media session to a specific time.
+  void ScrubTo(base::TimeDelta seek_time) override;
+
+  // Downloads the bitmap version of a MediaImage at least |minimum_size_px|
+  // and closest to |desired_size_px|. If the download failed, was too small or
+  // the image did not come from the media session then returns a null image.
+  CONTENT_EXPORT void GetMediaImageBitmap(
+      const media_session::MediaImage& image,
+      int minimum_size_px,
+      int desired_size_px,
+      GetMediaImageBitmapCallback callback) override;
+
   const base::UnguessableToken& audio_focus_group_id() const {
     return audio_focus_group_id_;
   }
+
+  // Returns whether the action should be routed to |routed_service_|.
+  bool ShouldRouteAction(media_session::mojom::MediaSessionAction action) const;
+
+  // Returns the source ID which links media sessions on the same browser
+  // context together.
+  CONTENT_EXPORT const base::UnguessableToken& GetSourceId() const;
+
+  // Returns the Audio Focus request ID associated with this media session.
+  const base::UnguessableToken& GetRequestId() const;
 
  private:
   friend class content::WebContentsUserData<MediaSessionImpl>;
@@ -269,7 +296,7 @@ class MediaSessionImpl : public MediaSession,
     bool operator==(const PlayerIdentifier& player_identifier) const;
     bool operator<(const PlayerIdentifier&) const;
 
-    // Hash operator for base::hash_map<>.
+    // Hash operator for std::unordered_map<>.
     struct Hash {
       size_t operator()(const PlayerIdentifier& player_identifier) const;
     };
@@ -277,12 +304,23 @@ class MediaSessionImpl : public MediaSession,
     MediaSessionPlayerObserver* observer;
     int player_id;
   };
-  using PlayersMap = base::hash_set<PlayerIdentifier, PlayerIdentifier::Hash>;
+  using PlayersMap =
+      std::unordered_set<PlayerIdentifier, PlayerIdentifier::Hash>;
   using StateChangedCallback = base::Callback<void(State)>;
 
   CONTENT_EXPORT explicit MediaSessionImpl(WebContents* web_contents);
 
   void Initialize();
+
+  // Called when we have finished downloading an image.
+  void OnImageDownloadComplete(GetMediaImageBitmapCallback callback,
+                               int minimum_size_px,
+                               int desired_size_px,
+                               int id,
+                               int http_status_code,
+                               const GURL& image_url,
+                               const std::vector<SkBitmap>& bitmaps,
+                               const std::vector<gfx::Size>& sizes);
 
   // Called when system audio focus has been requested and whether the request
   // was granted.
@@ -296,13 +334,6 @@ class MediaSessionImpl : public MediaSession,
   // delegate to abandon the audio focus.
   CONTENT_EXPORT void AbandonSystemAudioFocusIfNeeded();
 
-  // Notify all information that an observer needs to know when it's added.
-  void NotifyAddedObserver(MediaSessionObserver* observer);
-
-  // Notifies legacy (non-mojo) observers about the state change of the media
-  // session.
-  void NotifyLegacyObserversStateChange();
-
   // Internal method that should be used instead of setting audio_focus_state_.
   // It sets audio_focus_state_ and notifies observers about the state change.
   void SetAudioFocusState(State audio_focus_state);
@@ -310,9 +341,8 @@ class MediaSessionImpl : public MediaSession,
   // Flushes any mojo bindings for testing.
   CONTENT_EXPORT void FlushForTesting();
 
-  // Notifies mojo observers that the MediaSessionInfo has changed.
-  void OnMediaSessionInfoChanged();
-  void NotifyMojoObserversMediaSessionInfoChanged();
+  // Notifies |observers_| and |delegate_| that |MediaSessionInfo| has changed.
+  void RebuildAndNotifyMediaSessionInfoChanged();
 
   // Update the volume multiplier when ducking state changes.
   void UpdateVolumeMultiplier();
@@ -320,11 +350,6 @@ class MediaSessionImpl : public MediaSession,
   // Get the volume multiplier, which depends on whether the media session is
   // ducking.
   double GetVolumeMultiplier() const;
-
-  // Registers a MediaSessionImpl state change callback.
-  CONTENT_EXPORT std::unique_ptr<base::CallbackList<void(State)>::Subscription>
-  RegisterMediaSessionStateChangedCallbackForTest(
-      const StateChangedCallback& cb);
 
   CONTENT_EXPORT bool AddPepperPlayer(MediaSessionPlayerObserver* observer,
                                       int player_id);
@@ -344,13 +369,29 @@ class MediaSessionImpl : public MediaSession,
   // to update |routed_service_|.
   CONTENT_EXPORT MediaSessionServiceImpl* ComputeServiceForRouting();
 
-  // Returns whether the action is supported by the media session.
-  bool IsActionSupported(media_session::mojom::MediaSessionAction action) const;
+  // Rebuilds |actions_| and notifies observers if they have changed.
+  void RebuildAndNotifyActionsChanged();
+
+  // Rebuilds |metadata_| and |images_| and notifies observers if they have
+  // changed.
+  void RebuildAndNotifyMetadataChanged();
+
+  // Called when a MediaSessionAction is received. The action will be forwarded
+  // to blink::MediaSession corresponding to the current routed service.
+  void DidReceiveAction(media_session::mojom::MediaSessionAction action,
+                        blink::mojom::MediaSessionActionDetailsPtr details);
+
+  // A set of actions supported by |routed_service_| and the current media
+  // session.
+  std::set<media_session::mojom::MediaSessionAction> actions_;
 
   std::unique_ptr<AudioFocusDelegate> delegate_;
   std::map<PlayerIdentifier, media_session::mojom::AudioFocusType>
       normal_players_;
   PlayersMap pepper_players_;
+
+  // Players that are playing in the web contents but we cannot control (e.g.
+  // WebAudio or MediaStream).
   PlayersMap one_shot_players_;
 
   State audio_focus_state_ = State::INACTIVE;
@@ -359,6 +400,12 @@ class MediaSessionImpl : public MediaSession,
   // The |desired_audio_focus_type_| is the AudioFocusType we will request when
   // we request system audio focus.
   media_session::mojom::AudioFocusType desired_audio_focus_type_;
+
+  // The last updated |MediaSessionInfo| that was sent to |observers_|.
+  media_session::mojom::MediaSessionInfoPtr session_info_;
+
+  // The last updated |MediaPosition| that was sent to |observers_|.
+  base::Optional<media_session::MediaPosition> position_;
 
   MediaSessionUmaHelper uma_helper_;
 
@@ -371,9 +418,8 @@ class MediaSessionImpl : public MediaSession,
 
   double ducking_volume_multiplier_;
 
-  base::CallbackList<void(State)> media_session_state_listeners_;
-
-  base::ObserverList<MediaSessionObserver>::Unchecked observers_;
+  // True if the WebContents associated with this MediaSessionImpl is focused.
+  bool focused_ = false;
 
 #if defined(OS_ANDROID)
   std::unique_ptr<MediaSessionAndroid> session_android_;
@@ -381,6 +427,12 @@ class MediaSessionImpl : public MediaSession,
 
   // MediaSessionService-related fields
   using ServicesMap = std::map<RenderFrameHost*, MediaSessionServiceImpl*>;
+
+  // The current metadata and images associated with the current media session.
+  media_session::MediaMetadata metadata_;
+  base::flat_map<media_session::mojom::MediaSessionImageType,
+                 std::vector<media_session::MediaImage>>
+      images_;
 
   // The collection of all managed services (non-owned pointers). The services
   // are owned by RenderFrameHost and should be registered on creation and
@@ -390,13 +442,9 @@ class MediaSessionImpl : public MediaSession,
   MediaSessionServiceImpl* routed_service_;
 
   // Bindings for Mojo pointers to |this| held by media route providers.
-  mojo::BindingSet<media_session::mojom::MediaSession> bindings_;
+  mojo::ReceiverSet<media_session::mojom::MediaSession> receivers_;
 
-  mojo::InterfacePtrSet<media_session::mojom::MediaSessionObserver>
-      mojo_observers_;
-
-  // Timer used for debouncing MediaSessionInfoChanged events.
-  std::unique_ptr<base::OneShotTimer> info_changed_timer_;
+  mojo::RemoteSet<media_session::mojom::MediaSessionObserver> observers_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

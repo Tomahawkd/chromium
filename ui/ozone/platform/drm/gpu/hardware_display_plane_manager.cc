@@ -5,8 +5,8 @@
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager.h"
 
 #include <drm_fourcc.h>
-
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -213,7 +213,7 @@ const std::vector<uint32_t>& HardwareDisplayPlaneManager::GetSupportedFormats()
 
 std::vector<uint64_t> HardwareDisplayPlaneManager::GetFormatModifiers(
     uint32_t crtc_id,
-    uint32_t format) {
+    uint32_t format) const {
   int crtc_index = LookupCrtcIndex(crtc_id);
 
   for (const auto& plane : planes_) {
@@ -248,6 +248,16 @@ bool HardwareDisplayPlaneManager::SetColorMatrix(
       drm_->CreatePropertyBlob(ctm_blob_data.get(), sizeof(drm_color_ctm));
   crtc_state->properties.ctm.value = crtc_state->ctm_blob->id();
   return CommitColorMatrix(crtc_state->properties);
+}
+
+void HardwareDisplayPlaneManager::SetBackgroundColor(
+    uint32_t crtc_id,
+    const uint64_t background_color) {
+  const int crtc_index = LookupCrtcIndex(crtc_id);
+  DCHECK_GE(crtc_index, 0);
+  CrtcState* crtc_state = &crtc_state_[crtc_index];
+
+  crtc_state->properties.background_color.value = background_color;
 }
 
 bool HardwareDisplayPlaneManager::SetGammaCorrection(
@@ -336,6 +346,8 @@ bool HardwareDisplayPlaneManager::InitializeCrtcState() {
                           &state.properties.degamma_lut_size);
     GetDrmPropertyForName(drm_, props.get(), "OUT_FENCE_PTR",
                           &state.properties.out_fence_ptr);
+    GetDrmPropertyForName(drm_, props.get(), "BACKGROUND_COLOR",
+                          &state.properties.background_color);
 
     num_crtcs_with_out_fence_ptr += (state.properties.out_fence_ptr.id != 0);
 

@@ -25,6 +25,7 @@
 #include "components/sync/driver/test_sync_service.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -55,6 +56,7 @@ class PersonalDataLoadedObserverMock
   ~PersonalDataLoadedObserverMock() override;
 
   MOCK_METHOD0(OnPersonalDataChanged, void());
+  MOCK_METHOD0(OnPersonalDataFinishedProfileTasks, void());
 };
 
 // Base class for any interactive PaymentRequest test that will need to open
@@ -82,6 +84,8 @@ class PaymentRequestBrowserTestBase
     EDITOR_VIEW_UPDATED,
     CAN_MAKE_PAYMENT_CALLED,
     CAN_MAKE_PAYMENT_RETURNED,
+    HAS_ENROLLED_INSTRUMENT_CALLED,
+    HAS_ENROLLED_INSTRUMENT_RETURNED,
     ERROR_MESSAGE_SHOWN,
     SPEC_DONE_UPDATING,
     CVC_PROMPT_SHOWN,
@@ -105,10 +109,13 @@ class PaymentRequestBrowserTestBase
   void SetIncognito();
   void SetInvalidSsl();
   void SetBrowserWindowInactive();
+  void SetSkipUiForForBasicCard();
 
   // PaymentRequest::ObserverForTest:
   void OnCanMakePaymentCalled() override;
   void OnCanMakePaymentReturned() override;
+  void OnHasEnrolledInstrumentCalled() override;
+  void OnHasEnrolledInstrumentReturned() override;
   void OnNotSupportedError() override;
   void OnConnectionTerminated() override;
   void OnAbortCalled() override;
@@ -144,7 +151,6 @@ class PaymentRequestBrowserTestBase
 
   // Will expect that all strings in |expected_strings| are present in output.
   void ExpectBodyContains(const std::vector<std::string>& expected_strings);
-  void ExpectBodyContains(const std::vector<base::string16>& expected_strings);
 
   // Utility functions that will click on Dialog views and wait for the
   // associated action to happen.
@@ -174,9 +180,10 @@ class PaymentRequestBrowserTestBase
   // are added close to each other.
   void AddAutofillProfile(const autofill::AutofillProfile& profile);
   void AddCreditCard(const autofill::CreditCard& card);
+  void WaitForOnPersonalDataChanged();
 
   void CreatePaymentRequestForTest(
-      payments::mojom::PaymentRequestRequest request,
+      mojo::PendingReceiver<payments::mojom::PaymentRequest> receiver,
       content::RenderFrameHost* render_frame_host);
 
   // Click on a view from within the dialog and waits for an observed event
@@ -191,8 +198,8 @@ class PaymentRequestBrowserTestBase
   void ClickOnDialogViewAndWait(views::View* view,
                                 PaymentRequestDialogView* dialog_view,
                                 bool wait_for_animation = true);
-  void ClickOnChildInListViewAndWait(int child_index,
-                                     int total_num_children,
+  void ClickOnChildInListViewAndWait(size_t child_index,
+                                     size_t total_num_children,
                                      DialogViewID list_view_id,
                                      bool wait_for_animation = true);
   // Returns profile label values under |parent_view|.
@@ -268,12 +275,13 @@ class PaymentRequestBrowserTestBase
   std::unique_ptr<autofill::EventWaiter<DialogEvent>> event_waiter_;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
   // Weak, owned by the PaymentRequest object.
-  TestChromePaymentRequestDelegate* delegate_;
+  TestChromePaymentRequestDelegate* delegate_ = nullptr;
   syncer::TestSyncService sync_service_;
   sync_preferences::TestingPrefServiceSyncable prefs_;
-  bool is_incognito_;
-  bool is_valid_ssl_;
-  bool is_browser_window_active_;
+  bool is_incognito_ = false;
+  bool is_valid_ssl_ = true;
+  bool is_browser_window_active_ = true;
+  bool skip_ui_for_basic_card_ = false;
 
   service_manager::BinderRegistryWithArgs<content::RenderFrameHost*> registry_;
 

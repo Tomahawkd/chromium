@@ -12,29 +12,27 @@
 #include "base/gtest_prod_util.h"
 #include "chromeos/components/multidevice/remote_device.h"
 #include "chromeos/components/multidevice/software_feature_state.h"
-#include "components/cryptauth/proto/cryptauth_api.pb.h"
 
 namespace chromeos {
+
 class EasyUnlockServiceRegular;
+
 namespace multidevice_setup {
 class MultiDeviceSetupImpl;
 }  // namespace multidevice_setup
+
 namespace secure_channel {
 class SecureChannelClientImpl;
 }  // namespace secure_channel
+
 namespace tether {
 class TetherHostFetcherImpl;
 class TetherHostFetcherImplTest;
 }  // namespace tether
-}  // namespace chromeos
-
-namespace proximity_auth {
-class ProximityAuthWebUIHandler;
-}  // namespace proximity_auth
-
-namespace chromeos {
 
 namespace multidevice {
+
+class ProximityAuthWebUIHandler;
 
 // Contains metadata specific to a device associated with a user's account.
 // Because this metadata contains large and expensive data types, and that data
@@ -45,13 +43,6 @@ namespace multidevice {
 // the underlying data. Should be passed by value.
 class RemoteDeviceRef {
  public:
-  // Generates the device ID for a device given its public key.
-  static std::string GenerateDeviceId(const std::string& public_key);
-
-  // Derives the public key that was used to generate the given device ID;
-  // returns empty string if |device_id| is not a valid device ID.
-  static std::string DerivePublicKey(const std::string& device_id);
-
   // Static method for truncated device ID for logs.
   static std::string TruncateDeviceIdForLogs(const std::string& full_id);
 
@@ -59,7 +50,11 @@ class RemoteDeviceRef {
   ~RemoteDeviceRef();
 
   const std::string& user_id() const { return remote_device_->user_id; }
+  const std::string& instance_id() const { return remote_device_->instance_id; }
   const std::string& name() const { return remote_device_->name; }
+  const std::string& pii_free_name() const {
+    return remote_device_->pii_free_name;
+  }
   const std::string& public_key() const { return remote_device_->public_key; }
   const std::string& persistent_symmetric_key() const {
     return remote_device_->persistent_symmetric_key;
@@ -67,13 +62,13 @@ class RemoteDeviceRef {
   int64_t last_update_time_millis() const {
     return remote_device_->last_update_time_millis;
   }
-  const std::vector<cryptauth::BeaconSeed>& beacon_seeds() const {
+  const std::vector<BeaconSeed>& beacon_seeds() const {
     return remote_device_->beacon_seeds;
   }
 
   std::string GetDeviceId() const;
   SoftwareFeatureState GetSoftwareFeatureState(
-      const cryptauth::SoftwareFeature& software_feature) const;
+      const SoftwareFeature& software_feature) const;
 
   // Returns a shortened device ID for the purpose of concise logging (device
   // IDs are often so long that logs are difficult to read). Note that this
@@ -85,8 +80,8 @@ class RemoteDeviceRef {
   bool operator<(const RemoteDeviceRef& other) const;
 
  private:
-  friend class chromeos::multidevice_setup::MultiDeviceSetupImpl;
-  friend class chromeos::secure_channel::SecureChannelClientImpl;
+  friend class multidevice_setup::MultiDeviceSetupImpl;
+  friend class secure_channel::SecureChannelClientImpl;
   friend class RemoteDeviceCache;
   friend class RemoteDeviceRefBuilder;
   friend class RemoteDeviceRefTest;
@@ -99,10 +94,10 @@ class RemoteDeviceRef {
 
   // TODO(crbug.com/752273): Remove these once clients have migrated to Device
   // Sync service.
-  friend class chromeos::EasyUnlockServiceRegular;
-  friend class chromeos::tether::TetherHostFetcherImpl;
-  friend class chromeos::tether::TetherHostFetcherImplTest;
-  friend class proximity_auth::ProximityAuthWebUIHandler;
+  friend class EasyUnlockServiceRegular;
+  friend class tether::TetherHostFetcherImpl;
+  friend class tether::TetherHostFetcherImplTest;
+  friend class ProximityAuthWebUIHandler;
 
   explicit RemoteDeviceRef(std::shared_ptr<RemoteDevice> remote_device);
 

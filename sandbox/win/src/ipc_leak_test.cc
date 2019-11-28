@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 #include "base/process/process_metrics.h"
+#include "base/stl_util.h"
 #include "base/win/win_util.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/filesystem_interception.h"
@@ -220,10 +221,12 @@ PolicyGlobal* GenerateBlankPolicy() {
 
   LowLevelPolicy policy_maker(policy);
 
-  for (int i = 0; i < IPC_LAST_TAG; i++) {
+  for (int i = static_cast<int>(IpcTag::UNUSED);
+       i < static_cast<int>(IpcTag::LAST); i++) {
+    IpcTag service = static_cast<IpcTag>(i);
     PolicyRule ask_broker(ASK_BROKER);
     ask_broker.Done();
-    policy_maker.AddRule(i, &ask_broker);
+    policy_maker.AddRule(service, &ask_broker);
   }
 
   policy_maker.Done();
@@ -335,13 +338,13 @@ TEST(IPCTest, IPCLeak) {
                    {TESTIPC_NTOPENKEY, "TESTIPC_NTOPENKEY", nullptr},
                    {TESTIPC_NTCREATEKEY, "TESTIPC_NTCREATEEY", nullptr}};
 
-  static_assert(arraysize(test_data) == TESTIPC_LAST, "Not enough tests.");
+  static_assert(base::size(test_data) == TESTIPC_LAST, "Not enough tests.");
   for (auto test : test_data) {
     TestRunner runner;
     EXPECT_TRUE(runner.AddRule(TargetPolicy::SUBSYS_REGISTRY,
                                TargetPolicy::REG_ALLOW_READONLY,
                                L"HKEY_LOCAL_MACHINE\\Software\\*"));
-    base::string16 command = base::string16(L"IPC_Leak ");
+    std::wstring command = std::wstring(L"IPC_Leak ");
     command += std::to_wstring(test.test_id);
     EXPECT_EQ(test.expected_result,
               base::win::Uint32ToHandle(runner.RunTest(command.c_str())))

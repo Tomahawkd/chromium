@@ -7,7 +7,7 @@
 
 #include "ash/public/cpp/ash_switches.h"
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/input_method/input_method_manager_impl.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
@@ -15,11 +15,10 @@
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
+#include "chrome/browser/chromeos/settings/scoped_testing_cros_settings.h"
 #include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/chromeos/system/fake_input_device_settings.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/chromeos_switches.h"
 #include "components/feedback/tracing_manager.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
@@ -41,15 +40,13 @@ class PreferencesTest : public LoginManagerTest {
       const char* gaia_id;
     } const kTestUsers[] = {{"test-user1@gmail.com", "1111111111"},
                             {"test-user2@gmail.com", "2222222222"}};
-    for (size_t i = 0; i < arraysize(kTestUsers); ++i) {
+    for (size_t i = 0; i < base::size(kTestUsers); ++i) {
       test_users_.push_back(AccountId::FromUserEmailGaiaId(
           kTestUsers[i].email, kTestUsers[i].gaia_id));
     }
-  }
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    LoginManagerTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kStubCrosSettings);
+    scoped_testing_cros_settings_.device_settings()->Set(
+        kDeviceOwner, base::Value(test_users_[0].GetUserEmail()));
   }
 
   void SetUpOnMainThread() override {
@@ -60,7 +57,6 @@ class PreferencesTest : public LoginManagerTest {
     static_cast<input_method::InputMethodManagerImpl*>(
         input_method::InputMethodManager::Get())
         ->SetImeKeyboardForTesting(keyboard_);
-    settings_helper_.SetString(kDeviceOwner, test_users_[0].GetUserEmail());
   }
 
   // Sets set of preferences in given |prefs|. Value of prefernece depends of
@@ -70,6 +66,8 @@ class PreferencesTest : public LoginManagerTest {
     prefs->SetBoolean(prefs::kTapToClickEnabled, variant);
     prefs->SetBoolean(prefs::kPrimaryMouseButtonRight, !variant);
     prefs->SetBoolean(prefs::kMouseReverseScroll, variant);
+    prefs->SetBoolean(prefs::kMouseAcceleration, variant);
+    prefs->SetBoolean(prefs::kTouchpadAcceleration, variant);
     prefs->SetBoolean(prefs::kEnableTouchpadThreeFingerClick, !variant);
     prefs->SetBoolean(prefs::kNaturalScroll, variant);
     prefs->SetInteger(prefs::kMouseSensitivity, !variant);
@@ -90,6 +88,10 @@ class PreferencesTest : public LoginManagerTest {
                   .GetPrimaryButtonRight());
     EXPECT_EQ(prefs->GetBoolean(prefs::kMouseReverseScroll),
               input_settings_->current_mouse_settings().GetReverseScroll());
+    EXPECT_EQ(prefs->GetBoolean(prefs::kMouseAcceleration),
+              input_settings_->current_mouse_settings().GetAcceleration());
+    EXPECT_EQ(prefs->GetBoolean(prefs::kTouchpadAcceleration),
+              input_settings_->current_touchpad_settings().GetAcceleration());
     EXPECT_EQ(prefs->GetBoolean(prefs::kEnableTouchpadThreeFingerClick),
               input_settings_->current_touchpad_settings()
                   .GetThreeFingerClick());
@@ -120,8 +122,7 @@ class PreferencesTest : public LoginManagerTest {
   }
 
   std::vector<AccountId> test_users_;
-  ScopedCrosSettingsTestHelper settings_helper_{
-      /* create_settings_service= */ false};
+  ScopedTestingCrosSettings scoped_testing_cros_settings_;
 
  private:
   system::InputDeviceSettings::FakeInterface* input_settings_;
@@ -148,7 +149,7 @@ class PreferencesTestForceWebUiLogin : public PreferencesTest {
 IN_PROC_BROWSER_TEST_F(PreferencesTestForceWebUiLogin, PRE_MultiProfiles) {
   RegisterUser(test_users_[0]);
   RegisterUser(test_users_[1]);
-  chromeos::StartupUtils::MarkOobeCompleted();
+  StartupUtils::MarkOobeCompleted();
 }
 
 IN_PROC_BROWSER_TEST_F(PreferencesTestForceWebUiLogin, MultiProfiles) {

@@ -2,20 +2,24 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/buildflag_header.gni")
 import("//ios/public/provider/chrome/browser/build_config.gni")
 
 source_set("browser") {
   configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
+    "browser_url_rewriter_provider.h",
+    "browser_url_rewriter_provider.mm",
     "chrome_browser_provider.h",
     "chrome_browser_provider.mm",
     "geolocation_updater_provider.h",
     "geolocation_updater_provider.mm",
+    "overrides_provider.h",
+    "overrides_provider.mm",
   ]
   deps = [
     "//base",
     "//components/metrics",
+    "//ios//web/public",
     "//ios/public/provider/chrome/browser/mailto",
   ]
   libs = [ "CoreLocation.framework" ]
@@ -40,7 +44,6 @@ source_set("test_support") {
     "//ios/public/provider/chrome/browser/signin:test_support",
     "//ios/public/provider/chrome/browser/spotlight:test_support",
     "//ios/public/provider/chrome/browser/ui",
-    "//ios/public/provider/chrome/browser/ui:test_support",
     "//ios/public/provider/chrome/browser/user_feedback:test_support",
     "//ios/public/provider/chrome/browser/voice",
     "//ios/public/provider/chrome/browser/voice:test_support",

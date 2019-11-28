@@ -11,16 +11,16 @@ namespace autofill {
 using base::TimeTicks;
 
 AutofillHandlerProxy::AutofillHandlerProxy(AutofillDriver* driver,
+                                           LogManager* log_manager,
                                            AutofillProvider* provider)
-    : AutofillHandler(driver), provider_(provider), weak_ptr_factory_(this) {}
+    : AutofillHandler(driver, log_manager), provider_(provider) {}
 
 AutofillHandlerProxy::~AutofillHandlerProxy() {}
 
 void AutofillHandlerProxy::OnFormSubmittedImpl(const FormData& form,
                                                bool known_success,
-                                               SubmissionSource source,
-                                               base::TimeTicks timestamp) {
-  provider_->OnFormSubmitted(this, form, known_success, source, timestamp);
+                                               mojom::SubmissionSource source) {
+  provider_->OnFormSubmitted(this, form, known_success, source);
 }
 
 void AutofillHandlerProxy::OnTextFieldDidChangeImpl(

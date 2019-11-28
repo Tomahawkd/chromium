@@ -4,10 +4,10 @@
 
 #include "components/viz/service/display/overlay_strategy_underlay.h"
 
-#include "build/build_config.h"
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/service/display/display_resource_provider.h"
+#include "components/viz/service/display/overlay_candidate_list.h"
 #include "components/viz/service/display/overlay_candidate_validator.h"
 
 namespace viz {
@@ -25,9 +25,13 @@ bool OverlayStrategyUnderlay::Attempt(
     const SkMatrix44& output_color_matrix,
     const OverlayProcessor::FilterOperationsMap& render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
-    RenderPass* render_pass,
+    RenderPassList* render_pass_list,
+    const PrimaryPlane* primary_plane,
     OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds) {
+  // Before we attempt an overlay strategy, the candidate list should be empty.
+  DCHECK(candidate_list->empty());
+  RenderPass* render_pass = render_pass_list->back().get();
   QuadList& quad_list = render_pass->quad_list;
   const bool compute_hints =
       resource_provider->DoAnyResourcesWantPromotionHints();
@@ -57,22 +61,25 @@ bool OverlayStrategyUnderlay::Attempt(
       continue;
     }
 
-    OverlayCandidateList new_candidate_list;
-    if (candidate_list->size() == 1) {
-      OverlayCandidate primary(candidate_list->back());
-      primary.is_opaque = false;
-      OverlayProcessor::EliminateOrCropPrimary(quad_list, it, &primary,
-                                               &new_candidate_list);
-    } else {
-      new_candidate_list = *candidate_list;
-    }
-
     // Add the overlay.
+    OverlayCandidateList new_candidate_list = *candidate_list;
     new_candidate_list.push_back(candidate);
     new_candidate_list.back().plane_z_order = -1;
 
-    // Check for support.
-    capability_checker_->CheckOverlaySupport(&new_candidate_list);
+    if (primary_plane) {
+      // Since there is a list of strategies to go through, each strategy should
+      // not change the input parameters. In this case, we need to keep the
+      // |primary_plane| unchanged. The underlay strategy only works when the
+      // |primary_plane| supports blending. In order to check the hardware
+      // support, make a copy of the |primary_plane| with blending enabled.
+      PrimaryPlane new_plane_candidate(*primary_plane);
+      new_plane_candidate.enable_blending = true;
+      // Check for support.
+      capability_checker_->CheckOverlaySupport(&new_plane_candidate,
+                                               &new_candidate_list);
+    } else {
+      capability_checker_->CheckOverlaySupport(nullptr, &new_candidate_list);
+    }
 
     // If the candidate can be handled by an overlay, create a pass for it. We
     // need to switch out the video quad with a black transparent one.
@@ -107,8 +114,16 @@ bool OverlayStrategyUnderlay::Attempt(
   return false;
 }
 
-OverlayProcessor::StrategyType OverlayStrategyUnderlay::GetUMAEnum() const {
-  return OverlayProcessor::StrategyType::kUnderlay;
+// Turn on blending for the output surface plane so the underlay could show
+// through.
+void OverlayStrategyUnderlay::AdjustOutputSurfaceOverlay(
+    OverlayProcessor::OutputSurfaceOverlayPlane* output_surface_plane) {
+  if (output_surface_plane)
+    output_surface_plane->enable_blending = true;
+}
+
+OverlayStrategy OverlayStrategyUnderlay::GetUMAEnum() const {
+  return OverlayStrategy::kUnderlay;
 }
 
 }  // namespace viz

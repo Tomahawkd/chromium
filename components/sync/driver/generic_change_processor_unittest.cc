@@ -10,11 +10,10 @@
 
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
+#include "components/sync/base/client_tag_hash.h"
 #include "components/sync/base/model_type.h"
-#include "components/sync/device_info/local_device_info_provider.h"
 #include "components/sync/driver/data_type_manager.h"
-#include "components/sync/driver/fake_sync_client.h"
 #include "components/sync/driver/sync_api_component_factory_mock.h"
 #include "components/sync/engine/sync_encryption_handler.h"
 #include "components/sync/engine/sync_engine.h"
@@ -41,10 +40,9 @@ class SyncGenericChangeProcessorTest : public testing::Test {
   static const ModelType kType = PREFERENCES;
 
   SyncGenericChangeProcessorTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
-        syncable_service_ptr_factory_(&fake_syncable_service_),
-        sync_client_(&sync_factory_) {}
+      : task_environment_(
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
+        syncable_service_ptr_factory_(&fake_syncable_service_) {}
 
   void SetUp() override {
     // Use kType by default, but allow test cases to re-initialize with whatever
@@ -82,8 +80,8 @@ class SyncGenericChangeProcessorTest : public testing::Test {
     change_processor_ = std::make_unique<GenericChangeProcessor>(
         type, std::make_unique<DataTypeErrorHandlerMock>(),
         syncable_service_ptr_factory_.GetWeakPtr(),
-        merge_result_ptr_factory_->GetWeakPtr(), test_user_share_->user_share(),
-        &sync_client_);
+        merge_result_ptr_factory_->GetWeakPtr(),
+        test_user_share_->user_share());
   }
 
   void BuildChildNodes(ModelType type, int n) {
@@ -104,7 +102,7 @@ class SyncGenericChangeProcessorTest : public testing::Test {
   }
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   std::unique_ptr<SyncMergeResult> sync_merge_result_;
   std::unique_ptr<base::WeakPtrFactory<SyncMergeResult>>
@@ -114,7 +112,6 @@ class SyncGenericChangeProcessorTest : public testing::Test {
   base::WeakPtrFactory<FakeSyncableService> syncable_service_ptr_factory_;
 
   std::unique_ptr<TestUserShare> test_user_share_;
-  FakeSyncClient sync_client_;
   testing::NiceMock<SyncApiComponentFactoryMock> sync_factory_;
 
   std::unique_ptr<GenericChangeProcessor> change_processor_;
@@ -299,7 +296,7 @@ TEST_F(SyncGenericChangeProcessorTest, AddExistingEntry) {
   ASSERT_EQ(sync_data.size(), 1U);
   ASSERT_EQ("session tag 2",
             sync_data[0].GetSpecifics().session().session_tag());
-  EXPECT_FALSE(SyncDataRemote(sync_data[0]).GetClientTagHash().empty());
+  EXPECT_FALSE(SyncDataRemote(sync_data[0]).GetClientTagHash().value().empty());
 }
 
 }  // namespace

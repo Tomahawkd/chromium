@@ -11,18 +11,21 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/containers/hash_tables.h"
+#include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/url_request/url_request_interceptor.h"
 #include "net/url_request/url_request_job_factory.h"
-#include "services/network/public/mojom/cors_origin_pattern.mojom.h"
-#include "services/service_manager/public/mojom/service.mojom.h"
-#include "third_party/blink/public/mojom/blob/blob.mojom.h"
+#include "services/network/public/mojom/cors_origin_pattern.mojom-forward.h"
+#include "services/service_manager/public/mojom/service.mojom-forward.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom-forward.h"
+#include "third_party/blink/public/mojom/push_messaging/push_messaging_status.mojom-forward.h"
 
 #if !defined(OS_ANDROID)
 #include "content/public/browser/zoom_level_delegate.h"
@@ -33,7 +36,7 @@ class GURL;
 namespace base {
 class FilePath;
 class Token;
-}
+}  // namespace base
 
 namespace download {
 class InProgressDownloadManager;
@@ -42,7 +45,7 @@ class InProgressDownloadManager;
 namespace service_manager {
 class Connector;
 class Service;
-}
+}  // namespace service_manager
 
 namespace storage {
 class ExternalMountPoints;
@@ -54,16 +57,15 @@ class Origin;
 
 namespace media {
 class VideoDecodePerfHistory;
+namespace learning {
+class LearningSession;
 }
-
-namespace net {
-class URLRequestContextGetter;
-}
+}  // namespace media
 
 namespace storage {
 class BlobStorageContext;
 class SpecialStoragePolicy;
-}
+}  // namespace storage
 
 namespace content {
 
@@ -78,7 +80,10 @@ class BrowserPluginGuestManager;
 class BrowsingDataRemover;
 class BrowsingDataRemoverDelegate;
 class DownloadManager;
+class ClientHintsControllerDelegate;
+class ContentIndexProvider;
 class DownloadManagerDelegate;
+class NativeFileSystemPermissionContext;
 class PermissionController;
 class PermissionControllerDelegate;
 class PushMessagingService;
@@ -86,6 +91,7 @@ class ResourceContext;
 class ServiceManagerConnection;
 class SharedCorsOriginAccessList;
 class SiteInstance;
+class StorageNotificationService;
 class StoragePartition;
 class SSLHostStateDelegate;
 
@@ -129,10 +135,10 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
       BrowserContext* browser_context,
       const GURL& site,
       bool can_create = true);
-  using StoragePartitionCallback = base::Callback<void(StoragePartition*)>;
-  static void ForEachStoragePartition(
-      BrowserContext* browser_context,
-      const StoragePartitionCallback& callback);
+  using StoragePartitionCallback =
+      base::RepeatingCallback<void(StoragePartition*)>;
+  static void ForEachStoragePartition(BrowserContext* browser_context,
+                                      const StoragePartitionCallback& callback);
   static void AsyncObliterateStoragePartition(
       BrowserContext* browser_context,
       const GURL& site,
@@ -142,7 +148,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // ownership of the pointer.
   static void GarbageCollectStoragePartitions(
       BrowserContext* browser_context,
-      std::unique_ptr<base::hash_set<base::FilePath>> active_paths,
+      std::unique_ptr<std::unordered_set<base::FilePath>> active_paths,
       const base::Closure& done);
 
   static StoragePartition* GetDefaultStoragePartition(
@@ -156,8 +162,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // as well. Note that retrieving a blob ptr out of BlobHandle can only be
   // done on IO. |callback| returns a nullptr on failure.
   static void CreateMemoryBackedBlob(BrowserContext* browser_context,
-                                     const char* data,
-                                     size_t length,
+                                     base::span<const uint8_t> data,
                                      const std::string& content_type,
                                      BlobCallback callback);
 
@@ -165,13 +170,16 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   static BlobContextGetter GetBlobStorageContext(
       BrowserContext* browser_context);
 
-  // Returns a mojom::BlobPtr for a specific blob. If no blob exists with the
-  // given UUID, the BlobPtr pipe will close.
-  // This method should be called on the UI thread.
+  // Returns a mojom::mojo::PendingRemote<blink::mojom::Blob> for a specific
+  // blob. If no blob exists with the given UUID, the
+  // mojo::PendingRemote<blink::mojom::Blob> pipe will close. This method should
+  // be called on the UI thread.
   // TODO(mek): Blob UUIDs should be entirely internal to the blob system, so
-  // eliminate this method in favor of just passing around the BlobPtr directly.
-  static blink::mojom::BlobPtr GetBlobPtr(BrowserContext* browser_context,
-                                          const std::string& uuid);
+  // eliminate this method in favor of just passing around the
+  // mojo::PendingRemote<blink::mojom::Blob> directly.
+  static mojo::PendingRemote<blink::mojom::Blob> GetBlobRemote(
+      BrowserContext* browser_context,
+      const std::string& uuid);
 
   // Delivers a push message with |data| to the Service Worker identified by
   // |origin| and |service_worker_registration_id|.
@@ -179,8 +187,9 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
       BrowserContext* browser_context,
       const GURL& origin,
       int64_t service_worker_registration_id,
+      const std::string& message_id,
       base::Optional<std::string> payload,
-      const base::Callback<void(mojom::PushDeliveryStatus)>& callback);
+      const base::Callback<void(blink::mojom::PushDeliveryStatus)>& callback);
 
   static void NotifyWillBeDestroyed(BrowserContext* browser_context);
 
@@ -198,6 +207,10 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   static void SetDownloadManagerForTesting(
       BrowserContext* browser_context,
       std::unique_ptr<content::DownloadManager> download_manager);
+
+  static void SetPermissionControllerForTesting(
+      BrowserContext* browser_context,
+      std::unique_ptr<PermissionController> permission_controller);
 
   // Makes the Service Manager aware of this BrowserContext, and assigns a
   // instance group ID to it. Should be called for each BrowserContext created.
@@ -224,21 +237,6 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   static ServiceManagerConnection* GetServiceManagerConnectionFor(
       BrowserContext* browser_context);
 
-  // Returns a SharedCorsOriginAccessList instance for the |browser_context|.
-  // TODO(toyoshim): Remove this interface once NetworkService is enabled.
-  static const SharedCorsOriginAccessList* GetSharedCorsOriginAccessList(
-      BrowserContext* browser_context);
-
-  // Sets CORS origin access lists. This obtains SharedCorsOriginAccessList
-  // that is bound to |browser_context|, and calls SetForOrigin(...) for legacy
-  // code path, but calls into NetworkService instead if it is enabled.
-  static void SetCorsOriginAccessListsForOrigin(
-      BrowserContext* browser_context,
-      const url::Origin& source_origin,
-      std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
-      std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
-      base::OnceClosure closure);
-
   BrowserContext();
 
   ~BrowserContext() override;
@@ -258,10 +256,12 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
 #endif
 
   // Returns the path of the directory where this context's data is stored.
-  virtual base::FilePath GetPath() const = 0;
+  virtual base::FilePath GetPath() = 0;
 
-  // Return whether this context is incognito. Default is false.
-  virtual bool IsOffTheRecord() const = 0;
+  // Return whether this context is off the record. Default is false.
+  // Note that for Chrome this does not imply Incognito as Guest sessions are
+  // also off the record.
+  virtual bool IsOffTheRecord() = 0;
 
   // Returns the resource context.
   virtual ResourceContext* GetResourceContext() = 0;
@@ -285,6 +285,12 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // return nullptr.
   virtual PushMessagingService* GetPushMessagingService() = 0;
 
+  // Returns a storage notification service associated with that context,
+  // nullptr otherwise. In the case that nullptr is returned, QuotaManager
+  // and the rest of the storage layer will have no connection to the Chrome
+  // layer for UI purposes.
+  virtual StorageNotificationService* GetStorageNotificationService() = 0;
+
   // Returns the SSL host state decisions for this context. The context may
   // return nullptr, implementing the default exception storage strategy.
   virtual SSLHostStateDelegate* GetSSLHostStateDelegate() = 0;
@@ -295,6 +301,10 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // Note: if you want to check a permission status, you probably need
   // BrowserContext::GetPermissionController() instead.
   virtual PermissionControllerDelegate* GetPermissionControllerDelegate() = 0;
+
+  // Returns the ClientHintsControllerDelegate associated with that context if
+  // any, nullptr otherwise.
+  virtual ClientHintsControllerDelegate* GetClientHintsControllerDelegate() = 0;
 
   // Returns the BackgroundFetchDelegate associated with that context if any,
   // nullptr otherwise.
@@ -308,29 +318,18 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // called once per context. It's valid to return nullptr.
   virtual BrowsingDataRemoverDelegate* GetBrowsingDataRemoverDelegate() = 0;
 
-  // Creates the main net::URLRequestContextGetter. It's called only once.
-  virtual net::URLRequestContextGetter* CreateRequestContext(
-      ProtocolHandlerMap* protocol_handlers,
-      URLRequestInterceptorScopedVector request_interceptors) = 0;
+  // Sets CORS origin access lists.
+  virtual void SetCorsOriginAccessListForOrigin(
+      const url::Origin& source_origin,
+      std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
+      std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
+      base::OnceClosure closure);
 
-  // Creates the net::URLRequestContextGetter for a StoragePartition. It's
-  // called only once per partition_path.
-  virtual net::URLRequestContextGetter* CreateRequestContextForStoragePartition(
-      const base::FilePath& partition_path,
-      bool in_memory,
-      ProtocolHandlerMap* protocol_handlers,
-      URLRequestInterceptorScopedVector request_interceptors) = 0;
+  // Returns a SharedCorsOriginAccessList instance.
+  virtual SharedCorsOriginAccessList* GetSharedCorsOriginAccessList();
 
-  // Creates the main net::URLRequestContextGetter for media resources. It's
-  // called only once.
-  virtual net::URLRequestContextGetter* CreateMediaRequestContext() = 0;
-
-  // Creates the media net::URLRequestContextGetter for a StoragePartition. It's
-  // called only once per partition_path.
-  virtual net::URLRequestContextGetter*
-      CreateMediaRequestContextForStoragePartition(
-          const base::FilePath& partition_path,
-          bool in_memory) = 0;
+  // Returns true if OOR-CORS should be enabled.
+  virtual bool ShouldEnableOutOfBlinkCors();
 
   // Handles a service request for a service expected to run an instance per
   // BrowserContext.
@@ -339,7 +338,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
       service_manager::mojom::ServiceRequest request);
 
   // Returns a unique string associated with this browser context.
-  virtual const std::string& UniqueId() const;
+  virtual const std::string& UniqueId();
 
   // Returns a random salt string that is used for creating media device IDs.
   // Returns a random string by default.
@@ -356,10 +355,36 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // directly, so privacy is not compromised.
   virtual media::VideoDecodePerfHistory* GetVideoDecodePerfHistory();
 
+  // Returns a LearningSession associated with |this|. Used as the central
+  // source from which to retrieve LearningTaskControllers for media machine
+  // learning.
+  // Exposed here rather than StoragePartition because learnings will cover
+  // general media trends rather than SiteInstance specific behavior. The
+  // learnings are not exposed to the web.
+  virtual media::learning::LearningSession* GetLearningSession();
+
   // Retrieves the InProgressDownloadManager associated with this object if
   // available
   virtual download::InProgressDownloadManager*
   RetriveInProgressDownloadManager();
+
+  // Returns the NativeFileSystemPermissionContext associated with this context
+  // if any, nullptr otherwise.
+  virtual NativeFileSystemPermissionContext*
+  GetNativeFileSystemPermissionContext();
+
+  // Returns the ContentIndexProvider associated with that context if any,
+  // nullptr otherwise.
+  virtual ContentIndexProvider* GetContentIndexProvider();
+
+  // Returns true iff the sandboxed file system implementation should be disk
+  // backed, even if this browser context is off the record. By default this
+  // returns false, an embedded could override this to return true if for
+  // example the off-the-record browser context is stored in a in-memory file
+  // system anyway, in which case using the disk backed sandboxed file system
+  // API implementation can give some benefits over the in-memory
+  // implementation.
+  virtual bool CanUseDiskWhenOffTheRecord();
 
  private:
   const std::string unique_id_;

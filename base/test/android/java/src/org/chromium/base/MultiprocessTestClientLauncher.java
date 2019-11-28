@@ -36,12 +36,14 @@ import javax.annotation.concurrent.GuardedBy;
  */
 @JNINamespace("base::android")
 public final class MultiprocessTestClientLauncher {
-    private static final String TAG = "cr_MProcTCLauncher";
+    private static final String TAG = "MProcTCLauncher";
 
     private static final int CONNECTION_TIMEOUT_MS = 10 * 1000;
 
     private static final SparseArray<MultiprocessTestClientLauncher> sPidToLauncher =
             new SparseArray<>();
+
+    private static final SparseArray<Boolean> sPidToCleanExit = new SparseArray<>();
 
     private static final SparseArray<Integer> sPidToMainResult = new SparseArray<>();
 
@@ -105,6 +107,7 @@ public final class MultiprocessTestClientLauncher {
                     assert isRunningOnLauncherThread();
                     assert sPidToLauncher.get(connection.getPid())
                             == MultiprocessTestClientLauncher.this;
+                    sPidToCleanExit.put(connection.getPid(), connection.hasCleanExit());
                     sPidToLauncher.remove(connection.getPid());
                 }
             };
@@ -154,7 +157,7 @@ public final class MultiprocessTestClientLauncher {
                     return false;
                 }
                 try {
-                    mConnectedCondition.awaitNanos(timeoutNs);
+                    timeoutNs = mConnectedCondition.awaitNanos(timeoutNs);
                 } catch (InterruptedException ie) {
                     Log.e(TAG, "Interrupted while waiting for connection.");
                 }
@@ -197,6 +200,8 @@ public final class MultiprocessTestClientLauncher {
     @CalledByNative
     private static int launchClient(
             final String[] commandLine, final FileDescriptorInfo[] filesToMap) {
+        assert Looper.myLooper() != Looper.getMainLooper();
+
         initLauncherThread();
 
         final MultiprocessTestClientLauncher launcher =
@@ -336,7 +341,7 @@ public final class MultiprocessTestClientLauncher {
 
         MultiprocessTestClientLauncher launcher = sPidToLauncher.get(pid);
         if (launcher == null) {
-            return false;
+            return sPidToCleanExit.get(pid, false);
         }
         return launcher.mLauncher.getConnection().hasCleanExit();
     }

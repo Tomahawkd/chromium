@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
@@ -78,9 +79,9 @@ void AppLaunchSigninScreen::Login(const UserContext& user_context,
   // Note: CreateAuthenticator doesn't necessarily create
   // a new Authenticator object, and could reuse an existing one.
   authenticator_ = UserSessionManager::GetInstance()->CreateAuthenticator(this);
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::BindOnce(&Authenticator::AuthenticateToUnlock,
-                                          authenticator_.get(), user_context));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&Authenticator::AuthenticateToUnlock,
+                                authenticator_.get(), user_context));
 }
 
 void AppLaunchSigninScreen::OnSigninScreenReady() {}

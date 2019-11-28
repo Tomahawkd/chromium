@@ -12,7 +12,7 @@
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/dbus/vm_applications/apps.pb.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using vm_tools::apps::MimeTypes;
@@ -21,25 +21,11 @@ namespace crostini {
 
 class CrostiniMimeTypesServiceTest : public testing::Test {
  public:
-  CrostiniMimeTypesServiceTest() = default;
-
-  // testing::Test:
-  void SetUp() override {
-    SetCrostiniUIAllowedForTesting(true);
-
-    CrostiniTestHelper::EnableCrostini(&profile_);
-
-    RecreateService();
-  }
-
-  void TearDown() override { SetCrostiniUIAllowedForTesting(false); }
+  CrostiniMimeTypesServiceTest()
+      : crostini_test_helper_(&profile_),
+        service_(std::make_unique<CrostiniMimeTypesService>(&profile_)) {}
 
  protected:
-  void RecreateService() {
-    service_.reset(nullptr);
-    service_ = std::make_unique<CrostiniMimeTypesService>(&profile_);
-  }
-
   CrostiniMimeTypesService* service() { return service_.get(); }
 
   MimeTypes CreateMimeTypesProto(
@@ -59,8 +45,9 @@ class CrostiniMimeTypesServiceTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
+  CrostiniTestHelper crostini_test_helper_;
 
   std::unique_ptr<CrostiniMimeTypesService> service_;
 
@@ -120,7 +107,7 @@ TEST_F(CrostiniMimeTypesServiceTest, MultipleContainers) {
 }
 
 // Test that ClearMimeTypes works, and only removes apps from the
-// specified container.
+// specified VM.
 TEST_F(CrostiniMimeTypesServiceTest, ClearMimeTypes) {
   service()->UpdateMimeTypes(
       CreateMimeTypesProto({"foo"}, {"foo/mime"}, "vm 1", "container 1"));
@@ -136,7 +123,7 @@ TEST_F(CrostiniMimeTypesServiceTest, ClearMimeTypes) {
   EXPECT_EQ("foobar/mime", service()->GetMimeType(base::FilePath("test.foobar"),
                                                   "vm 2", "container 1"));
 
-  service()->ClearMimeTypes("vm 2", "container 1");
+  service()->ClearMimeTypes("vm 2", "");
 
   EXPECT_EQ("foo/mime", service()->GetMimeType(base::FilePath("test.foo"),
                                                "vm 1", "container 1"));

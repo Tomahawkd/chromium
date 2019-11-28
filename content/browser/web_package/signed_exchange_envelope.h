@@ -15,6 +15,7 @@
 #include "base/strings/string_util.h"
 #include "content/browser/web_package/signed_exchange_signature_header_field.h"
 #include "content/common/content_export.h"
+#include "crypto/sha2.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "url/gurl.h"
@@ -30,13 +31,14 @@ class CONTENT_EXPORT SignedExchangeEnvelope {
  public:
   using HeaderMap = std::map<std::string, std::string>;
 
-  // Parse headers from the application/signed-exchange;v=b2 format.
+  // Parse headers from the application/signed-exchange;v=b3 format.
   // https://wicg.github.io/webpackage/draft-yasskin-httpbis-origin-signed-exchanges-impl.html#application-signed-exchange
   //
   // This also performs the steps 1, 3 and 4 of "Cross-origin trust" validation.
   // https://wicg.github.io/webpackage/draft-yasskin-httpbis-origin-signed-exchanges-impl.html#cross-origin-trust
   static base::Optional<SignedExchangeEnvelope> Parse(
-      const GURL& fallback_url,
+      SignedExchangeVersion version,
+      const signed_exchange_utils::URLWithRawString& fallback_url,
       base::StringPiece signature_header_field,
       base::span<const uint8_t> cbor_header,
       SignedExchangeDevToolsProxy* devtools_proxy);
@@ -56,12 +58,11 @@ class CONTENT_EXPORT SignedExchangeEnvelope {
   }
   void set_cbor_header(base::span<const uint8_t> data);
 
-  const GURL& request_url() const { return request_url_; };
-  void set_request_url(GURL url) { request_url_ = std::move(url); }
-
-  const std::string& request_method() const { return request_method_; }
-  void set_request_method(base::StringPiece s) {
-    s.CopyToString(&request_method_);
+  const signed_exchange_utils::URLWithRawString& request_url() const {
+    return request_url_;
+  }
+  void set_request_url(const signed_exchange_utils::URLWithRawString& url) {
+    request_url_ = url;
   }
 
   net::HttpStatusCode response_code() const { return response_code_; }
@@ -77,12 +78,13 @@ class CONTENT_EXPORT SignedExchangeEnvelope {
     signature_ = sig;
   }
 
+  // Returns the header integrity value of the loaded signed exchange.
+  net::SHA256HashValue ComputeHeaderIntegrity() const;
+
  private:
   std::vector<uint8_t> cbor_header_;
 
-  GURL request_url_;
-  std::string request_method_;
-
+  signed_exchange_utils::URLWithRawString request_url_;
   net::HttpStatusCode response_code_;
   HeaderMap response_headers_;
   SignedExchangeSignatureHeaderField::Signature signature_;

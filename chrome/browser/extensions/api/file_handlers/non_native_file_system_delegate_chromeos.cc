@@ -24,6 +24,13 @@ bool NonNativeFileSystemDelegateChromeOS::IsUnderNonNativeLocalPath(
       Profile::FromBrowserContext(context), path);
 }
 
+bool NonNativeFileSystemDelegateChromeOS::HasNonNativeMimeTypeProvider(
+    content::BrowserContext* context,
+    const base::FilePath& path) {
+  return file_manager::util::HasNonNativeMimeTypeProvider(
+      Profile::FromBrowserContext(context), path);
+}
+
 void NonNativeFileSystemDelegateChromeOS::GetNonNativeLocalPathMimeType(
     content::BrowserContext* context,
     const base::FilePath& path,
@@ -37,9 +44,9 @@ void NonNativeFileSystemDelegateChromeOS::GetNonNativeLocalPathMimeType(
 void NonNativeFileSystemDelegateChromeOS::IsNonNativeLocalPathDirectory(
     content::BrowserContext* context,
     const base::FilePath& path,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   file_manager::util::IsNonNativeLocalPathDirectory(
-      Profile::FromBrowserContext(context), path, callback);
+      Profile::FromBrowserContext(context), path, std::move(callback));
 }
 
 // Ensures a non-local file exists at |path|, i.e., it does nothing if a file
@@ -49,9 +56,9 @@ void NonNativeFileSystemDelegateChromeOS::
     PrepareNonNativeLocalFileForWritableApp(
         content::BrowserContext* context,
         const base::FilePath& path,
-        const base::Callback<void(bool)>& callback) {
+        base::OnceCallback<void(bool)> callback) {
   file_manager::util::PrepareNonNativeLocalFileForWritableApp(
-      Profile::FromBrowserContext(context), path, callback);
+      Profile::FromBrowserContext(context), path, std::move(callback));
 }
 
 }  // namespace extensions

@@ -5,7 +5,7 @@
 #include "ui/views/style/platform_style.h"
 
 #include "base/strings/sys_string_conversions.h"
-#include "ui/base/ui_features.h"
+#include "ui/base/buildflags.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/views/controls/button/label_button.h"
 #import "ui/views/controls/scrollbar/cocoa_scroll_bar.h"
@@ -45,11 +45,8 @@ const bool PlatformStyle::kUseRipples = false;
 const bool PlatformStyle::kPreferFocusRings = true;
 const bool PlatformStyle::kInactiveWidgetControlsAppearDisabled = true;
 
-const Button::NotifyAction PlatformStyle::kMenuNotifyActivationAction =
-    Button::NOTIFY_ON_PRESS;
-
 const Button::KeyClickAction PlatformStyle::kKeyClickActionOnSpace =
-    Button::CLICK_ON_KEY_PRESS;
+    Button::KeyClickAction::kOnKeyPress;
 
 // On Mac, the Return key is used to perform the default action even when a
 // control is focused.

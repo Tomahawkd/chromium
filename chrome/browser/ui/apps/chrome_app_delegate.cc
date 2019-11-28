@@ -6,14 +6,15 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/apps/platform_apps/audio_focus_web_contents_observer.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/data_use_measurement/data_use_web_contents_observer.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/file_select_helper.h"
@@ -23,13 +24,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/color_chooser.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
-#include "chrome/common/extensions/chrome_extension_messages.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/zoom/zoom_controller.h"
@@ -38,6 +38,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/host_zoom_map.h"
+#include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -45,7 +46,8 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_messages.h"
-#include "extensions/common/mojo/app_window.mojom.h"
+#include "extensions/common/mojom/app_window.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 
@@ -68,10 +70,12 @@ bool disable_external_open_for_testing_ = false;
 content::WebContents* OpenURLFromTabInternal(
     content::BrowserContext* context,
     const content::OpenURLParams& params) {
+  NavigateParams new_tab_params(static_cast<Browser*>(nullptr), params.url,
+                                params.transition);
+  new_tab_params.FillNavigateParamsFromOpenURLParams(params);
+
   // Force all links to open in a new tab, even if they were trying to open a
   // window.
-  NavigateParams new_tab_params(static_cast<Browser*>(NULL), params.url,
-                                params.transition);
   if (params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
     new_tab_params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
   } else {
@@ -142,6 +146,7 @@ class ChromeAppDelegate::NewWindowContentsDelegate
 
  private:
   std::vector<std::unique_ptr<content::WebContents>> owned_contents_;
+
   DISALLOW_COPY_AND_ASSIGN(NewWindowContentsDelegate);
 };
 
@@ -183,11 +188,10 @@ ChromeAppDelegate::ChromeAppDelegate(bool keep_alive)
     : has_been_shown_(false),
       is_hidden_(true),
       for_lock_screen_app_(false),
-      new_window_contents_delegate_(new NewWindowContentsDelegate()),
-      weak_factory_(this) {
+      new_window_contents_delegate_(new NewWindowContentsDelegate()) {
   if (keep_alive) {
-    keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::CHROME_APP_DELEGATE,
-                                          KeepAliveRestartOption::DISABLED));
+    keep_alive_ = std::make_unique<ScopedKeepAlive>(
+        KeepAliveOrigin::CHROME_APP_DELEGATE, KeepAliveRestartOption::DISABLED);
   }
   registrar_.Add(this,
                  chrome::NOTIFICATION_APP_TERMINATING,
@@ -204,8 +208,6 @@ void ChromeAppDelegate::DisableExternalOpenForTesting() {
 }
 
 void ChromeAppDelegate::InitWebContents(content::WebContents* web_contents) {
-  data_use_measurement::DataUseWebContentsObserver::CreateForWebContents(
-      web_contents);
   favicon::CreateContentFaviconDriverForWebContents(web_contents);
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -302,7 +304,7 @@ void ChromeAppDelegate::RequestMediaAccessPermission(
 bool ChromeAppDelegate::CheckMediaAccessPermission(
     content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
-    content::MediaStreamType type,
+    blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
   return MediaCaptureDevicesDispatcher::GetInstance()
       ->CheckMediaAccessPermission(render_frame_host, security_origin, type,
@@ -326,8 +328,9 @@ void ChromeAppDelegate::SetWebContentsBlocked(
   // RenderViewHost may be NULL during shutdown.
   content::RenderFrameHost* host = web_contents->GetMainFrame();
   if (host) {
-    extensions::mojom::AppWindowPtr app_window;
-    host->GetRemoteInterfaces()->GetInterface(&app_window);
+    mojo::Remote<extensions::mojom::AppWindow> app_window;
+    host->GetRemoteInterfaces()->GetInterface(
+        app_window.BindNewPipeAndPassReceiver());
     app_window->SetVisuallyDeemphasized(blocked);
   }
 }
@@ -350,7 +353,7 @@ void ChromeAppDelegate::OnHide() {
 
   // Hold on to the keep alive for some time to give the app a chance to show
   // the window.
-  base::PostDelayedTaskWithTraits(
+  base::PostDelayedTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&ChromeAppDelegate::RelinquishKeepAliveAfterTimeout,
                      weak_factory_.GetWeakPtr()),
@@ -360,8 +363,8 @@ void ChromeAppDelegate::OnHide() {
 void ChromeAppDelegate::OnShow() {
   has_been_shown_ = true;
   is_hidden_ = false;
-  keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::CHROME_APP_DELEGATE,
-                                        KeepAliveRestartOption::DISABLED));
+  keep_alive_ = std::make_unique<ScopedKeepAlive>(
+      KeepAliveOrigin::CHROME_APP_DELEGATE, KeepAliveRestartOption::DISABLED);
 }
 
 bool ChromeAppDelegate::TakeFocus(content::WebContents* web_contents,
@@ -376,7 +379,7 @@ bool ChromeAppDelegate::TakeFocus(content::WebContents* web_contents,
 #endif
 }
 
-gfx::Size ChromeAppDelegate::EnterPictureInPicture(
+content::PictureInPictureResult ChromeAppDelegate::EnterPictureInPicture(
     content::WebContents* web_contents,
     const viz::SurfaceId& surface_id,
     const gfx::Size& natural_size) {

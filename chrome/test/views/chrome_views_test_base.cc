@@ -6,9 +6,7 @@
 
 #include "chrome/test/views/chrome_test_views_delegate.h"
 
-ChromeViewsTestBase::ChromeViewsTestBase() {}
-
-ChromeViewsTestBase::~ChromeViewsTestBase() {}
+ChromeViewsTestBase::~ChromeViewsTestBase() = default;
 
 void ChromeViewsTestBase::SetUp() {
   set_views_delegate(std::make_unique<ChromeTestViewsDelegate>());

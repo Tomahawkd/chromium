@@ -18,10 +18,10 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner.h"
@@ -71,22 +71,6 @@ void UmaHistogramExactLinearWithSuffix(const char* histogram_name,
                           static_cast<int>(max_sample));
 }
 
-// Helper function to write samples to a histogram with a dynamically assigned
-// histogram name.  Works with short timings from 1 ms up to 10 seconds (50
-// buckets) which is the actual argument type of UmaHistogramTimes.
-void UmaHistogramTimesWithSuffix(const char* histogram_name,
-                                 StringPiece histogram_suffix,
-                                 TimeDelta sample) {
-  DCHECK(histogram_name);
-  std::string histogram_full_name(histogram_name);
-  if (!histogram_suffix.empty()) {
-    histogram_full_name.append(".");
-    histogram_full_name.append(histogram_suffix.data(),
-                               histogram_suffix.length());
-  }
-  UmaHistogramTimes(histogram_full_name, sample);
-}
-
 void LogFailure(const FilePath& path,
                 StringPiece histogram_suffix,
                 TempFileFailure failure_code,
@@ -108,13 +92,8 @@ void WriteScopedStringToFileAtomically(
   if (!before_write_callback.is_null())
     std::move(before_write_callback).Run();
 
-  TimeTicks start_time = TimeTicks::Now();
   bool result =
       ImportantFileWriter::WriteFileAtomically(path, *data, histogram_suffix);
-  if (result) {
-    UmaHistogramTimesWithSuffix("ImportantFile.TimeToWrite", histogram_suffix,
-                                TimeTicks::Now() - start_time);
-  }
 
   if (!after_write_callback.is_null())
     std::move(after_write_callback).Run(result);
@@ -145,7 +124,7 @@ bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
     char path[128];
   } file_info;
   file_info.data_size = data.size();
-  strlcpy(file_info.path, path.value().c_str(), arraysize(file_info.path));
+  strlcpy(file_info.path, path.value().c_str(), base::size(file_info.path));
   debug::Alias(&file_info);
 #endif
 
@@ -187,7 +166,7 @@ bool ImportantFileWriter::WriteFileAtomically(const FilePath& path,
 
   if (bytes_written < data_length) {
     LogFailure(path, histogram_suffix, FAILED_WRITING,
-               "error writing, bytes_written=" + IntToString(bytes_written));
+               "error writing, bytes_written=" + NumberToString(bytes_written));
     DeleteTmpFile(tmp_file_path, histogram_suffix);
     return false;
   }
@@ -230,8 +209,7 @@ ImportantFileWriter::ImportantFileWriter(
       task_runner_(std::move(task_runner)),
       serializer_(nullptr),
       commit_interval_(interval),
-      histogram_suffix_(histogram_suffix ? histogram_suffix : ""),
-      weak_factory_(this) {
+      histogram_suffix_(histogram_suffix ? histogram_suffix : "") {
   DCHECK(task_runner_);
 }
 
@@ -255,7 +233,7 @@ void ImportantFileWriter::WriteNow(std::unique_ptr<std::string> data) {
     return;
   }
 
-  Closure task = AdaptCallbackForRepeating(
+  RepeatingClosure task = AdaptCallbackForRepeating(
       BindOnce(&WriteScopedStringToFileAtomically, path_, std::move(data),
                std::move(before_next_write_callback_),
                std::move(after_next_write_callback_), histogram_suffix_));
@@ -266,7 +244,7 @@ void ImportantFileWriter::WriteNow(std::unique_ptr<std::string> data) {
     // on the current thread.
     NOTREACHED();
 
-    task.Run();
+    std::move(task).Run();
   }
   ClearPendingWrite();
 }
@@ -280,7 +258,7 @@ void ImportantFileWriter::ScheduleWrite(DataSerializer* serializer) {
   if (!timer().IsRunning()) {
     timer().Start(
         FROM_HERE, commit_interval_,
-        Bind(&ImportantFileWriter::DoScheduledWrite, Unretained(this)));
+        BindOnce(&ImportantFileWriter::DoScheduledWrite, Unretained(this)));
   }
 }
 

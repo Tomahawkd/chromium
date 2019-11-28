@@ -188,13 +188,15 @@ unpacker.app = {
     if (chrome.extension.inIncognitoContext)
       return;
 
-    chrome.storage.local.get([unpacker.app.STORAGE_KEY], function(result) {
-      if (result[unpacker.app.STORAGE_KEY]) {
-        chrome.storage.local.clear(function() {
-          console.info('Cleaned up archive mount info from older versions.');
-        });
-      }
-    });
+    if (chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get([unpacker.app.STORAGE_KEY], function(result) {
+        if (result[unpacker.app.STORAGE_KEY]) {
+          chrome.storage.local.clear(function() {
+            console.info('Cleaned up archive mount info from older versions.');
+          });
+        }
+      });
+    }
   },
 
   /**
@@ -348,6 +350,51 @@ unpacker.app = {
         unpacker.app.naclModule = document.querySelector('#' + moduleId);
         fulfill();
       }, true);
+      elementDiv.addEventListener('crash', () => {
+        // The title for notifications is usually the file name of the
+        // operation. Since there are potentially multiple operations in
+        // progress, use the first one as the notification title.
+        let crashTitle = '';
+
+        // Need to cancel and clean up any pending operations.
+        for (let fileSystemId in unpacker.app.volumes) {
+          if (crashTitle == '')
+            crashTitle = fileSystemId;
+          unpacker.app.unmountVolume(fileSystemId, true /* forceUnmount */);
+        }
+        // Force unmounting volumes doesn't remove them from the volumes map.
+        // Since all volumes have been forcably unmounted, explicitly clear this
+        // map.
+        unpacker.app.volumes = {};
+
+        for (let compressorId in unpacker.app.compressors) {
+          if (crashTitle == '')
+            crashTitle =
+                unpacker.app.compressors[compressorId].getArchiveName();
+          unpacker.app.cleanupCompressor(
+              compressorId, true /* hasError */, false /* canceled */);
+        }
+
+        // Reset the NaCl module state so that a future operation will load the
+        // module.
+        // TODO(crbug.com/907956): NaCl module state management is scattered
+        // throughout several different functions, making it difficult to
+        // reason. Refactor into a couple of functions that take care of all
+        // state management.
+        unpacker.app.unloadNaclModule();
+        unpacker.app.mountProcessCounter = 0;
+
+        unpacker.app.stringDataLoadedPromise.then((stringData) => {
+          chrome.notifications.create(
+              crashTitle, {
+                type: 'basic',
+                iconUrl: chrome.runtime.getManifest().icons[128],
+                title: crashTitle,
+                message: stringData['ZIP_ARCHIVER_CRASH_ERROR_MESSAGE'],
+              },
+              function() {});
+        });
+      }, true);
 
       elementDiv.addEventListener('message', unpacker.app.handleMessage_, true);
 
@@ -371,8 +418,10 @@ unpacker.app = {
    * Unloads the NaCl module.
    */
   unloadNaclModule: function() {
-    var naclModuleParentNode = unpacker.app.naclModule.parentNode;
-    naclModuleParentNode.parentNode.removeChild(naclModuleParentNode);
+    if (unpacker.app.naclModule) {
+      var naclModuleParentNode = unpacker.app.naclModule.parentNode;
+      naclModuleParentNode.parentNode.removeChild(naclModuleParentNode);
+    }
     unpacker.app.naclModule = null;
     unpacker.app.moduleLoadedPromise = null;
   },
@@ -390,7 +439,7 @@ unpacker.app = {
     if (Object.keys(unpacker.app.volumes).length === 0 &&
         unpacker.app.mountProcessCounter === 0) {
       unpacker.app.unloadNaclModule();
-    } else {
+    } else if (unpacker.app.naclModule) {
       unpacker.app.naclModule.postMessage(
           unpacker.request.createCloseVolumeRequest(fileSystemId));
     }
@@ -438,54 +487,39 @@ unpacker.app = {
    */
   unmountVolume: function(fileSystemId, opt_forceUnmount) {
     return new Promise(function(fulfill, reject) {
-             chrome.fileManagerPrivate.markCacheAsMounted(
-                 fileSystemId, false /* isMounted */, function() {
-                   if (chrome.runtime.lastError) {
-                     console.error(
-                         'Unmount error: ' + chrome.runtime.lastError.message +
-                         '.');
-                     reject('FAILED');
-                     return;
-                   }
-                   fulfill();
-                 });
-           })
-        .then(function() {
-          return new Promise(function(fulfill, reject) {
-            var volume = unpacker.app.volumes[fileSystemId];
-            console.assert(
-                volume || opt_forceUnmount,
-                'Unmount that is not forced must not be called for ',
-                'volumes that are not restored.');
+      var volume = unpacker.app.volumes[fileSystemId];
+      console.assert(
+          volume || opt_forceUnmount,
+          'Unmount that is not forced must not be called for ',
+          'volumes that are not restored.');
 
-            if (!opt_forceUnmount && volume.inUse()) {
-              reject('IN_USE');
-              return;
-            }
+      if (!opt_forceUnmount && volume.inUse()) {
+        reject('IN_USE');
+        return;
+      }
 
-            var options = {fileSystemId: fileSystemId};
-            chrome.fileSystemProvider.unmount(options, function() {
-              if (chrome.runtime.lastError) {
-                console.error(
-                    'Unmount error: ' + chrome.runtime.lastError.message + '.');
-                reject('FAILED');
-                return;
-              }
+      var options = {fileSystemId: fileSystemId};
+      chrome.fileSystemProvider.unmount(options, function() {
+        if (chrome.runtime.lastError) {
+          console.error(
+              'Unmount error: ' + chrome.runtime.lastError.message + '.');
+          reject('FAILED');
+          return;
+        }
 
-              // In case of forced unmount volume can be undefined due to not
-              // being restored. An unmount that is not forced will be called
-              // only after restoring state. In the case of forced unmount when
-              // volume is not restored, we will not do a normal cleanup, but
-              // just remove the load volume promise to allow further mounts.
-              if (opt_forceUnmount)
-                delete unpacker.app.volumeLoadedPromises[fileSystemId];
-              else
-                unpacker.app.cleanupVolume(fileSystemId);
+        // In case of forced unmount volume can be undefined due to not
+        // being restored. An unmount that is not forced will be called
+        // only after restoring state. In the case of forced unmount when
+        // volume is not restored, we will not do a normal cleanup, but
+        // just remove the load volume promise to allow further mounts.
+        if (opt_forceUnmount)
+          delete unpacker.app.volumeLoadedPromises[fileSystemId];
+        else
+          unpacker.app.cleanupVolume(fileSystemId);
 
-              fulfill();
-            });
-          });
-        });
+        fulfill();
+      });
+    });
   },
 
   /**
@@ -785,13 +819,16 @@ unpacker.app = {
                         opt_onError(fileSystemId);
                       return;
                     }
+                    const errorMessageString =
+                        error.message === 'TOO_MANY_OPENED' ?
+                        stringData['ZIP_ARCHIVER_TOO_MANY_OPENED'] :
+                        stringData['ZIP_ARCHIVER_OTHER_ERROR_MESSAGE'];
                     chrome.notifications.create(
                         fileSystemId, {
                           type: 'basic',
                           iconUrl: chrome.runtime.getManifest().icons[128],
                           title: entry.name,
-                          message:
-                              stringData['ZIP_ARCHIVER_OTHER_ERROR_MESSAGE'],
+                          message: errorMessageString,
                         },
                         function() {});
                     if (opt_onError)
@@ -833,18 +870,6 @@ unpacker.app = {
                   loadPromise
                       .then(function() {
                         unpacker.app.volumeLoadFinished[fileSystemId] = true;
-                        return new Promise(function(fulfill, reject) {
-                          chrome.fileManagerPrivate.markCacheAsMounted(
-                              displayPath, true /* isMounted */, function() {
-                                if (chrome.runtime.lastError) {
-                                  reject(chrome.runtime.lastError);
-                                  return;
-                                }
-                                fulfill();
-                              });
-                        });
-                      })
-                      .then(function() {
                         chrome.fileSystemProvider.mount(
                             {
                               fileSystemId: fileSystemId,

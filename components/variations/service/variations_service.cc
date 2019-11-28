@@ -25,10 +25,11 @@
 #include "base/task/post_task.h"
 #include "base/task_runner_util.h"
 #include "base/timer/elapsed_timer.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "base/version.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/encrypted_messages/encrypted_message.pb.h"
 #include "components/encrypted_messages/message_encrypter.h"
 #include "components/metrics/clean_exit_beacon.h"
@@ -56,6 +57,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "ui/base/device_form_factor.h"
 #include "url/gurl.h"
 
@@ -86,9 +88,8 @@ const uint8_t kServerPublicKey[] = {
 
 const uint32_t kServerPublicKeyVersion = 1;
 
-// TODO(mad): To be removed when we stop updating the NetworkTimeTracker.
 // For the HTTP date headers, the resolution of the server time is 1 second.
-const int64_t kServerTimeResolutionMs = 1000;
+const base::TimeDelta kServerTimeResolution = base::TimeDelta::FromSeconds(1);
 
 // Whether the VariationsService should fetch the seed for testing.
 bool g_should_fetch_for_testing = false;
@@ -240,7 +241,7 @@ bool GetInstanceManipulations(const net::HttpResponseHeaders* headers,
 // Variations seed fetching is only enabled in official Chrome builds, if a URL
 // is specified on the command line, and for testing.
 bool IsFetchingEnabled() {
-#if !defined(GOOGLE_CHROME_BUILD)
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kVariationsServerURL) &&
       !g_should_fetch_for_testing) {
@@ -297,8 +298,7 @@ VariationsService::VariationsService(
                                MaybeImportFirstRunSeed(local_state),
                                base::BindOnce(&OnInitialSeedStored)),
                            ui_string_overrider),
-      last_request_was_http_retry_(false),
-      weak_ptr_factory_(this) {
+      last_request_was_http_retry_(false) {
   DCHECK(client_);
   DCHECK(resource_request_allowed_notifier_);
 }
@@ -402,7 +402,7 @@ GURL VariationsService::GetVariationsServerURL(HttpOptions http_options) {
                                                   GetPlatformString());
 
   // Add channel to the request URL.
-  version_info::Channel channel = client_->GetChannel();
+  version_info::Channel channel = client_->GetChannelForVariations();
   if (channel != version_info::Channel::UNKNOWN) {
     server_url = net::AppendOrReplaceQueryParameter(
         server_url, "channel", version_info::GetChannelString(channel));
@@ -426,6 +426,14 @@ void VariationsService::EnsureLocaleEquals(const std::string& locale) {
   // Chrome OS may switch language on the fly.
   DCHECK_EQ(locale, field_trial_creator_.application_locale());
 #else
+
+#if defined(OS_ANDROID)
+  // TODO(asvitkine): Speculative early return to silence CHECK failures on
+  // Android, see crbug.com/912320.
+  if (locale.empty())
+    return;
+#endif
+
   // Uses a CHECK rather than a DCHECK to ensure that issues are caught since
   // problems in this area may only appear in the wild due to official builds
   // and end user machines.
@@ -446,6 +454,10 @@ void VariationsService::RegisterPrefs(PrefRegistrySimple* registry) {
   // This preference will only be written by the policy service, which will fill
   // it according to a value stored in the User Policy.
   registry->RegisterStringPref(prefs::kVariationsRestrictParameter,
+                               std::string());
+  // This preference is used to override the variations country code which is
+  // consistent across different chrome version.
+  registry->RegisterStringPref(prefs::kVariationsPermanentOverriddenCountry,
                                std::string());
   // This preference keeps track of the country code used to filter
   // permanent-consistency studies.
@@ -495,11 +507,11 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
 
   safe_seed_manager_.RecordFetchStarted();
 
-  // Normally, there shouldn't be a |pending_request_| when this fires. However
-  // it's not impossible - for example if Chrome was paused (e.g. in a debugger
-  // or if the machine was suspended) and OnURLFetchComplete() hasn't had a
-  // chance to run yet from the previous request. In this case, don't start a
-  // new request and just let the previous one finish.
+  // Normally, there shouldn't be a |pending_seed_request_| when this fires.
+  // However it's not impossible - for example if Chrome was paused (e.g. in a
+  // debugger or if the machine was suspended) and OnURLFetchComplete() hasn't
+  // had a chance to run yet from the previous request. In this case, don't
+  // start a new request and just let the previous one finish.
   if (pending_seed_request_)
     return false;
 
@@ -525,7 +537,7 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
         })");
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url;
-  resource_request->allow_credentials = false;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   bool enable_deltas = false;
   std::string serial_number =
       field_trial_creator_.seed_store()->GetLatestSerialNumber();
@@ -546,15 +558,15 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
   const char* supported_im = enable_deltas ? "x-bm,gzip" : "gzip";
   resource_request->headers.SetHeader("A-IM", supported_im);
 
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // ID=data_use_measurement::DataUseUserData::VARIATIONS
   pending_seed_request_ = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
   // Ensure our callback is called even with "304 Not Modified" responses.
   pending_seed_request_->SetAllowHttpErrorResults(true);
+  // Set the redirect callback so we can cancel on redirects.
   // base::Unretained is safe here since this class owns
   // |pending_seed_request_|'s lifetime.
+  pending_seed_request_->SetOnRedirectCallback(base::BindRepeating(
+      &VariationsService::OnSimpleLoaderRedirect, base::Unretained(this)));
   pending_seed_request_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       client_->GetURLLoaderFactory().get(),
       base::BindOnce(&VariationsService::OnSimpleLoaderComplete,
@@ -598,8 +610,9 @@ bool VariationsService::StoreSeed(const std::string& seed_data,
   // activated by this seed. To do this, first get the Chrome version to do a
   // simulation with, which must be done on a background thread, and then do the
   // actual simulation on the UI thread.
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       client_->GetVersionForSimulationCallback(),
       base::Bind(&VariationsService::PerformSimulationWithVersion,
                  weak_ptr_factory_.GetWeakPtr(), base::Passed(&seed)));
@@ -668,30 +681,58 @@ void VariationsService::NotifyObservers(
 void VariationsService::OnSimpleLoaderComplete(
     std::unique_ptr<std::string> response_body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  OnSimpleLoaderCompleteOrRedirect(std::move(response_body), false);
+}
 
+void VariationsService::OnSimpleLoaderRedirect(
+    const net::RedirectInfo& redirect_info,
+    const network::mojom::URLResponseHead& response_head,
+    std::vector<std::string>* to_be_removed_headers) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  OnSimpleLoaderCompleteOrRedirect(nullptr, true);
+}
+
+void VariationsService::OnSimpleLoaderCompleteOrRedirect(
+    std::unique_ptr<std::string> response_body,
+    bool was_redirect) {
+  TRACE_EVENT0("browser", "VariationsService::OnSimpleLoaderCompleteOrRedirect");
   const bool is_first_request = !initial_request_completed_;
   initial_request_completed_ = true;
 
-  int net_error = pending_seed_request_->NetError();
-  int response_code = -1;
+  bool is_success = false;
+  int net_error = net::ERR_INVALID_REDIRECT;
   scoped_refptr<net::HttpResponseHeaders> headers;
-  if (pending_seed_request_->ResponseInfo() &&
-      pending_seed_request_->ResponseInfo()->headers) {
-    headers = pending_seed_request_->ResponseInfo()->headers;
-    response_code = headers->response_code();
-  }
-  bool is_success = headers && (net_error == net::OK);
+
+  int response_code = -1;
   // We use the final URL HTTPS/HTTP value to pass to StoreSeed, since
   // signature validation should be forced on for any HTTP fetch, including
-  // redirects from HTTPS to HTTP.
-  bool final_url_was_https =
-      pending_seed_request_->GetFinalURL().SchemeIs(url::kHttpsScheme);
+  // redirects from HTTPS to HTTP. We default to false since we can't get this
+  // value (nor will it be used) in the redirect case.
+  bool final_url_was_https = false;
+
+  // Variations seed fetches should not follow redirects, so if this request was
+  // redirected, keep the default values for |net_error| and |is_success| (treat
+  // it as a net::ERR_INVALID_REDIRECT), and the fetch will be cancelled when
+  // pending_seed_request is reset.
+  if (!was_redirect) {
+    final_url_was_https =
+        pending_seed_request_->GetFinalURL().SchemeIs(url::kHttpsScheme);
+    const network::mojom::URLResponseHead* response_info =
+        pending_seed_request_->ResponseInfo();
+    if (response_info && response_info->headers) {
+      headers = response_info->headers;
+      response_code = headers->response_code();
+    }
+    net_error = pending_seed_request_->NetError();
+    is_success = headers && response_body && (net_error == net::OK);
+  }
+
   pending_seed_request_.reset();
   if (last_request_was_http_retry_) {
-    base::UmaHistogramSparse("Variations.SeedFetchResponseOrErrorCode",
+    base::UmaHistogramSparse("Variations.SeedFetchResponseOrErrorCode.HTTP",
                              is_success ? response_code : net_error);
   } else {
-    base::UmaHistogramSparse("Variations.SeedFetchResponseOrErrorCode.HTTP",
+    base::UmaHistogramSparse("Variations.SeedFetchResponseOrErrorCode",
                              is_success ? response_code : net_error);
   }
   if (!is_success) {
@@ -714,39 +755,46 @@ void VariationsService::OnSimpleLoaderComplete(
     }
   }
 
-  const base::TimeDelta latency =
-      base::TimeTicks::Now() - last_request_started_time_;
-
-  base::Time response_date;
-  if (response_code == net::HTTP_OK ||
-      response_code == net::HTTP_NOT_MODIFIED) {
-    bool success = headers->GetDateValue(&response_date);
-    DCHECK(success || response_date.is_null());
-
-    if (!response_date.is_null()) {
-      client_->GetNetworkTimeTracker()->UpdateNetworkTime(
-          response_date,
-          base::TimeDelta::FromMilliseconds(kServerTimeResolutionMs), latency,
-          base::TimeTicks::Now());
-    }
-  }
-
-  if (response_code != net::HTTP_OK) {
-    DVLOG(1) << "Variations server request returned non-HTTP_OK response code: "
-             << response_code;
-    if (response_code == net::HTTP_NOT_MODIFIED) {
-      RecordSuccessfulFetch();
-
-      // Update the seed date value in local state (used for expiry check on
-      // next start up), since 304 is a successful response. Note that the
-      // serial number included in the request is always that of the latest
-      // seed, even when running in safe mode, so it's appropriate to always
-      // modify the latest seed's date.
-      field_trial_creator_.seed_store()->UpdateSeedDateAndLogDayChange(
-          response_date);
-    }
+  // Return if there was a failure. Note that we check both |is_success| which
+  // is set above and the response code. There could be a case where there's a
+  // HTTP_OK response code but |is_success| is false, for example if the fetch
+  // download was interrupted after having been started.
+  if (!is_success || (response_code != net::HTTP_OK &&
+                      response_code != net::HTTP_NOT_MODIFIED)) {
+    DVLOG(1) << "Variations server request failed: is_success=" << is_success
+             << " response_code=" << response_code
+             << " net_error=" << net_error;
     return;
   }
+  // At this point, |headers| and |response_body| should exist.
+  DCHECK(headers);
+  DCHECK(response_body);
+
+  base::Time response_date;
+  if (headers->GetDateValue(&response_date)) {
+    DCHECK(!response_date.is_null());
+
+    const base::TimeTicks now = base::TimeTicks::Now();
+    const base::TimeDelta latency = now - last_request_started_time_;
+    client_->GetNetworkTimeTracker()->UpdateNetworkTime(
+        response_date, kServerTimeResolution, latency, now);
+  }
+
+  if (response_code == net::HTTP_NOT_MODIFIED) {
+    RecordSuccessfulFetch();
+
+    // Update the seed date value in local state (used for expiry check on
+    // next start up), since 304 is a successful response. Note that the
+    // serial number included in the request is always that of the latest
+    // seed, even when running in safe mode, so it's appropriate to always
+    // modify the latest seed's date.
+    field_trial_creator_.seed_store()->UpdateSeedDateAndLogDayChange(
+        response_date);
+    return;
+  }
+
+  // We're now handling the HTTP_OK success case.
+  DCHECK_EQ(response_code, net::HTTP_OK);
 
   bool is_delta_compressed;
   bool is_gzip_compressed;
@@ -840,7 +888,7 @@ bool VariationsService::CallMaybeRetryOverHTTPForTesting() {
 }
 
 void VariationsService::RecordSuccessfulFetch() {
-  field_trial_creator_.seed_store()->RecordLastFetchTime();
+  field_trial_creator_.seed_store()->RecordLastFetchTime(base::Time::Now());
   safe_seed_manager_.RecordSuccessfulFetch(field_trial_creator_.seed_store());
 }
 
@@ -862,19 +910,39 @@ bool VariationsService::SetupFieldTrials(
     const char* kDisableFeatures,
     const std::set<std::string>& unforceable_field_trials,
     const std::vector<std::string>& variation_ids,
+    const std::vector<base::FeatureList::FeatureOverrideInfo>& extra_overrides,
     std::unique_ptr<base::FeatureList> feature_list,
     variations::PlatformFieldTrials* platform_field_trials) {
   return field_trial_creator_.SetupFieldTrials(
       kEnableGpuBenchmarking, kEnableFeatures, kDisableFeatures,
-      unforceable_field_trials, variation_ids, CreateLowEntropyProvider(),
-      std::move(feature_list), platform_field_trials, &safe_seed_manager_);
+      unforceable_field_trials, variation_ids, extra_overrides,
+      CreateLowEntropyProvider(), std::move(feature_list),
+      platform_field_trials, &safe_seed_manager_);
 }
 
 void VariationsService::OverrideCachedUIStrings() {
   field_trial_creator_.OverrideCachedUIStrings();
 }
 
+void VariationsService::CancelCurrentRequestForTesting() {
+  pending_seed_request_.reset();
+}
+
+void VariationsService::StartRepeatedVariationsSeedFetchForTesting() {
+  InitResourceRequestedAllowedNotifier();
+  return StartRepeatedVariationsSeedFetch();
+}
+
+std::string VariationsService::GetOverriddenPermanentCountry() {
+  return local_state_->GetString(prefs::kVariationsPermanentOverriddenCountry);
+}
+
 std::string VariationsService::GetStoredPermanentCountry() {
+  const std::string variations_overridden_country =
+      GetOverriddenPermanentCountry();
+  if (!variations_overridden_country.empty())
+    return variations_overridden_country;
+
   const base::ListValue* list_value =
       local_state_->GetList(prefs::kVariationsPermanentConsistencyCountry);
   std::string stored_country;
@@ -890,21 +958,13 @@ bool VariationsService::OverrideStoredPermanentCountry(
     const std::string& country_override) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (country_override.empty())
+  const std::string stored_country =
+      local_state_->GetString(prefs::kVariationsPermanentOverriddenCountry);
+
+  if (stored_country == country_override)
     return false;
 
-  const base::ListValue* list_value =
-      local_state_->GetList(prefs::kVariationsPermanentConsistencyCountry);
-
-  std::string stored_country;
-  const bool got_stored_country =
-      list_value->GetSize() == 2 && list_value->GetString(1, &stored_country);
-
-  if (got_stored_country && stored_country == country_override)
-    return false;
-
-  base::Version version(version_info::GetVersionNumber());
-  field_trial_creator_.StorePermanentCountry(version, country_override);
+  field_trial_creator_.StoreVariationsOverriddenCountry(country_override);
   return true;
 }
 

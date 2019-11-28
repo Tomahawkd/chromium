@@ -6,10 +6,35 @@
  * @fileoverview
  * 'settings-basic-page' is the settings page containing the actual settings.
  */
+(function() {
+'use strict';
+
+// <if expr="chromeos">
+const OS_BANNER_INTERACTION_METRIC_NAME =
+    'ChromeOS.Settings.OsBannerInteraction';
+
+/**
+ * These values are persisted to logs and should not be renumbered or re-used.
+ * See tools/metrics/histograms/enums.xml.
+ * @enum {number}
+ */
+const CrosSettingsOsBannerInteraction = {
+  NotShown: 0,
+  Shown: 1,
+  Clicked: 2,
+  Closed: 3,
+};
+// </if>
+
 Polymer({
   is: 'settings-basic-page',
 
-  behaviors: [MainPageBehavior, WebUIListenerBehavior],
+  behaviors: [
+    settings.MainPageBehavior,
+    settings.RouteObserverBehavior,
+    PrefsBehavior,
+    WebUIListenerBehavior,
+  ],
 
   properties: {
     /** Preferences state. */
@@ -25,8 +50,6 @@ Polymer({
 
     allowCrostini_: Boolean,
 
-    showMultidevice: Boolean,
-
     havePlayStoreApp: Boolean,
     // </if>
 
@@ -40,7 +63,7 @@ Polymer({
 
     /**
      * Dictionary defining page visibility.
-     * @type {!GuestModePageVisibility}
+     * @type {!PageVisibility}
      */
     pageVisibility: {
       type: Object,
@@ -87,6 +110,13 @@ Polymer({
       type: Boolean,
       computed: 'computeShowSecondaryUserBanner_(hasExpandedSection_)',
     },
+
+    /** @private */
+    showOSSettingsBanner_: {
+      type: Boolean,
+      computed: 'computeShowOSSettingsBanner_(' +
+          'prefs.settings.cros.show_os_banner.value, currentRoute_)',
+    },
     // </if>
 
     /** @private {!settings.Route|undefined} */
@@ -107,6 +137,11 @@ Polymer({
    */
   advancedTogglingInProgress_: false,
 
+  // <if expr="chromeos">
+  /** @private {boolean} */
+  osBannerShowMetricRecorded_: false,
+  // </if>
+
   /** @override */
   attached: function() {
     this.currentRoute_ = settings.getCurrentRoute();
@@ -118,11 +153,6 @@ Polymer({
       this.showChangePassword = visibility;
     });
 
-    if (loadTimeData.getBoolean('passwordProtectionAvailable')) {
-      settings.ChangePasswordBrowserProxyImpl.getInstance()
-          .initializeChangePasswordHandler();
-    }
-
     if (settings.AndroidAppsBrowserProxyImpl) {
       this.addWebUIListener(
           'android-apps-info-update', this.androidAppsInfoUpdate_.bind(this));
@@ -132,26 +162,35 @@ Polymer({
   },
 
   /**
-   * Overrides MainPageBehaviorImpl from MainPageBehavior.
    * @param {!settings.Route} newRoute
    * @param {settings.Route} oldRoute
    */
   currentRouteChanged: function(newRoute, oldRoute) {
     this.currentRoute_ = newRoute;
 
-    if (settings.routes.ADVANCED && settings.routes.ADVANCED.contains(newRoute))
+    if (settings.routes.ADVANCED &&
+        settings.routes.ADVANCED.contains(newRoute)) {
       this.advancedToggleExpanded = true;
+    }
 
     if (oldRoute && oldRoute.isSubpage()) {
       // If the new route isn't the same expanded section, reset
       // hasExpandedSection_ for the next transition.
-      if (!newRoute.isSubpage() || newRoute.section != oldRoute.section)
+      if (!newRoute.isSubpage() || newRoute.section != oldRoute.section) {
         this.hasExpandedSection_ = false;
+      }
     } else {
       assert(!this.hasExpandedSection_);
     }
 
-    MainPageBehaviorImpl.currentRouteChanged.call(this, newRoute, oldRoute);
+    settings.MainPageBehavior.currentRouteChanged.call(
+        this, newRoute, oldRoute);
+  },
+
+  // Override settings.MainPageBehavior method.
+  containsRoute: function(route) {
+    return !route || settings.routes.BASIC.contains(route) ||
+        settings.routes.ADVANCED.contains(route);
   },
 
   /**
@@ -161,12 +200,6 @@ Polymer({
    */
   showPage_: function(visibility) {
     return visibility !== false;
-  },
-
-  focusSection: function() {
-    const section = this.getSection(settings.getCurrentRoute().section);
-    assert(section);
-    section.show();
   },
 
   /**
@@ -213,6 +246,58 @@ Polymer({
     return !this.hasExpandedSection_ &&
         loadTimeData.getBoolean('isSecondaryUser');
   },
+
+  /**
+   * @return {boolean|undefined}
+   * @private
+   */
+  computeShowOSSettingsBanner_: function() {
+    // this.prefs is implicitly used by this.getPref() below.
+    if (!this.prefs || !this.currentRoute_) {
+      return;
+    }
+    // Don't show the banner when SplitSettings is disabled (and hence this page
+    // is already showing OS settings).
+    if (loadTimeData.getBoolean('showOSSettings')) {
+      return false;
+    }
+    const showPref = /** @type {boolean} */ (
+        this.getPref('settings.cros.show_os_banner').value);
+
+    // Banner only shows on the main page because direct navigations to a
+    // sub-page are unlikely to be due to a user looking for an OS setting.
+    const show = showPref && !this.currentRoute_.isSubpage();
+
+    // Record the show metric once. We can't record the metric in attached()
+    // because prefs might not be ready yet.
+    if (!this.osBannerShowMetricRecorded_) {
+      chrome.metricsPrivate.recordEnumerationValue(
+          OS_BANNER_INTERACTION_METRIC_NAME,
+          show ? CrosSettingsOsBannerInteraction.Shown :
+                 CrosSettingsOsBannerInteraction.NotShown,
+          Object.keys(CrosSettingsOsBannerInteraction).length);
+      this.osBannerShowMetricRecorded_ = true;
+    }
+    return show;
+  },
+
+  /** @private */
+  onOSSettingsBannerClick_: function() {
+    // The label has a link that opens the page, so just record the metric.
+    chrome.metricsPrivate.recordEnumerationValue(
+        OS_BANNER_INTERACTION_METRIC_NAME,
+        CrosSettingsOsBannerInteraction.Clicked,
+        Object.keys(CrosSettingsOsBannerInteraction).length);
+  },
+
+  /** @private */
+  onOSSettingsBannerClosed_: function() {
+    this.setPrefValue('settings.cros.show_os_banner', false);
+    chrome.metricsPrivate.recordEnumerationValue(
+        OS_BANNER_INTERACTION_METRIC_NAME,
+        CrosSettingsOsBannerInteraction.Closed,
+        Object.keys(CrosSettingsOsBannerInteraction).length);
+  },
   // </if>
 
   /** @private */
@@ -229,35 +314,18 @@ Polymer({
   },
 
   /**
+   * Returns true in case Android apps settings should be shown. It is not
+   * shown in case we don't have the Play Store app and settings app is not
+   * yet available.
    * @return {boolean}
    * @private
    */
-  shouldShowAndroidApps_: function() {
-    const visibility = /** @type {boolean|undefined} */ (
-        this.get('pageVisibility.androidApps'));
-    if (!this.showAndroidApps || !this.showPage_(visibility)) {
-      return false;
+  shouldShowAndroidAppsSection_: function() {
+    if (this.havePlayStoreApp ||
+        (this.androidAppsInfo && this.androidAppsInfo.settingsAppAvailable)) {
+      return true;
     }
-
-    // Section is invisible in case we don't have the Play Store app and
-    // settings app is not yet available.
-    if (!this.havePlayStoreApp &&
-        (!this.androidAppsInfo || !this.androidAppsInfo.settingsAppAvailable)) {
-      return false;
-    }
-
-    return true;
-  },
-
-  /**
-   * @return {boolean} Whether the account supports the features managed in
-   * this section.
-   * @private
-   */
-  canShowMultideviceSection_: function() {
-    const visibility = /** @type {boolean|undefined} */ (
-        this.get('pageVisibility.multidevice'));
-    return this.showMultidevice && this.showPage_(visibility);
+    return false;
   },
 
   /**
@@ -273,26 +341,21 @@ Polymer({
    * @private
    */
   advancedToggleExpandedChanged_: function() {
-    if (this.advancedToggleExpanded) {
-      // In Polymer2, async() does not wait long enough for layout to complete.
-      // Polymer.RenderStatus.beforeNextRender() must be used instead.
-      // TODO (rbpotter): Remove conditional when migration to Polymer 2 is
-      // completed.
-      if (Polymer.DomIf) {
-        Polymer.RenderStatus.beforeNextRender(this, () => {
-          this.$$('#advancedPageTemplate').get();
-        });
-      } else {
-        this.async(() => {
-          this.$$('#advancedPageTemplate').get();
-        });
-      }
+    if (!this.advancedToggleExpanded) {
+      return;
     }
+
+    // In Polymer2, async() does not wait long enough for layout to complete.
+    // Polymer.RenderStatus.beforeNextRender() must be used instead.
+    Polymer.RenderStatus.beforeNextRender(this, () => {
+      this.$$('#advancedPageTemplate').get();
+    });
   },
 
   advancedToggleClicked_: function() {
-    if (this.advancedTogglingInProgress_)
+    if (this.advancedTogglingInProgress_) {
       return;
+    }
 
     this.advancedTogglingInProgress_ = true;
     const toggle = this.$$('#toggleContainer');
@@ -385,3 +448,4 @@ Polymer({
     return bool.toString();
   },
 });
+})();

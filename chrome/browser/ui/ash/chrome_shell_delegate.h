@@ -14,12 +14,11 @@ class ChromeShellDelegate : public ash::ShellDelegate {
   ~ChromeShellDelegate() override;
 
   // ash::ShellDelegate:
-  bool CanShowWindowForUser(aura::Window* window) const override;
-  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
+  bool CanShowWindowForUser(const aura::Window* window) const override;
   std::unique_ptr<ash::ScreenshotDelegate> CreateScreenshotDelegate() override;
   ash::AccessibilityDelegate* CreateAccessibilityDelegate() override;
   void OpenKeyboardShortcutHelpPage() const override;
-  ws::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
+  bool CanGoBack(gfx::NativeWindow window) const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ChromeShellDelegate);

@@ -23,7 +23,7 @@
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_paths.h"
+#include "chromeos/constants/chromeos_paths.h"
 #endif
 
 #if BUILDFLAG(ENABLE_NACL)
@@ -99,7 +99,7 @@ void InitLogging() {
   // Set up log initialization settings.
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_ALL;
-  settings.log_file = log_path.value().c_str();
+  settings.log_file_path = log_path.value().c_str();
 
   // Replace the old log file if this is the first process.
   std::string process_type =

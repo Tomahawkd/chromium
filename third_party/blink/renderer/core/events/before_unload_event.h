@@ -34,12 +34,12 @@ class BeforeUnloadEvent final : public Event {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  BeforeUnloadEvent();
-  ~BeforeUnloadEvent() override;
-
   static BeforeUnloadEvent* Create() {
     return MakeGarbageCollected<BeforeUnloadEvent>();
   }
+
+  BeforeUnloadEvent();
+  ~BeforeUnloadEvent() override;
 
   bool IsBeforeUnloadEvent() const override;
 
@@ -50,6 +50,13 @@ class BeforeUnloadEvent final : public Event {
 
   const AtomicString& InterfaceName() const override {
     return event_interface_names::kBeforeUnloadEvent;
+  }
+
+  // A confirmation dialog for leaving a page is expected to be shown
+  // regardless of the state of the page.  So, beforeunload's event
+  // listeners should always run regardless of pause.
+  bool ShouldDispatchEvenWhenExecutionContextIsPaused() const override {
+    return true;
   }
 
   void Trace(blink::Visitor*) override;

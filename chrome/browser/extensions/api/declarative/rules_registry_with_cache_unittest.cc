@@ -17,7 +17,7 @@
 #include "chrome/common/extensions/extension_test_util.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/version_info/version_info.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/declarative/rules_cache_delegate.h"
 #include "extensions/browser/api/declarative/rules_registry_service.h"
@@ -75,10 +75,10 @@ class RulesRegistryWithCacheTest : public testing::Test {
   std::string AddRule(const std::string& extension_id,
                       const std::string& rule_id,
                       TestRulesRegistry* registry) {
-    std::vector<linked_ptr<api::events::Rule>> add_rules;
-    add_rules.push_back(make_linked_ptr(new api::events::Rule));
-    add_rules[0]->id.reset(new std::string(rule_id));
-    return registry->AddRules(extension_id, add_rules);
+    std::vector<api::events::Rule> add_rules;
+    add_rules.emplace_back();
+    add_rules[0].id.reset(new std::string(rule_id));
+    return registry->AddRules(extension_id, std::move(add_rules));
   }
 
   std::string AddRule(const std::string& extension_id,
@@ -95,7 +95,7 @@ class RulesRegistryWithCacheTest : public testing::Test {
 
   int GetNumberOfRules(const std::string& extension_id,
                        TestRulesRegistry* registry) {
-    std::vector<linked_ptr<api::events::Rule>> get_rules;
+    std::vector<const api::events::Rule*> get_rules;
     registry->GetAllRules(extension_id, &get_rules);
     return get_rules.size();
   }
@@ -191,7 +191,7 @@ TEST_F(RulesRegistryWithCacheTest, GetRules) {
   std::vector<std::string> rules_to_get;
   rules_to_get.push_back(kRuleId);
   rules_to_get.push_back("unknown_rule");
-  std::vector<linked_ptr<api::events::Rule>> gotten_rules;
+  std::vector<const api::events::Rule*> gotten_rules;
   registry_->GetRules(extension1_->id(), rules_to_get, &gotten_rules);
   ASSERT_EQ(1u, gotten_rules.size());
   ASSERT_TRUE(gotten_rules[0]->id.get());
@@ -205,7 +205,7 @@ TEST_F(RulesRegistryWithCacheTest, GetAllRules) {
   EXPECT_EQ("", AddRule(extension2_->id(), kRuleId));
 
   // Check that we get the correct rules.
-  std::vector<linked_ptr<api::events::Rule>> gotten_rules;
+  std::vector<const api::events::Rule*> gotten_rules;
   registry_->GetAllRules(extension1_->id(), &gotten_rules);
   EXPECT_EQ(2u, gotten_rules.size());
   ASSERT_TRUE(gotten_rules[0]->id.get());
@@ -255,7 +255,7 @@ TEST_F(RulesRegistryWithCacheTest, DeclarativeRulesStored) {
   // 2. Test writing behavior.
   {
     base::Value value(base::Value::Type::LIST);
-    value.GetList().push_back(base::Value(true));
+    value.Append(base::Value(true));
     cache_delegate->UpdateRules(extension1_->id(), std::move(value));
   }
   EXPECT_TRUE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
@@ -302,7 +302,7 @@ TEST_F(RulesRegistryWithCacheTest, EphemeralCacheIsEphemeral) {
   auto cache_delegate = std::make_unique<RulesCacheDelegate>(
       RulesCacheDelegate::Type::kEphemeral, false);
   base::Value value(base::Value::Type::LIST);
-  value.GetList().push_back(base::Value(true));
+  value.Append(base::Value(true));
   cache_delegate->UpdateRules(extension1_->id(), std::move(value));
   content::RunAllTasksUntilIdle();
   TestingValueStore* store = env_.GetExtensionSystem()->value_store();

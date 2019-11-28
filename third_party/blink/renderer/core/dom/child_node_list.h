@@ -33,10 +33,6 @@ namespace blink {
 
 class ChildNodeList final : public NodeList {
  public:
-  static ChildNodeList* Create(ContainerNode& root_node) {
-    return MakeGarbageCollected<ChildNodeList>(root_node);
-  }
-
   explicit ChildNodeList(ContainerNode& root_node);
   ~ChildNodeList() override;
 
@@ -64,7 +60,7 @@ class ChildNodeList final : public NodeList {
                                  Node& current_node,
                                  unsigned& current_offset) const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   bool IsChildNodeList() const override { return true; }

@@ -45,20 +45,20 @@ class VIEWS_EXPORT MenuDelegate {
  public:
   // Used during drag and drop to indicate where the drop indicator should
   // be rendered.
-  enum DropPosition {
-    DROP_UNKNOWN = -1,
+  enum class DropPosition {
+    kUnknow = -1,
 
     // Indicates a drop is not allowed here.
-    DROP_NONE,
+    kNone,
 
     // Indicates the drop should occur before the item.
-    DROP_BEFORE,
+    kBefore,
 
     // Indicates the drop should occur after the item.
-    DROP_AFTER,
+    kAfter,
 
     // Indicates the drop should occur on the item.
-    DROP_ON
+    kOn
   };
 
   // Used when indicating the style for a given label.
@@ -150,10 +150,9 @@ class VIEWS_EXPORT MenuDelegate {
   virtual bool CanDrop(MenuItemView* menu, const OSExchangeData& data);
 
   // See view for a description of this method.
-  virtual bool GetDropFormats(
-      MenuItemView* menu,
-      int* formats,
-      std::set<ui::Clipboard::FormatType>* format_types);
+  virtual bool GetDropFormats(MenuItemView* menu,
+                              int* formats,
+                              std::set<ui::ClipboardFormatType>* format_types);
 
   // See view for a description of this method.
   virtual bool AreDropTypesRequired(MenuItemView* menu);
@@ -193,10 +192,6 @@ class VIEWS_EXPORT MenuDelegate {
   // true. This is only invoked for drag and drop operations performed on child
   // Views that are not MenuItemViews.
   virtual bool ShouldCloseOnDragComplete();
-
-  // Notification that the user has highlighted the specified item.
-  virtual void SelectionChanged(MenuItemView* menu) {
-  }
 
   // Notification the menu has closed. This will not be called if MenuRunner is
   // deleted during calls to ExecuteCommand().

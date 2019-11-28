@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -31,7 +31,7 @@ const ContentSettingsStringMapping kContentSettingsStringMapping[] = {
     {CONTENT_SETTING_SESSION_ONLY, "session_only"},
     {CONTENT_SETTING_DETECT_IMPORTANT_CONTENT, "detect_important_content"},
 };
-static_assert(arraysize(kContentSettingsStringMapping) ==
+static_assert(base::size(kContentSettingsStringMapping) ==
                   CONTENT_SETTING_NUM_SETTINGS,
               "kContentSettingsToFromString should have "
               "CONTENT_SETTING_NUM_SETTINGS elements");
@@ -50,8 +50,8 @@ const ContentSetting kContentSettingOrder[] = {
     CONTENT_SETTING_BLOCK
 };
 
-static_assert(arraysize(kContentSettingOrder) ==
-              CONTENT_SETTING_NUM_SETTINGS - 1,
+static_assert(base::size(kContentSettingOrder) ==
+                  CONTENT_SETTING_NUM_SETTINGS - 1,
               "kContentSettingOrder should have CONTENT_SETTING_NUM_SETTINGS-1"
               "entries");
 
@@ -69,7 +69,7 @@ std::string ContentSettingToString(ContentSetting setting) {
 
 bool ContentSettingFromString(const std::string& name,
                               ContentSetting* setting) {
-  for (size_t i = 0; i < arraysize(kContentSettingsStringMapping); ++i) {
+  for (size_t i = 0; i < base::size(kContentSettingsStringMapping); ++i) {
     if (name == kContentSettingsStringMapping[i].content_setting_str) {
       *setting = kContentSettingsStringMapping[i].content_setting;
       return true;
@@ -120,10 +120,11 @@ PatternPair ParsePatternString(const std::string& pattern_str) {
 void GetRendererContentSettingRules(const HostContentSettingsMap* map,
                                     RendererContentSettingRules* rules) {
 #if !defined(OS_ANDROID)
-  map->GetSettingsForOneType(
-      CONTENT_SETTINGS_TYPE_IMAGES,
-      ResourceIdentifier(),
-      &(rules->image_rules));
+  map->GetSettingsForOneType(ContentSettingsType::IMAGES, ResourceIdentifier(),
+                             &(rules->image_rules));
+  map->GetSettingsForOneType(ContentSettingsType::MIXEDSCRIPT,
+                             ResourceIdentifier(),
+                             &(rules->mixed_content_rules));
 #else
   // Android doesn't use image content settings, so ALLOW rule is added for
   // all origins.
@@ -131,20 +132,23 @@ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
       base::Value::FromUniquePtrValue(
           ContentSettingToValue(CONTENT_SETTING_ALLOW)),
-      std::string(), map->is_incognito()));
+      std::string(), map->IsOffTheRecord()));
+  // In Android active mixed content is hard blocked, with no option to allow
+  // it.
+  rules->mixed_content_rules.push_back(ContentSettingPatternSource(
+      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
+      base::Value::FromUniquePtrValue(
+          ContentSettingToValue(CONTENT_SETTING_BLOCK)),
+      std::string(), map->IsOffTheRecord()));
 #endif
-  map->GetSettingsForOneType(
-      CONTENT_SETTINGS_TYPE_JAVASCRIPT,
-      ResourceIdentifier(),
-      &(rules->script_rules));
-  map->GetSettingsForOneType(
-      CONTENT_SETTINGS_TYPE_AUTOPLAY,
-      ResourceIdentifier(),
-      &(rules->autoplay_rules));
-  map->GetSettingsForOneType(CONTENT_SETTINGS_TYPE_CLIENT_HINTS,
+  map->GetSettingsForOneType(ContentSettingsType::JAVASCRIPT,
+                             ResourceIdentifier(), &(rules->script_rules));
+  map->GetSettingsForOneType(ContentSettingsType::AUTOPLAY,
+                             ResourceIdentifier(), &(rules->autoplay_rules));
+  map->GetSettingsForOneType(ContentSettingsType::CLIENT_HINTS,
                              ResourceIdentifier(),
                              &(rules->client_hints_rules));
-  map->GetSettingsForOneType(CONTENT_SETTINGS_TYPE_POPUPS, ResourceIdentifier(),
+  map->GetSettingsForOneType(ContentSettingsType::POPUPS, ResourceIdentifier(),
                              &(rules->popup_redirect_rules));
 }
 

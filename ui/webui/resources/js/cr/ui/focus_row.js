@@ -2,6 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// clang-format off
+// #import {assert, assertInstanceof} from 'chrome://resources/js/assert.m.js'
+// #import {EventTracker} from 'chrome://resources/js/event_tracker.m.js'
+// #import {hasKeyModifiers, isRTL} from 'chrome://resources/js/util.m.js'
+// clang-format on
+
 cr.define('cr.ui', function() {
   /**
    * A class to manage focus between given horizontally arranged elements.
@@ -15,7 +21,7 @@ cr.define('cr.ui', function() {
    * changes to a node inside |this.boundary_|. If |boundary| isn't specified,
    * any focus change deactivates the row.
    */
-  class FocusRow {
+  /* #export */ class FocusRow {
     /**
      * @param {!Element} root The root of this focus row. Focus classes are
      *     applied to |root| and all added elements must live within |root|.
@@ -44,8 +50,9 @@ cr.define('cr.ui', function() {
      * @return {boolean} Whether the item is focusable.
      */
     static isFocusable(element) {
-      if (!element || element.disabled)
+      if (!element || element.disabled) {
         return false;
+      }
 
       // We don't check that element.tabIndex >= 0 here because inactive rows
       // set a tabIndex of -1.
@@ -53,17 +60,20 @@ cr.define('cr.ui', function() {
       while (true) {
         assertInstanceof(current, Element);
 
-        var style = window.getComputedStyle(current);
-        if (style.visibility == 'hidden' || style.display == 'none')
+        const style = window.getComputedStyle(current);
+        if (style.visibility == 'hidden' || style.display == 'none') {
           return false;
+        }
 
-        var parent = current.parentNode;
-        if (!parent)
+        const parent = current.parentNode;
+        if (!parent) {
           return false;
+        }
 
         if (parent == current.ownerDocument ||
-            parent instanceof DocumentFragment)
+            parent instanceof DocumentFragment) {
           return true;
+        }
 
         current = /** @type {Element} */ (parent);
       }
@@ -79,8 +89,9 @@ cr.define('cr.ui', function() {
      * @return {!Element}
      */
     static getFocusableElement(element) {
-      if (element.getFocusableElement)
+      if (element.getFocusableElement) {
         return element.getFocusableElement();
+      }
       return element;
     }
 
@@ -104,13 +115,15 @@ cr.define('cr.ui', function() {
     addItem(type, selectorOrElement) {
       assert(type);
 
-      var element;
-      if (typeof selectorOrElement == 'string')
+      let element;
+      if (typeof selectorOrElement == 'string') {
         element = this.root.querySelector(selectorOrElement);
-      else
+      } else {
         element = selectorOrElement;
-      if (!element)
+      }
+      if (!element) {
         return false;
+      }
 
       element.setAttribute('focus-type', type);
       element.tabIndex = this.isActive() ? 0 : -1;
@@ -133,7 +146,7 @@ cr.define('cr.ui', function() {
      * @protected
      */
     getCustomEquivalent(sampleElement) {
-      return assert(this.getFirstFocusable());
+      return /** @type {!Element} */ (assert(this.getFirstFocusable()));
     }
 
     /**
@@ -152,14 +165,16 @@ cr.define('cr.ui', function() {
      * @return {!Element} The element that best matches sampleElement.
      */
     getEquivalentElement(sampleElement) {
-      if (this.getFocusableElements().indexOf(sampleElement) >= 0)
+      if (this.getFocusableElements().indexOf(sampleElement) >= 0) {
         return sampleElement;
+      }
 
-      var sampleFocusType = this.getTypeForElement(sampleElement);
+      const sampleFocusType = this.getTypeForElement(sampleElement);
       if (sampleFocusType) {
-        var sameType = this.getFirstFocusable(sampleFocusType);
-        if (sameType)
+        const sameType = this.getFirstFocusable(sampleFocusType);
+        if (sameType) {
           return sameType;
+        }
       }
 
       return this.getCustomEquivalent(sampleElement);
@@ -199,8 +214,9 @@ cr.define('cr.ui', function() {
      * @param {boolean} active True if tab is allowed for this row.
      */
     makeActive(active) {
-      if (active == this.isActive())
+      if (active == this.isActive()) {
         return;
+      }
 
       this.getElements().forEach(function(element) {
         element.tabIndex = active ? 0 : -1;
@@ -214,12 +230,14 @@ cr.define('cr.ui', function() {
      * @private
      */
     onBlur_(e) {
-      if (!this.boundary_.contains(/** @type {Element} */ (e.relatedTarget)))
+      if (!this.boundary_.contains(/** @type {Element} */ (e.relatedTarget))) {
         return;
+      }
 
-      var currentTarget = /** @type {!Element} */ (e.currentTarget);
-      if (this.getFocusableElements().indexOf(currentTarget) >= 0)
+      const currentTarget = /** @type {!Element} */ (e.currentTarget);
+      if (this.getFocusableElements().indexOf(currentTarget) >= 0) {
         this.makeActive(false);
+      }
     }
 
     /**
@@ -227,8 +245,9 @@ cr.define('cr.ui', function() {
      * @private
      */
     onFocus_(e) {
-      if (this.delegate)
+      if (this.delegate) {
         this.delegate.onFocus(this, e);
+      }
     }
 
     /**
@@ -237,12 +256,14 @@ cr.define('cr.ui', function() {
      */
     onMousedown_(e) {
       // Only accept left mouse clicks.
-      if (e.button)
+      if (e.button) {
         return;
+      }
 
       // Allow the element under the mouse cursor to be focusable.
-      if (!e.currentTarget.disabled)
+      if (!e.currentTarget.disabled) {
         e.currentTarget.tabIndex = 0;
+      }
     }
 
     /**
@@ -250,29 +271,33 @@ cr.define('cr.ui', function() {
      * @private
      */
     onKeydown_(e) {
-      var elements = this.getFocusableElements();
-      var currentElement = /** @type {!Element} */ (e.currentTarget);
-      var elementIndex = elements.indexOf(currentElement);
+      const elements = this.getFocusableElements();
+      const currentElement = cr.ui.FocusRow.getFocusableElement(
+          /** @type {!Element} */ (e.currentTarget));
+      const elementIndex = elements.indexOf(currentElement);
       assert(elementIndex >= 0);
 
-      if (this.delegate && this.delegate.onKeydown(this, e))
+      if (this.delegate && this.delegate.onKeydown(this, e)) {
         return;
+      }
 
-      if (hasKeyModifiers(e))
+      if (hasKeyModifiers(e)) {
         return;
+      }
 
-      var index = -1;
+      let index = -1;
 
-      if (e.key == 'ArrowLeft')
+      if (e.key == 'ArrowLeft') {
         index = elementIndex + (isRTL() ? 1 : -1);
-      else if (e.key == 'ArrowRight')
+      } else if (e.key == 'ArrowRight') {
         index = elementIndex + (isRTL() ? -1 : 1);
-      else if (e.key == 'Home')
+      } else if (e.key == 'Home') {
         index = 0;
-      else if (e.key == 'End')
+      } else if (e.key == 'End') {
         index = elements.length - 1;
+      }
 
-      var elementToFocus = elements[index];
+      const elementToFocus = elements[index];
       if (elementToFocus) {
         this.getEquivalentElement(elementToFocus).focus();
         e.preventDefault();
@@ -285,7 +310,7 @@ cr.define('cr.ui', function() {
 
 
   /** @interface */
-  class FocusRowDelegate {
+  /* #export */ class FocusRowDelegate {
     /**
      * Called when a key is pressed while on a FocusRow's item. If true is
      * returned, further processing is skipped.
@@ -300,8 +325,16 @@ cr.define('cr.ui', function() {
      * @param {!Event} e
      */
     onFocus(row, e) {}
+
+    /**
+     * @param {!Element} sampleElement An element to find an equivalent for.
+     * @return {?Element} An equivalent element to focus, or null to use the
+     *     default FocusRow element.
+     */
+    getCustomEquivalent(sampleElement) {}
   }
 
+  // #cr_define_end
   return {
     FocusRow,
     FocusRowDelegate,

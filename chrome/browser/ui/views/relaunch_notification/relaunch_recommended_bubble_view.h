@@ -15,7 +15,6 @@ class Browser;
 
 namespace views {
 class Button;
-class Label;
 class Widget;
 }  // namespace views
 
@@ -28,21 +27,17 @@ class RelaunchRecommendedBubbleView : public LocationBarBubbleDelegateView {
   // |detection_time|. |on_accept| is run if the user accepts the prompt to
   // restart.
   static views::Widget* ShowBubble(Browser* browser,
-                                   base::TimeTicks detection_time,
+                                   base::Time detection_time,
                                    base::RepeatingClosure on_accept);
   ~RelaunchRecommendedBubbleView() override;
 
   // LocationBarBubbleDelegateView:
   bool Accept() override;
   bool Close() override;
-  int GetDialogButtons() const override;
-  base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   base::string16 GetWindowTitle() const override;
   bool ShouldShowCloseButton() const override;
   gfx::ImageSkia GetWindowIcon() override;
   bool ShouldShowWindowIcon() const override;
-  int GetHeightForWidth(int width) const override;
-  void Layout() override;
 
  protected:
   // LocationBarBubbleDelegateView:
@@ -52,8 +47,7 @@ class RelaunchRecommendedBubbleView : public LocationBarBubbleDelegateView {
 
  private:
   RelaunchRecommendedBubbleView(views::Button* anchor_button,
-                                const gfx::Point& anchor_point,
-                                base::TimeTicks detection_time,
+                                base::Time detection_time,
                                 base::RepeatingClosure on_accept);
 
   // Invoked when the timer fires to refresh the title text.
@@ -63,9 +57,6 @@ class RelaunchRecommendedBubbleView : public LocationBarBubbleDelegateView {
 
   // A callback run if the user accepts the prompt to relaunch the browser.
   base::RepeatingClosure on_accept_;
-
-  // The label containing the body text of the bubble.
-  views::Label* body_label_;
 
   // Timer that schedules title refreshes.
   RelaunchRecommendedTimer relaunch_recommended_timer_;

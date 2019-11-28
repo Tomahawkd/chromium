@@ -17,6 +17,7 @@
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "extensions/browser/extension_event_histogram_value.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/common/api/bluetooth.h"
 #include "extensions/common/api/bluetooth_private.h"
@@ -34,7 +35,6 @@ class BluetoothDiscoverySession;
 
 namespace extensions {
 class BluetoothApiPairingDelegate;
-class ExtensionRegistry;
 struct EventListenerInfo;
 
 class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
@@ -48,8 +48,7 @@ class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
   // adapter is available for the current platform.
   bool IsBluetoothSupported() const;
 
-  void GetAdapter(
-      const device::BluetoothAdapterFactory::AdapterCallback& callback);
+  void GetAdapter(device::BluetoothAdapterFactory::AdapterCallback callback);
 
   // Requests that a new device discovery session be initiated for extension
   // with id |extension_id|. |callback| is called, if a session has been
@@ -140,7 +139,7 @@ class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
   void AddPairingDelegateImpl(const std::string& extension_id);
 
   void OnAdapterInitialized(
-      const device::BluetoothAdapterFactory::AdapterCallback& callback,
+      device::BluetoothAdapterFactory::AdapterCallback callback,
       scoped_refptr<device::BluetoothAdapter> adapter);
   void MaybeReleaseAdapter();
   void DispatchAdapterStateEvent();
@@ -182,9 +181,9 @@ class BluetoothEventRouter : public device::BluetoothAdapter::Observer,
   content::NotificationRegistrar registrar_;
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
-  base::WeakPtrFactory<BluetoothEventRouter> weak_ptr_factory_;
+  base::WeakPtrFactory<BluetoothEventRouter> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothEventRouter);
 };

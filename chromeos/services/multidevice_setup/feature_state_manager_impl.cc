@@ -11,8 +11,9 @@
 #include "base/no_destructor.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/software_feature.h"
 #include "chromeos/services/multidevice_setup/public/cpp/prefs.h"
 #include "components/prefs/pref_service.h"
 
@@ -165,30 +166,28 @@ FeatureStateManagerImpl::Factory::BuildInstance(
     PrefService* pref_service,
     HostStatusProvider* host_status_provider,
     device_sync::DeviceSyncClient* device_sync_client,
-    std::unique_ptr<AndroidSmsPairingStateTracker>
-        android_sms_pairing_state_tracker) {
+    AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker) {
   return base::WrapUnique(new FeatureStateManagerImpl(
       pref_service, host_status_provider, device_sync_client,
-      std::move(android_sms_pairing_state_tracker)));
+      android_sms_pairing_state_tracker));
 }
 
 FeatureStateManagerImpl::FeatureStateManagerImpl(
     PrefService* pref_service,
     HostStatusProvider* host_status_provider,
     device_sync::DeviceSyncClient* device_sync_client,
-    std::unique_ptr<AndroidSmsPairingStateTracker>
-        android_sms_pairing_state_tracker)
+    AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker)
     : pref_service_(pref_service),
       host_status_provider_(host_status_provider),
       device_sync_client_(device_sync_client),
-      android_sms_pairing_state_tracker_(
-          std::move(android_sms_pairing_state_tracker)),
+      android_sms_pairing_state_tracker_(android_sms_pairing_state_tracker),
       feature_to_enabled_pref_name_map_(GenerateFeatureToEnabledPrefNameMap()),
       feature_to_allowed_pref_name_map_(GenerateFeatureToAllowedPrefNameMap()),
       cached_feature_state_map_(GenerateInitialDefaultCachedStateMap()) {
   host_status_provider_->AddObserver(this);
   device_sync_client_->AddObserver(this);
-  android_sms_pairing_state_tracker_->AddObserver(this);
+  if (android_sms_pairing_state_tracker_)
+    android_sms_pairing_state_tracker_->AddObserver(this);
 
   registrar_.Init(pref_service_);
 
@@ -220,7 +219,8 @@ FeatureStateManagerImpl::FeatureStateManagerImpl(
 FeatureStateManagerImpl::~FeatureStateManagerImpl() {
   host_status_provider_->RemoveObserver(this);
   device_sync_client_->RemoveObserver(this);
-  android_sms_pairing_state_tracker_->RemoveObserver(this);
+  if (android_sms_pairing_state_tracker_)
+    android_sms_pairing_state_tracker_->RemoveObserver(this);
 }
 
 FeatureStateManager::FeatureStatesMap
@@ -310,23 +310,23 @@ mojom::FeatureState FeatureStateManagerImpl::ComputeFeatureState(
 bool FeatureStateManagerImpl::IsAllowedByPolicy(mojom::Feature feature) {
   // If no policy preference exists for this feature, the feature is implicitly
   // allowed.
-  if (!base::ContainsKey(feature_to_allowed_pref_name_map_, feature))
+  if (!base::Contains(feature_to_allowed_pref_name_map_, feature))
     return true;
 
   return pref_service_->GetBoolean(feature_to_allowed_pref_name_map_[feature]);
 }
 
 bool FeatureStateManagerImpl::IsSupportedByChromebook(mojom::Feature feature) {
-  static const std::pair<mojom::Feature, cryptauth::SoftwareFeature>
+  static const std::pair<mojom::Feature, multidevice::SoftwareFeature>
       kFeatureAndClientSoftwareFeaturePairs[] = {
           {mojom::Feature::kBetterTogetherSuite,
-           cryptauth::SoftwareFeature::BETTER_TOGETHER_CLIENT},
+           multidevice::SoftwareFeature::kBetterTogetherClient},
           {mojom::Feature::kInstantTethering,
-           cryptauth::SoftwareFeature::MAGIC_TETHER_CLIENT},
+           multidevice::SoftwareFeature::kInstantTetheringClient},
           {mojom::Feature::kMessages,
-           cryptauth::SoftwareFeature::SMS_CONNECT_CLIENT},
+           multidevice::SoftwareFeature::kMessagesForWebClient},
           {mojom::Feature::kSmartLock,
-           cryptauth::SoftwareFeature::EASY_UNLOCK_CLIENT}};
+           multidevice::SoftwareFeature::kSmartLockClient}};
 
   for (const auto& pair : kFeatureAndClientSoftwareFeaturePairs) {
     if (pair.first != feature)
@@ -348,26 +348,26 @@ bool FeatureStateManagerImpl::HasSufficientSecurity(
     return true;
 
   // Special case for Smart Lock: if the host device does not have a lock screen
-  // set, its SoftwareFeatureState for EASY_UNLOCK_HOST is supported but not
+  // set, its SoftwareFeatureState for kSmartLockHost is supported but not
   // enabled.
   return host_device.GetSoftwareFeatureState(
-             cryptauth::SoftwareFeature::EASY_UNLOCK_HOST) !=
+             multidevice::SoftwareFeature::kSmartLockHost) !=
          multidevice::SoftwareFeatureState::kSupported;
 }
 
 bool FeatureStateManagerImpl::HasBeenActivatedByPhone(
     mojom::Feature feature,
     const multidevice::RemoteDeviceRef& host_device) {
-  static const std::pair<mojom::Feature, cryptauth::SoftwareFeature>
+  static const std::pair<mojom::Feature, multidevice::SoftwareFeature>
       kFeatureAndHostSoftwareFeaturePairs[] = {
           {mojom::Feature::kBetterTogetherSuite,
-           cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST},
+           multidevice::SoftwareFeature::kBetterTogetherHost},
           {mojom::Feature::kInstantTethering,
-           cryptauth::SoftwareFeature::MAGIC_TETHER_HOST},
+           multidevice::SoftwareFeature::kInstantTetheringHost},
           {mojom::Feature::kMessages,
-           cryptauth::SoftwareFeature::SMS_CONNECT_HOST},
+           multidevice::SoftwareFeature::kMessagesForWebHost},
           {mojom::Feature::kSmartLock,
-           cryptauth::SoftwareFeature::EASY_UNLOCK_HOST}};
+           multidevice::SoftwareFeature::kSmartLockHost}};
 
   for (const auto& pair : kFeatureAndHostSoftwareFeaturePairs) {
     if (pair.first != feature)
@@ -385,12 +385,18 @@ bool FeatureStateManagerImpl::RequiresFurtherSetup(mojom::Feature feature) {
   if (feature != mojom::Feature::kMessages)
     return false;
 
-  return !android_sms_pairing_state_tracker_->IsAndroidSmsPairingComplete();
+  if (GetEnabledOrDisabledState(feature) ==
+      mojom::FeatureState::kDisabledByUser) {
+    return false;
+  }
+
+  return android_sms_pairing_state_tracker_ &&
+         !android_sms_pairing_state_tracker_->IsAndroidSmsPairingComplete();
 }
 
 mojom::FeatureState FeatureStateManagerImpl::GetEnabledOrDisabledState(
     mojom::Feature feature) {
-  if (!base::ContainsKey(feature_to_enabled_pref_name_map_, feature)) {
+  if (!base::Contains(feature_to_enabled_pref_name_map_, feature)) {
     PA_LOG(ERROR) << "FeatureStateManagerImpl::GetEnabledOrDisabledState(): "
                   << "Feature not present in \"enabled pref\" map: " << feature;
     NOTREACHED();

@@ -1,9 +1,8 @@
 include_rules = [
-  "+components/data_use_measurement/core",
   "+components/image_fetcher/core",
   "+components/keyed_service/core",
   "+components/search_engines",
-  "+components/signin/core/browser",
+  "+components/signin/public",
   "+components/sync_preferences/testing_pref_service_syncable.h",
   "+net",
   "+services/network/public/cpp",

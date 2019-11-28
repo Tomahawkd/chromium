@@ -82,6 +82,20 @@ def handle_shard_failures_with(on_failure):
   return decorator
 
 
+def place_nomedia_on_device(dev, device_root):
+  """Places .nomedia file in test data root.
+
+  This helps to prevent system from scanning media files inside test data.
+
+  Args:
+    dev: Device to place .nomedia file.
+    device_root: Base path on device to place .nomedia file.
+  """
+
+  dev.RunShellCommand(['mkdir', '-p', device_root], check_return=True)
+  dev.WriteFile('%s/.nomedia' % device_root, 'https://crbug.com/796640')
+
+
 class LocalDeviceEnvironment(environment.Environment):
 
   def __init__(self, args, output_manager, _error_func):
@@ -98,6 +112,7 @@ class LocalDeviceEnvironment(environment.Environment):
     self._logcat_output_dir = args.logcat_output_dir
     self._logcat_output_file = args.logcat_output_file
     self._max_tries = 1 + args.num_retries
+    self._preferred_abis = None
     self._recover_devices = args.recover_devices
     self._skip_clear_data = args.skip_clear_data
     self._tool_name = args.tool
@@ -127,15 +142,24 @@ class LocalDeviceEnvironment(environment.Environment):
     elif self.trace_output:
       self.EnableTracing()
 
+  # Must be called before accessing |devices|.
+  def SetPreferredAbis(self, abis):
+    assert self._devices is None
+    self._preferred_abis = abis
+
   def _InitDevices(self):
     device_arg = []
     if self._device_serials:
       device_arg = self._device_serials
 
     self._devices = device_utils.DeviceUtils.HealthyDevices(
-        self._blacklist, retries=5, enable_usb_resets=True,
+        self._blacklist,
+        retries=5,
+        enable_usb_resets=True,
         enable_device_files_cache=self._enable_device_cache,
-        default_retries=self._max_tries - 1, device_arg=device_arg)
+        default_retries=self._max_tries - 1,
+        device_arg=device_arg,
+        abis=self._preferred_abis)
 
     if self._logcat_output_file:
       self._logcat_output_dir = tempfile.mkdtemp()

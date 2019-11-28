@@ -18,6 +18,7 @@ class PickleIterator;
 
 namespace content {
 
+class BrowserContext;
 class NavigationEntry;
 class WebContents;
 
@@ -48,16 +49,18 @@ void WriteHeaderToPickle(uint32_t state_version, base::Pickle* pickle);
 uint32_t RestoreHeaderFromPickle(base::PickleIterator* iterator)
     WARN_UNUSED_RESULT;
 bool IsSupportedVersion(uint32_t state_version) WARN_UNUSED_RESULT;
-void WriteNavigationEntryToPickle(const content::NavigationEntry& entry,
+void WriteNavigationEntryToPickle(content::NavigationEntry& entry,
                                   base::Pickle* pickle);
 void WriteNavigationEntryToPickle(uint32_t state_version,
-                                  const content::NavigationEntry& entry,
+                                  content::NavigationEntry& entry,
                                   base::Pickle* pickle);
 bool RestoreNavigationEntryFromPickle(base::PickleIterator* iterator,
+                                      content::BrowserContext* browser_context,
                                       content::NavigationEntry* entry)
     WARN_UNUSED_RESULT;
 bool RestoreNavigationEntryFromPickle(uint32_t state_version,
                                       base::PickleIterator* iterator,
+                                      content::BrowserContext* browser_context,
                                       content::NavigationEntry* entry)
     WARN_UNUSED_RESULT;
 

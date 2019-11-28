@@ -5,8 +5,9 @@
 #include "chromeos/components/tether/tether_connector_impl.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/disconnect_tethering_request_sender.h"
@@ -62,8 +63,7 @@ TetherConnectorImpl::TetherConnectorImpl(
       notification_presenter_(notification_presenter),
       host_connection_metrics_logger_(host_connection_metrics_logger),
       disconnect_tethering_request_sender_(disconnect_tethering_request_sender),
-      wifi_hotspot_disconnector_(wifi_hotspot_disconnector),
-      weak_ptr_factory_(this) {}
+      wifi_hotspot_disconnector_(wifi_hotspot_disconnector) {}
 
 TetherConnectorImpl::~TetherConnectorImpl() {
   if (connect_tethering_operation_)
@@ -150,6 +150,8 @@ bool TetherConnectorImpl::CancelConnectionAttempt(
 
 void TetherConnectorImpl::OnConnectTetheringRequestSent(
     multidevice::RemoteDeviceRef remote_device) {
+  did_send_successful_request_ = true;
+
   // If setup is required for the phone, display a notification so that the
   // user knows to follow instructions on the phone. Note that the notification
   // is displayed only after a request has been sent successfully. If the
@@ -432,8 +434,19 @@ TetherConnectorImpl::GetConnectionToHostResultFromErrorCode(
         CONNECTION_RESULT_FAILURE_INVALID_HOTSPOT_CREDENTIALS;
   }
 
+  if (error_code ==
+      ConnectTetheringOperation::HostResponseErrorCode::NO_RESPONSE) {
+    if (did_send_successful_request_) {
+      return HostConnectionMetricsLogger::ConnectionToHostResult::
+          CONNECTION_RESULT_FAILURE_SUCCESSFUL_REQUEST_BUT_NO_RESPONSE;
+    } else {
+      return HostConnectionMetricsLogger::ConnectionToHostResult::
+          CONNECTION_RESULT_FAILURE_NO_RESPONSE;
+    }
+  }
+
   return HostConnectionMetricsLogger::ConnectionToHostResult::
-      CONNECTION_RESULT_FAILURE_NO_RESPONSE;
+      CONNECTION_RESULT_FAILURE_UNRECOGNIZED_RESPONSE_ERROR;
 }
 
 }  // namespace tether

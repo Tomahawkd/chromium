@@ -53,6 +53,7 @@ class MEDIA_EXPORT Decryptor {
   // If this function is called multiple times for the same |stream_type|, the
   // previously registered callback will be replaced. In other words,
   // registering a null callback cancels the originally registered callback.
+  // TODO(crbug.com/821288): Replace this with CdmContext::RegisterEventCB().
   virtual void RegisterNewKeyCB(StreamType stream_type,
                                 const NewKeyCB& key_added_cb) = 0;
 
@@ -120,9 +121,10 @@ class MEDIA_EXPORT Decryptor {
   // - Set to kError if unexpected error has occurred. In this case the
   //   returned frame(s) must be NULL/empty.
   // Second parameter: The decoded video frame or audio buffers.
-  typedef base::Callback<void(Status, const AudioFrames&)> AudioDecodeCB;
-  typedef base::Callback<void(Status,
-                              const scoped_refptr<VideoFrame>&)> VideoDecodeCB;
+  typedef base::RepeatingCallback<void(Status, const AudioFrames&)>
+      AudioDecodeCB;
+  typedef base::RepeatingCallback<void(Status, scoped_refptr<VideoFrame>)>
+      VideoDecodeCB;
 
   // Decrypts and decodes the |encrypted| buffer. The status and the decrypted
   // buffer are returned via the provided callback.
@@ -156,6 +158,9 @@ class MEDIA_EXPORT Decryptor {
   // After this operation, the decoder is set to an uninitialized state.
   // The decoder can be reinitialized after it is uninitialized.
   virtual void DeinitializeDecoder(StreamType stream_type) = 0;
+
+  // Returns whether or not the decryptor implementation supports decrypt-only.
+  virtual bool CanAlwaysDecrypt();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(Decryptor);

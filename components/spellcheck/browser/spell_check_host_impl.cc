@@ -5,16 +5,16 @@
 #include "components/spellcheck/browser/spell_check_host_impl.h"
 
 #include "content/public/browser/browser_thread.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 
 SpellCheckHostImpl::SpellCheckHostImpl() = default;
 SpellCheckHostImpl::~SpellCheckHostImpl() = default;
 
 // static
 void SpellCheckHostImpl::Create(
-    spellcheck::mojom::SpellCheckHostRequest request) {
-  mojo::MakeStrongBinding(std::make_unique<SpellCheckHostImpl>(),
-                          std::move(request));
+    mojo::PendingReceiver<spellcheck::mojom::SpellCheckHost> receiver) {
+  mojo::MakeSelfOwnedReceiver(std::make_unique<SpellCheckHostImpl>(),
+                              std::move(receiver));
 }
 
 void SpellCheckHostImpl::RequestDictionary() {
@@ -32,7 +32,7 @@ void SpellCheckHostImpl::NotifyChecked(const base::string16& word,
   return;
 }
 
-#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+#if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
 void SpellCheckHostImpl::CallSpellingService(
     const base::string16& text,
     CallSpellingServiceCallback callback) {
@@ -44,7 +44,7 @@ void SpellCheckHostImpl::CallSpellingService(
   // This API requires Chrome-only features.
   std::move(callback).Run(false, std::vector<SpellCheckResult>());
 }
-#endif  // !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+#endif  // BUILDFLAG(USE_RENDERER_SPELLCHECKER)
 
 #if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 void SpellCheckHostImpl::RequestTextCheck(const base::string16& text,
@@ -60,14 +60,6 @@ void SpellCheckHostImpl::RequestTextCheck(const base::string16& text,
 #else
   // This API requires Chrome-only features on the platform.
   std::move(callback).Run(std::vector<SpellCheckResult>());
-#endif
-}
-
-void SpellCheckHostImpl::ToggleSpellCheck(bool enabled, bool checked) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-#if defined(OS_ANDROID)
-  if (!enabled)
-    session_bridge_.DisconnectSession();
 #endif
 }
 
@@ -89,3 +81,10 @@ void SpellCheckHostImpl::FillSuggestionList(
   std::move(callback).Run(std::vector<base::string16>());
 }
 #endif  // BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+
+#if defined(OS_ANDROID)
+void SpellCheckHostImpl::DisconnectSessionBridge() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  session_bridge_.DisconnectSession();
+}
+#endif

@@ -8,20 +8,26 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
-#include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_error_controller.h"
-#include "components/signin/core/browser/signin_manager_base.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+
+class ProfileAttributesStorage;
 
 // This class listens to various signin events and updates the signin-related
 // fields of ProfileAttributes.
-class SigninProfileAttributesUpdater : public KeyedService,
-                                       public SigninErrorController::Observer,
-                                       public SigninManagerBase::Observer {
+class SigninProfileAttributesUpdater
+    : public KeyedService,
+      public SigninErrorController::Observer,
+      public signin::IdentityManager::Observer {
  public:
-  SigninProfileAttributesUpdater(SigninManagerBase* signin_manager,
-                                 SigninErrorController* signin_error_controller,
-                                 const base::FilePath& profile_path);
+  SigninProfileAttributesUpdater(
+      signin::IdentityManager* identity_manager,
+      SigninErrorController* signin_error_controller,
+      ProfileAttributesStorage* profile_attributes_storage,
+      const base::FilePath& profile_path,
+      PrefService* prefs);
 
   ~SigninProfileAttributesUpdater() override;
 
@@ -29,22 +35,29 @@ class SigninProfileAttributesUpdater : public KeyedService,
   // KeyedService:
   void Shutdown() override;
 
+  // Updates the profile attributes on signin and signout events.
+  void UpdateProfileAttributes();
+
   // SigninErrorController::Observer:
   void OnErrorChanged() override;
 
-// These observer methods are never called on ChromeOS.
-#if !defined(OS_CHROMEOS)
-  // SigninManagerBase::Observer:
-  void GoogleSigninSucceeded(const AccountInfo& account_info) override;
-  void GoogleSignedOut(const AccountInfo& account_info) override;
-#endif
+  // IdentityManager::Observer:
+  void OnPrimaryAccountSet(
+      const CoreAccountInfo& primary_account_info) override;
+  void OnPrimaryAccountCleared(
+      const CoreAccountInfo& previous_primary_account_info) override;
+  void OnUnconsentedPrimaryAccountChanged(
+      const CoreAccountInfo& unconsented_primary_account_info) override;
 
+  signin::IdentityManager* identity_manager_;
   SigninErrorController* signin_error_controller_;
+  ProfileAttributesStorage* profile_attributes_storage_;
   const base::FilePath profile_path_;
-  ScopedObserver<SigninErrorController, SigninProfileAttributesUpdater>
-      signin_error_controller_observer_;
-  ScopedObserver<SigninManagerBase, SigninProfileAttributesUpdater>
-      signin_manager_observer_;
+  PrefService* prefs_;
+  ScopedObserver<signin::IdentityManager, signin::IdentityManager::Observer>
+      identity_manager_observer_{this};
+  ScopedObserver<SigninErrorController, SigninErrorController::Observer>
+      signin_error_controller_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SigninProfileAttributesUpdater);
 };

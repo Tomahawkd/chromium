@@ -23,15 +23,15 @@ class AboutUIHTMLSource : public content::URLDataSource {
   ~AboutUIHTMLSource() override;
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
+  std::string GetSource() override;
   void StartDataRequest(
-      const std::string& path,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
+      const GURL& url,
+      const content::WebContents::Getter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string& path) const override;
-  bool ShouldAddContentSecurityPolicy() const override;
+  std::string GetMimeType(const std::string& path) override;
+  bool ShouldAddContentSecurityPolicy() override;
   std::string GetAccessControlAllowOriginForOrigin(
-      const std::string& origin) const override;
+      const std::string& origin) override;
 
   // Send the response data.
   void FinishDataRequest(
@@ -40,18 +40,9 @@ class AboutUIHTMLSource : public content::URLDataSource {
 
   Profile* profile() { return profile_; }
 
-  // Overrides Chrome OS assets location for tests.
-  void SetChromeOSAssetsDirForTests(const std::string& path) {
-    chromeos_assets_dir_for_tests_ = path;
-  }
-
  private:
   std::string source_name_;
   Profile* profile_;
-
-  // Directory to be used as Chrome OS assets location in tests. If set, it
-  // overrides chrome::kChromeOSAssetPath.
-  std::string chromeos_assets_dir_for_tests_;
 
   DISALLOW_COPY_AND_ASSIGN(AboutUIHTMLSource);
 };

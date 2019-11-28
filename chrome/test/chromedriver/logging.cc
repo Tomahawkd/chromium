@@ -14,7 +14,7 @@
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -22,6 +22,7 @@
 #include "chrome/test/chromedriver/chrome/console_logger.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/command_listener_proxy.h"
+#include "chrome/test/chromedriver/constants/version.h"
 #include "chrome/test/chromedriver/devtools_events_logger.h"
 #include "chrome/test/chromedriver/performance_logger.h"
 #include "chrome/test/chromedriver/session.h"
@@ -31,12 +32,21 @@
 #include <unistd.h>
 #endif
 
+const char* GetPortProtectionMessage() {
+  static std::string kPortProtectionMessage = base::StringPrintf(
+      "Please protect ports used by %s and related test frameworks to "
+      "prevent access by malicious code.",
+      kChromeDriverProductShortName);
+  return kPortProtectionMessage.c_str();
+}
 
 namespace {
 
 Log::Level g_log_level = Log::kWarning;
 
 int64_t g_start_time = 0;
+
+bool readable_timestamp;
 
 // Array indices are the Log::Level enum values.
 const char* const kLevelToName[] = {
@@ -51,7 +61,7 @@ const char* const kLevelToName[] = {
 const char* LevelToName(Log::Level level) {
   const int index = level - Log::kAll;
   CHECK_GE(index, 0);
-  CHECK_LT(static_cast<size_t>(index), arraysize(kLevelToName));
+  CHECK_LT(static_cast<size_t>(index), base::size(kLevelToName));
   return kLevelToName[index];
 }
 
@@ -108,13 +118,47 @@ bool HandleLogMessage(int severity,
 
   if (level >= g_log_level) {
     const char* level_name = LevelToName(level);
-    std::string entry = base::StringPrintf(
-        "[%.3lf][%s]: %s",
-        base::TimeDelta(base::TimeTicks::Now() -
-                        base::TimeTicks::UnixEpoch())
-            .InSecondsF(),
-        level_name,
-        message.c_str());
+    std::string entry;
+
+    if (readable_timestamp) {
+#if defined(OS_WIN)
+      SYSTEMTIME local_time;
+      GetLocalTime(&local_time);
+
+      entry = base::StringPrintf(
+          "[%02d-%02d-%04d %02d:%02d:%02d.%03d][%s]: %s",
+          local_time.wMonth, local_time.wDay, local_time.wYear,
+          local_time.wHour, local_time.wMinute, local_time.wSecond,
+          local_time.wMilliseconds,
+          level_name,
+          message.c_str());
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+      timeval tv;
+      gettimeofday(&tv, nullptr);
+      time_t t = tv.tv_sec;
+      struct tm local_time;
+      localtime_r(&t, &local_time);
+      struct tm* tm_time = &local_time;
+
+      entry = base::StringPrintf(
+          "[%02d-%02d-%04d %02d:%02d:%02d.%06ld][%s]: %s",
+          1 + tm_time->tm_mon, tm_time->tm_mday, 1900 + tm_time->tm_year,
+          tm_time->tm_hour, tm_time->tm_min, tm_time->tm_sec,
+          static_cast<long>(tv.tv_usec),
+          level_name,
+          message.c_str());
+#else
+#error Unsupported platform
+#endif
+    } else {
+      entry = base::StringPrintf(
+          "[%.3lf][%s]: %s",
+          base::TimeDelta(base::TimeTicks::Now() -
+                          base::TimeTicks::UnixEpoch())
+              .InSecondsF(),
+          level_name,
+          message.c_str());
+    }
     fprintf(stderr, "%s", entry.c_str());
     fflush(stderr);
   }
@@ -134,7 +178,7 @@ const char WebDriverLog::kPerformanceType[] = "performance";
 const char WebDriverLog::kDevToolsType[] = "devtools";
 
 bool WebDriverLog::NameToLevel(const std::string& name, Log::Level* out_level) {
-  for (size_t i = 0; i < arraysize(kNameToLevel); ++i) {
+  for (size_t i = 0; i < base::size(kNameToLevel); ++i) {
     if (name == kNameToLevel[i].name) {
       *out_level = kNameToLevel[i].level;
       return true;
@@ -232,7 +276,7 @@ Log::Level WebDriverLog::min_level() const {
   return min_level_;
 }
 
-bool InitLogging() {
+bool InitLogging(uint16_t port) {
   g_start_time = base::TimeTicks::Now().ToInternalValue();
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
 
@@ -244,6 +288,9 @@ bool InitLogging() {
     if (cmd_line->HasSwitch("append-log")) {
         logMode = FILE_PATH_LITERAL("a");
     }
+  if (cmd_line->HasSwitch("readable-timestamp")) {
+    readable_timestamp = true;
+  }
 #if defined(OS_WIN)
     FILE* redir_stderr = _wfreopen(log_path.value().c_str(), logMode, stderr);
 #else
@@ -296,8 +343,15 @@ bool InitLogging() {
   logging::SetLogMessageHandler(&HandleLogMessage);
 
   logging::LoggingSettings logging_settings;
-  logging_settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
-  return logging::InitLogging(logging_settings);
+  logging_settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
+  bool res = logging::InitLogging(logging_settings);
+  if (cmd_line->HasSwitch("log-path") && res) {
+    VLOG(0) << "Starting " << kChromeDriverProductFullName << " "
+            << kChromeDriverVersion << " on port " << port;
+    VLOG(0) << GetPortProtectionMessage();
+  }
+  return res;
 }
 
 Status CreateLogs(

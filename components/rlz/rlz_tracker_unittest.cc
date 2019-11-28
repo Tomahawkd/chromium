@@ -6,11 +6,11 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -109,6 +109,9 @@ class TestRLZTrackerDelegate : public RLZTrackerDelegate {
     DCHECK(!callback.is_null());
     on_homepage_search_callback_ = callback;
   }
+
+  // A speculative fix for https://crbug.com/907379.
+  bool ShouldUpdateExistingAccessPointRlz() override { return false; }
 
  private:
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
@@ -257,7 +260,7 @@ class RlzLibTest : public testing::Test {
   void ExpectRlzPingSent(bool expected);
   void ExpectReactivationRlzPingSent(bool expected);
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   TestRLZTrackerDelegate* delegate_;
   std::unique_ptr<TestRLZTracker> tracker_;
   RlzLibTestNoMachineStateHelper m_rlz_test_helper_;
@@ -331,7 +334,7 @@ void RlzLibTest::InvokeDelayedInit() {
 
 void RlzLibTest::ExpectEventRecorded(const char* event_name, bool expected) {
   char cgi[rlz_lib::kMaxCgiLength];
-  GetProductEventsAsCgi(rlz_lib::CHROME, cgi, arraysize(cgi));
+  GetProductEventsAsCgi(rlz_lib::CHROME, cgi, base::size(cgi));
   if (expected) {
     EXPECT_STR_CONTAINS(cgi, event_name);
   } else {

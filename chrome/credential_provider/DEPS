@@ -4,10 +4,11 @@ include_rules = [
   "+chrome/installer/util",
   "+components/crash",
   "+google_apis",
+  "+third_party/boringssl/src/include",
 ]
 
 specific_include_rules = {
-  "gcp_gls_output_unittest\.cc": [
+  ".+_unittests*\.cc": [
     "+chrome/browser/ui/startup/credential_provider_signin_dialog_win_test_data.h",
   ]
 }

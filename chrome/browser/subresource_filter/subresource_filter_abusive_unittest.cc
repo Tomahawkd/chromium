@@ -96,7 +96,7 @@ class SubresourceFilterAbusiveTest
   bool DidSendConsoleMessage(const std::string& message) {
     const auto& messages =
         content::RenderFrameHostTester::For(main_rfh())->GetConsoleMessages();
-    return base::ContainsValue(messages, message);
+    return base::Contains(messages, message);
   }
 
  protected:
@@ -151,7 +151,7 @@ TEST_P(SubresourceFilterAbusiveTest, ConfigCombination) {
             DidSendConsoleMessage(kAbusiveWarnMessage));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     SubresourceFilterAbusiveTest,
     ::testing::Combine(

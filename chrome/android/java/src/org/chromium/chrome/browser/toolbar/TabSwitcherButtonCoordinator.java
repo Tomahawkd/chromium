@@ -9,14 +9,14 @@ import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
-import org.chromium.chrome.browser.modelutil.PropertyModelChangeProcessor;
+import org.chromium.chrome.browser.ThemeColorProvider;
+import org.chromium.chrome.browser.ThemeColorProvider.TintObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
 import org.chromium.chrome.browser.toolbar.TabCountProvider.TabCountObserver;
-import org.chromium.chrome.browser.toolbar.ThemeColorProvider.ThemeColorObserver;
-import org.chromium.chrome.browser.util.AccessibilityUtil;
+import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /**
  * The controller for the tab switcher button. This class handles all interactions that the tab
@@ -36,7 +36,7 @@ public class TabSwitcherButtonCoordinator {
     private TabModelSelectorTabModelObserver mTabModelSelectorTabModelObserver;
 
     private ThemeColorProvider mThemeColorProvider;
-    private ThemeColorObserver mThemeColorObserver;
+    private TintObserver mTintObserver;
 
     private TabCountProvider mTabCountProvider;
     private TabCountObserver mTabCountObserver;
@@ -49,10 +49,6 @@ public class TabSwitcherButtonCoordinator {
         final TabSwitcherButtonView view = root.findViewById(R.id.tab_switcher_button);
         PropertyModelChangeProcessor.create(
                 mTabSwitcherButtonModel, view, new TabSwitcherButtonViewBinder());
-
-        CharSequence description = root.getResources().getString(R.string.open_tabs);
-        mTabSwitcherButtonModel.set(TabSwitcherButtonProperties.ON_LONG_CLICK_LISTENER,
-                v -> AccessibilityUtil.showAccessibilityToast(root.getContext(), v, description));
     }
 
     /**
@@ -65,13 +61,13 @@ public class TabSwitcherButtonCoordinator {
 
     public void setThemeColorProvider(ThemeColorProvider themeColorProvider) {
         mThemeColorProvider = themeColorProvider;
-        mThemeColorObserver = new ThemeColorObserver() {
+        mTintObserver = new TintObserver() {
             @Override
-            public void onThemeColorChanged(ColorStateList tint, int primaryColor) {
+            public void onTintChanged(ColorStateList tint, boolean useLight) {
                 mTabSwitcherButtonModel.set(TabSwitcherButtonProperties.TINT, tint);
             }
         };
-        mThemeColorProvider.addObserver(mThemeColorObserver);
+        mThemeColorProvider.addTintObserver(mTintObserver);
     }
 
     public void setTabCountProvider(TabCountProvider tabCountProvider) {
@@ -87,7 +83,7 @@ public class TabSwitcherButtonCoordinator {
 
     public void destroy() {
         if (mThemeColorProvider != null) {
-            mThemeColorProvider.removeObserver(mThemeColorObserver);
+            mThemeColorProvider.removeTintObserver(mTintObserver);
             mThemeColorProvider = null;
         }
         if (mTabCountProvider != null) {

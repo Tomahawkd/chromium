@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "chromeos/cryptohome/homedir_methods.h"
 #include "chromeos/dbus/cryptohome/rpc.pb.h"
@@ -15,7 +16,8 @@
 
 namespace cryptohome {
 
-class CHROMEOS_EXPORT MockHomedirMethods : public HomedirMethods {
+class COMPONENT_EXPORT(CHROMEOS_CRYPTOHOME) MockHomedirMethods
+    : public HomedirMethods {
  public:
   MockHomedirMethods();
   ~MockHomedirMethods() override;
@@ -26,35 +28,29 @@ class CHROMEOS_EXPORT MockHomedirMethods : public HomedirMethods {
                void(const Identification& id,
                     const AuthorizationRequest& auth,
                     const CheckKeyRequest& request,
-                    const Callback& callback));
+                    Callback callback));
   MOCK_METHOD4(AddKeyEx,
                void(const Identification& id,
                     const AuthorizationRequest& auth,
                     const AddKeyRequest& request,
-                    const Callback& callback));
+                    Callback callback));
   MOCK_METHOD4(RemoveKeyEx,
                void(const Identification& id,
                     const AuthorizationRequest& auth,
                     const RemoveKeyRequest& request,
-                    const Callback& callback));
+                    Callback callback));
   MOCK_METHOD4(UpdateKeyEx,
                void(const Identification& id,
                     const AuthorizationRequest& auth,
                     const UpdateKeyRequest& request,
-                    const Callback& callback));
-
-  void set_add_key_callback(const base::Closure& callback) {
-    on_add_key_called_ = callback;
-  }
+                    Callback callback));
 
  private:
-  void DoCallback(const Callback& callback);
-  void DoAddKeyCallback(const Callback& callback);
+  void DoCallback(Callback callback);
+  void DoAddKeyCallback(Callback callback);
 
   bool success_ = false;
   MountError return_code_ = MOUNT_ERROR_NONE;
-
-  base::Closure on_add_key_called_;
 
   DISALLOW_COPY_AND_ASSIGN(MockHomedirMethods);
 };

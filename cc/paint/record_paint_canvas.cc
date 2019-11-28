@@ -4,13 +4,14 @@
 
 #include "cc/paint/record_paint_canvas.h"
 
+#include <utility>
+
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_record.h"
 #include "cc/paint/paint_recorder.h"
 #include "cc/paint/skottie_wrapper.h"
 #include "third_party/skia/include/core/SkAnnotation.h"
-#include "third_party/skia/include/core/SkMetaData.h"
 #include "third_party/skia/include/utils/SkNWayCanvas.h"
 
 namespace cc {
@@ -23,14 +24,15 @@ RecordPaintCanvas::RecordPaintCanvas(DisplayItemList* list,
 
 RecordPaintCanvas::~RecordPaintCanvas() = default;
 
-SkMetaData& RecordPaintCanvas::getMetaData() {
-  // This could just be SkMetaData owned by RecordPaintCanvas, but since
-  // SkCanvas already has one, we might as well use it directly.
-  return GetCanvas()->getMetaData();
-}
-
 SkImageInfo RecordPaintCanvas::imageInfo() const {
   return GetCanvas()->imageInfo();
+}
+
+void* RecordPaintCanvas::accessTopLayerPixels(SkImageInfo* info,
+                                              size_t* rowBytes,
+                                              SkIPoint* origin) {
+  // Modifications to the underlying pixels cannot be saved.
+  return nullptr;
 }
 
 void RecordPaintCanvas::flush() {
@@ -49,7 +51,7 @@ int RecordPaintCanvas::saveLayer(const SkRect* bounds,
       // TODO(enne): maybe more callers should know this and call
       // saveLayerAlpha instead of needing to check here.
       uint8_t alpha = SkColorGetA(flags->getColor());
-      return saveLayerAlpha(bounds, alpha, false);
+      return saveLayerAlpha(bounds, alpha);
     }
 
     // TODO(enne): it appears that image filters affect matrices and color
@@ -63,10 +65,8 @@ int RecordPaintCanvas::saveLayer(const SkRect* bounds,
   return GetCanvas()->saveLayer(bounds, nullptr);
 }
 
-int RecordPaintCanvas::saveLayerAlpha(const SkRect* bounds,
-                                      uint8_t alpha,
-                                      bool preserve_lcd_text_requests) {
-  list_->push<SaveLayerAlphaOp>(bounds, alpha, preserve_lcd_text_requests);
+int RecordPaintCanvas::saveLayerAlpha(const SkRect* bounds, uint8_t alpha) {
+  list_->push<SaveLayerAlphaOp>(bounds, alpha);
   return GetCanvas()->saveLayerAlpha(bounds, alpha);
 }
 
@@ -253,6 +253,7 @@ void RecordPaintCanvas::drawImage(const PaintImage& image,
                                   SkScalar left,
                                   SkScalar top,
                                   const PaintFlags* flags) {
+  DCHECK(!image.IsPaintWorklet());
   list_->push<DrawImageOp>(image, left, top, flags);
 }
 
@@ -277,6 +278,14 @@ void RecordPaintCanvas::drawTextBlob(sk_sp<SkTextBlob> blob,
   list_->push<DrawTextBlobOp>(std::move(blob), x, y, flags);
 }
 
+void RecordPaintCanvas::drawTextBlob(sk_sp<SkTextBlob> blob,
+                                     SkScalar x,
+                                     SkScalar y,
+                                     NodeId node_id,
+                                     const PaintFlags& flags) {
+  list_->push<DrawTextBlobOp>(std::move(blob), x, y, node_id, flags);
+}
+
 void RecordPaintCanvas::drawPicture(sk_sp<const PaintRecord> record) {
   // TODO(enne): If this is small, maybe flatten it?
   list_->push<DrawRecordOp>(record);
@@ -285,11 +294,6 @@ void RecordPaintCanvas::drawPicture(sk_sp<const PaintRecord> record) {
 bool RecordPaintCanvas::isClipEmpty() const {
   DCHECK(InitializedWithRecordingBounds());
   return GetCanvas()->isClipEmpty();
-}
-
-bool RecordPaintCanvas::isClipRect() const {
-  DCHECK(InitializedWithRecordingBounds());
-  return GetCanvas()->isClipRect();
 }
 
 const SkMatrix& RecordPaintCanvas::getTotalMatrix() const {

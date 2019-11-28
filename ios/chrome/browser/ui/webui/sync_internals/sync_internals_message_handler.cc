@@ -7,14 +7,15 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/values.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/sync/base/weak_handle.h"
 #include "components/sync/driver/about_sync_util.h"
 #include "components/sync/driver/sync_driver_switches.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "components/sync/engine/cycle/commit_counters.h"
 #include "components/sync/engine/cycle/status_counters.h"
 #include "components/sync/engine/cycle/update_counters.h"
@@ -23,7 +24,7 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/chrome/common/channel_info.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "ios/web/public/webui/web_ui_ios.h"
 
 namespace {
@@ -196,7 +197,7 @@ void SyncInternalsMessageHandler::HandleGetAllNodes(
 
   syncer::SyncService* service = GetSyncService();
   if (service) {
-    service->GetAllNodes(
+    service->GetAllNodesForDebugging(
         base::Bind(&SyncInternalsMessageHandler::OnReceivedAllNodes,
                    weak_ptr_factory_.GetWeakPtr(), request_id));
   }
@@ -221,7 +222,8 @@ void SyncInternalsMessageHandler::HandleRequestStart(
   // If the service was previously stopped with CLEAR_DATA, then the
   // "first-setup-complete" bit was also cleared, and now the service wouldn't
   // fully start up. So set that too.
-  service->GetUserSettings()->SetFirstSetupComplete();
+  service->GetUserSettings()->SetFirstSetupComplete(
+      syncer::SyncFirstSetupCompleteSource::BASIC_FLOW);
 }
 
 void SyncInternalsMessageHandler::HandleRequestStopKeepData(
@@ -265,8 +267,11 @@ void SyncInternalsMessageHandler::OnReceivedAllNodes(
     int request_id,
     std::unique_ptr<base::ListValue> nodes) {
   base::Value id(request_id);
+  base::Value nodes_clone = nodes->Clone();
+
+  std::vector<const base::Value*> args{&id, &nodes_clone};
   web_ui()->CallJavascriptFunction(syncer::sync_ui_util::kGetAllNodesCallback,
-                                   id, *nodes);
+                                   args);
 }
 
 void SyncInternalsMessageHandler::OnStateChanged(syncer::SyncService* sync) {
@@ -276,7 +281,7 @@ void SyncInternalsMessageHandler::OnStateChanged(syncer::SyncService* sync) {
 void SyncInternalsMessageHandler::OnProtocolEvent(
     const syncer::ProtocolEvent& event) {
   std::unique_ptr<base::DictionaryValue> value(
-      syncer::ProtocolEvent::ToValue(event, include_specifics_));
+      event.ToValue(include_specifics_));
   DispatchEvent(syncer::sync_ui_util::kOnProtocolEvent, *value);
 }
 
@@ -336,6 +341,9 @@ syncer::SyncService* SyncInternalsMessageHandler::GetSyncService() {
 void SyncInternalsMessageHandler::DispatchEvent(
     const std::string& name,
     const base::Value& details_value) {
-  web_ui()->CallJavascriptFunction(syncer::sync_ui_util::kDispatchEvent,
-                                   base::Value(name), details_value);
+  base::Value event_name = base::Value(name);
+
+  std::vector<const base::Value*> args{&event_name, &details_value};
+
+  web_ui()->CallJavascriptFunction(syncer::sync_ui_util::kDispatchEvent, args);
 }

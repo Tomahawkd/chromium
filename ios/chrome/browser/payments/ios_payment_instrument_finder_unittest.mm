@@ -4,9 +4,10 @@
 
 #include "ios/chrome/browser/payments/ios_payment_instrument_finder.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ios/chrome/browser/payments/ios_payment_instrument.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
@@ -39,14 +40,13 @@ class TestIOSPaymentInstrumentFinder final : public IOSPaymentInstrumentFinder {
 class PaymentRequestIOSPaymentInstrumentFinderTest : public PlatformTest {
  public:
   PaymentRequestIOSPaymentInstrumentFinderTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::IO),
+      : task_environment_(base::test::TaskEnvironment::MainThreadType::IO),
         shared_factory_(
             base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
                 &test_url_loader_factory_)),
         ios_payment_instrument_finder_(
-            std::make_unique<TestIOSPaymentInstrumentFinder>(
-                shared_factory_)) {}
+            std::make_unique<TestIOSPaymentInstrumentFinder>(shared_factory_)) {
+  }
 
   ~PaymentRequestIOSPaymentInstrumentFinderTest() override {}
 
@@ -139,8 +139,10 @@ class PaymentRequestIOSPaymentInstrumentFinderTest : public PlatformTest {
         &PaymentRequestIOSPaymentInstrumentFinderTest::InstrumentsFoundCallback,
         base::Unretained(this));
     ios_payment_instrument_finder_->num_instruments_to_find_ = 1;
+    GURL web_app_manifest_url("https://bobpay.xyz/bob/manifest.json");
     ios_payment_instrument_finder_->OnWebAppManifestDownloaded(
-        method, GURL("https://bobpay.xyz/bob/manifest.json"), content);
+        method, web_app_manifest_url, web_app_manifest_url, content,
+        /*error_message=*/"");
   }
 
   void RunLoop() {
@@ -153,7 +155,7 @@ class PaymentRequestIOSPaymentInstrumentFinderTest : public PlatformTest {
   }
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_factory_;
 
@@ -228,9 +230,8 @@ TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        DefaultApplicationsShouldHaveAbsoluteUrl) {
-  ExpectUnableToParsePaymentMethodManifest(
-      "{\"default_applications\": ["
-      "\"app.json\"]}");
+  ExpectUnableToParsePaymentMethodManifest("{\"default_applications\": ["
+                                           "\"app.json\"]}");
 }
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
@@ -243,23 +244,21 @@ TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        WellFormedPaymentMethodManifestWithApps) {
-  ExpectParsedPaymentMethodManifest(
-      "{\"default_applications\": ["
-      "\"https://bobpay.com/app.json\","
-      "\"https://alicepay.com/app.json\"]}",
-      {GURL("https://bobpay.com/app.json"),
-       GURL("https://alicepay.com/app.json")});
+  ExpectParsedPaymentMethodManifest("{\"default_applications\": ["
+                                    "\"https://bobpay.com/app.json\","
+                                    "\"https://alicepay.com/app.json\"]}",
+                                    {GURL("https://bobpay.com/app.json"),
+                                     GURL("https://alicepay.com/app.json")});
 }
 
 TEST_F(PaymentRequestIOSPaymentInstrumentFinderTest,
        WellFormedPaymentMethodManifestWithDuplicateApps) {
-  ExpectParsedPaymentMethodManifest(
-      "{\"default_applications\": ["
-      "\"https://bobpay.com/app.json\","
-      "\"https://bobpay.com/app.json\","
-      "\"https://alicepay.com/app.json\"]}",
-      {GURL("https://bobpay.com/app.json"),
-       GURL("https://alicepay.com/app.json")});
+  ExpectParsedPaymentMethodManifest("{\"default_applications\": ["
+                                    "\"https://bobpay.com/app.json\","
+                                    "\"https://bobpay.com/app.json\","
+                                    "\"https://alicepay.com/app.json\"]}",
+                                    {GURL("https://bobpay.com/app.json"),
+                                     GURL("https://alicepay.com/app.json")});
 }
 
 // Web app manifest parsing:

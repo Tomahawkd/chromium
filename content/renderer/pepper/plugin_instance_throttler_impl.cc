@@ -4,6 +4,7 @@
 
 #include "content/renderer/pepper/plugin_instance_throttler_impl.h"
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
@@ -67,8 +68,7 @@ PluginInstanceThrottlerImpl::PluginInstanceThrottlerImpl(
           base::TimeDelta::FromMilliseconds(
               kAudioThrottledFrameTimeoutMilliseconds),
           this,
-          &PluginInstanceThrottlerImpl::EngageThrottle),
-      weak_factory_(this) {}
+          &PluginInstanceThrottlerImpl::EngageThrottle) {}
 
 PluginInstanceThrottlerImpl::~PluginInstanceThrottlerImpl() {
   for (auto& observer : observer_list_)
@@ -85,11 +85,11 @@ void PluginInstanceThrottlerImpl::RemoveObserver(Observer* observer) {
   observer_list_.RemoveObserver(observer);
 }
 
-bool PluginInstanceThrottlerImpl::IsThrottled() const {
+bool PluginInstanceThrottlerImpl::IsThrottled() {
   return state_ == THROTTLER_STATE_PLUGIN_THROTTLED;
 }
 
-bool PluginInstanceThrottlerImpl::IsHiddenForPlaceholder() const {
+bool PluginInstanceThrottlerImpl::IsHiddenForPlaceholder() {
   return is_hidden_for_placeholder_;
 }
 
@@ -117,12 +117,12 @@ void PluginInstanceThrottlerImpl::SetHiddenForPlaceholder(bool hidden) {
     observer.OnHiddenForPlaceholder(hidden);
 }
 
-PepperWebPluginImpl* PluginInstanceThrottlerImpl::GetWebPlugin() const {
+PepperWebPluginImpl* PluginInstanceThrottlerImpl::GetWebPlugin() {
   DCHECK(web_plugin_);
   return web_plugin_;
 }
 
-const gfx::Size& PluginInstanceThrottlerImpl::GetSize() const {
+const gfx::Size& PluginInstanceThrottlerImpl::GetSize() {
   return unobscured_size_;
 }
 
@@ -170,8 +170,9 @@ void PluginInstanceThrottlerImpl::Initialize(
     // is disabled.
     frame->RegisterPeripheralPlugin(
         content_origin,
-        base::Bind(&PluginInstanceThrottlerImpl::MarkPluginEssential,
-                   weak_factory_.GetWeakPtr(), UNTHROTTLE_METHOD_BY_WHITELIST));
+        base::BindOnce(&PluginInstanceThrottlerImpl::MarkPluginEssential,
+                       weak_factory_.GetWeakPtr(),
+                       UNTHROTTLE_METHOD_BY_WHITELIST));
   }
 }
 

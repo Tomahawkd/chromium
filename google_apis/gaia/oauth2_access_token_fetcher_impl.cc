@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
@@ -119,8 +120,7 @@ static std::unique_ptr<network::SimpleURLLoader> CreateURLLoader(
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url;
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   if (!body.empty())
     resource_request->method = "POST";
 
@@ -150,7 +150,7 @@ std::unique_ptr<base::DictionaryValue> ParseGetAccessTokenResponse(
   if (!data)
     return nullptr;
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(*data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(*data);
   if (!value.get() || value->type() != base::Value::Type::DICTIONARY)
     value.reset();
 
@@ -207,9 +207,8 @@ void OAuth2AccessTokenFetcherImpl::EndGetAccessToken(
 
   bool net_failure = false;
   int histogram_value;
-  if (url_loader_->ResponseInfo() && url_loader_->ResponseInfo()->headers) {
-    // Note that the SimpleURLLoader reports net::ERR_FAILED for HTTP codes
-    // other than 200s.
+  if (url_loader_->NetError() == net::OK && url_loader_->ResponseInfo() &&
+      url_loader_->ResponseInfo()->headers) {
     histogram_value = url_loader_->ResponseInfo()->headers->response_code();
   } else {
     histogram_value = url_loader_->NetError();
@@ -226,6 +225,13 @@ void OAuth2AccessTokenFetcherImpl::EndGetAccessToken(
   switch (response_code) {
     case net::HTTP_OK:
       break;
+    case net::HTTP_PROXY_AUTHENTICATION_REQUIRED:
+      NOTREACHED() << "HTTP 407 should be treated as a network error.";
+      // If this ever happens in production, we treat it as a temporary error as
+      // it is similar to a network error.
+      OnGetTokenFailure(
+          GoogleServiceAuthError(GoogleServiceAuthError::SERVICE_UNAVAILABLE));
+      return;
     case net::HTTP_FORBIDDEN:
       // HTTP_FORBIDDEN (403) is treated as temporary error, because it may be
       // '403 Rate Limit Exeeded.'

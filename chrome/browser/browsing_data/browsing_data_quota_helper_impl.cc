@@ -10,7 +10,7 @@
 #include "base/barrier_closure.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -35,7 +35,7 @@ void BrowsingDataQuotaHelperImpl::StartFetching(FetchResultCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!callback.is_null());
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&BrowsingDataQuotaHelperImpl::FetchQuotaInfoOnIOThread,
                      this, std::move(callback)));
@@ -43,7 +43,7 @@ void BrowsingDataQuotaHelperImpl::StartFetching(FetchResultCallback callback) {
 
 void BrowsingDataQuotaHelperImpl::RevokeHostQuota(const std::string& host) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&BrowsingDataQuotaHelperImpl::RevokeHostQuotaOnIOThread,
                      this, host));
@@ -51,9 +51,7 @@ void BrowsingDataQuotaHelperImpl::RevokeHostQuota(const std::string& host) {
 
 BrowsingDataQuotaHelperImpl::BrowsingDataQuotaHelperImpl(
     storage::QuotaManager* quota_manager)
-    : BrowsingDataQuotaHelper(),
-      quota_manager_(quota_manager),
-      weak_factory_(this) {
+    : BrowsingDataQuotaHelper(), quota_manager_(quota_manager) {
   DCHECK(quota_manager);
 }
 
@@ -71,7 +69,7 @@ void BrowsingDataQuotaHelperImpl::FetchQuotaInfoOnIOThread(
   // hosts.
   PendingHosts* pending_hosts = new PendingHosts();
   base::RepeatingClosure completion = base::BarrierClosure(
-      arraysize(types),
+      base::size(types),
       base::BindOnce(&BrowsingDataQuotaHelperImpl::OnGetOriginsComplete,
                      weak_factory_.GetWeakPtr(), std::move(callback),
                      base::Owned(pending_hosts)));
@@ -161,8 +159,8 @@ void BrowsingDataQuotaHelperImpl::OnGetHostsUsageComplete(
     result.push_back(info);
   }
 
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(std::move(callback), result));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(std::move(callback), result));
 }
 
 void BrowsingDataQuotaHelperImpl::RevokeHostQuotaOnIOThread(

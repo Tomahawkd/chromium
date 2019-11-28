@@ -7,46 +7,26 @@
 
 #import <Foundation/Foundation.h>
 
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_item.h"
-#import "ios/third_party/material_components_ios/src/components/CollectionCells/src/MaterialCollectionCells.h"
+#import "ios/chrome/browser/ui/table_view/cells/table_view_item.h"
 
 // SettingsImageDetailTextItem is an item that displays an image, a title and
-// a detail text (optional). This item uses multi-lines text field. It also
-// contains acommand id.
-// This class is intended to be used with Google services settings view.
-@interface SettingsImageDetailTextItem : CollectionViewItem
+// a detail text (optional). This item uses multi-lines text field.
+@interface SettingsImageDetailTextItem : TableViewItem
 
-// The image to display.
+// The image to display (required). If this image should be tinted to match the
+// text color (e.g. in dark mode), the provided image should have rendering mode
+// UIImageRenderingModeAlwaysTemplate.
 @property(nonatomic, strong) UIImage* image;
+
+// Whether the image should be tinted as an icon or not (if it is already
+// colored). The tint color will match the text color.
+@property(nonatomic, assign) BOOL imageShouldBeTinted;
 
 // The title text to display.
 @property(nonatomic, copy) NSString* text;
 
 // The detail text to display.
 @property(nonatomic, copy) NSString* detailText;
-
-// Command to trigger when the switch is toggled. The default value is 0.
-@property(nonatomic, assign) NSInteger commandID;
-
-@end
-
-// Cell representation for SettingsImageDetailTextItem.
-//  +--------------------------------------------------+
-//  |  +-------+                                       |
-//  |  | image |   Multiline title                     |
-//  |  |       |   Optional multiline detail text      |
-//  |  +-------+                                       |
-//  +--------------------------------------------------+
-@interface SettingsImageDetailTextCell : MDCCollectionViewCell
-
-// Cell image.
-@property(nonatomic, readonly, strong) UIImageView* imageView;
-
-// Cell title.
-@property(nonatomic, readonly, strong) UILabel* textLabel;
-
-// Cell subtitle.
-@property(nonatomic, readonly, strong) UILabel* detailTextLabel;
 
 @end
 

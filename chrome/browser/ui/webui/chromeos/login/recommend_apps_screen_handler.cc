@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/webui/chromeos/login/recommend_apps_screen_handler.h"
 
 #include "base/metrics/histogram_macros.h"
-#include "chrome/browser/chromeos/arc/arc_session_manager.h"
+#include "chrome/browser/chromeos/arc/session/arc_session_manager.h"
 #include "chrome/browser/chromeos/login/screens/recommend_apps_screen.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -17,8 +17,6 @@
 #include "ui/base/resource/resource_bundle.h"
 
 namespace {
-
-const char kJsScreenPath[] = "login.RecommendAppsScreen";
 
 constexpr const char kUserActionSkip[] = "recommendAppsSkip";
 constexpr const char kUserActionRetry[] = "recommendAppsRetry";
@@ -73,14 +71,16 @@ void RecordUmaScreenAction(RecommendAppsScreenAction action) {
 
 namespace chromeos {
 
-RecommendAppsScreenHandler::RecommendAppsScreenHandler()
-    : BaseScreenHandler(kScreenId) {
-  set_call_js_prefix(kJsScreenPath);
+constexpr StaticOobeScreenId RecommendAppsScreenView::kScreenId;
+
+RecommendAppsScreenHandler::RecommendAppsScreenHandler(
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container) {
 }
 
 RecommendAppsScreenHandler::~RecommendAppsScreenHandler() {
-  for (auto& observer : observer_list_)
-    observer.OnViewDestroyed(this);
+  if (screen_)
+    screen_->OnViewDestroyed(this);
 }
 
 void RecommendAppsScreenHandler::DeclareLocalizedValues(
@@ -104,16 +104,6 @@ void RecommendAppsScreenHandler::RegisterMessages() {
                  &RecommendAppsScreenHandler::HandleInstall);
 }
 
-void RecommendAppsScreenHandler::AddObserver(
-    RecommendAppsScreenViewObserver* observer) {
-  observer_list_.AddObserver(observer);
-}
-
-void RecommendAppsScreenHandler::RemoveObserver(
-    RecommendAppsScreenViewObserver* observer) {
-  observer_list_.RemoveObserver(observer);
-}
-
 void RecommendAppsScreenHandler::Bind(RecommendAppsScreen* screen) {
   screen_ = screen;
   BaseScreenHandler::SetBaseScreen(screen);
@@ -128,27 +118,9 @@ void RecommendAppsScreenHandler::Show() {
 
 void RecommendAppsScreenHandler::Hide() {}
 
-void RecommendAppsScreenHandler::Initialize() {}
-
-void RecommendAppsScreenHandler::LoadAppListInUI(const base::Value& app_list) {
-  if (!page_is_ready()) {
-    RecordUmaScreenState(RecommendAppsScreenState::ERROR);
-    CallJSWithPrefix("showError");
-    return;
-  }
-
-  RecordUmaScreenState(RecommendAppsScreenState::SHOW);
-  const ui::ResourceBundle& resource_bundle =
-      ui::ResourceBundle::GetSharedInstance();
-  base::StringPiece app_list_webview = resource_bundle.GetRawDataResource(
-      IDR_ARC_SUPPORT_RECOMMEND_APP_LIST_VIEW_HTML);
-  CallJSWithPrefix("setWebview", app_list_webview.as_string());
-  CallJSWithPrefix("loadAppList", app_list);
-}
-
 void RecommendAppsScreenHandler::OnLoadError() {
   RecordUmaScreenState(RecommendAppsScreenState::ERROR);
-  CallJSWithPrefix("showError");
+  CallJS("login.RecommendAppsScreen.showError");
 }
 
 void RecommendAppsScreenHandler::OnLoadSuccess(const base::Value& app_list) {
@@ -160,6 +132,25 @@ void RecommendAppsScreenHandler::OnParseResponseError() {
   RecordUmaScreenState(RecommendAppsScreenState::NO_SHOW);
   HandleSkip();
 }
+
+void RecommendAppsScreenHandler::Initialize() {}
+
+void RecommendAppsScreenHandler::LoadAppListInUI(const base::Value& app_list) {
+  if (!page_is_ready()) {
+    RecordUmaScreenState(RecommendAppsScreenState::ERROR);
+    CallJS("login.RecommendAppsScreen.showError");
+    return;
+  }
+
+  RecordUmaScreenState(RecommendAppsScreenState::SHOW);
+  const ui::ResourceBundle& resource_bundle =
+      ui::ResourceBundle::GetSharedInstance();
+  base::StringPiece app_list_webview = resource_bundle.GetRawDataResource(
+      IDR_ARC_SUPPORT_RECOMMEND_APP_LIST_VIEW_HTML);
+  CallJS("login.RecommendAppsScreen.setWebview", app_list_webview.as_string());
+  CallJS("login.RecommendAppsScreen.loadAppList", app_list);
+}
+
 void RecommendAppsScreenHandler::OnUserSkip() {
   RecordUmaScreenAction(RecommendAppsScreenAction::SKIPPED);
   HandleSkip();
@@ -171,14 +162,14 @@ void RecommendAppsScreenHandler::OnUserSkip() {
 // 3. The response from the fetcher cannot be parsed.
 // Each case has its own entry point to be logged.
 void RecommendAppsScreenHandler::HandleSkip() {
-  for (auto& observer : observer_list_)
-    observer.OnSkip();
+  if (screen_)
+    screen_->OnSkip();
 }
 
 void RecommendAppsScreenHandler::HandleRetry() {
   RecordUmaScreenAction(RecommendAppsScreenAction::RETRIED);
-  for (auto& observer : observer_list_)
-    observer.OnRetry();
+  if (screen_)
+    screen_->OnRetry();
 }
 
 void RecommendAppsScreenHandler::HandleInstall(const base::ListValue* args) {
@@ -210,8 +201,8 @@ void RecommendAppsScreenHandler::HandleInstall(const base::ListValue* args) {
         << "Cannot complete Fast App Reinstall flow. Starter is not available.";
   }
 
-  for (auto& observer : observer_list_)
-    observer.OnInstall();
+  if (screen_)
+    screen_->OnInstall();
 }
 
 }  // namespace chromeos

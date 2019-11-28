@@ -4,10 +4,14 @@
 
 package org.chromium.printing;
 
+import android.app.Activity;
+
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.NativeMethods;
+import org.chromium.ui.base.WindowAndroid;
 
 /**
  * This class is responsible for communicating with its native counterpart through JNI to handle
@@ -82,6 +86,17 @@ public class PrintingContext {
     }
 
     @CalledByNative
+    private static void setPendingPrint(
+            WindowAndroid window, Printable printable, int renderProcessId, int renderFrameId) {
+        PrintingController printingController = PrintingControllerImpl.getInstance();
+        Activity activity = window.getActivity().get();
+        if (printingController == null || activity == null) return;
+
+        printingController.setPendingPrint(
+                printable, new PrintManagerDelegateImpl(activity), renderProcessId, renderFrameId);
+    }
+
+    @CalledByNative
     public int[] getPages() {
         ThreadUtils.assertOnUiThread();
         return mController.getPageNumbers();
@@ -92,8 +107,8 @@ public class PrintingContext {
         ThreadUtils.assertOnUiThread();
         // If the printing dialog has already finished, tell Chromium that operation is cancelled.
         if (mController.hasPrintingFinished()) {
-            // NOTE: We don't call nativeAskUserForSettingsReply (hence Chromium callback in
-            // AskUserForSettings callback) twice.
+            // NOTE: We don't call PrintingContextJni.get().askUserForSettingsReply (hence Chromium
+            // callback in AskUserForSettings callback) twice.
             askUserForSettingsReply(false);
         } else {
             mController.setPrintingContext(this);
@@ -103,16 +118,19 @@ public class PrintingContext {
 
     private void askUserForSettingsReply(boolean success) {
         assert mNativeObject != 0;
-        nativeAskUserForSettingsReply(mNativeObject, success);
+        PrintingContextJni.get().askUserForSettingsReply(
+                mNativeObject, PrintingContext.this, success);
     }
 
     private void showSystemDialogDone() {
         assert mNativeObject != 0;
-        nativeShowSystemDialogDone(mNativeObject);
+        PrintingContextJni.get().showSystemDialogDone(mNativeObject, PrintingContext.this);
     }
 
-    private native void nativeAskUserForSettingsReply(
-            long nativePrintingContextAndroid, boolean success);
-
-    private native void nativeShowSystemDialogDone(long nativePrintingContextAndroid);
+    @NativeMethods
+    interface Natives {
+        void askUserForSettingsReply(
+                long nativePrintingContextAndroid, PrintingContext caller, boolean success);
+        void showSystemDialogDone(long nativePrintingContextAndroid, PrintingContext caller);
+    }
 }

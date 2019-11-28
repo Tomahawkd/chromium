@@ -24,17 +24,19 @@ class RemoteDeviceRefBuilder {
   RemoteDeviceRefBuilder();
   ~RemoteDeviceRefBuilder();
   RemoteDeviceRefBuilder& SetUserId(const std::string& user_id);
+  RemoteDeviceRefBuilder& SetInstanceId(const std::string& instance_id);
   RemoteDeviceRefBuilder& SetName(const std::string& name);
+  RemoteDeviceRefBuilder& SetPiiFreeName(const std::string& pii_free_name);
   RemoteDeviceRefBuilder& SetPublicKey(const std::string& public_key);
   RemoteDeviceRefBuilder& SetSupportsMobileHotspot(
       bool supports_mobile_hotspot);
   RemoteDeviceRefBuilder& SetSoftwareFeatureState(
-      const cryptauth::SoftwareFeature feature,
+      const SoftwareFeature feature,
       const SoftwareFeatureState new_state);
   RemoteDeviceRefBuilder& SetLastUpdateTimeMillis(
       int64_t last_update_time_millis);
   RemoteDeviceRefBuilder& SetBeaconSeeds(
-      const std::vector<cryptauth::BeaconSeed>& beacon_seeds);
+      const std::vector<BeaconSeed>& beacon_seeds);
   RemoteDeviceRef Build();
 
  private:

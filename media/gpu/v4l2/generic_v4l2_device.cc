@@ -19,13 +19,14 @@
 #include <memory>
 
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "media/base/video_types.h"
 #include "media/gpu/buildflags.h"
+#include "media/gpu/chromeos/fourcc.h"
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/generic_v4l2_device.h"
 #include "ui/gfx/native_pixmap.h"
@@ -137,7 +138,7 @@ bool GenericV4L2Device::ClearDevicePollInterrupt() {
 }
 
 bool GenericV4L2Device::Initialize() {
-  VLOGF(2);
+  DVLOGF(3);
   static bool v4l2_functions_initialized = PostSandboxInitialization();
   if (!v4l2_functions_initialized) {
     VLOGF(1) << "Failed to initialize LIBV4L2 libs";
@@ -148,7 +149,7 @@ bool GenericV4L2Device::Initialize() {
 }
 
 bool GenericV4L2Device::Open(Type type, uint32_t v4l2_pixfmt) {
-  VLOGF(2);
+  DVLOGF(3);
   std::string path = GetDevicePathFor(type, v4l2_pixfmt);
 
   if (path.empty()) {
@@ -175,7 +176,7 @@ std::vector<base::ScopedFD> GenericV4L2Device::GetDmabufsForV4L2Buffer(
     int index,
     size_t num_planes,
     enum v4l2_buf_type buf_type) {
-  VLOGF(2);
+  DVLOGF(3);
   DCHECK(V4L2_TYPE_IS_MULTIPLANAR(buf_type));
 
   std::vector<base::ScopedFD> dmabuf_fds;
@@ -200,7 +201,7 @@ std::vector<base::ScopedFD> GenericV4L2Device::GetDmabufsForV4L2Buffer(
 bool GenericV4L2Device::CanCreateEGLImageFrom(uint32_t v4l2_pixfmt) {
   static uint32_t kEGLImageDrmFmtsSupported[] = {
     DRM_FORMAT_ARGB8888,
-#if defined(ARCH_CPU_ARMEL)
+#if defined(ARCH_CPU_ARM_FAMILY)
     DRM_FORMAT_NV12,
     DRM_FORMAT_YVU420,
 #endif
@@ -208,9 +209,9 @@ bool GenericV4L2Device::CanCreateEGLImageFrom(uint32_t v4l2_pixfmt) {
 
   return std::find(
              kEGLImageDrmFmtsSupported,
-             kEGLImageDrmFmtsSupported + arraysize(kEGLImageDrmFmtsSupported),
+             kEGLImageDrmFmtsSupported + base::size(kEGLImageDrmFmtsSupported),
              V4L2PixFmtToDrmFormat(v4l2_pixfmt)) !=
-         kEGLImageDrmFmtsSupported + arraysize(kEGLImageDrmFmtsSupported);
+         kEGLImageDrmFmtsSupported + base::size(kEGLImageDrmFmtsSupported);
 }
 
 EGLImageKHR GenericV4L2Device::CreateEGLImage(
@@ -227,7 +228,8 @@ EGLImageKHR GenericV4L2Device::CreateEGLImage(
     return EGL_NO_IMAGE_KHR;
   }
 
-  VideoPixelFormat vf_format = V4L2PixFmtToVideoPixelFormat(v4l2_pixfmt);
+  VideoPixelFormat vf_format =
+      Fourcc::FromV4L2PixFmt(v4l2_pixfmt).ToVideoPixelFormat();
   // Number of components, as opposed to the number of V4L2 planes, which is
   // just a buffer count.
   size_t num_planes = VideoFrame::NumPlanes(vf_format);
@@ -291,7 +293,8 @@ scoped_refptr<gl::GLImage> GenericV4L2Device::CreateGLImage(
     const std::vector<base::ScopedFD>& dmabuf_fds) {
   DVLOGF(3);
   DCHECK(CanCreateEGLImageFrom(fourcc));
-  VideoPixelFormat vf_format = V4L2PixFmtToVideoPixelFormat(fourcc);
+  VideoPixelFormat vf_format =
+      Fourcc::FromV4L2PixFmt(fourcc).ToVideoPixelFormat();
   size_t num_planes = VideoFrame::NumPlanes(vf_format);
   DCHECK_LE(num_planes, 3u);
   DCHECK_LE(dmabuf_fds.size(), num_planes);
@@ -299,15 +302,18 @@ scoped_refptr<gl::GLImage> GenericV4L2Device::CreateGLImage(
   gfx::NativePixmapHandle native_pixmap_handle;
 
   std::vector<base::ScopedFD> duped_fds;
-  for (const auto& fd : dmabuf_fds) {
-    duped_fds.emplace_back(HANDLE_EINTR(dup(fd.get())));
+  // The number of file descriptors can be less than the number of planes when
+  // v4l2 pix fmt, |fourcc|, is a single plane format. Duplicating the last
+  // file descriptor should be safely used for the later planes, because they
+  // are on the last buffer.
+  for (size_t i = 0; i < num_planes; ++i) {
+    int fd =
+        i < dmabuf_fds.size() ? dmabuf_fds[i].get() : dmabuf_fds.back().get();
+    duped_fds.emplace_back(HANDLE_EINTR(dup(fd)));
     if (!duped_fds.back().is_valid()) {
       VPLOGF(1) << "Failed duplicating a dmabuf fd";
       return nullptr;
     }
-  }
-  for (auto& fd : duped_fds) {
-    native_pixmap_handle.fds.emplace_back(fd.release(), true /* auto_close */);
   }
 
   // For existing formats, if we have less buffers (V4L2 planes) than
@@ -321,7 +327,8 @@ scoped_refptr<gl::GLImage> GenericV4L2Device::CreateGLImage(
   for (size_t p = 0; p < num_planes; ++p) {
     native_pixmap_handle.planes.emplace_back(
         VideoFrame::RowBytes(p, vf_format, size.width()), plane_offset,
-        VideoFrame::PlaneSize(vf_format, p, size).GetArea());
+        VideoFrame::PlaneSize(vf_format, p, size).GetArea(),
+        std::move(duped_fds[p]));
 
     if (v4l2_plane + 1 < dmabuf_fds.size()) {
       ++v4l2_plane;
@@ -332,19 +339,15 @@ scoped_refptr<gl::GLImage> GenericV4L2Device::CreateGLImage(
   }
 
   gfx::BufferFormat buffer_format = gfx::BufferFormat::BGRA_8888;
-  unsigned internal_format = GL_BGRA_EXT;
   switch (fourcc) {
     case DRM_FORMAT_ARGB8888:
       buffer_format = gfx::BufferFormat::BGRA_8888;
-      internal_format = GL_BGRA_EXT;
       break;
     case DRM_FORMAT_NV12:
       buffer_format = gfx::BufferFormat::YUV_420_BIPLANAR;
-      internal_format = GL_RGB_YCBCR_420V_CHROMIUM;
       break;
     case DRM_FORMAT_YVU420:
       buffer_format = gfx::BufferFormat::YVU_420;
-      internal_format = GL_RGB_YCRCB_420_CHROMIUM;
       break;
     default:
       NOTREACHED();
@@ -354,13 +357,13 @@ scoped_refptr<gl::GLImage> GenericV4L2Device::CreateGLImage(
       ui::OzonePlatform::GetInstance()
           ->GetSurfaceFactoryOzone()
           ->CreateNativePixmapFromHandle(0, size, buffer_format,
-                                         native_pixmap_handle);
+                                         std::move(native_pixmap_handle));
 
   DCHECK(pixmap);
 
-  scoped_refptr<gl::GLImageNativePixmap> image(
-      new gl::GLImageNativePixmap(size, internal_format));
-  bool ret = image->Initialize(pixmap.get(), buffer_format);
+  auto image =
+      base::MakeRefCounted<gl::GLImageNativePixmap>(size, buffer_format);
+  bool ret = image->Initialize(std::move(pixmap));
   DCHECK(ret);
   return image;
 }
@@ -379,11 +382,11 @@ GLenum GenericV4L2Device::GetTextureTarget() {
   return GL_TEXTURE_EXTERNAL_OES;
 }
 
-uint32_t GenericV4L2Device::PreferredInputFormat(Type type) {
+std::vector<uint32_t> GenericV4L2Device::PreferredInputFormat(Type type) {
   if (type == Type::kEncoder)
-    return V4L2_PIX_FMT_NV12M;
+    return {V4L2_PIX_FMT_NV12M, V4L2_PIX_FMT_NV12};
 
-  return 0;
+  return {};
 }
 
 std::vector<uint32_t> GenericV4L2Device::GetSupportedImageProcessorPixelformats(
@@ -480,7 +483,7 @@ bool GenericV4L2Device::OpenDevicePath(const std::string& path, Type type) {
   if (type == Type::kEncoder &&
       HANDLE_EINTR(v4l2_fd_open(device_fd_.get(), V4L2_DISABLE_CONVERSION)) !=
           -1) {
-    VLOGF(2) << "Using libv4l2 for " << path;
+    DVLOGF(3) << "Using libv4l2 for " << path;
     use_libv4l2_ = true;
   }
 #endif
@@ -488,7 +491,7 @@ bool GenericV4L2Device::OpenDevicePath(const std::string& path, Type type) {
 }
 
 void GenericV4L2Device::CloseDevice() {
-  VLOGF(2);
+  DVLOGF(3);
 #if BUILDFLAG(USE_LIBV4L2)
   if (use_libv4l2_ && device_fd_.is_valid())
     v4l2_close(device_fd_.release());

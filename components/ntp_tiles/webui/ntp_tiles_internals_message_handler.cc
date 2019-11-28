@@ -59,11 +59,7 @@ NTPTilesInternalsMessageHandler::NTPTilesInternalsMessageHandler(
     favicon::FaviconService* favicon_service)
     : favicon_service_(favicon_service),
       client_(nullptr),
-      // 9 tiles are required for the custom links feature in order to balance
-      // the Most Visited rows (this is due to an additional "Add" button).
-      // Otherwise, Most Visited should return the regular 8 tiles.
-      site_count_(IsCustomLinksEnabled() ? 9 : 8),
-      weak_ptr_factory_(this) {}
+      site_count_(ntp_tiles::kMaxNumMostVisited) {}
 
 NTPTilesInternalsMessageHandler::~NTPTilesInternalsMessageHandler() = default;
 
@@ -102,6 +98,7 @@ void NTPTilesInternalsMessageHandler::HandleRegisterForEvents(
     disabled.SetBoolean("topSites", false);
     disabled.SetBoolean("suggestionsService", false);
     disabled.SetBoolean("popular", false);
+    disabled.SetBoolean("customLinks", false);
     disabled.SetBoolean("whitelist", false);
     client_->CallJavascriptFunction(
         "chrome.ntp_tiles_internals.receiveSourceInfo", disabled);
@@ -210,6 +207,8 @@ void NTPTilesInternalsMessageHandler::SendSourceInfo() {
 
   value.SetBoolean("topSites",
                    most_visited_sites_->DoesSourceExist(TileSource::TOP_SITES));
+  value.SetBoolean("customLinks", most_visited_sites_->DoesSourceExist(
+                                      TileSource::CUSTOM_LINKS));
   value.SetBoolean("whitelist",
                    most_visited_sites_->DoesSourceExist(TileSource::WHITELIST));
 
@@ -259,6 +258,9 @@ void NTPTilesInternalsMessageHandler::SendTiles(
     entry->SetInteger("source", static_cast<int>(tile.source));
     entry->SetString("whitelistIconPath",
                      tile.whitelist_icon_path.LossyDisplayName());
+    if (tile.source == TileSource::CUSTOM_LINKS) {
+      entry->SetBoolean("fromMostVisited", tile.from_most_visited);
+    }
 
     auto icon_list = std::make_unique<base::ListValue>();
     for (const auto& entry : kIconTypesAndNames) {

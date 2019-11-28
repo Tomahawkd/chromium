@@ -16,14 +16,14 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
-class MessageLoopForIO;
+class SingleThreadTaskExecutor;
 }
 
 namespace remoting {
 namespace test {
 
 class AccessTokenFetcher;
-class RefreshTokenStore;
+class TestTokenStorage;
 class HostListFetcher;
 
 // Globally accessible to all test fixtures and cases and has its
@@ -65,7 +65,7 @@ class ChromotingTestDriverEnvironment : public testing::Environment {
   // they remain valid until the ChromotingTestDriverEnvironment instance has
   // been destroyed.
   void SetAccessTokenFetcherForTest(AccessTokenFetcher* access_token_fetcher);
-  void SetRefreshTokenStoreForTest(RefreshTokenStore* refresh_token_store);
+  void SetTestTokenStorageForTest(TestTokenStorage* test_token_storage);
   void SetHostListFetcherForTest(HostListFetcher* host_list_fetcher);
   void SetHostNameForTest(const std::string& host_name);
   void SetHostJidForTest(const std::string& host_jid);
@@ -140,14 +140,14 @@ class ChromotingTestDriverEnvironment : public testing::Environment {
   // Access token fetcher used by TestDriverEnvironment tests.
   remoting::test::AccessTokenFetcher* test_access_token_fetcher_ = nullptr;
 
-  // RefreshTokenStore used by TestDriverEnvironment tests.
-  remoting::test::RefreshTokenStore* test_refresh_token_store_ = nullptr;
+  // TestTokenStorage used by TestDriverEnvironment tests.
+  remoting::test::TestTokenStorage* test_test_token_storage_ = nullptr;
 
   // HostListFetcher used by TestDriverEnvironment tests.
   remoting::test::HostListFetcher* test_host_list_fetcher_ = nullptr;
 
   // Used for running network request tasks.
-  std::unique_ptr<base::MessageLoopForIO> message_loop_;
+  std::unique_ptr<base::SingleThreadTaskExecutor> executor_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromotingTestDriverEnvironment);
 };

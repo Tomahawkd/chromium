@@ -4,16 +4,17 @@
 
 #include "content/browser/media/media_devices_permission_checker.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "content/public/common/media_stream_request.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "url/origin.h"
 
 namespace content {
@@ -26,7 +27,7 @@ class TestWebContentsDelegate : public content::WebContentsDelegate {
 
   bool CheckMediaAccessPermission(RenderFrameHost* render_Frame_host,
                                   const GURL& security_origin,
-                                  MediaStreamType type) override {
+                                  blink::mojom::MediaStreamType type) override {
     return true;
   }
 };
@@ -52,14 +53,14 @@ class MediaDevicesPermissionCheckerTest : public RenderViewHostImplTestHarness {
   void RefreshPageAndSetHeaderPolicy(blink::mojom::FeaturePolicyFeature feature,
                                      bool enabled) {
     NavigateAndCommit(origin_.GetURL());
-    std::vector<url::Origin> whitelist;
+    std::vector<url::Origin> allowlist;
     if (enabled)
-      whitelist.push_back(origin_);
+      allowlist.push_back(origin_);
     RenderFrameHostTester::For(main_rfh())
-        ->SimulateFeaturePolicyHeader(feature, whitelist);
+        ->SimulateFeaturePolicyHeader(feature, allowlist);
   }
 
-  bool CheckPermission(MediaDeviceType device_type) {
+  bool CheckPermission(blink::MediaDeviceType device_type) {
     base::RunLoop run_loop;
     quit_closure_ = run_loop.QuitClosure();
     checker_.CheckPermission(
@@ -101,18 +102,18 @@ class MediaDevicesPermissionCheckerTest : public RenderViewHostImplTestHarness {
 TEST_F(MediaDevicesPermissionCheckerTest, CheckPermissionWithFeaturePolicy) {
   // Mic and Camera should be enabled by default for a frame (if permission is
   // granted).
-  EXPECT_TRUE(CheckPermission(MEDIA_DEVICE_TYPE_AUDIO_INPUT));
-  EXPECT_TRUE(CheckPermission(MEDIA_DEVICE_TYPE_VIDEO_INPUT));
+  EXPECT_TRUE(CheckPermission(blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT));
+  EXPECT_TRUE(CheckPermission(blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT));
 
   RefreshPageAndSetHeaderPolicy(blink::mojom::FeaturePolicyFeature::kMicrophone,
                                 /*enabled=*/false);
-  EXPECT_FALSE(CheckPermission(MEDIA_DEVICE_TYPE_AUDIO_INPUT));
-  EXPECT_TRUE(CheckPermission(MEDIA_DEVICE_TYPE_VIDEO_INPUT));
+  EXPECT_FALSE(CheckPermission(blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT));
+  EXPECT_TRUE(CheckPermission(blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT));
 
   RefreshPageAndSetHeaderPolicy(blink::mojom::FeaturePolicyFeature::kCamera,
                                 /*enabled=*/false);
-  EXPECT_TRUE(CheckPermission(MEDIA_DEVICE_TYPE_AUDIO_INPUT));
-  EXPECT_FALSE(CheckPermission(MEDIA_DEVICE_TYPE_VIDEO_INPUT));
+  EXPECT_TRUE(CheckPermission(blink::MEDIA_DEVICE_TYPE_AUDIO_INPUT));
+  EXPECT_FALSE(CheckPermission(blink::MEDIA_DEVICE_TYPE_VIDEO_INPUT));
 }
 
 }  // namespace

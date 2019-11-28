@@ -7,29 +7,25 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
+#include "base/scoped_observer.h"
+#include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/platform/ax_unique_id.h"
+#include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
 
-namespace aura {
-class Window;
-}  // namespace aura
-
 namespace views {
+class AXAuraObjCache;
 
 // Describes a |Window| for use with other AX classes.
 class AXWindowObjWrapper : public AXAuraObjWrapper,
                            public aura::WindowObserver {
  public:
-  explicit AXWindowObjWrapper(aura::Window* window);
+  // |aura_obj_cache| and |window| must outlive this object.
+  AXWindowObjWrapper(AXAuraObjCache* aura_obj_cache, aura::Window* window);
+  AXWindowObjWrapper(const AXWindowObjWrapper&) = delete;
+  AXWindowObjWrapper& operator=(const AXWindowObjWrapper&) = delete;
   ~AXWindowObjWrapper() override;
-
-  // Whether this window is an alert window.
-  bool is_alert() { return is_alert_; }
-
-  // Sets whether this window is an alert window.
-  void set_is_alert(bool is_alert) { is_alert_ = is_alert; }
 
   // AXAuraObjWrapper overrides.
   bool IsIgnored() override;
@@ -55,15 +51,16 @@ class AXWindowObjWrapper : public AXAuraObjWrapper,
   void OnWindowTitleChanged(aura::Window* window) override;
 
  private:
-  aura::Window* window_;
+  // Fires an accessibility event.
+  void FireEvent(ax::mojom::Event event_type);
 
-  bool is_alert_;
+  aura::Window* window_;
 
   bool is_root_window_;
 
   const ui::AXUniqueId unique_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(AXWindowObjWrapper);
+  ScopedObserver<aura::Window, aura::WindowObserver> observer_{this};
 };
 
 }  // namespace views

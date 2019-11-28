@@ -22,6 +22,12 @@ GLenum GLStubApiBase::glClientWaitSyncFn(GLsync sync,
   return 0;
 }
 
+GLenum GLStubApiBase::glClientWaitSyncAPPLEFn(GLsync sync,
+                                              GLbitfield flags,
+                                              GLuint64 timeout) {
+  return 0;
+}
+
 GLuint GLStubApiBase::glCreateProgramFn() {
   return 0;
 }
@@ -37,6 +43,10 @@ GLuint GLStubApiBase::glCreateShaderProgramvFn(GLenum type,
 }
 
 GLsync GLStubApiBase::glFenceSyncFn(GLenum condition, GLbitfield flags) {
+  return 0;
+}
+
+GLsync GLStubApiBase::glFenceSyncAPPLEFn(GLenum condition, GLbitfield flags) {
   return 0;
 }
 
@@ -76,6 +86,12 @@ GLint GLStubApiBase::glGetFragDataLocationFn(GLuint program, const char* name) {
 }
 
 GLenum GLStubApiBase::glGetGraphicsResetStatusARBFn() {
+  return 0;
+}
+
+GLuint GLStubApiBase::glGetProgramResourceIndexFn(GLuint program,
+                                                  GLenum programInterface,
+                                                  const GLchar* name) {
   return 0;
 }
 
@@ -151,6 +167,10 @@ GLboolean GLStubApiBase::glIsShaderFn(GLuint shader) {
 }
 
 GLboolean GLStubApiBase::glIsSyncFn(GLsync sync) {
+  return 0;
+}
+
+GLboolean GLStubApiBase::glIsSyncAPPLEFn(GLsync sync) {
   return 0;
 }
 

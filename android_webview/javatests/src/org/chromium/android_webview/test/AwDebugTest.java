@@ -16,6 +16,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.android_webview.AwDebug;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 
 import java.io.File;
@@ -32,7 +33,7 @@ public class AwDebugTest {
     @Rule
     public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
 
-    private static final String TAG = "cr_AwDebugTest";
+    private static final String TAG = "AwDebugTest";
 
     // These constants must match android_webview/browser/aw_debug.cc.
     private static final String WHITELISTED_DEBUG_KEY = "AW_WHITELISTED_DEBUG_KEY";
@@ -42,6 +43,7 @@ public class AwDebugTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Debug"})
+    @DisabledTest(message = "crbug.com/913515")
     public void testDump() throws Throwable {
         File f = File.createTempFile("dump", ".dmp");
         try {
@@ -56,6 +58,7 @@ public class AwDebugTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Debug"})
+    @DisabledTest(message = "crbug.com/913515")
     public void testDumpContainsWhitelistedKey() throws Throwable {
         File f = File.createTempFile("dump", ".dmp");
         try {
@@ -71,6 +74,7 @@ public class AwDebugTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Debug"})
+    @DisabledTest(message = "crbug.com/913515")
     public void testDumpDoesNotContainNonWhitelistedKey() throws Throwable {
         File f = File.createTempFile("dump", ".dmp");
         try {

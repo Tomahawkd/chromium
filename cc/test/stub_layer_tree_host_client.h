@@ -5,6 +5,7 @@
 #ifndef CC_TEST_STUB_LAYER_TREE_HOST_CLIENT_H_
 #define CC_TEST_STUB_LAYER_TREE_HOST_CLIENT_H_
 
+#include "cc/paint/element_id.h"
 #include "cc/trees/layer_tree_host_client.h"
 
 namespace cc {
@@ -16,14 +17,24 @@ class StubLayerTreeHostClient : public LayerTreeHostClient {
   // LayerTreeHostClient implementation.
   void WillBeginMainFrame() override {}
   void DidBeginMainFrame() override {}
+  void WillUpdateLayers() override {}
+  void DidUpdateLayers() override {}
   void BeginMainFrame(const viz::BeginFrameArgs& args) override {}
+  void OnDeferMainFrameUpdatesChanged(bool) override {}
+  void OnDeferCommitsChanged(bool) override {}
+  void RecordStartOfFrameMetrics() override {}
   void RecordEndOfFrameMetrics(base::TimeTicks) override {}
+  std::unique_ptr<BeginMainFrameMetrics> GetBeginMainFrameMetrics() override;
   void BeginMainFrameNotExpectedSoon() override {}
   void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override {}
-  void UpdateLayerTreeHost(bool record_main_frame_metrics) override {}
+  void UpdateLayerTreeHost() override {}
   void ApplyViewportChanges(const ApplyViewportChangesArgs&) override {}
-  void RecordWheelAndTouchScrollingCount(bool has_scrolled_by_wheel,
-                                         bool has_scrolled_by_touch) override {}
+  void RecordManipulationTypeCounts(ManipulationInfo info) override {}
+  void SendOverscrollEventFromImplSide(
+      const gfx::Vector2dF& overscroll_delta,
+      ElementId scroll_latched_element_id) override {}
+  void SendScrollEndEventFromImplSide(
+      ElementId scroll_latched_element_id) override {}
   void RequestNewLayerTreeFrameSink() override {}
   void DidInitializeLayerTreeFrameSink() override {}
   void DidFailToInitializeLayerTreeFrameSink() override {}

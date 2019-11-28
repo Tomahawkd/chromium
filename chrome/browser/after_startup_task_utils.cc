@@ -19,15 +19,19 @@
 #include "base/task/post_task.h"
 #include "base/task_runner.h"
 #include "build/build_config.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/page_visibility_state.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/page_visibility_state.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 #include "ui/views/linux_ui/linux_ui.h"
@@ -58,6 +62,8 @@ base::LazyInstance<base::AtomicFlag>::Leaky g_startup_complete_flag;
 base::LazyInstance<base::circular_deque<AfterStartupTask*>>::Leaky
     g_after_startup_tasks;
 
+bool g_schedule_tasks_with_delay = true;
+
 bool IsBrowserStartupComplete() {
   // Be sure to initialize the LazyInstance on the main thread since the flag
   // may only be set on it's initializing thread.
@@ -74,13 +80,16 @@ void RunTask(std::unique_ptr<AfterStartupTask> queued_task) {
 
 void ScheduleTask(std::unique_ptr<AfterStartupTask> queued_task) {
   // Spread their execution over a brief time.
-  const int kMinDelaySec = 0;
-  const int kMaxDelaySec = 10;
+  constexpr int kMinDelaySec = 0;
+  constexpr int kMaxDelaySec = 10;
   scoped_refptr<base::TaskRunner> target_runner = queued_task->task_runner;
   base::Location from_here = queued_task->from_here;
+  int delay_in_seconds = g_schedule_tasks_with_delay
+                             ? base::RandInt(kMinDelaySec, kMaxDelaySec)
+                             : 0;
   target_runner->PostDelayedTask(
       from_here, base::BindOnce(&RunTask, std::move(queued_task)),
-      base::TimeDelta::FromSeconds(base::RandInt(kMinDelaySec, kMaxDelaySec)));
+      base::TimeDelta::FromSeconds(delay_in_seconds));
 }
 
 void QueueTask(std::unique_ptr<AfterStartupTask> queued_task) {
@@ -93,9 +102,9 @@ void QueueTask(std::unique_ptr<AfterStartupTask> queued_task) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     // Posted with USER_VISIBLE priority to avoid this becoming an after startup
     // task itself.
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI, base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(QueueTask, std::move(queued_task)));
+    base::PostTask(FROM_HERE,
+                   {BrowserThread::UI, base::TaskPriority::USER_VISIBLE},
+                   base::BindOnce(QueueTask, std::move(queued_task)));
     return;
   }
 
@@ -125,10 +134,7 @@ void SetBrowserStartupIsComplete() {
   for (AfterStartupTask* queued_task : g_after_startup_tasks.Get())
     ScheduleTask(base::WrapUnique(queued_task));
   g_after_startup_tasks.Get().clear();
-
-  // The shrink_to_fit() method is not available for all of our build targets.
-  base::circular_deque<AfterStartupTask*>(g_after_startup_tasks.Get())
-      .swap(g_after_startup_tasks.Get());
+  g_after_startup_tasks.Get().shrink_to_fit();
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   // Make sure we complete the startup notification sequence, or launchers will
@@ -143,7 +149,7 @@ void SetBrowserStartupIsComplete() {
 // flag accordingly.
 class StartupObserver : public WebContentsObserver {
  public:
-  StartupObserver() : weak_factory_(this) {}
+  StartupObserver() {}
   ~StartupObserver() override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(IsBrowserStartupComplete());
@@ -175,11 +181,19 @@ class StartupObserver : public WebContentsObserver {
       OnStartupComplete();
   }
 
+  // Starting the browser with a file download url will not result in
+  // DidFinishLoad firing, so watch for this case too. crbug.com/1006954
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override {
+    if (navigation_handle->IsInMainFrame() && navigation_handle->IsDownload())
+      OnStartupComplete();
+  }
+
   void WebContentsDestroyed() override { OnStartupComplete(); }
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<StartupObserver> weak_factory_;
+  base::WeakPtrFactory<StartupObserver> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(StartupObserver);
 };
@@ -213,11 +227,10 @@ void StartupObserver::Start() {
   delay = base::TimeDelta::FromMinutes(kLongerDelayMins);
 #endif  // !defined(OS_ANDROID)
 
-  base::PostDelayedTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&StartupObserver::OnFailsafeTimeout,
-                     weak_factory_.GetWeakPtr()),
-      delay);
+  base::PostDelayedTask(FROM_HERE, {BrowserThread::UI},
+                        base::BindOnce(&StartupObserver::OnFailsafeTimeout,
+                                       weak_factory_.GetWeakPtr()),
+                        delay);
 }
 
 }  // namespace
@@ -281,4 +294,9 @@ void AfterStartupTaskUtils::UnsafeResetForTesting() {
     return;
   g_startup_complete_flag.Get().UnsafeResetForTesting();
   DCHECK(!IsBrowserStartupComplete());
+}
+
+// static
+void AfterStartupTaskUtils::DisableScheduleTaskDelayForTesting() {
+  g_schedule_tasks_with_delay = false;
 }

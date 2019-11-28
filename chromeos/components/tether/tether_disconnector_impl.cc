@@ -6,7 +6,7 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/disconnect_tethering_request_sender.h"
@@ -33,8 +33,7 @@ TetherDisconnectorImpl::TetherDisconnectorImpl(
       disconnect_tethering_request_sender_(disconnect_tethering_request_sender),
       tether_connector_(tether_connector),
       device_id_tether_network_guid_map_(device_id_tether_network_guid_map),
-      tether_session_completion_logger_(tether_session_completion_logger),
-      weak_ptr_factory_(this) {}
+      tether_session_completion_logger_(tether_session_completion_logger) {}
 
 TetherDisconnectorImpl::~TetherDisconnectorImpl() = default;
 

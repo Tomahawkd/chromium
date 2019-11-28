@@ -9,16 +9,15 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/crw_session_controller+private_constructors.h"
 #import "ios/web/navigation/crw_session_controller.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/navigation_item_impl_list.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
-#include "ios/web/public/load_committed_details.h"
-#import "ios/web/public/navigation_item.h"
-#include "ios/web/public/reload_type.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/reload_type.h"
 #import "ios/web/public/web_client.h"
-#import "ios/web/public/web_state/web_state.h"
 #include "ui/base/page_transition_types.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -54,25 +53,13 @@ void LegacyNavigationManagerImpl::OnNavigationItemsPruned(
   delegate_->OnNavigationItemsPruned(pruned_item_count);
 }
 
-void LegacyNavigationManagerImpl::OnNavigationItemChanged() {
-  delegate_->OnNavigationItemChanged();
-}
-
 void LegacyNavigationManagerImpl::OnNavigationItemCommitted() {
-  LoadCommittedDetails details;
-  details.item = GetLastCommittedItemInCurrentOrRestoredSession();
-  DCHECK(details.item);
-  details.previous_item_index = [session_controller_ previousItemIndex];
-  if (details.previous_item_index >= 0) {
-    DCHECK([session_controller_ previousItem]);
-    details.is_in_page = IsFragmentChangeNavigationBetweenUrls(
-        [session_controller_ previousItem]->GetURL(), details.item->GetURL());
-  } else {
-    details.is_in_page = NO;
-  }
-
-  delegate_->OnNavigationItemCommitted(details);
+  web::NavigationItem* item = GetLastCommittedItemInCurrentOrRestoredSession();
+  DCHECK(item);
+  delegate_->OnNavigationItemCommitted(item);
 }
+
+void LegacyNavigationManagerImpl::OnNavigationStarted(const GURL& url) {}
 
 CRWSessionController* LegacyNavigationManagerImpl::GetSessionController()
     const {
@@ -108,17 +95,36 @@ void LegacyNavigationManagerImpl::AddPendingItem(
                        initiationType:initiation_type
               userAgentOverrideOption:user_agent_override_option];
 
-  if (!GetPendingItem()) {
+  if (!GetPendingItemInCurrentOrRestoredSession()) {
     return;
   }
 
   UpdatePendingItemUserAgentType(user_agent_override_option,
                                  GetLastCommittedItemWithUserAgentType(),
-                                 GetPendingItem());
+                                 GetPendingItemInCurrentOrRestoredSession());
 }
 
 void LegacyNavigationManagerImpl::CommitPendingItem() {
   [session_controller_ commitPendingItem];
+}
+
+void LegacyNavigationManagerImpl::CommitPendingItem(
+    std::unique_ptr<NavigationItemImpl> item) {
+  if (item) {
+    [session_controller_ commitPendingItem:std::move(item)];
+  } else {
+    CommitPendingItem();
+  }
+}
+
+std::unique_ptr<web::NavigationItemImpl>
+LegacyNavigationManagerImpl::ReleasePendingItem() {
+  return [session_controller_ releasePendingItem];
+}
+
+void LegacyNavigationManagerImpl::SetPendingItem(
+    std::unique_ptr<web::NavigationItemImpl> item) {
+  [session_controller_ setPendingItem:std::move(item)];
 }
 
 BrowserState* LegacyNavigationManagerImpl::GetBrowserState() const {
@@ -157,15 +163,7 @@ int LegacyNavigationManagerImpl::GetIndexOfItem(
 }
 
 int LegacyNavigationManagerImpl::GetPendingItemIndex() const {
-  if (GetPendingItem()) {
-    if ([session_controller_ pendingItemIndex] != -1) {
-      return [session_controller_ pendingItemIndex];
-    }
-    // TODO(crbug.com/665189): understand why last committed item index is
-    // returned here.
-    return GetLastCommittedItemIndex();
-  }
-  return -1;
+  return [session_controller_ pendingItemIndex];
 }
 
 int LegacyNavigationManagerImpl::
@@ -219,6 +217,9 @@ void LegacyNavigationManagerImpl::Restore(
     int last_committed_item_index,
     std::vector<std::unique_ptr<NavigationItem>> items) {
   WillRestore(items.size());
+  for (size_t index = 0; index < items.size(); ++index) {
+    RewriteItemURLIfNecessary(items[index].get());
+  }
 
   DCHECK(GetItemCount() == 0 && !GetPendingItem());
   DCHECK_LT(last_committed_item_index, static_cast<int>(items.size()));
@@ -302,7 +303,8 @@ LegacyNavigationManagerImpl::GetLastCommittedItemInCurrentOrRestoredSession()
   return [session_controller_ lastCommittedItem];
 }
 
-NavigationItemImpl* LegacyNavigationManagerImpl::GetPendingItemImpl() const {
+NavigationItemImpl*
+LegacyNavigationManagerImpl::GetPendingItemInCurrentOrRestoredSession() const {
   return [session_controller_ pendingItem];
 }
 
@@ -329,7 +331,7 @@ void LegacyNavigationManagerImpl::FinishGoToIndex(int index,
   } else {
     [session_controller_ discardNonCommittedItems];
     [session_controller_ setPendingItemIndex:index];
-    delegate_->LoadCurrentItem();
+    delegate_->LoadCurrentItem(type);
   }
 }
 
@@ -353,6 +355,14 @@ void LegacyNavigationManagerImpl::AddPushStateItemIfNecessary(
 
 bool LegacyNavigationManagerImpl::IsRestoreSessionInProgress() const {
   return false;  // Session restoration is synchronous.
+}
+
+bool LegacyNavigationManagerImpl::ShouldBlockUrlDuringRestore(const GURL& url) {
+  return false;
+}
+
+void LegacyNavigationManagerImpl::SetPendingItemIndex(int index) {
+  session_controller_.pendingItemIndex = index;
 }
 
 }  // namespace web

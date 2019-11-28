@@ -10,12 +10,12 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
-#include "chromecast/common/extensions_api/cast_extension_messages.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "extensions/browser/extension_system.h"
@@ -32,7 +32,7 @@ using content::BrowserThread;
 namespace {
 
 const uint32_t kExtensionFilteredMessageClasses[] = {
-    ChromeExtensionMsgStart, ExtensionMsgStart,
+    ExtensionMsgStart,
 };
 
 }  // namespace
@@ -41,7 +41,7 @@ CastExtensionMessageFilter::CastExtensionMessageFilter(
     int render_process_id,
     content::BrowserContext* context)
     : BrowserMessageFilter(kExtensionFilteredMessageClasses,
-                           arraysize(kExtensionFilteredMessageClasses)),
+                           base::size(kExtensionFilteredMessageClasses)),
       render_process_id_(render_process_id),
       context_(context),
       extension_info_map_(
@@ -69,7 +69,7 @@ void CastExtensionMessageFilter::OnDestruct() const {
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     delete this;
   } else {
-    BrowserThread::DeleteSoon(BrowserThread::UI, FROM_HERE, this);
+    base::DeleteSoon(FROM_HERE, {BrowserThread::UI}, this);
   }
 }
 
@@ -120,10 +120,11 @@ void CastExtensionMessageFilter::OnGetExtMessageBundle(
   }
 
   // This blocks tab loading. Priority is inherited from the calling context.
-  base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock()},
-      base::Bind(&CastExtensionMessageFilter::OnGetExtMessageBundleAsync, this,
-                 paths_to_load, extension_id, default_locale, reply_msg));
+  base::PostTask(
+      FROM_HERE, {base::ThreadPool(), base::MayBlock()},
+      base::BindOnce(&CastExtensionMessageFilter::OnGetExtMessageBundleAsync,
+                     this, paths_to_load, extension_id, default_locale,
+                     reply_msg));
 }
 
 void CastExtensionMessageFilter::OnGetExtMessageBundleAsync(

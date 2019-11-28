@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
@@ -41,8 +42,7 @@ SubresourceFilterAgent::SubresourceFilterAgent(
     : content::RenderFrameObserver(render_frame),
       content::RenderFrameObserverTracker<SubresourceFilterAgent>(render_frame),
       ruleset_dealer_(ruleset_dealer),
-      ad_resource_tracker_(std::move(ad_resource_tracker)),
-      binding_(this) {
+      ad_resource_tracker_(std::move(ad_resource_tracker)) {
   DCHECK(ruleset_dealer);
   // |render_frame| can be nullptr in unit tests.
   if (render_frame) {
@@ -91,8 +91,9 @@ bool SubresourceFilterAgent::IsAdSubframe() {
   return render_frame()->GetWebFrame()->IsAdSubframe();
 }
 
-void SubresourceFilterAgent::SetIsAdSubframe() {
-  render_frame()->GetWebFrame()->SetIsAdSubframe();
+void SubresourceFilterAgent::SetIsAdSubframe(
+    blink::mojom::AdFrameType ad_frame_type) {
+  render_frame()->GetWebFrame()->SetIsAdSubframe(ad_frame_type);
 }
 
 // static
@@ -117,79 +118,42 @@ void SubresourceFilterAgent::RecordHistogramsOnLoadCommitted(
   UMA_HISTOGRAM_ENUMERATION("SubresourceFilter.DocumentLoad.ActivationState",
                             activation_level);
 
+  if (IsMainFrame()) {
+    UMA_HISTOGRAM_BOOLEAN(
+        "SubresourceFilter.MainFrameLoad.RulesetIsAvailableAnyActivationLevel",
+        ruleset_dealer_->IsRulesetFileAvailable());
+  }
   if (activation_level != mojom::ActivationLevel::kDisabled) {
     UMA_HISTOGRAM_BOOLEAN("SubresourceFilter.DocumentLoad.RulesetIsAvailable",
                           ruleset_dealer_->IsRulesetFileAvailable());
   }
 }
 
-void SubresourceFilterAgent::RecordHistogramsOnLoadFinished() {
-  DCHECK(filter_for_last_committed_load_);
-  const auto& statistics =
-      filter_for_last_committed_load_->filter().statistics();
-
-  UMA_HISTOGRAM_COUNTS_1000(
-      "SubresourceFilter.DocumentLoad.NumSubresourceLoads.Total",
-      statistics.num_loads_total);
-  UMA_HISTOGRAM_COUNTS_1000(
-      "SubresourceFilter.DocumentLoad.NumSubresourceLoads.Evaluated",
-      statistics.num_loads_evaluated);
-  UMA_HISTOGRAM_COUNTS_1000(
-      "SubresourceFilter.DocumentLoad.NumSubresourceLoads.MatchedRules",
-      statistics.num_loads_matching_rules);
-  UMA_HISTOGRAM_COUNTS_1000(
-      "SubresourceFilter.DocumentLoad.NumSubresourceLoads.Disallowed",
-      statistics.num_loads_disallowed);
-
-  // If ThreadTicks is not supported or performance measuring is switched off,
-  // then no time measurements have been collected.
-  if (ScopedThreadTimers::IsSupported() &&
-      filter_for_last_committed_load_->filter()
-          .activation_state()
-          .measure_performance) {
-    UMA_HISTOGRAM_CUSTOM_MICRO_TIMES(
-        "SubresourceFilter.DocumentLoad.SubresourceEvaluation."
-        "TotalWallDuration",
-        statistics.evaluation_total_wall_duration,
-        base::TimeDelta::FromMicroseconds(1), base::TimeDelta::FromSeconds(10),
-        50);
-    UMA_HISTOGRAM_CUSTOM_MICRO_TIMES(
-        "SubresourceFilter.DocumentLoad.SubresourceEvaluation.TotalCPUDuration",
-        statistics.evaluation_total_cpu_duration,
-        base::TimeDelta::FromMicroseconds(1), base::TimeDelta::FromSeconds(10),
-        50);
-  } else {
-    DCHECK(statistics.evaluation_total_wall_duration.is_zero());
-    DCHECK(statistics.evaluation_total_cpu_duration.is_zero());
-  }
-
-  SendDocumentLoadStatistics(statistics);
-}
-
 void SubresourceFilterAgent::ResetInfoForNextCommit() {
   activation_state_for_next_commit_ = mojom::ActivationState();
 }
 
-const mojom::SubresourceFilterHostAssociatedPtr&
+mojom::SubresourceFilterHost*
 SubresourceFilterAgent::GetSubresourceFilterHost() {
   if (!subresource_filter_host_) {
     render_frame()->GetRemoteAssociatedInterfaces()->GetInterface(
         &subresource_filter_host_);
   }
-  return subresource_filter_host_;
+  return subresource_filter_host_.get();
 }
 
 void SubresourceFilterAgent::OnSubresourceFilterAgentRequest(
-    mojom::SubresourceFilterAgentAssociatedRequest request) {
-  binding_.Bind(std::move(request));
+    mojo::PendingAssociatedReceiver<mojom::SubresourceFilterAgent> receiver) {
+  receiver_.Bind(std::move(receiver));
 }
 
 void SubresourceFilterAgent::ActivateForNextCommittedLoad(
     mojom::ActivationStatePtr activation_state,
-    bool is_ad_subframe) {
+    blink::mojom::AdFrameType ad_frame_type) {
   activation_state_for_next_commit_ = *activation_state;
-  if (is_ad_subframe)
-    SetIsAdSubframe();
+  if (ad_frame_type != blink::mojom::AdFrameType::kNonAd) {
+    SetIsAdSubframe(ad_frame_type);
+  }
 }
 
 void SubresourceFilterAgent::OnDestruct() {
@@ -197,24 +161,6 @@ void SubresourceFilterAgent::OnDestruct() {
 }
 
 void SubresourceFilterAgent::DidCreateNewDocument() {
-  if (!first_document_)
-    return;
-  first_document_ = false;
-
-  // Local subframes will first navigate to kAboutBlankURL. Frames created by
-  // the browser initialize the LocalFrame before creating
-  // RenderFrameObservers, so the about:blank document isn't observed. We only
-  // care about local subframes.
-  if (IsAdSubframe() && GetDocumentURL() == url::kAboutBlankURL)
-    SendFrameIsAdSubframe();
-}
-
-void SubresourceFilterAgent::DidCommitProvisionalLoad(
-    bool is_same_document_navigation,
-    ui::PageTransition transition) {
-  if (is_same_document_navigation)
-    return;
-
   // Filter may outlive us, so reset the ad tracker.
   if (filter_for_last_committed_load_)
     filter_for_last_committed_load_->set_ad_resource_tracker(nullptr);
@@ -223,6 +169,20 @@ void SubresourceFilterAgent::DidCommitProvisionalLoad(
   // TODO(csharrison): Use WebURL and WebSecurityOrigin for efficiency here,
   // which require changes to the unit tests.
   const GURL& url = GetDocumentURL();
+
+  if (first_document_) {
+    first_document_ = false;
+
+    // Local subframes will first navigate to kAboutBlankURL. Frames created by
+    // the browser initialize the LocalFrame before creating
+    // RenderFrameObservers, so the about:blank document isn't observed. We only
+    // care about local subframes.
+    if (url == url::kAboutBlankURL) {
+      if (IsAdSubframe())
+        SendFrameIsAdSubframe();
+      return;
+    }
+  }
 
   bool use_parent_activation = !IsMainFrame() && ShouldUseParentActivation(url);
 
@@ -257,8 +217,7 @@ void SubresourceFilterAgent::DidCommitProvisionalLoad(
   SetSubresourceFilterForCommittedLoad(std::move(filter));
 }
 
-void SubresourceFilterAgent::DidFailProvisionalLoad(
-    const blink::WebURLError& error) {
+void SubresourceFilterAgent::DidFailProvisionalLoad() {
   // TODO(engedy): Add a test with `frame-ancestor` violation to exercise this.
   ResetInfoForNextCommit();
 }
@@ -266,7 +225,9 @@ void SubresourceFilterAgent::DidFailProvisionalLoad(
 void SubresourceFilterAgent::DidFinishLoad() {
   if (!filter_for_last_committed_load_)
     return;
-  RecordHistogramsOnLoadFinished();
+  const auto& statistics =
+      filter_for_last_committed_load_->filter().statistics();
+  SendDocumentLoadStatistics(statistics);
 }
 
 void SubresourceFilterAgent::WillCreateWorkerFetchContext(

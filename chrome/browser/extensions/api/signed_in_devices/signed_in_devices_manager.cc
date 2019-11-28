@@ -14,12 +14,11 @@
 #include "chrome/browser/extensions/api/signed_in_devices/signed_in_devices_api.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/browser/sync/device_info_sync_service_factory.h"
 #include "chrome/common/extensions/api/signed_in_devices.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/sync/device_info/device_info.h"
+#include "components/sync_device_info/device_info.h"
+#include "components/sync_device_info/device_info_sync_service.h"
 #include "extensions/browser/event_router.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 
 using syncer::DeviceInfo;
@@ -42,20 +41,20 @@ SignedInDevicesChangeObserver::SignedInDevicesChangeObserver(
     const std::string& extension_id,
     Profile* profile) : extension_id_(extension_id),
                         profile_(profile) {
-  browser_sync::ProfileSyncService* pss =
-      ProfileSyncServiceFactory::GetForProfile(profile_);
-  if (pss) {
-    DCHECK(pss->GetDeviceInfoTracker());
-    pss->GetDeviceInfoTracker()->AddObserver(this);
+  syncer::DeviceInfoSyncService* service =
+      DeviceInfoSyncServiceFactory::GetForProfile(profile_);
+  if (service) {
+    DCHECK(service->GetDeviceInfoTracker());
+    service->GetDeviceInfoTracker()->AddObserver(this);
   }
 }
 
 SignedInDevicesChangeObserver::~SignedInDevicesChangeObserver() {
-  browser_sync::ProfileSyncService* pss =
-      ProfileSyncServiceFactory::GetForProfile(profile_);
-  if (pss) {
-    DCHECK(pss->GetDeviceInfoTracker());
-    pss->GetDeviceInfoTracker()->RemoveObserver(this);
+  syncer::DeviceInfoSyncService* service =
+      DeviceInfoSyncServiceFactory::GetForProfile(profile_);
+  if (service) {
+    DCHECK(service->GetDeviceInfoTracker());
+    service->GetDeviceInfoTracker()->RemoveObserver(this);
   }
 }
 
@@ -93,13 +92,9 @@ SignedInDevicesManager::GetFactoryInstance() {
   return g_signed_in_devices_manager_factory.Pointer();
 }
 
-SignedInDevicesManager::SignedInDevicesManager()
-    : profile_(NULL), extension_registry_observer_(this) {
-}
-
+SignedInDevicesManager::SignedInDevicesManager() = default;
 SignedInDevicesManager::SignedInDevicesManager(content::BrowserContext* context)
-    : profile_(Profile::FromBrowserContext(context)),
-      extension_registry_observer_(this) {
+    : profile_(Profile::FromBrowserContext(context)) {
   EventRouter* router = EventRouter::Get(profile_);
   if (router) {
     router->RegisterObserver(

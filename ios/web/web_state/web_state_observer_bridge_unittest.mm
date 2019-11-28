@@ -2,15 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/web/public/web_state/web_state_observer_bridge.h"
+#import "ios/web/public/web_state_observer_bridge.h"
 
 #include "base/memory/ptr_util.h"
 #include "base/scoped_observer.h"
-#include "ios/web/public/favicon_url.h"
+#import "ios/web/navigation/navigation_context_impl.h"
+#include "ios/web/public/favicon/favicon_url.h"
 #import "ios/web/public/test/fakes/crw_test_web_state_observer.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#import "ios/web/public/web_state/web_state_observer_bridge.h"
-#import "ios/web/web_state/navigation_context_impl.h"
 #include "net/http/http_response_headers.h"
 #include "testing/platform_test.h"
 
@@ -130,27 +129,6 @@ TEST_F(WebStateObserverBridgeTest, DidFinishNavigation) {
       actual_context->GetPageTransition()));
   EXPECT_EQ(context->GetResponseHeaders(),
             actual_context->GetResponseHeaders());
-}
-
-// Tests |webState:didCommitNavigationWithDetails:| forwarding.
-TEST_F(WebStateObserverBridgeTest, NavigationItemCommitted) {
-  ASSERT_FALSE([observer_ commitNavigationInfo]);
-
-  LoadCommittedDetails load_details;
-  load_details.item = reinterpret_cast<web::NavigationItem*>(1);
-  load_details.previous_item_index = 15;
-  load_details.is_in_page = true;
-
-  observer_bridge_.NavigationItemCommitted(&test_web_state_, load_details);
-
-  ASSERT_TRUE([observer_ commitNavigationInfo]);
-  EXPECT_EQ(&test_web_state_, [observer_ commitNavigationInfo]->web_state);
-  EXPECT_EQ(load_details.item,
-            [observer_ commitNavigationInfo]->load_details.item);
-  EXPECT_EQ(load_details.previous_item_index,
-            [observer_ commitNavigationInfo]->load_details.previous_item_index);
-  EXPECT_EQ(load_details.is_in_page,
-            [observer_ commitNavigationInfo]->load_details.is_in_page);
 }
 
 // Tests |webState:didLoadPageWithSuccess:| forwarding.

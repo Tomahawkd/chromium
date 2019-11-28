@@ -7,8 +7,9 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/components/tether/asynchronous_shutdown_object_container_impl.h"
 #include "chromeos/components/tether/crash_recovery_manager_impl.h"
@@ -171,8 +172,7 @@ TetherComponentImpl::TetherComponentImpl(
       crash_recovery_manager_(CrashRecoveryManagerImpl::Factory::NewInstance(
           network_state_handler,
           synchronous_shutdown_object_container_->active_host(),
-          synchronous_shutdown_object_container_->host_scan_cache())),
-      weak_ptr_factory_(this) {
+          synchronous_shutdown_object_container_->host_scan_cache())) {
   crash_recovery_manager_->RestorePreCrashStateIfNecessary(
       base::Bind(&TetherComponentImpl::OnPreCrashStateRestored,
                  weak_ptr_factory_.GetWeakPtr()));

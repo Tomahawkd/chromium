@@ -14,8 +14,8 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/power_monitor/power_monitor.h"
+#include "base/stl_util.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
 #include "media/base/mac/video_frame_mac.h"
@@ -181,9 +181,7 @@ H264VideoToolboxEncoder::H264VideoToolboxEncoder(
             weak_factory_.GetWeakPtr(), cast_environment_));
 
     // Register for power state changes.
-    auto* power_monitor = base::PowerMonitor::Get();
-    if (power_monitor) {
-      power_monitor->AddObserver(this);
+    if (base::PowerMonitor::AddObserver(this)) {
       VLOG(1) << "Registered for power state changes.";
     } else {
       DLOG(WARNING) << "No power monitor. Process suspension will invalidate "
@@ -197,11 +195,8 @@ H264VideoToolboxEncoder::~H264VideoToolboxEncoder() {
 
   // If video_frame_factory_ is not null, the encoder registered for power state
   // changes in the ctor and it must now unregister.
-  if (video_frame_factory_) {
-    auto* power_monitor = base::PowerMonitor::Get();
-    if (power_monitor)
-      power_monitor->RemoveObserver(this);
-  }
+  if (video_frame_factory_)
+    base::PowerMonitor::RemoveObserver(this);
 }
 
 void H264VideoToolboxEncoder::ResetCompressionSession() {
@@ -241,14 +236,14 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
   CFTypeRef buffer_attributes_keys[] = {kCVPixelBufferPixelFormatTypeKey,
                                         kCVBufferPropagatedAttachmentsKey};
   CFTypeRef buffer_attributes_values[] = {
-      video_toolbox::ArrayWithIntegers(format, arraysize(format)).release(),
+      video_toolbox::ArrayWithIntegers(format, base::size(format)).release(),
       video_toolbox::DictionaryWithKeysAndValues(
-          attachments_keys, attachments_values, arraysize(attachments_keys))
+          attachments_keys, attachments_values, base::size(attachments_keys))
           .release()};
   const base::ScopedCFTypeRef<CFDictionaryRef> buffer_attributes =
       video_toolbox::DictionaryWithKeysAndValues(
           buffer_attributes_keys, buffer_attributes_values,
-          arraysize(buffer_attributes_keys));
+          base::size(buffer_attributes_keys));
   for (auto* v : buffer_attributes_values)
     CFRelease(v);
 
@@ -351,7 +346,7 @@ void H264VideoToolboxEncoder::DestroyCompressionSession() {
 }
 
 bool H264VideoToolboxEncoder::EncodeVideoFrame(
-    const scoped_refptr<media::VideoFrame>& video_frame,
+    scoped_refptr<media::VideoFrame> video_frame,
     const base::TimeTicks& reference_time,
     const FrameEncodedCallback& frame_encoded_callback) {
   DCHECK(thread_checker_.CalledOnValidThread());

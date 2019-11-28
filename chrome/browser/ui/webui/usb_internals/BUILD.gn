@@ -9,8 +9,8 @@ mojom("mojo_bindings") {
     "usb_internals.mojom",
   ]
 
-  public_deps = [
-    "//url/mojom:url_mojom_gurl",
-    "//url/mojom:url_mojom_origin",
+  deps = [
+    "//services/device/public/mojom:usb",
+    "//services/device/public/mojom:usb_test",
   ]
 }

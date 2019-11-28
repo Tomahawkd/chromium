@@ -11,8 +11,9 @@
 #include <string>
 
 #include "base/time/time.h"
-#include "content/common/media/media_stream.mojom.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 
 namespace content {
 
@@ -28,12 +29,15 @@ namespace content {
 // If the renderer process goes away without sending messages that
 // tracks were removed, this class instead infers that the tracks were
 // removed.
-class MediaStreamTrackMetricsHost : public mojom::MediaStreamTrackMetricsHost {
+class MediaStreamTrackMetricsHost
+    : public blink::mojom::MediaStreamTrackMetricsHost {
  public:
   explicit MediaStreamTrackMetricsHost();
 
   ~MediaStreamTrackMetricsHost() override;
-  void BindRequest(mojom::MediaStreamTrackMetricsHostRequest request);
+  void BindReceiver(
+      mojo::PendingReceiver<blink::mojom::MediaStreamTrackMetricsHost>
+          receiver);
 
  private:
   void AddTrack(uint64_t id, bool is_audio, bool is_remote) override;
@@ -56,7 +60,7 @@ class MediaStreamTrackMetricsHost : public mojom::MediaStreamTrackMetricsHost {
   typedef std::map<uint64_t, TrackInfo> TrackMap;
   TrackMap tracks_;
 
-  mojo::BindingSet<mojom::MediaStreamTrackMetricsHost> bindings_;
+  mojo::ReceiverSet<blink::mojom::MediaStreamTrackMetricsHost> receivers_;
 };
 
 }  // namespace content

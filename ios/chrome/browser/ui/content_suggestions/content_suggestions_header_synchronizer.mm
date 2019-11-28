@@ -102,7 +102,8 @@ initWithCollectionController:
   [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 }
 
-- (void)shiftTilesUpWithCompletionBlock:(ProceduralBlock)completion {
+- (void)shiftTilesUpWithAnimations:(ProceduralBlock)animations
+                        completion:(ProceduralBlock)completion {
   // Add gesture recognizer to collection view when the omnibox is focused.
   [self.collectionView addGestureRecognizer:self.tapGestureRecognizer];
 
@@ -120,6 +121,9 @@ initWithCollectionController:
     return;
   }
 
+  if (CGSizeEqualToSize(self.collectionView.contentSize, CGSizeZero))
+    [self.collectionView layoutIfNeeded];
+
   CGFloat pinnedOffsetY = [self.headerController pinnedOffsetY];
   self.collectionShiftingOffset =
       MAX(0, pinnedOffsetY - self.collectionView.contentOffset.y);
@@ -130,6 +134,8 @@ initWithCollectionController:
   [UIView animateWithDuration:kShiftTilesUpAnimationDuration
       animations:^{
         if (self.collectionView.contentOffset.y < pinnedOffsetY) {
+          if (animations)
+            animations();
           // Changing the contentOffset of the collection results in a scroll
           // and a change in the constraints of the header.
           self.collectionView.contentOffset = CGPointMake(0, pinnedOffsetY);
@@ -242,8 +248,9 @@ initWithCollectionController:
   // Find how much the collection view should be scrolled up in the next frame.
   CGFloat yOffset =
       (1.0 - percentComplete) * [self.headerController pinnedOffsetY] +
-      percentComplete * ([self.headerController pinnedOffsetY] -
-                         self.collectionShiftingOffset);
+      percentComplete * MAX([self.headerController pinnedOffsetY] -
+                                self.collectionShiftingOffset,
+                            0);
   self.collectionView.contentOffset = CGPointMake(0, yOffset);
 
   if (percentComplete == 1.0) {

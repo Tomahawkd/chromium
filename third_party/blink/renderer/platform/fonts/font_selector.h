@@ -61,10 +61,20 @@ class PLATFORM_EXPORT FontSelector : public FontCacheClient {
 
   virtual void ReportNotDefGlyph() const = 0;
 
+  // Called when a page attempts to match a font family, and the font family is
+  // available.
+  virtual void ReportSuccessfulFontFamilyMatch(
+      const AtomicString& font_family_name) = 0;
+
+  // Called when a page attempts to match a font family, and the font family is
+  // not available.
+  virtual void ReportFailedFontFamilyMatch(
+      const AtomicString& font_family_name) = 0;
+
   virtual void RegisterForInvalidationCallbacks(FontSelectorClient*) = 0;
   virtual void UnregisterForInvalidationCallbacks(FontSelectorClient*) = 0;
 
-  virtual void FontFaceInvalidated(){};
+  virtual void FontFaceInvalidated() {}
 
   virtual ExecutionContext* GetExecutionContext() const = 0;
 

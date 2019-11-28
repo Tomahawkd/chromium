@@ -7,6 +7,9 @@
 
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "media/gpu/media_gpu_export.h"
+#include "media/video/supported_video_decoder_config.h"
+#include "media/video/video_decode_accelerator.h"
 
 namespace gl {
 class GLContext;
@@ -15,6 +18,7 @@ class GLImage;
 
 namespace gpu {
 namespace gles2 {
+class AbstractTexture;
 class ContextGroup;
 }
 }
@@ -50,6 +54,24 @@ using BindGLImageCallback =
 // Return a ContextGroup*, if one is available.
 using GetContextGroupCallback =
     base::RepeatingCallback<gpu::gles2::ContextGroup*(void)>;
+
+// Create and return an AbstractTexture, if possible.
+using CreateAbstractTextureCallback =
+    base::RepeatingCallback<std::unique_ptr<gpu::gles2::AbstractTexture>(
+        unsigned /* GLenum */ target,
+        unsigned /* GLenum */ internal_format,
+        int /* GLsizei */ width,
+        int /* GLsizei */ height,
+        int /* GLsizei */ depth,
+        int /* GLint */ border,
+        unsigned /* GLenum */ format,
+        unsigned /* GLenum */ type)>;
+
+// Convert vector of VDA::SupportedProfile to vector of
+// SupportedVideoDecoderConfig.
+MEDIA_GPU_EXPORT SupportedVideoDecoderConfigs ConvertFromSupportedProfiles(
+    const VideoDecodeAccelerator::SupportedProfiles& profiles,
+    bool allow_encrypted);
 
 }  // namespace media
 

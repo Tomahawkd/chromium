@@ -11,7 +11,6 @@
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "ios/chrome/browser/net/net_types.h"
 #include "ios/web/public/browser_state.h"
@@ -115,13 +114,10 @@ class ChromeBrowserState : public web::BrowserState {
   virtual net::URLRequestContextGetter* CreateRequestContext(
       ProtocolHandlerMap* protocol_handlers) = 0;
 
-  // Creates a isolated net::URLRequestContextGetter. Should only be called once
-  // per partition_path per browser state object.
-  virtual net::URLRequestContextGetter* CreateIsolatedRequestContext(
-      const base::FilePath& partition_path) = 0;
-
   // web::BrowserState
   net::URLRequestContextGetter* GetRequestContext() override;
+  void UpdateCorsExemptHeader(
+      network::mojom::NetworkContextParams* params) override;
 
  protected:
   explicit ChromeBrowserState(

@@ -17,7 +17,7 @@
 #include "content/common/background_fetch/background_fetch_types.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
-#include "third_party/blink/public/platform/modules/background_fetch/background_fetch.mojom.h"
+#include "third_party/blink/public/mojom/background_fetch/background_fetch.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace content {
@@ -37,7 +37,8 @@ struct CONTENT_EXPORT BackgroundFetchInitializationData {
   blink::mojom::BackgroundFetchOptionsPtr options =
       blink::mojom::BackgroundFetchOptions::New();
   SkBitmap icon;
-  BackgroundFetchRegistration registration;
+  blink::mojom::BackgroundFetchRegistrationDataPtr registration_data =
+      blink::mojom::BackgroundFetchRegistrationData::New();
   size_t num_requests;
   size_t num_completed_requests;
   std::vector<scoped_refptr<BackgroundFetchRequestInfo>> active_fetch_requests;
@@ -93,8 +94,8 @@ class GetInitializationDataTask : public DatabaseTask {
   // Map from the unique_id to the initialization data.
   InitializationDataMap initialization_data_map_;
 
-  base::WeakPtrFactory<GetInitializationDataTask>
-      weak_factory_;  // Keep as last.
+  base::WeakPtrFactory<GetInitializationDataTask> weak_factory_{
+      this};  // Keep as last.
 
   DISALLOW_COPY_AND_ASSIGN(GetInitializationDataTask);
 };

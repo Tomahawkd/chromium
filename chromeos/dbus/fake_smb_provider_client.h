@@ -14,7 +14,8 @@
 namespace chromeos {
 
 // A fake implementation of SmbProviderClient.
-class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeSmbProviderClient
+    : public SmbProviderClient {
  public:
   FakeSmbProviderClient();
   explicit FakeSmbProviderClient(bool should_run_synchronously);
@@ -30,20 +31,13 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
 
   // SmbProviderClient override.
   void Mount(const base::FilePath& share_path,
-             bool ntlm_enabled,
-             const std::string& workgroup,
-             const std::string& username,
+             const MountOptions& options,
              base::ScopedFD password_fd,
              MountCallback callback) override;
 
-  void Remount(const base::FilePath& share_path,
-               int32_t mount_id,
-               bool ntlm_enabled,
-               const std::string& workgroup,
-               const std::string& username,
-               base::ScopedFD password_fd,
+  void Unmount(int32_t mount_id,
+               bool remove_password,
                StatusCallback callback) override;
-  void Unmount(int32_t mount_id, StatusCallback callback) override;
   void ReadDirectory(int32_t mount_id,
                      const base::FilePath& directory_path,
                      ReadDirectoryCallback callback) override;
@@ -130,8 +124,22 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
                              int32_t read_dir_token,
                              ReadDirectoryCallback callback) override;
 
+  void UpdateMountCredentials(int32_t mount_id,
+                              std::string workgroup,
+                              std::string username,
+                              base::ScopedFD password_fd,
+                              StatusCallback callback) override;
+
+  void UpdateSharePath(int32_t mount_id,
+                       const std::string& share_path,
+                       StatusCallback callback) override;
+
   // Adds |share| to the list of shares for |server_url| in |shares_|.
   void AddToShares(const std::string& server_url, const std::string& share);
+
+  // Adds a failure to get shares for |server_url|.
+  void AddGetSharesFailure(const std::string& server_url,
+                           smbprovider::ErrorType error);
 
   // Clears |shares_|.
   void ClearShares();
@@ -140,6 +148,15 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
   void RunStoredReadDirCallback();
 
  private:
+  // Result of a GetShares() call.
+  struct ShareResult {
+    ShareResult();
+    ~ShareResult();
+
+    smbprovider::ErrorType error = smbprovider::ErrorType::ERROR_OK;
+    std::vector<std::string> shares;
+  };
+
   // Controls whether |stored_readdir_callback_| should run synchronously.
   bool should_run_synchronously_ = true;
 
@@ -148,7 +165,7 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
   std::map<uint8_t, std::vector<std::string>> netbios_parse_results_;
 
   // Mapping of a server url to its shares.
-  std::map<std::string, std::vector<std::string>> shares_;
+  std::map<std::string, ShareResult> shares_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeSmbProviderClient);
 };

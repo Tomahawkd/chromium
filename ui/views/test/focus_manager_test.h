@@ -17,6 +17,8 @@ class FocusChangeListener;
 
 class FocusManagerTest : public ViewsTestBase, public WidgetDelegate {
  public:
+  using FocusChangeReason = FocusManager::FocusChangeReason;
+
   FocusManagerTest();
   ~FocusManagerTest() override;
 
@@ -46,8 +48,8 @@ class FocusManagerTest : public ViewsTestBase, public WidgetDelegate {
 
  private:
   View* contents_view_;
-  FocusChangeListener* focus_change_listener_;
-  WidgetFocusChangeListener* widget_focus_change_listener_;
+  FocusChangeListener* focus_change_listener_ = nullptr;
+  WidgetFocusChangeListener* widget_focus_change_listener_ = nullptr;
   std::vector<View*> accessible_panes_;
 
   DISALLOW_COPY_AND_ASSIGN(FocusManagerTest);

@@ -6,12 +6,12 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/values.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/common/bind_interface_helpers.h"
 
 namespace content {
 
@@ -21,20 +21,16 @@ namespace content {
 // TODO(hajimehoshi): Now these are hard-corded. If we add a target to count
 // objects like RefCounted whose initial state is diffcult to estimate, we stop
 // using hard-coded values. Instead, we need to load about:blank ahead of the
-// layout tests actually and initialize LeakDetector by the got values.
+// web tests actually and initialize LeakDetector by the got values.
 const int kInitialNumberOfLiveAudioNodes = 0;
 const int kInitialNumberOfLiveDocuments = 1;
 const int kInitialNumberOfLiveNodes = 4;
 const int kInitialNumberOfLiveLayoutObjects = 3;
 const int kInitialNumberOfLiveResources = 0;
-const int kInitialNumberOfScriptPromises = 0;
 const int kInitialNumberOfLiveFrames = 1;
 const int kInitialNumberOfWorkerGlobalScopes = 0;
 const int kInitialNumberOfLiveResourceFetchers = 1;
-
-// In the initial state, there are two PausableObjects (FontFaceSet created
-// by HTMLDocument and PausableTimer created by DocumentLoader).
-const int kInitialNumberOfLivePausableObject = 2;
+const int kInitialNumberOfLiveContextLifecycleStateObservers = 0;
 
 // This includes not only about:blank's context but also ScriptRegexp (e.g.
 // created by isValidEmailAddress in EmailInputType.cpp). The leak detector
@@ -42,7 +38,7 @@ const int kInitialNumberOfLivePausableObject = 2;
 // objects.
 const int kInitialNumberOfV8PerContextData = 2;
 
-LeakDetector::LeakDetector() : weak_factory_(this) {
+LeakDetector::LeakDetector() {
   previous_result_ = blink::mojom::LeakDetectionResult::New();
   previous_result_->number_of_live_audio_nodes = kInitialNumberOfLiveAudioNodes;
   previous_result_->number_of_live_documents = kInitialNumberOfLiveDocuments;
@@ -50,10 +46,8 @@ LeakDetector::LeakDetector() : weak_factory_(this) {
   previous_result_->number_of_live_layout_objects =
       kInitialNumberOfLiveLayoutObjects;
   previous_result_->number_of_live_resources = kInitialNumberOfLiveResources;
-  previous_result_->number_of_live_pausable_objects =
-      kInitialNumberOfLivePausableObject;
-  previous_result_->number_of_live_script_promises =
-      kInitialNumberOfScriptPromises;
+  previous_result_->number_of_live_context_lifecycle_state_observers =
+      kInitialNumberOfLiveContextLifecycleStateObservers;
   previous_result_->number_of_live_frames = kInitialNumberOfLiveFrames;
   previous_result_->number_of_live_v8_per_context_data =
       kInitialNumberOfV8PerContextData;
@@ -69,8 +63,8 @@ void LeakDetector::TryLeakDetection(RenderProcessHost* process,
                                     ReportCallback callback) {
   callback_ = std::move(callback);
 
-  BindInterface(process, &leak_detector_);
-  leak_detector_.set_connection_error_handler(base::BindOnce(
+  process->BindReceiver(leak_detector_.BindNewPipeAndPassReceiver());
+  leak_detector_.set_disconnect_handler(base::BindOnce(
       &LeakDetector::OnLeakDetectorIsGone, base::Unretained(this)));
   leak_detector_->PerformLeakDetection(base::BindOnce(
       &LeakDetector::OnLeakDetectionComplete, weak_factory_.GetWeakPtr()));
@@ -120,19 +114,14 @@ void LeakDetector::OnLeakDetectionComplete(
       list->AppendInteger(result->number_of_live_resources);
       detail.Set("numberOfLiveResources", std::move(list));
     }
-    if (previous_result_->number_of_live_pausable_objects <
-        result->number_of_live_pausable_objects) {
+    if (previous_result_->number_of_live_context_lifecycle_state_observers <
+        result->number_of_live_context_lifecycle_state_observers) {
       auto list = std::make_unique<base::ListValue>();
-      list->AppendInteger(previous_result_->number_of_live_pausable_objects);
-      list->AppendInteger(result->number_of_live_pausable_objects);
-      detail.Set("numberOfLivePausableObjects", std::move(list));
-    }
-    if (previous_result_->number_of_live_script_promises <
-        result->number_of_live_script_promises) {
-      auto list = std::make_unique<base::ListValue>();
-      list->AppendInteger(previous_result_->number_of_live_script_promises);
-      list->AppendInteger(result->number_of_live_script_promises);
-      detail.Set("numberOfLiveScriptPromises", std::move(list));
+      list->AppendInteger(
+          previous_result_->number_of_live_context_lifecycle_state_observers);
+      list->AppendInteger(
+          result->number_of_live_context_lifecycle_state_observers);
+      detail.Set("numberOfLiveContextLifecycleStateObservers", std::move(list));
     }
     if (previous_result_->number_of_live_frames <
         result->number_of_live_frames) {

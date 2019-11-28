@@ -11,11 +11,18 @@
 #include <string>
 #include <vector>
 
+#include "base/sync_socket.h"
+
+#ifdef WIN32
+// base/sync_socket.h will define MemoryBarrier (a Win32 macro) that
+// would clash with MemoryBarrier in base/atomicops.h if someone uses
+// that together with this header.
+#undef MemoryBarrier
+#endif  // WIN32
+
 #include "base/files/file_path.h"
-#include "base/memory/shared_memory.h"
 #include "base/process/process.h"
 #include "base/strings/string16.h"
-#include "base/sync_socket.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
@@ -42,7 +49,6 @@
 #include "ppapi/c/pp_size.h"
 #include "ppapi/c/pp_time.h"
 #include "ppapi/c/ppb_audio_config.h"
-#include "ppapi/c/ppb_compositor_layer.h"
 #include "ppapi/c/ppb_image_data.h"
 #include "ppapi/c/ppb_tcp_socket.h"
 #include "ppapi/c/ppb_text_input_controller.h"
@@ -66,13 +72,13 @@
 #include "ppapi/proxy/serialized_handle.h"
 #include "ppapi/proxy/serialized_structs.h"
 #include "ppapi/proxy/serialized_var.h"
-#include "ppapi/shared_impl/compositor_layer_data.h"
 #include "ppapi/shared_impl/dir_contents.h"
 #include "ppapi/shared_impl/file_growth.h"
 #include "ppapi/shared_impl/file_path.h"
 #include "ppapi/shared_impl/file_ref_create_info.h"
 #include "ppapi/shared_impl/media_stream_audio_track_shared.h"
 #include "ppapi/shared_impl/media_stream_video_track_shared.h"
+#include "ppapi/shared_impl/pdf_accessibility_shared.h"
 #include "ppapi/shared_impl/ppapi_nacl_plugin_args.h"
 #include "ppapi/shared_impl/ppapi_preferences.h"
 #include "ppapi/shared_impl/ppb_device_ref_shared.h"
@@ -93,7 +99,6 @@
 IPC_ENUM_TRAITS_MAX_VALUE(ppapi::TCPSocketVersion,
                           ppapi::TCP_SOCKET_VERSION_1_1_OR_ABOVE)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_AudioSampleRate, PP_AUDIOSAMPLERATE_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_BlendMode, PP_BLENDMODE_LAST)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_DeviceType_Dev, PP_DEVICETYPE_DEV_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_FileSystemType, PP_FILESYSTEMTYPE_ISOLATED)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_FileType, PP_FILETYPE_OTHER)
@@ -147,6 +152,11 @@ IPC_ENUM_TRAITS_MAX_VALUE(PP_HardwareAcceleration, PP_HARDWAREACCELERATION_LAST)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_AudioProfile, PP_AUDIOPROFILE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_VideoProfile, PP_VIDEOPROFILE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_PrivateDirection, PP_PRIVATEDIRECTION_LAST)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_TextRenderingMode, PP_TEXTRENDERINGMODE_LAST)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_PdfAccessibilityAction,
+                          PP_PDF_ACCESSIBILITYACTION_LAST)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_PdfAccessibilityScrollAlignment,
+                          PP_PDF_ACCESSIBILITYSCROLLALIGNMENT_LAST)
 
 IPC_STRUCT_TRAITS_BEGIN(PP_Point)
   IPC_STRUCT_TRAITS_MEMBER(x)
@@ -222,6 +232,15 @@ IPC_STRUCT_TRAITS_BEGIN(PP_PrintSettings_Dev)
   IPC_STRUCT_TRAITS_MEMBER(format)
 IPC_STRUCT_TRAITS_END()
 
+IPC_STRUCT_TRAITS_BEGIN(PP_PdfAccessibilityActionData)
+  IPC_STRUCT_TRAITS_MEMBER(action)
+  IPC_STRUCT_TRAITS_MEMBER(target_rect)
+  IPC_STRUCT_TRAITS_MEMBER(link_index)
+  IPC_STRUCT_TRAITS_MEMBER(page_index)
+  IPC_STRUCT_TRAITS_MEMBER(horizontal_scroll_alignment)
+  IPC_STRUCT_TRAITS_MEMBER(vertical_scroll_alignment)
+IPC_STRUCT_TRAITS_END()
+
 IPC_STRUCT_TRAITS_BEGIN(PP_PdfPrintPresetOptions_Dev)
   IPC_STRUCT_TRAITS_MEMBER(is_scaling_disabled)
   IPC_STRUCT_TRAITS_MEMBER(copies)
@@ -236,7 +255,7 @@ IPC_STRUCT_TRAITS_BEGIN(PP_PdfPrintSettings_Dev)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityViewportInfo)
-  IPC_STRUCT_TRAITS_MEMBER(zoom)
+  IPC_STRUCT_TRAITS_MEMBER(zoom_device_scale_factor)
   IPC_STRUCT_TRAITS_MEMBER(scroll)
   IPC_STRUCT_TRAITS_MEMBER(offset)
   IPC_STRUCT_TRAITS_MEMBER(selection_start_page_index)
@@ -256,11 +275,22 @@ IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityCharInfo)
   IPC_STRUCT_TRAITS_MEMBER(char_width)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityTextRunInfo)
-  IPC_STRUCT_TRAITS_MEMBER(len)
+IPC_STRUCT_TRAITS_BEGIN(ppapi::PdfAccessibilityTextStyleInfo)
+  IPC_STRUCT_TRAITS_MEMBER(font_name)
+  IPC_STRUCT_TRAITS_MEMBER(font_weight)
+  IPC_STRUCT_TRAITS_MEMBER(render_mode)
   IPC_STRUCT_TRAITS_MEMBER(font_size)
+  IPC_STRUCT_TRAITS_MEMBER(fill_color)
+  IPC_STRUCT_TRAITS_MEMBER(stroke_color)
+  IPC_STRUCT_TRAITS_MEMBER(is_italic)
+  IPC_STRUCT_TRAITS_MEMBER(is_bold)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::PdfAccessibilityTextRunInfo)
+  IPC_STRUCT_TRAITS_MEMBER(len)
   IPC_STRUCT_TRAITS_MEMBER(bounds)
   IPC_STRUCT_TRAITS_MEMBER(direction)
+  IPC_STRUCT_TRAITS_MEMBER(style)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityPageInfo)
@@ -268,6 +298,34 @@ IPC_STRUCT_TRAITS_BEGIN(PP_PrivateAccessibilityPageInfo)
   IPC_STRUCT_TRAITS_MEMBER(bounds)
   IPC_STRUCT_TRAITS_MEMBER(text_run_count)
   IPC_STRUCT_TRAITS_MEMBER(char_count)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::PdfAccessibilityLinkInfo)
+  IPC_STRUCT_TRAITS_MEMBER(url)
+  IPC_STRUCT_TRAITS_MEMBER(index_in_page)
+  IPC_STRUCT_TRAITS_MEMBER(text_run_index)
+  IPC_STRUCT_TRAITS_MEMBER(text_run_count)
+  IPC_STRUCT_TRAITS_MEMBER(bounds)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::PdfAccessibilityImageInfo)
+  IPC_STRUCT_TRAITS_MEMBER(alt_text)
+  IPC_STRUCT_TRAITS_MEMBER(text_run_index)
+  IPC_STRUCT_TRAITS_MEMBER(bounds)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::PdfAccessibilityHighlightInfo)
+  IPC_STRUCT_TRAITS_MEMBER(note_text)
+  IPC_STRUCT_TRAITS_MEMBER(index_in_page)
+  IPC_STRUCT_TRAITS_MEMBER(text_run_index)
+  IPC_STRUCT_TRAITS_MEMBER(text_run_count)
+  IPC_STRUCT_TRAITS_MEMBER(bounds)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::PdfAccessibilityPageObjects)
+  IPC_STRUCT_TRAITS_MEMBER(links)
+  IPC_STRUCT_TRAITS_MEMBER(images)
+  IPC_STRUCT_TRAITS_MEMBER(highlights)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(PP_URLComponent_Dev)
@@ -303,42 +361,6 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(ppapi::FileGrowth)
   IPC_STRUCT_TRAITS_MEMBER(max_written_offset)
   IPC_STRUCT_TRAITS_MEMBER(append_mode_write_amount)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData)
-  IPC_STRUCT_TRAITS_MEMBER(common)
-  IPC_STRUCT_TRAITS_MEMBER(color)
-  IPC_STRUCT_TRAITS_MEMBER(texture)
-  IPC_STRUCT_TRAITS_MEMBER(image)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::LayerCommon)
-  IPC_STRUCT_TRAITS_MEMBER(size)
-  IPC_STRUCT_TRAITS_MEMBER(clip_rect)
-  IPC_STRUCT_TRAITS_MEMBER(transform)
-  IPC_STRUCT_TRAITS_MEMBER(blend_mode)
-  IPC_STRUCT_TRAITS_MEMBER(opacity)
-  IPC_STRUCT_TRAITS_MEMBER(resource_id)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::ColorLayer)
-  IPC_STRUCT_TRAITS_MEMBER(red)
-  IPC_STRUCT_TRAITS_MEMBER(green)
-  IPC_STRUCT_TRAITS_MEMBER(blue)
-  IPC_STRUCT_TRAITS_MEMBER(alpha)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::ImageLayer)
-  IPC_STRUCT_TRAITS_MEMBER(resource)
-  IPC_STRUCT_TRAITS_MEMBER(source_rect)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::TextureLayer)
-  IPC_STRUCT_TRAITS_MEMBER(mailbox)
-  IPC_STRUCT_TRAITS_MEMBER(sync_token)
-  IPC_STRUCT_TRAITS_MEMBER(target)
-  IPC_STRUCT_TRAITS_MEMBER(source_rect)
-  IPC_STRUCT_TRAITS_MEMBER(premult_alpha)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ppapi::DeviceRefData)
@@ -524,20 +546,6 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::proxy::PPB_AudioEncodeParameters)
   IPC_STRUCT_TRAITS_MEMBER(initial_bitrate)
   IPC_STRUCT_TRAITS_MEMBER(acceleration)
 IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::Transform)
-  IPC_STRUCT_TRAITS_MEMBER(matrix)
-IPC_STRUCT_TRAITS_END()
-
-#if !defined(OS_NACL) && !defined(NACL_WIN64)
-
-IPC_STRUCT_TRAITS_BEGIN(ppapi::proxy::PPPDecryptor_Buffer)
-  IPC_STRUCT_TRAITS_MEMBER(resource)
-  IPC_STRUCT_TRAITS_MEMBER(handle)
-  IPC_STRUCT_TRAITS_MEMBER(size)
-IPC_STRUCT_TRAITS_END()
-
-#endif  // !defined(OS_NACL) && !defined(NACL_WIN64)
 
 // These are from the browser to the plugin.
 // Loads the given plugin.
@@ -834,6 +842,9 @@ IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanRedo,
                            PP_Bool /* result */)
 IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_Undo, PP_Instance /* instance */)
 IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_Redo, PP_Instance /* instance */)
+IPC_MESSAGE_ROUTED2(PpapiMsg_PPPPdf_HandleAccessibilityAction,
+                    PP_Instance /* instance */,
+                    PP_PdfAccessibilityActionData /* action_data */)
 IPC_SYNC_MESSAGE_ROUTED3_1(PpapiMsg_PPPPdf_PrintBegin,
                            PP_Instance /* instance */,
                            PP_PrintSettings_Dev /* print_settings */,
@@ -1092,7 +1103,7 @@ IPC_SYNC_MESSAGE_ROUTED4_3(PpapiHostMsg_PPBImageData_CreatePlatform,
                            PP_Bool /* init_to_zero */,
                            ppapi::HostResource /* result_resource */,
                            PP_ImageDataDesc /* image_data_desc */,
-                           ppapi::proxy::ImageHandle /* result */)
+                           ppapi::proxy::SerializedHandle /* result */)
 IPC_SYNC_MESSAGE_ROUTED4_3(PpapiHostMsg_PPBImageData_CreateSimple,
                            PP_Instance /* instance */,
                            int32_t /* format */,
@@ -1471,17 +1482,6 @@ IPC_MESSAGE_CONTROL3(PpapiHostMsg_UMA_HistogramEnumeration,
                      int32_t /* boundary_value */)
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_UMA_IsCrashReportingEnabled)
 IPC_MESSAGE_CONTROL0(PpapiPluginMsg_UMA_IsCrashReportingEnabledReply)
-
-// Compositor
-IPC_MESSAGE_CONTROL0(PpapiHostMsg_Compositor_Create)
-IPC_MESSAGE_CONTROL2(PpapiHostMsg_Compositor_CommitLayers,
-                     std::vector<ppapi::CompositorLayerData> /* layers */,
-                     bool /* reset */)
-IPC_MESSAGE_CONTROL0(PpapiPluginMsg_Compositor_CommitLayersReply)
-IPC_MESSAGE_CONTROL3(PpapiPluginMsg_Compositor_ReleaseResource,
-                     int32_t /* id */,
-                     gpu::SyncToken /* sync_token */,
-                     bool /* is_lost */)
 
 // File chooser.
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_FileChooser_Create)
@@ -2409,11 +2409,12 @@ IPC_MESSAGE_CONTROL1(
     PP_PrivateAccessibilityDocInfo /* doc_info */)
 
 // Send information about one page for accessibility support.
-IPC_MESSAGE_CONTROL3(
+IPC_MESSAGE_CONTROL4(
     PpapiHostMsg_PDF_SetAccessibilityPageInfo,
     PP_PrivateAccessibilityPageInfo /* page_info */,
-    std::vector<PP_PrivateAccessibilityTextRunInfo> /* text_runs */,
-    std::vector<PP_PrivateAccessibilityCharInfo> /* chars */)
+    std::vector<ppapi::PdfAccessibilityTextRunInfo> /* text_runs */,
+    std::vector<PP_PrivateAccessibilityCharInfo> /* chars */,
+    ppapi::PdfAccessibilityPageObjects /* page_objects */)
 
 // Send information about the selection coordinates.
 IPC_MESSAGE_CONTROL4(PpapiHostMsg_PDF_SelectionChanged,
@@ -2421,6 +2422,11 @@ IPC_MESSAGE_CONTROL4(PpapiHostMsg_PDF_SelectionChanged,
                      int32_t /* left_height */,
                      PP_FloatPoint /* right */,
                      int32_t /* right_height */)
+
+// Lets the renderer know that the PDF plugin can handle save commands
+// internally. i.e. It will provide the data to save and trigger the download
+// dialog.
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_PDF_SetPluginCanSave, bool /* can_save */)
 
 // VideoCapture ----------------------------------------------------------------
 

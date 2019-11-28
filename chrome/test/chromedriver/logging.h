@@ -80,7 +80,7 @@ class WebDriverLog : public Log {
 };
 
 // Initializes logging system for ChromeDriver. Returns true on success.
-bool InitLogging();
+bool InitLogging(uint16_t port);
 
 // Creates |Log|s, |DevToolsEventListener|s, and |CommandListener|s based on
 // logging preferences.
@@ -90,5 +90,7 @@ Status CreateLogs(
     std::vector<std::unique_ptr<WebDriverLog>>* out_logs,
     std::vector<std::unique_ptr<DevToolsEventListener>>* out_devtools_listeners,
     std::vector<std::unique_ptr<CommandListener>>* out_command_listeners);
+
+const char* GetPortProtectionMessage();
 
 #endif  // CHROME_TEST_CHROMEDRIVER_LOGGING_H_

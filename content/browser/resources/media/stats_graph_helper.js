@@ -77,8 +77,9 @@ var dataConversionConfig = {
     convertFunction: function(srcDataSeries) {
       var length = srcDataSeries.dataPoints_.length;
       var lastDataPoint = srcDataSeries.dataPoints_[length - 1];
-      if (lastDataPoint.value < 5000)
+      if (lastDataPoint.value < 5000) {
         return lastDataPoint.value * 1000;
+      }
       return lastDataPoint.value;
     }
   }
@@ -96,23 +97,81 @@ var statsNameBlackList = {
   'googFingerprint': true,
 };
 
+function isStandardReportBlacklisted(report) {
+  // Codec stats reflect what has been negotiated. There are LOTS of them and
+  // they don't change over time on their own.
+  if (report.type == 'codec') {
+    return true;
+  }
+  // Unused data channels can stay in "connecting" indefinitely and their
+  // counters stay zero.
+  if (report.type == 'data-channel' &&
+      readReportStat(report, 'state') == 'connecting') {
+    return true;
+  }
+  // The same is true for transports and "new".
+  if (report.type == 'transport' &&
+      readReportStat(report, 'dtlsState') == 'new') {
+    return true;
+  }
+  // Local and remote candidates don't change over time and there are several of
+  // them.
+  if (report.type == 'local-candidate' || report.type == 'remote-candidate') {
+    return true;
+  }
+  return false;
+}
+
+function readReportStat(report, stat) {
+  let values = report.stats.values;
+  for (let i = 0; i < values.length; i += 2) {
+    if (values[i] == stat) {
+      return values[i + 1];
+    }
+  }
+  return undefined;
+}
+
+function isStandardStatBlacklisted(report, statName) {
+  // The datachannelid is an identifier, but because it is a number it shows up
+  // as a graph if we don't blacklist it.
+  if (report.type == 'data-channel' && statName == 'datachannelid') {
+    return true;
+  }
+  // The priority does not change over time on its own; plotting uninteresting.
+  if (report.type == 'candidate-pair' && statName == 'priority') {
+    return true;
+  }
+  return false;
+}
+
 var graphViews = {};
+let graphElementsByPeerConnectionId = new Map();
 
 // Returns number parsed from |value|, or NaN if the stats name is black-listed.
 function getNumberFromValue(name, value) {
-  if (statsNameBlackList[name])
+  if (statsNameBlackList[name]) {
     return NaN;
+  }
+  if (isNaN(value)) {
+    return NaN;
+  }
   return parseFloat(value);
 }
 
 // Adds the stats report |report| to the timeline graph for the given
 // |peerConnectionElement|.
-function drawSingleReport(peerConnectionElement, report) {
+function drawSingleReport(peerConnectionElement, report, isLegacyReport) {
   var reportType = report.type;
   var reportId = report.id;
   var stats = report.stats;
-  if (!stats || !stats.values)
+  if (!stats || !stats.values) {
     return;
+  }
+
+  const childrenBefore = peerConnectionElement.hasChildNodes() ?
+      Array.from(peerConnectionElement.childNodes) :
+      [];
 
   for (var i = 0; i < stats.values.length - 1; i = i + 2) {
     var rawLabel = stats.values[i];
@@ -132,12 +191,11 @@ function drawSingleReport(peerConnectionElement, report) {
           [stats.values[i + 1]]);
       continue;
     }
-
     var finalDataSeriesId = rawDataSeriesId;
     var finalLabel = rawLabel;
     var finalValue = rawValue;
     // We need to convert the value if dataConversionConfig[rawLabel] exists.
-    if (dataConversionConfig[rawLabel]) {
+    if (isLegacyReport && dataConversionConfig[rawLabel]) {
       // Updates the original dataSeries before the conversion.
       addDataSeriesPoints(
           peerConnectionElement, rawDataSeriesId, rawLabel, [stats.timestamp],
@@ -157,6 +215,14 @@ function drawSingleReport(peerConnectionElement, report) {
         peerConnectionElement, finalDataSeriesId, finalLabel, [stats.timestamp],
         [finalValue]);
 
+    if (!isLegacyReport &&
+        (isStandardReportBlacklisted(report) ||
+         isStandardStatBlacklisted(report, rawLabel))) {
+      // We do not want to draw certain standard reports but still want to
+      // record them in the data series.
+      continue;
+    }
+
     // Updates the graph.
     var graphType =
         bweCompoundGraphConfig[finalLabel] ? 'bweCompound' : finalLabel;
@@ -174,10 +240,43 @@ function drawSingleReport(peerConnectionElement, report) {
     var dataSeries =
         peerConnectionDataStore[peerConnectionElement.id].getDataSeries(
             finalDataSeriesId);
-    if (!graphViews[graphViewId].hasDataSeries(dataSeries))
+    if (!graphViews[graphViewId].hasDataSeries(dataSeries)) {
       graphViews[graphViewId].addDataSeries(dataSeries);
+    }
     graphViews[graphViewId].updateEndDate();
   }
+
+  const childrenAfter = peerConnectionElement.hasChildNodes() ?
+      Array.from(peerConnectionElement.childNodes) :
+      [];
+  for (let i = 0; i < childrenAfter.length; ++i) {
+    if (!childrenBefore.includes(childrenAfter[i])) {
+      let graphElements =
+          graphElementsByPeerConnectionId.get(peerConnectionElement.id);
+      if (!graphElements) {
+        graphElements = [];
+        graphElementsByPeerConnectionId.set(
+            peerConnectionElement.id, graphElements);
+      }
+      graphElements.push(childrenAfter[i]);
+    }
+  }
+}
+
+function removeStatsReportGraphs(peerConnectionElement) {
+  const graphElements =
+      graphElementsByPeerConnectionId.get(peerConnectionElement.id);
+  if (graphElements) {
+    for (let i = 0; i < graphElements.length; ++i) {
+      peerConnectionElement.removeChild(graphElements[i]);
+    }
+    graphElementsByPeerConnectionId.delete(peerConnectionElement.id);
+  }
+  Object.keys(graphViews).forEach(key => {
+    if (key.startsWith(peerConnectionElement.id)) {
+      delete graphViews[key];
+    }
+  });
 }
 
 // Makes sure the TimelineDataSeries with id |dataSeriesId| is created,
@@ -196,8 +295,9 @@ function addDataSeriesPoints(
       dataSeries.setColor(bweCompoundGraphConfig[label].color);
     }
   }
-  for (var i = 0; i < times.length; ++i)
+  for (var i = 0; i < times.length; ++i) {
     dataSeries.addPoint(times[i], values[i]);
+  }
 }
 
 // Draws the received propagation deltas using the packet group arrival time as
@@ -216,8 +316,9 @@ function drawReceivedPropagationDelta(peerConnectionElement, report, deltas) {
     }
   }
   // Unexpected.
-  if (times == null)
+  if (times == null) {
     return;
+  }
 
   // Convert |deltas| and |times| from strings to arrays of numbers.
   try {
@@ -254,8 +355,9 @@ function drawReceivedPropagationDelta(peerConnectionElement, report, deltas) {
 // can be deduced from existing stats labels. Otherwise empty string for
 // non-SSRC reports or where type (audio/video) can't be deduced.
 function getSsrcReportType(report) {
-  if (report.type != 'ssrc')
+  if (report.type != 'ssrc') {
     return '';
+  }
   if (report.stats && report.stats.values) {
     // Known stats keys for audio send/receive streams.
     if (report.stats.values.indexOf('audioOutputLevel') != -1 ||
@@ -291,8 +393,9 @@ function ensureStatsGraphTopContainer(peerConnectionElement, report) {
     container.firstChild.firstChild.textContent =
         'Stats graphs for ' + report.id + ' (' + report.type + ')';
     var statsType = getSsrcReportType(report);
-    if (statsType != '')
+    if (statsType != '') {
       container.firstChild.firstChild.textContent += ' (' + statsType + ')';
+    }
 
     if (report.type == 'ssrc') {
       var ssrcInfoElement = document.createElement('div');

@@ -16,8 +16,8 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/logging.h"
-#include "base/md5.h"
 #include "base/optional.h"
 #include "base/path_service.h"
 #include "base/strings/string_piece.h"
@@ -221,6 +221,26 @@ TEST_F(VolumeArchiveMinizipTest, Read) {
       continue;
 
     CheckFileContents(&archive, it.second);
+  }
+}
+
+// Regression test for https://crbug.com/915960
+TEST_F(VolumeArchiveMinizipTest, ReadPartial) {
+  std::unique_ptr<TestVolumeReader> reader =
+      std::make_unique<TestVolumeReader>(GetTestZipPath("small_zip.zip"));
+  VolumeArchiveMinizip archive(std::move(reader));
+  ASSERT_TRUE(archive.Init(""));
+
+  for (auto it : kSmallZipFiles) {
+    EXPECT_TRUE(archive.SeekHeader(it.first));
+    if (it.second.is_directory)
+      continue;
+
+    // Read 1 byte.
+    const int32_t read_length = 1;
+    const char* buffer = nullptr;
+    int64_t read = archive.ReadData(0, read_length, &buffer);
+    EXPECT_EQ(read, read_length);
   }
 }
 

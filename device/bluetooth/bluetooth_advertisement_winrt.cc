@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
@@ -63,8 +64,7 @@ void RemoveStatusChangedHandler(IBluetoothLEAdvertisementPublisher* publisher,
 
 }  // namespace
 
-BluetoothAdvertisementWinrt::BluetoothAdvertisementWinrt()
-    : weak_ptr_factory_(this) {}
+BluetoothAdvertisementWinrt::BluetoothAdvertisementWinrt() {}
 
 bool BluetoothAdvertisementWinrt::Initialize(
     std::unique_ptr<BluetoothAdvertisement::Data> advertisement_data) {

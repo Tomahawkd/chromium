@@ -4,8 +4,9 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
 #include "base/time/time.h"
@@ -51,8 +52,7 @@ const char kLanguageSelect[] = "languageSelect";
 const char kKeyboardSelect[] = "keyboardSelect";
 
 std::string GetGetSelectStatement(const std::string& selectId) {
-  return "document.getElementById('oobe-welcome-md').$." + selectId +
-         ".$.select";
+  return "document.getElementById('connect').$." + selectId + ".$.select";
 }
 
 const char kUSLayout[] = "xkb:us::eng";
@@ -133,6 +133,8 @@ class LanguageListWaiter : public WelcomeScreen::Observer {
 
 }  // namespace
 
+// These test data depend on the IME extension manifest which differs between
+// Chromium OS and Chrome OS.
 struct LocalizationTestParams {
   const char* initial_locale;
   const char* keyboard_layout;
@@ -140,6 +142,51 @@ struct LocalizationTestParams {
   const char* expected_keyboard_layout;
   const char* expected_keyboard_select_control;
 } const oobe_localization_test_parameters[] = {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+    // ------------------ Non-Latin setup
+    // For a non-Latin keyboard layout like Russian, we expect to see the US
+    // keyboard.
+    {"ru", "xkb:ru::rus", "ru", kUSLayout, "xkb:us::eng"},
+    {"ru", "xkb:us::eng,xkb:ru::rus", "ru", kUSLayout, "xkb:us::eng"},
+
+    // IMEs do not load at OOBE, so we just expect to see the (Latin) Japanese
+    // keyboard.
+    {"ja", "xkb:jp::jpn", "ja", "xkb:jp::jpn", "xkb:jp::jpn,[xkb:us::eng]"},
+
+    // We don't use the Icelandic locale but the Icelandic keyboard layout
+    // should still be selected when specified as the default.
+    {"en-US", "xkb:is::ice", "en-US", "xkb:is::ice",
+     "xkb:is::ice,[xkb:us::eng,xkb:us:intl:eng,xkb:us:intl_pc:eng,"
+     "xkb:us:altgr-intl:eng,xkb:us:dvorak:eng,xkb:us:dvp:eng,"
+     "xkb:us:colemak:eng,xkb:us:workman:eng,xkb:us:workman-intl:eng]"},
+    // ------------------ Full Latin setup
+    // French Swiss keyboard.
+    {"fr", "xkb:ch:fr:fra", "fr", "xkb:ch:fr:fra",
+     "xkb:ch:fr:fra,[xkb:fr::fra,xkb:fr:bepo:fra,xkb:be::fra,xkb:ca::fra,"
+     "xkb:ca:multix:fra,xkb:us::eng]"},
+
+    // German Swiss keyboard.
+    {"de", "xkb:ch::ger", "de", "xkb:ch::ger",
+     "xkb:ch::ger,[xkb:de::ger,xkb:de:neo:ger,xkb:be::ger,xkb:us::eng]"},
+
+    // WelcomeScreenMultipleLocales
+    {"es,en-US,nl", "xkb:be::nld", "es,en-US,nl", "xkb:be::nld",
+     "xkb:be::nld,[xkb:es::spa,xkb:latam::spa,xkb:us::eng]"},
+
+    {"ru,de", "xkb:ru::rus", "ru,de", kUSLayout, "xkb:us::eng"},
+
+    // ------------------ Regional Locales
+    // Synthetic example to test correct merging of different locales.
+    {"fr-CH,it-CH,de-CH", "xkb:fr::fra,xkb:it::ita,xkb:de::ger",
+     "fr-CH,it-CH,de-CH", "xkb:fr::fra",
+     "xkb:fr::fra,xkb:it::ita,xkb:de::ger,"
+     "[xkb:fr:bepo:fra,xkb:be::fra,xkb:ca::fra,"
+     "xkb:ch:fr:fra,xkb:ca:multix:fra,xkb:us::eng]"},
+
+    // Another synthetic example. Check that british keyboard is available.
+    {"en-AU", "xkb:us::eng", "en-AU", "xkb:us::eng",
+     "xkb:us::eng,[xkb:gb:extd:eng,xkb:gb:dvorak:eng]"},
+#else
     // ------------------ Non-Latin setup
     // For a non-Latin keyboard layout like Russian, we expect to see the US
     // keyboard.
@@ -173,20 +220,16 @@ struct LocalizationTestParams {
     {"ru,de", "xkb:ru::rus", "ru,de", kUSLayout, "xkb:us::eng"},
 
     // ------------------ Regional Locales
-    // Syntetic example to test correct merging of different locales.
-    {"fr-CH,it-CH,de-CH",
-     "xkb:fr::fra,xkb:it::ita,xkb:de::ger",
-     "fr-CH,it-CH,de-CH",
-     "xkb:fr::fra",
+    // Synthetic example to test correct merging of different locales.
+    {"fr-CH,it-CH,de-CH", "xkb:fr::fra,xkb:it::ita,xkb:de::ger",
+     "fr-CH,it-CH,de-CH", "xkb:fr::fra",
      "xkb:fr::fra,xkb:it::ita,xkb:de::ger,[xkb:be::fra,xkb:ca::fra,"
-         "xkb:ch:fr:fra,xkb:ca:multix:fra,xkb:us::eng]"},
+     "xkb:ch:fr:fra,xkb:ca:multix:fra,xkb:us::eng]"},
 
-    // Another syntetic example. Check that british keyboard is available.
-    {"en-AU",
-     "xkb:us::eng",
-     "en-AU",
-     "xkb:us::eng",
+    // Another synthetic example. Check that british keyboard is available.
+    {"en-AU", "xkb:us::eng", "en-AU", "xkb:us::eng",
      "xkb:us::eng,[xkb:gb:extd:eng,xkb:gb:dvorak:eng]"},
+#endif
 };
 
 class OobeLocalizationTest
@@ -233,7 +276,6 @@ class OobeLocalizationTest
 
  private:
   system::ScopedFakeStatisticsProvider fake_statistics_provider_;
-  test::JSChecker checker;
 
   DISALLOW_COPY_AND_ASSIGN(OobeLocalizationTest);
 };
@@ -264,7 +306,7 @@ bool OobeLocalizationTest::VerifyInitialOptions(const char* select_id,
       "  return correct;\n"
       "})()",
       GetGetSelectStatement(select_id).c_str(), values, check_separator);
-  const bool execute_status = checker.GetBool(expression);
+  const bool execute_status = test::OobeJS().GetBool(expression);
   EXPECT_TRUE(execute_status) << expression;
   return execute_status;
 }
@@ -283,7 +325,7 @@ bool OobeLocalizationTest::VerifyOptionExists(const char* select_id,
       "  return false;\n"
       "})()",
       GetGetSelectStatement(select_id).c_str(), value);
-  const bool execute_status = checker.GetBool(expression);
+  const bool execute_status = test::OobeJS().GetBool(expression);
   EXPECT_TRUE(execute_status) << expression;
   return execute_status;
 }
@@ -331,7 +373,7 @@ std::string OobeLocalizationTest::DumpOptions(const char* select_id) {
       "  return result;\n"
       "})()\n",
       GetGetSelectStatement(select_id).c_str(), select_id);
-  return checker.GetString(expression);
+  return test::OobeJS().GetString(expression);
 }
 
 std::string TranslateXKB2Extension(const std::string& src) {
@@ -389,11 +431,6 @@ void OobeLocalizationTest::RunLocalizationTest() {
       LoginDisplayHost::default_host()->GetOobeUI()->web_ui()->GetWebContents(),
       waiting_script, &done));
 
-  checker.set_web_contents(LoginDisplayHost::default_host()
-                               ->GetOobeUI()
-                               ->web_ui()
-                               ->GetWebContents());
-
   if (!VerifyInitialOptions(kLanguageSelect, expected_locale.c_str(), true)) {
     LOG(ERROR) << "Actual value of " << kLanguageSelect << ":\n"
                << DumpOptions(kLanguageSelect);
@@ -433,10 +470,10 @@ IN_PROC_BROWSER_TEST_P(OobeLocalizationTest, LocalizationTest) {
   RunLocalizationTest();
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StructSequence,
     OobeLocalizationTest,
     testing::Range(&oobe_localization_test_parameters[0],
-                   &oobe_localization_test_parameters[arraysize(
+                   &oobe_localization_test_parameters[base::size(
                        oobe_localization_test_parameters)]));
 }  // namespace chromeos

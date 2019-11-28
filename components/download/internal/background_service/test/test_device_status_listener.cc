@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "components/download/internal/background_service/scheduler/battery_status_listener_impl.h"
 #include "components/download/network/network_status_listener_impl.h"
 #include "services/network/test/test_network_connection_tracker.h"
@@ -31,8 +32,7 @@ TestDeviceStatusListener::TestDeviceStatusListener()
           base::TimeDelta(), /* online_delay */
           std::make_unique<FakeBatteryStatusListener>(),
           std::make_unique<NetworkStatusListenerImpl>(
-              network::TestNetworkConnectionTracker::GetInstance())),
-      weak_ptr_factory_(this) {}
+              network::TestNetworkConnectionTracker::GetInstance())) {}
 
 TestDeviceStatusListener::~TestDeviceStatusListener() {
   // Mark |listening_| to false to bypass the remove observer calls in the base
@@ -51,9 +51,11 @@ void TestDeviceStatusListener::SetDeviceStatus(const DeviceStatus& status) {
   status_ = status;
 }
 
-void TestDeviceStatusListener::Start(DeviceStatusListener::Observer* observer) {
+void TestDeviceStatusListener::Start(const base::TimeDelta& start_delay) {
+  if (listening_ || !observer_)
+    return;
+
   listening_ = true;
-  observer_ = observer;
 
   // Simulates the delay after start up.
   base::ThreadTaskRunnerHandle::Get()->PostTask(

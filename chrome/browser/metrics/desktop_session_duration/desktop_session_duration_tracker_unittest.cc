@@ -4,8 +4,8 @@
 
 #include "chrome/browser/metrics/desktop_session_duration/desktop_session_duration_tracker.h"
 
-#include "base/message_loop/message_loop.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -52,7 +52,8 @@ class MockDesktopSessionObserver
   void OnSessionStarted(base::TimeTicks session_start) override {
     session_started_count_ = true;
   }
-  void OnSessionEnded(base::TimeDelta session_length) override {
+  void OnSessionEnded(base::TimeDelta session_length,
+                      base::TimeTicks session_end) override {
     session_ended_count_ = true;
   }
 
@@ -65,8 +66,7 @@ class MockDesktopSessionObserver
 
 class DesktopSessionDurationTrackerTest : public testing::Test {
  public:
-  DesktopSessionDurationTrackerTest()
-      : loop_(base::MessageLoop::TYPE_DEFAULT) {}
+  DesktopSessionDurationTrackerTest() {}
 
   void SetUp() override {
     metrics::DesktopSessionDurationTracker::Initialize();
@@ -90,7 +90,7 @@ class DesktopSessionDurationTrackerTest : public testing::Test {
   MockDesktopSessionObserver observer_;
 
  private:
-  base::MessageLoop loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopSessionDurationTrackerTest);
 };

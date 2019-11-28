@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/webui/inspect_ui.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/devtools/devtools_targets_ui.h"
@@ -46,6 +49,7 @@ const char kInspectUiActivateCommand[] = "activate";
 const char kInspectUiCloseCommand[] = "close";
 const char kInspectUiReloadCommand[] = "reload";
 const char kInspectUiOpenCommand[] = "open";
+const char kInspectUiPauseCommand[] = "pause";
 const char kInspectUiInspectBrowser[] = "inspect-browser";
 const char kInspectUiLocalHost[] = "localhost";
 
@@ -67,14 +71,14 @@ const char kInspectUiNameField[] = "name";
 const char kInspectUiUrlField[] = "url";
 const char kInspectUiIsAdditionalField[] = "isAdditional";
 
-base::ListValue GetUiDevToolsTargets() {
-  base::ListValue targets;
+base::Value GetUiDevToolsTargets() {
+  base::Value targets(base::Value::Type::LIST);
   for (const auto& client_pair :
        ui_devtools::UiDevToolsServer::GetClientNamesAndUrls()) {
-    auto target_data = std::make_unique<base::DictionaryValue>();
-    target_data->SetString(kInspectUiNameField, client_pair.first);
-    target_data->SetString(kInspectUiUrlField, client_pair.second);
-    target_data->SetBoolean(kInspectUiIsAdditionalField, true);
+    base::Value target_data(base::Value::Type::DICTIONARY);
+    target_data.SetStringKey(kInspectUiNameField, client_pair.first);
+    target_data.SetStringKey(kInspectUiUrlField, client_pair.second);
+    target_data.SetBoolKey(kInspectUiIsAdditionalField, true);
     targets.Append(std::move(target_data));
   }
   return targets;
@@ -100,6 +104,7 @@ class InspectMessageHandler : public WebUIMessageHandler {
   void HandleCloseCommand(const base::ListValue* args);
   void HandleReloadCommand(const base::ListValue* args);
   void HandleOpenCommand(const base::ListValue* args);
+  void HandlePauseCommand(const base::ListValue* args);
   void HandleInspectBrowserCommand(const base::ListValue* args);
   void HandleBooleanPrefChanged(const char* pref_name,
                                 const base::ListValue* args);
@@ -137,6 +142,10 @@ void InspectMessageHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       kInspectUiCloseCommand,
       base::BindRepeating(&InspectMessageHandler::HandleCloseCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kInspectUiPauseCommand,
+      base::BindRepeating(&InspectMessageHandler::HandlePauseCommand,
                           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       kInspectUiDiscoverUsbDevicesEnabledCommand,
@@ -250,6 +259,13 @@ void InspectMessageHandler::HandleOpenCommand(const base::ListValue* args) {
   std::string url;
   if (ParseStringArgs(args, &source_id, &browser_id, &url))
     inspect_ui_->Open(source_id, browser_id, url);
+}
+
+void InspectMessageHandler::HandlePauseCommand(const base::ListValue* args) {
+  std::string source;
+  std::string id;
+  if (ParseStringArgs(args, &source, &id))
+    inspect_ui_->Pause(source, id);
 }
 
 void InspectMessageHandler::HandleInspectBrowserCommand(
@@ -431,6 +447,16 @@ void InspectUI::Open(const std::string& source_id,
     handler->Open(browser_id, url);
 }
 
+void InspectUI::Pause(const std::string& source_id,
+                      const std::string& target_id) {
+  scoped_refptr<DevToolsAgentHost> target = FindTarget(source_id, target_id);
+  content::WebContents* web_contents = target->GetWebContents();
+  if (web_contents) {
+    DevToolsWindow::OpenDevToolsWindow(web_contents,
+                                       DevToolsToggleAction::PauseInDebugger());
+  }
+}
+
 void InspectUI::InspectBrowserWithCustomFrontend(
     const std::string& source_id,
     const std::string& browser_id,
@@ -489,8 +515,7 @@ void InspectUI::StartListeningNotifications() {
   DevToolsTargetsUIHandler::Callback callback =
       base::Bind(&InspectUI::PopulateTargets, base::Unretained(this));
 
-  base::ListValue additional_targets = GetUiDevToolsTargets();
-  PopulateAdditionalTargets(additional_targets);
+  PopulateAdditionalTargets(GetUiDevToolsTargets());
 
   AddTargetUIHandler(
       DevToolsTargetsUIHandler::CreateForLocal(callback, profile));
@@ -603,7 +628,7 @@ void InspectUI::SetPortForwardingDefaults() {
   }
 
   // Do nothing if user already took explicit action.
-  if (enabled || config->size() != 0)
+  if (enabled || !config->empty())
     return;
 
   base::DictionaryValue default_config;
@@ -642,7 +667,7 @@ void InspectUI::PopulateTargets(const std::string& source,
                                          targets);
 }
 
-void InspectUI::PopulateAdditionalTargets(const base::ListValue& targets) {
+void InspectUI::PopulateAdditionalTargets(const base::Value& targets) {
   web_ui()->CallJavascriptFunctionUnsafe("populateAdditionalTargets", targets);
 }
 

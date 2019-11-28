@@ -51,22 +51,22 @@ void {{cpp_class}}::InvokeAndReportException({{argument_declarations | join(', '
 
 {% if callback_function_name == 'EventHandlerNonNull' %}
 bool {{cpp_class}}::IsRunnableOrThrowException(IgnorePause ignore_pause) {
+  ScriptState* callback_relevant_script_state =
+      CallbackRelevantScriptState();
+
   bool is_runnable =
       ignore_pause == IgnorePause::kIgnore ?
       IsCallbackFunctionRunnableIgnoringPause(
-          CallbackRelevantScriptState(), IncumbentScriptState()) :
+          callback_relevant_script_state, IncumbentScriptState()) :
       IsCallbackFunctionRunnable(
-          CallbackRelevantScriptState(), IncumbentScriptState());
+          callback_relevant_script_state, IncumbentScriptState());
   if (is_runnable)
     return true;
 
   // Wrapper-tracing for the callback function makes the function object and
   // its creation context alive. Thus it's safe to use the creation context
   // of the callback function here.
-  v8::HandleScope handle_scope(GetIsolate());
-  v8::Local<v8::Object> callback_object = CallbackObject();
-  CHECK(!callback_object.IsEmpty());
-  v8::Context::Scope context_scope(callback_object->CreationContext());
+  ScriptState::Scope scope(callback_relevant_script_state);
   V8ThrowException::ThrowError(
       GetIsolate(),
       ExceptionMessages::FailedToExecute(
@@ -82,26 +82,6 @@ v8::Maybe<{{return_cpp_type}}> {{cpp_class}}::InvokeWithoutRunnabilityCheck({{ar
     return_cpp_type, native_value_traits_tag, arguments,
     is_treat_non_object_as_null, True,
     callback_function_name, 'invoke')}}
-}
-{% endif %}
-
-v8::Maybe<{{return_cpp_type}}> V8PersistentCallbackFunction<{{cpp_class}}>::Invoke({{argument_declarations | join(', ')}}) {
-  return Proxy()->Invoke(
-      {{
-         (['callback_this_value'] +
-          (arguments|map(attribute='name')|list)
-         )|join(', ')
-      }});
-}
-
-{% if idl_type == 'void' or callback_function_name == 'Function' %}
-void V8PersistentCallbackFunction<{{cpp_class}}>::InvokeAndReportException({{argument_declarations | join(', ')}}) {
-  Proxy()->InvokeAndReportException(
-      {{
-         (['callback_this_value'] +
-          (arguments|map(attribute='name')|list)
-         )|join(', ')
-      }});
 }
 {% endif %}
 

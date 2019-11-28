@@ -5,7 +5,8 @@
 package org.chromium.components.signin.test.util;
 
 import android.accounts.Account;
-import android.support.annotation.NonNull;
+
+import androidx.annotation.NonNull;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -18,13 +19,12 @@ import java.util.Set;
  */
 public class AccountHolder {
     private final Account mAccount;
-    private final String mPassword;
     private final Map<String, String> mAuthTokens;
     private final Map<String, Boolean> mHasBeenAccepted;
     private final boolean mAlwaysAccept;
     private final Set<String> mFeatures;
 
-    private AccountHolder(Account account, String password, Map<String, String> authTokens,
+    private AccountHolder(Account account, Map<String, String> authTokens,
             Map<String, Boolean> hasBeenAccepted, boolean alwaysAccept, Set<String> features) {
         assert account != null;
         assert authTokens != null;
@@ -32,7 +32,6 @@ public class AccountHolder {
         assert features != null;
 
         mAccount = account;
-        mPassword = password;
         mAuthTokens = authTokens;
         mHasBeenAccepted = hasBeenAccepted;
         mAlwaysAccept = alwaysAccept;
@@ -41,10 +40,6 @@ public class AccountHolder {
 
     public Account getAccount() {
         return mAccount;
-    }
-
-    public String getPassword() {
-        return mPassword;
     }
 
     public boolean hasAuthTokenRegistered(String authTokenType) {
@@ -102,10 +97,6 @@ public class AccountHolder {
         return new Builder(account);
     }
 
-    public AccountHolder withPassword(String password) {
-        return copy().password(password).build();
-    }
-
     public AccountHolder withAuthTokens(Map<String, String> authTokens) {
         return copy().authTokens(authTokens).build();
     }
@@ -124,7 +115,6 @@ public class AccountHolder {
 
     private Builder copy() {
         return builder(mAccount)
-                .password(mPassword)
                 .authTokens(mAuthTokens)
                 .hasBeenAcceptedMap(mHasBeenAccepted)
                 .alwaysAccept(mAlwaysAccept);
@@ -135,7 +125,6 @@ public class AccountHolder {
      */
     public static class Builder {
         private Account mAccount;
-        private String mPassword;
         private Map<String, String> mAuthTokens = new HashMap<>();
         private Map<String, Boolean> mHasBeenAccepted = new HashMap<>();
         private boolean mAlwaysAccept;
@@ -147,11 +136,6 @@ public class AccountHolder {
 
         public Builder account(@NonNull Account account) {
             mAccount = account;
-            return this;
-        }
-
-        public Builder password(String password) {
-            mPassword = password;
             return this;
         }
 
@@ -198,7 +182,7 @@ public class AccountHolder {
 
         public AccountHolder build() {
             return new AccountHolder(
-                    mAccount, mPassword, mAuthTokens, mHasBeenAccepted, mAlwaysAccept, mFeatures);
+                    mAccount, mAuthTokens, mHasBeenAccepted, mAlwaysAccept, mFeatures);
         }
     }
 }

@@ -10,7 +10,9 @@
 #include <vector>
 
 #include "ash/assistant/model/assistant_query_history.h"
+#include "base/component_export.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/observer_list.h"
 
 namespace ash {
@@ -43,7 +45,7 @@ enum class MicState {
 
 // Models the Assistant interaction. This includes query state, state of speech
 // recognition, as well as a renderable AssistantResponse.
-class AssistantInteractionModel {
+class COMPONENT_EXPORT(ASSISTANT_MODEL) AssistantInteractionModel {
  public:
   AssistantInteractionModel();
   ~AssistantInteractionModel();
@@ -100,7 +102,7 @@ class AssistantInteractionModel {
   void ClearPendingQuery();
 
   // Sets the pending response for the interaction.
-  void SetPendingResponse(std::unique_ptr<AssistantResponse> response);
+  void SetPendingResponse(scoped_refptr<AssistantResponse> response);
 
   // Returns the pending response for the interaction.
   AssistantResponse* pending_response() { return pending_response_.get(); }
@@ -133,7 +135,7 @@ class AssistantInteractionModel {
   void NotifyCommittedQueryChanged();
   void NotifyCommittedQueryCleared();
   void NotifyPendingQueryChanged();
-  void NotifyPendingQueryCleared();
+  void NotifyPendingQueryCleared(bool due_to_commit);
   void NotifyResponseChanged();
   void NotifyResponseCleared();
   void NotifySpeechLevelChanged(float speech_level_db);
@@ -144,8 +146,8 @@ class AssistantInteractionModel {
   AssistantQueryHistory query_history_;
   std::unique_ptr<AssistantQuery> committed_query_;
   std::unique_ptr<AssistantQuery> pending_query_;
-  std::unique_ptr<AssistantResponse> pending_response_;
-  std::shared_ptr<AssistantResponse> response_;
+  scoped_refptr<AssistantResponse> pending_response_;
+  scoped_refptr<AssistantResponse> response_;
 
   base::ObserverList<AssistantInteractionModelObserver> observers_;
 

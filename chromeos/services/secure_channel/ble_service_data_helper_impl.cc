@@ -7,14 +7,15 @@
 #include "base/containers/flat_map.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/components/multidevice/beacon_seed.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/multidevice/remote_device_cache.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/services/secure_channel/background_eid_generator.h"
+#include "chromeos/services/secure_channel/ble_advertisement_generator.h"
 #include "chromeos/services/secure_channel/ble_constants.h"
-#include "components/cryptauth/background_eid_generator.h"
-#include "components/cryptauth/ble/ble_advertisement_generator.h"
-#include "components/cryptauth/foreground_eid_generator.h"
+#include "chromeos/services/secure_channel/foreground_eid_generator.h"
 
 namespace chromeos {
 
@@ -64,14 +65,12 @@ BleServiceDataHelperImpl::Factory::BuildInstance(
 BleServiceDataHelperImpl::BleServiceDataHelperImpl(
     multidevice::RemoteDeviceCache* remote_device_cache)
     : remote_device_cache_(remote_device_cache),
-      background_eid_generator_(
-          std::make_unique<cryptauth::BackgroundEidGenerator>()),
-      foreground_eid_generator_(
-          std::make_unique<cryptauth::ForegroundEidGenerator>()) {}
+      background_eid_generator_(std::make_unique<BackgroundEidGenerator>()),
+      foreground_eid_generator_(std::make_unique<ForegroundEidGenerator>()) {}
 
 BleServiceDataHelperImpl::~BleServiceDataHelperImpl() = default;
 
-std::unique_ptr<cryptauth::DataWithTimestamp>
+std::unique_ptr<DataWithTimestamp>
 BleServiceDataHelperImpl::GenerateForegroundAdvertisement(
     const DeviceIdPair& device_id_pair) {
   base::Optional<multidevice::RemoteDeviceRef> local_device =
@@ -92,7 +91,7 @@ BleServiceDataHelperImpl::GenerateForegroundAdvertisement(
     return nullptr;
   }
 
-  return cryptauth::BleAdvertisementGenerator::GenerateBleAdvertisement(
+  return BleAdvertisementGenerator::GenerateBleAdvertisement(
       *remote_device, local_device->public_key());
 }
 
@@ -144,7 +143,9 @@ BleServiceDataHelperImpl::PerformIdentifyRemoteDevice(
   // First try, identifying |service_data| as a foreground advertisement.
   if (service_data.size() >= kMinNumBytesInForegroundServiceData) {
     std::vector<cryptauth::BeaconSeed> beacon_seeds =
-        remote_device_cache_->GetRemoteDevice(local_device_id)->beacon_seeds();
+        multidevice::ToCryptAuthSeedList(
+            remote_device_cache_->GetRemoteDevice(local_device_id)
+                ->beacon_seeds());
 
     identified_device_id =
         foreground_eid_generator_->IdentifyRemoteDeviceByAdvertisement(
@@ -153,7 +154,7 @@ BleServiceDataHelperImpl::PerformIdentifyRemoteDevice(
 
   // If the device has not yet been identified, try identifying |service_data|
   // as a background advertisement.
-  if (chromeos::switches::IsInstantTetheringBackgroundAdvertisingSupported() &&
+  if (features::IsInstantTetheringBackgroundAdvertisingSupported() &&
       identified_device_id.empty() &&
       service_data.size() >= kMinNumBytesInServiceData &&
       service_data.size() <= kMaxNumBytesInBackgroundServiceData) {
@@ -174,15 +175,14 @@ BleServiceDataHelperImpl::PerformIdentifyRemoteDevice(
   if (identified_device_id.empty())
     return base::nullopt;
 
-  return secure_channel::BleServiceDataHelper::DeviceWithBackgroundBool(
+  return BleServiceDataHelper::DeviceWithBackgroundBool(
       *remote_device_cache_->GetRemoteDevice(identified_device_id),
       is_background_advertisement);
 }
 
 void BleServiceDataHelperImpl::SetTestDoubles(
-    std::unique_ptr<cryptauth::BackgroundEidGenerator> background_eid_generator,
-    std::unique_ptr<cryptauth::ForegroundEidGenerator>
-        foreground_eid_generator) {
+    std::unique_ptr<BackgroundEidGenerator> background_eid_generator,
+    std::unique_ptr<ForegroundEidGenerator> foreground_eid_generator) {
   background_eid_generator_ = std::move(background_eid_generator);
   foreground_eid_generator_ = std::move(foreground_eid_generator);
 }

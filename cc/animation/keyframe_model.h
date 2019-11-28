@@ -7,10 +7,10 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "cc/animation/animation_export.h"
-#include "cc/trees/element_id.h"
+#include "cc/paint/element_id.h"
 
 namespace cc {
 
@@ -22,9 +22,6 @@ class AnimationCurve;
 // It represents a model of the keyframes (internally represented as a curve).
 class CC_ANIMATION_EXPORT KeyframeModel {
  public:
-  // TODO(yigu): RunState is supposed to be managed/accessed at Animation
-  // level rather than KeyframeModel level. See https://crbug.com/812652.
-  //
   // KeyframeModels begin in the 'WAITING_FOR_TARGET_AVAILABILITY' state. A
   // KeyframeModel waiting for target availibility will run as soon as its
   // target property is free (and all the KeyframeModels animating with it are
@@ -55,16 +52,25 @@ class CC_ANIMATION_EXPORT KeyframeModel {
 
   enum class FillMode { NONE, FORWARDS, BACKWARDS, BOTH, AUTO };
 
+  enum class Phase { BEFORE, ACTIVE, AFTER };
+
+  // The |custom_property_name| has a default value of an empty string,
+  // indicating that the animated property is a native property. When it is an
+  // animated custom property, it should be the property name.
   static std::unique_ptr<KeyframeModel> Create(
       std::unique_ptr<AnimationCurve> curve,
       int keyframe_model_id,
       int group_id,
-      int target_property_id);
+      int target_property_id,
+      const std::string& custom_property_name = "");
 
   std::unique_ptr<KeyframeModel> CreateImplInstance(
       RunState initial_run_state) const;
 
+  KeyframeModel(const KeyframeModel&) = delete;
   virtual ~KeyframeModel();
+
+  KeyframeModel& operator=(const KeyframeModel&) = delete;
 
   int id() const { return id_; }
   int group() const { return group_; }
@@ -169,11 +175,19 @@ class CC_ANIMATION_EXPORT KeyframeModel {
   }
   bool affects_pending_elements() const { return affects_pending_elements_; }
 
+  const std::string& custom_property_name() const {
+    return custom_property_name_;
+  }
+
+  KeyframeModel::Phase CalculatePhaseForTesting(
+      base::TimeDelta local_time) const;
+
  private:
   KeyframeModel(std::unique_ptr<AnimationCurve> curve,
                 int keyframe_model_id,
                 int group_id,
-                int target_property_id);
+                int target_property_id,
+                const std::string& custom_property_name);
 
   // Return local time for this keyframe model given the absolute monotonic
   // time.
@@ -202,8 +216,9 @@ class CC_ANIMATION_EXPORT KeyframeModel {
   base::TimeDelta ConvertMonotonicTimeToLocalTime(
       base::TimeTicks monotonic_time) const;
 
-  base::TimeDelta TrimLocalTimeToCurrentIteration(
-      base::TimeDelta local_time) const;
+  KeyframeModel::Phase CalculatePhase(base::TimeDelta local_time) const;
+  base::Optional<base::TimeDelta> CalculateActiveTime(
+      base::TimeTicks monotonic_time) const;
 
   std::unique_ptr<AnimationCurve> curve_;
 
@@ -273,7 +288,9 @@ class CC_ANIMATION_EXPORT KeyframeModel {
   bool affects_active_elements_;
   bool affects_pending_elements_;
 
-  DISALLOW_COPY_AND_ASSIGN(KeyframeModel);
+  // Name of the animated custom property. Empty if it is an animated native
+  // property.
+  std::string custom_property_name_;
 };
 
 }  // namespace cc

@@ -27,26 +27,13 @@ const char kDisplayNameMapKey[] = "displayName";
 const char kIconUrlMapKey[] = "icon";
 const char kCredentialTypeMapKey[] = "type";
 const char kCredentialAlgorithmMapKey[] = "alg";
+const char kCredentialManagementMapKey[] = "credMgmt";
+const char kCredentialManagementPreviewMapKey[] = "credentialMgmtPreview";
+const char kBioEnrollmentMapKey[] = "bioEnroll";
+const char kBioEnrollmentPreviewMapKey[] = "userVerificationMgmtPreview";
 
-const uint32_t kHidBroadcastChannel = 0xffffffff;
-const size_t kHidInitPacketHeaderSize = 7;
-const size_t kHidContinuationPacketHeaderSize = 5;
-const size_t kHidMaxPacketSize = 64;
-const uint8_t kHidMaxLockSeconds = 10;
-const size_t kHidMaxMessageSize = 7609;
-
-const size_t kU2fMaxResponseSize = 65536;
-const uint8_t kP1TupRequired = 0x01;
-const uint8_t kP1TupConsumed = 0x02;
-const uint8_t kP1TupRequiredConsumed = kP1TupRequired | kP1TupConsumed;
-const uint8_t kP1CheckOnly = 0x07;
-const uint8_t kP1IndividualAttestation = 0x80;
-const size_t kMaxKeyHandleLength = 255;
-
-const base::TimeDelta kDeviceTimeout = base::TimeDelta::FromSeconds(3);
+const base::TimeDelta kDeviceTimeout = base::TimeDelta::FromSeconds(20);
 const base::TimeDelta kU2fRetryDelay = base::TimeDelta::FromMilliseconds(200);
-const base::TimeDelta kHidKeepAliveDelay =
-    base::TimeDelta::FromMilliseconds(100);
 
 const char kFormatKey[] = "fmt";
 const char kAttestationStatementKey[] = "attStmt";
@@ -65,7 +52,10 @@ const char* CredentialTypeToString(CredentialType type) {
 }
 
 const char kCableHandshakeKeyInfo[] = "FIDO caBLE v1 handshakeKey";
-const char kCableDeviceEncryptionKeyInfo[] = "FIDO caBLE v1 sessionKey";
+const std::array<uint8_t, 24> kCableDeviceEncryptionKeyInfo = {
+    'F', 'I', 'D', 'O', ' ', 'c', 'a', 'B', 'L', 'E', ' ', 'v',
+    '1', ' ', 's', 'e', 's', 's', 'i', 'o', 'n', 'K', 'e', 'y',
+};
 const char kCableAuthenticatorHelloMessage[] = "caBLE v1 authenticator hello";
 const char kCableClientHelloMessage[] = "caBLE v1 client hello";
 
@@ -73,6 +63,7 @@ const char kCtap2Version[] = "FIDO_2_0";
 const char kU2fVersion[] = "U2F_V2";
 
 const char kExtensionHmacSecret[] = "hmac-secret";
+const char kExtensionCredProtect[] = "credProtect";
 
 const base::TimeDelta kBleDevicePairingModeWaitingInterval =
     base::TimeDelta::FromSeconds(2);

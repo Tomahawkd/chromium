@@ -6,11 +6,12 @@
 #define CHROMEOS_DBUS_LORGNETTE_MANAGER_CLIENT_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 
@@ -18,7 +19,8 @@ namespace chromeos {
 
 // LorgnetteManagerClient is used to communicate with the lorgnette
 // document scanning daemon.
-class CHROMEOS_EXPORT LorgnetteManagerClient : public DBusClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) LorgnetteManagerClient
+    : public DBusClient {
  public:
   // The property information for each scanner retured by ListScanners.
   using ScannerTableEntry = std::map<std::string, std::string>;
@@ -44,7 +46,7 @@ class CHROMEOS_EXPORT LorgnetteManagerClient : public DBusClient {
 
   // Factory function, creates a new instance and returns ownership.
   // For normal usage, access the singleton via DBusThreadManager::Get().
-  static LorgnetteManagerClient* Create();
+  static std::unique_ptr<LorgnetteManagerClient> Create();
 
  protected:
   // Create() should be used instead.

@@ -50,6 +50,9 @@ class WebRtcTestBase : public InProcessBrowserTest {
   static const char kUseDefaultAudioCodec[];
   static const char kUseDefaultVideoCodec[];
 
+  static const char kVP9Profile0Specifier[];
+  static const char kVP9Profile2Specifier[];
+
   static const char kUndefined[];
 
   enum class StreamArgumentType {
@@ -112,6 +115,10 @@ class WebRtcTestBase : public InProcessBrowserTest {
 
   std::string ExecuteJavascript(const std::string& javascript,
                                 content::WebContents* tab_contents) const;
+
+  // TODO(https://crbug.com/1004239): Remove this function as soon as browser
+  // tests stop relying on the legacy getStats() API.
+  void ChangeToLegacyGetStats(content::WebContents* tab) const;
 
   // Sets up a peer connection in the tab and adds the current local stream
   // (which you can prepare by calling one of the GetUserMedia* methods above).
@@ -198,18 +205,20 @@ class WebRtcTestBase : public InProcessBrowserTest {
   scoped_refptr<content::TestStatsReportDictionary> GetStatsReportDictionary(
       content::WebContents* tab) const;
   double MeasureGetStatsPerformance(content::WebContents* tab) const;
-  std::vector<std::string> GetWhitelistedStatsTypes(
+  std::vector<std::string> GetMandatoryStatsTypes(
       content::WebContents* tab) const;
 
   // Change the default audio/video codec in the offer SDP.
   void SetDefaultAudioCodec(content::WebContents* tab,
                             const std::string& audio_codec) const;
-  // |prefer_hw_codec| controls what codec with name |video_codec| should be
-  // selected. This parameter only matters if there are multiple codecs with the
-  // same name, which can be the case for H264.
+  // |prefer_hw_codec| controls what codec with name |video_codec| (and with
+  // profile |profile| if given)should be selected. This parameter only matters
+  // if there are multiple codecs with the same name, which can be the case for
+  // H264.
   void SetDefaultVideoCodec(content::WebContents* tab,
                             const std::string& video_codec,
-                            bool prefer_hw_codec = false) const;
+                            bool prefer_hw_codec = false,
+                            const std::string& profile = std::string()) const;
 
   // Add 'usedtx=1' to the offer SDP.
   void EnableOpusDtx(content::WebContents* tab) const;

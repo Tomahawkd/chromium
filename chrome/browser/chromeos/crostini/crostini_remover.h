@@ -13,7 +13,6 @@ class CrostiniRemover : public base::RefCountedThreadSafe<CrostiniRemover> {
  public:
   CrostiniRemover(Profile* profile,
                   std::string vm_name,
-                  std::string container_name,
                   CrostiniManager::RemoveCrostiniCallback callback);
 
   void RemoveCrostini();
@@ -26,12 +25,11 @@ class CrostiniRemover : public base::RefCountedThreadSafe<CrostiniRemover> {
   void OnComponentLoaded(crostini::CrostiniResult result);
   void OnConciergeStarted(bool is_successful);
   void StopVmFinished(crostini::CrostiniResult result);
-  void DestroyDiskImageFinished(crostini::CrostiniResult result);
+  void DestroyDiskImageFinished(bool success);
   void StopConciergeFinished(bool is_successful);
 
   Profile* profile_;
   std::string vm_name_;
-  std::string container_name_;
   CrostiniManager::RemoveCrostiniCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(CrostiniRemover);

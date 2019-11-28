@@ -42,18 +42,14 @@ namespace blink {
 
 Path::Path() : path_() {}
 
-Path::Path(const Path& other) {
-  path_ = SkPath(other.path_);
-}
+Path::Path(const Path& other) : path_(other.path_) {}
 
-Path::Path(const SkPath& other) {
-  path_ = other;
-}
+Path::Path(const SkPath& other) : path_(other) {}
 
 Path::~Path() = default;
 
 Path& Path::operator=(const Path& other) {
-  path_ = SkPath(other.path_);
+  path_ = other.path_;
   return *this;
 }
 
@@ -341,7 +337,7 @@ void Path::AddArcTo(const FloatPoint& p,
               WebCoreFloatToSkScalar(r.Height()),
               WebCoreFloatToSkScalar(x_rotate),
               large_arc ? SkPath::kLarge_ArcSize : SkPath::kSmall_ArcSize,
-              sweep ? SkPath::kCW_Direction : SkPath::kCCW_Direction,
+              sweep ? SkPathDirection::kCW : SkPathDirection::kCCW,
               WebCoreFloatToSkScalar(p.X()), WebCoreFloatToSkScalar(p.Y()));
 }
 
@@ -353,13 +349,10 @@ void Path::AddEllipse(const FloatPoint& p,
                       float radius_x,
                       float radius_y,
                       float start_angle,
-                      float end_angle,
-                      bool anticlockwise) {
+                      float end_angle) {
   DCHECK(EllipseIsRenderable(start_angle, end_angle));
   DCHECK_GE(start_angle, 0);
   DCHECK_LT(start_angle, kTwoPiFloat);
-  DCHECK((anticlockwise && (start_angle - end_angle) >= 0) ||
-         (!anticlockwise && (end_angle - start_angle) >= 0));
 
   SkScalar cx = WebCoreFloatToSkScalar(p.X());
   SkScalar cy = WebCoreFloatToSkScalar(p.Y());
@@ -367,8 +360,8 @@ void Path::AddEllipse(const FloatPoint& p,
   SkScalar radius_y_scalar = WebCoreFloatToSkScalar(radius_y);
 
   SkRect oval;
-  oval.set(cx - radius_x_scalar, cy - radius_y_scalar, cx + radius_x_scalar,
-           cy + radius_y_scalar);
+  oval.setLTRB(cx - radius_x_scalar, cy - radius_y_scalar, cx + radius_x_scalar,
+               cy + radius_y_scalar);
 
   float sweep = end_angle - start_angle;
   SkScalar start_degrees = WebCoreFloatToSkScalar(start_angle * 180 / kPiFloat);
@@ -400,14 +393,13 @@ void Path::AddEllipse(const FloatPoint& p,
 void Path::AddArc(const FloatPoint& p,
                   float radius,
                   float start_angle,
-                  float end_angle,
-                  bool anticlockwise) {
-  AddEllipse(p, radius, radius, start_angle, end_angle, anticlockwise);
+                  float end_angle) {
+  AddEllipse(p, radius, radius, start_angle, end_angle);
 }
 
 void Path::AddRect(const FloatRect& rect) {
   // Start at upper-left, add clock-wise.
-  path_.addRect(rect, SkPath::kCW_Direction, 0);
+  path_.addRect(rect, SkPathDirection::kCW, 0);
 }
 
 void Path::AddEllipse(const FloatPoint& p,
@@ -415,17 +407,14 @@ void Path::AddEllipse(const FloatPoint& p,
                       float radius_y,
                       float rotation,
                       float start_angle,
-                      float end_angle,
-                      bool anticlockwise) {
+                      float end_angle) {
   DCHECK(EllipseIsRenderable(start_angle, end_angle));
   DCHECK_GE(start_angle, 0);
   DCHECK_LT(start_angle, kTwoPiFloat);
-  DCHECK((anticlockwise && (start_angle - end_angle) >= 0) ||
-         (!anticlockwise && (end_angle - start_angle) >= 0));
 
   if (!rotation) {
     AddEllipse(FloatPoint(p.X(), p.Y()), radius_x, radius_y, start_angle,
-               end_angle, anticlockwise);
+               end_angle);
     return;
   }
 
@@ -435,14 +424,13 @@ void Path::AddEllipse(const FloatPoint& p,
   DCHECK(ellipse_transform.IsInvertible());
   AffineTransform inverse_ellipse_transform = ellipse_transform.Inverse();
   Transform(inverse_ellipse_transform);
-  AddEllipse(FloatPoint::Zero(), radius_x, radius_y, start_angle, end_angle,
-             anticlockwise);
+  AddEllipse(FloatPoint::Zero(), radius_x, radius_y, start_angle, end_angle);
   Transform(ellipse_transform);
 }
 
 void Path::AddEllipse(const FloatRect& rect) {
   // Start at 3 o'clock, add clock-wise.
-  path_.addOval(rect, SkPath::kCW_Direction, 1);
+  path_.addOval(rect, SkPathDirection::kCW, 1);
 }
 
 void Path::AddRoundedRect(const FloatRoundedRect& r) {
@@ -514,7 +502,7 @@ void Path::AddPathForRoundedRect(const FloatRect& rect,
   // Start at upper-left (after corner radii), add clock-wise.
   path_.addRRect(FloatRoundedRect(rect, top_left_radius, top_right_radius,
                                   bottom_left_radius, bottom_right_radius),
-                 SkPath::kCW_Direction, 0);
+                 SkPathDirection::kCW, 0);
 }
 
 void Path::AddPath(const Path& src, const AffineTransform& transform) {

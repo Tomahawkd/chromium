@@ -11,21 +11,16 @@
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 
 namespace {
-bool g_is_input_source_dvorak_qwerty = false;
-bool g_is_input_source_czech = false;
-bool g_is_input_source_abc_azerty = false;
+bool g_is_input_source_command_qwerty = false;
 }  // namespace
 
-void SetIsInputSourceDvorakQwertyForTesting(bool is_dvorak_qwerty) {
-  g_is_input_source_dvorak_qwerty = is_dvorak_qwerty;
+void SetIsInputSourceCommandQwertyForTesting(bool is_command_qwerty) {
+  g_is_input_source_command_qwerty = is_command_qwerty;
 }
 
-void SetIsInputSourceCzechForTesting(bool is_czech) {
-  g_is_input_source_czech = is_czech;
-}
-
-void SetIsInputSourceAbcAzertyForTesting(bool is_abc_azerty) {
-  g_is_input_source_abc_azerty = is_abc_azerty;
+bool IsKeyboardLayoutCommandQwerty(NSString* layout_id) {
+  return [layout_id isEqualToString:@"com.apple.keylayout.DVORAK-QWERTYCMD"] ||
+         [layout_id isEqualToString:@"com.apple.keylayout.Dhivehi-QWERTY"];
 }
 
 @interface KeyboardInputSourceListener : NSObject
@@ -53,16 +48,9 @@ void SetIsInputSourceAbcAzertyForTesting(bool is_abc_azerty) {
 - (void)updateInputSource {
   base::ScopedCFTypeRef<TISInputSourceRef> inputSource(
       TISCopyCurrentKeyboardInputSource());
-  NSString* inputSourceID = (NSString*)TISGetInputSourceProperty(
+  NSString* layoutId = (NSString*)TISGetInputSourceProperty(
       inputSource.get(), kTISPropertyInputSourceID);
-  g_is_input_source_dvorak_qwerty =
-      [inputSourceID isEqualToString:@"com.apple.keylayout.DVORAK-QWERTYCMD"];
-  g_is_input_source_czech =
-      [inputSourceID rangeOfString:@"com.apple.keylayout.Czech"].location !=
-      NSNotFound;
-  g_is_input_source_abc_azerty =
-      [inputSourceID rangeOfString:@"com.apple.keylayout.ABC-AZERTY"]
-          .location != NSNotFound;
+  g_is_input_source_command_qwerty = IsKeyboardLayoutCommandQwerty(layoutId);
 }
 
 - (void)inputSourceDidChange:(NSNotification*)notification {
@@ -148,17 +136,31 @@ void SetIsInputSourceAbcAzertyForTesting(bool is_abc_azerty) {
       [[KeyboardInputSourceListener alloc] init];
 
   // We typically want to compare [NSMenuItem keyEquivalent] against [NSEvent
-  // charactersIgnoringModifiers]. There is a special keyboard layout "Dvorak -
-  // QWERTY" which uses QWERTY-style shortcuts when the Command key is held
-  // down. In this case, we want to use the keycode of the event rather than
-  // looking at the characters.
-  if (g_is_input_source_dvorak_qwerty) {
+  // charactersIgnoringModifiers]. There are special command-qwerty layouts
+  // (such as DVORAK-QWERTY) which use QWERTY-style shortcuts when the Command
+  // key is held down. In this case, we want to use the keycode of the event
+  // rather than looking at the characters.
+  if (g_is_input_source_command_qwerty) {
     ui::KeyboardCode windows_keycode =
         ui::KeyboardCodeFromKeyCode(event.keyCode);
     unichar shifted_character, character;
     ui::MacKeyCodeForWindowsKeyCode(windows_keycode, event.modifierFlags,
                                     &shifted_character, &character);
     eventString = [NSString stringWithFormat:@"%C", shifted_character];
+  }
+
+  // On all keyboards, treat cmd + <number key> as the equivalent numerical key.
+  // This is technically incorrect, since the actual character produced may not
+  // be a number key, but this causes Chrome to match platform behavior. For
+  // example, on the Czech keyboard, we want to interpret cmd + '+' as cmd +
+  // '1', even though the '1' character normally requires cmd + shift + '+'.
+  if (eventModifiers == NSCommandKeyMask) {
+    ui::KeyboardCode windows_keycode =
+        ui::KeyboardCodeFromKeyCode(event.keyCode);
+    if (windows_keycode >= ui::VKEY_0 && windows_keycode <= ui::VKEY_9) {
+      eventString =
+          [NSString stringWithFormat:@"%d", windows_keycode - ui::VKEY_0];
+    }
   }
 
   // [ctr + shift + tab] generates the "End of Medium" keyEquivalent rather than
@@ -182,30 +184,6 @@ void SetIsInputSourceAbcAzertyForTesting(bool is_abc_azerty) {
                     NSControlKeyMask |
                     NSAlternateKeyMask |
                     NSShiftKeyMask;
-
-  // On Czech keyboards, we want to interpret cmd + '+' as cmd + '1'.
-  // htts://crbug.com/889424. We don't need special handling for other numeric
-  // keys because they produce non-ASCII characters, and we already have logic
-  // that ignores non-ASCII characters in favor of modified characters.
-  if (g_is_input_source_czech) {
-    if (eventModifiers == NSCommandKeyMask &&
-        [eventString isEqualToString:@"+"]) {
-      eventString = @"1";
-    }
-  }
-
-  // On ABC-AZERTY kebyards, we want to interpet cmd + '&' as cmd + '1'. Ditto
-  // for other keyCodes that would produce a numerical key.
-  if (g_is_input_source_abc_azerty) {
-    if (eventModifiers == NSCommandKeyMask) {
-      ui::KeyboardCode windows_keycode =
-          ui::KeyboardCodeFromKeyCode(event.keyCode);
-      if (windows_keycode >= ui::VKEY_0 && windows_keycode <= ui::VKEY_9) {
-        eventString =
-            [NSString stringWithFormat:@"%d", windows_keycode - ui::VKEY_0];
-      }
-    }
-  }
 
   return [eventString isEqualToString:[self keyEquivalent]]
       && eventModifiers == [self keyEquivalentModifierMask];

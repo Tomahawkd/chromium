@@ -7,9 +7,12 @@ package org.chromium.chrome.browser.omnibox.suggestions;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.chromium.chrome.browser.modelutil.PropertyKey;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
+import androidx.annotation.Nullable;
+
 import org.chromium.ui.UiUtils;
+import org.chromium.ui.modelutil.ListObservable;
+import org.chromium.ui.modelutil.PropertyKey;
+import org.chromium.ui.modelutil.PropertyModel;
 
 /**
  * Handles property updates to the suggestion list component.
@@ -21,19 +24,16 @@ class SuggestionListViewBinder {
     public static class SuggestionListViewHolder {
         public final ViewGroup container;
         public final OmniboxSuggestionsList listView;
-        public final OmniboxResultsAdapter adapter;
 
-        public SuggestionListViewHolder(
-                ViewGroup container, OmniboxSuggestionsList list, OmniboxResultsAdapter adapter) {
+        public SuggestionListViewHolder(ViewGroup container, OmniboxSuggestionsList list) {
             this.container = container;
             this.listView = list;
-            this.adapter = adapter;
         }
     }
 
     /**
      * @see
-     * org.chromium.chrome.browser.modelutil.PropertyModelChangeProcessor.ViewBinder#bind(Object,
+     * PropertyModelChangeProcessor.ViewBinder#bind(Object,
      * Object, Object)
      */
     public static void bind(
@@ -52,11 +52,17 @@ class SuggestionListViewBinder {
         } else if (SuggestionListProperties.EMBEDDER.equals(propertyKey)) {
             view.listView.setEmbedder(model.get(SuggestionListProperties.EMBEDDER));
         } else if (SuggestionListProperties.SUGGESTION_MODELS.equals(propertyKey)) {
-            view.adapter.updateSuggestions(model.get(SuggestionListProperties.SUGGESTION_MODELS));
-            view.listView.setSelection(0);
-        } else if (SuggestionListProperties.USE_DARK_BACKGROUND.equals(propertyKey)) {
-            view.listView.refreshPopupBackground(
-                    model.get(SuggestionListProperties.USE_DARK_BACKGROUND));
+            // This should only ever be bound once.
+            model.get(SuggestionListProperties.SUGGESTION_MODELS)
+                    .addObserver(new ListObservable.ListObserver<Void>() {
+                        @Override
+                        public void onItemRangeChanged(ListObservable<Void> source, int index,
+                                int count, @Nullable Void payload) {
+                            view.listView.setSelection(0);
+                        }
+                    });
+        } else if (SuggestionListProperties.IS_INCOGNITO.equals(propertyKey)) {
+            view.listView.refreshPopupBackground(model.get(SuggestionListProperties.IS_INCOGNITO));
         }
     }
 }

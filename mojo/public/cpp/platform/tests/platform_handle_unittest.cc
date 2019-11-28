@@ -164,7 +164,7 @@ class PlatformHandleTest : public testing::Test,
 #if defined(OS_FUCHSIA)
             handle.GetHandle().get()
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
-            handle.GetMachPort().get()
+            handle.GetMachSendRight().get()
 #endif
                 );
     auto generic_region = base::subtle::PlatformSharedMemoryRegion::Take(
@@ -244,20 +244,20 @@ TEST_P(PlatformHandleTest, CStructConversion) {
   EXPECT_EQ(kTestData, GetObjectContents(handle));
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        PlatformHandleTest,
+INSTANTIATE_TEST_SUITE_P(All,
+                         PlatformHandleTest,
 #if defined(OS_WIN)
-                        testing::Values(HandleType::kHandle)
+                         testing::Values(HandleType::kHandle)
 #elif defined(OS_FUCHSIA)
-                        testing::Values(HandleType::kHandle,
-                                        HandleType::kFileDescriptor)
+                         testing::Values(HandleType::kHandle,
+                                         HandleType::kFileDescriptor)
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
-                        testing::Values(HandleType::kFileDescriptor,
-                                        HandleType::kMachPort)
+                         testing::Values(HandleType::kFileDescriptor,
+                                         HandleType::kMachPort)
 #elif defined(OS_POSIX)
-                        testing::Values(HandleType::kFileDescriptor)
+                         testing::Values(HandleType::kFileDescriptor)
 #endif
-                            );
+);
 
 }  // namespace
 }  // namespace mojo

@@ -11,10 +11,12 @@
 #include "build/build_config.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/ui/screen_capture_notification_ui.h"
+#include "chrome/browser/ui/tab_sharing/tab_sharing_ui.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "media/audio/audio_device_description.h"
-#include "media/mojo/interfaces/display_media_information.mojom.h"
+#include "media/mojo/mojom/display_media_information.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -29,7 +31,7 @@ DesktopMediaIDToDisplayMediaInformation(
       media::mojom::CursorCaptureType::NEVER;
 #if defined(USE_AURA)
   const bool uses_aura =
-      media_id.aura_id != content::DesktopMediaID::kNullId ? true : false;
+      media_id.window_id != content::DesktopMediaID::kNullId ? true : false;
 #else
   const bool uses_aura = false;
 #endif  // defined(USE_AURA)
@@ -132,10 +134,10 @@ base::string16 GetStopSharingUIString(
 
 std::unique_ptr<content::MediaStreamUI> GetDevicesForDesktopCapture(
     content::WebContents* web_contents,
-    content::MediaStreamDevices* devices,
+    blink::MediaStreamDevices* devices,
     const content::DesktopMediaID& media_id,
-    content::MediaStreamType devices_video_type,
-    content::MediaStreamType devices_audio_type,
+    blink::mojom::MediaStreamType devices_video_type,
+    blink::mojom::MediaStreamType devices_audio_type,
     bool capture_audio,
     bool disable_local_echo,
     bool display_notification,
@@ -151,7 +153,7 @@ std::unique_ptr<content::MediaStreamUI> GetDevicesForDesktopCapture(
            << registered_extension_name;
 
   // Add selected desktop source to the list.
-  auto device = content::MediaStreamDevice(
+  auto device = blink::MediaStreamDevice(
       devices_video_type, media_id.ToString(), media_id.ToString());
   device.display_media_info = DesktopMediaIDToDisplayMediaInformation(media_id);
   devices->push_back(device);
@@ -159,17 +161,17 @@ std::unique_ptr<content::MediaStreamUI> GetDevicesForDesktopCapture(
     if (media_id.type == content::DesktopMediaID::TYPE_WEB_CONTENTS) {
       content::WebContentsMediaCaptureId web_id = media_id.web_contents_id;
       web_id.disable_local_echo = disable_local_echo;
-      devices->push_back(content::MediaStreamDevice(
+      devices->push_back(blink::MediaStreamDevice(
           devices_audio_type, web_id.ToString(), "Tab audio"));
     } else if (disable_local_echo) {
       // Use the special loopback device ID for system audio capture.
-      devices->push_back(content::MediaStreamDevice(
+      devices->push_back(blink::MediaStreamDevice(
           devices_audio_type,
           media::AudioDeviceDescription::kLoopbackWithMuteDeviceId,
           "System Audio"));
     } else {
       // Use the special loopback device ID for system audio capture.
-      devices->push_back(content::MediaStreamDevice(
+      devices->push_back(blink::MediaStreamDevice(
           devices_audio_type,
           media::AudioDeviceDescription::kLoopbackInputDeviceId,
           "System Audio"));
@@ -177,11 +179,17 @@ std::unique_ptr<content::MediaStreamUI> GetDevicesForDesktopCapture(
   }
 
   // If required, register to display the notification for stream capture.
-  std::unique_ptr<ScreenCaptureNotificationUI> notification_ui;
+  std::unique_ptr<MediaStreamUI> notification_ui;
   if (display_notification) {
-    notification_ui = ScreenCaptureNotificationUI::Create(
-        GetStopSharingUIString(application_title, registered_extension_name,
-                               capture_audio, media_id.type));
+    if (media_id.type == content::DesktopMediaID::TYPE_WEB_CONTENTS &&
+        base::FeatureList::IsEnabled(
+            features::kDesktopCaptureTabSharingInfobar)) {
+      notification_ui = TabSharingUI::Create(media_id, application_title);
+    } else {
+      notification_ui = ScreenCaptureNotificationUI::Create(
+          GetStopSharingUIString(application_title, registered_extension_name,
+                                 capture_audio, media_id.type));
+    }
   }
 
   return MediaCaptureDevicesDispatcher::GetInstance()

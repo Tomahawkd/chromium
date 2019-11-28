@@ -7,22 +7,21 @@
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
+#include "third_party/skia/include/core/SkPath.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
+#include "ui/aura/window_occlusion_tracker.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/dip_util.h"
-#include "ui/gfx/path.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/window_util.h"
 
 namespace exo {
 
-FullscreenShellSurface::FullscreenShellSurface(Surface* surface)
+FullscreenShellSurface::FullscreenShellSurface()
     : SurfaceTreeHost("FullscreenShellSurfaceHost") {
-  surface->AddSurfaceObserver(this);
-  SetRootSurface(surface);
-  host_window()->Show();
   set_owned_by_client();
   CreateFullscreenShellSurfaceWidget(ui::SHOW_STATE_FULLSCREEN);
   widget_->SetFullscreen(true);
@@ -64,6 +63,22 @@ void FullscreenShellSurface::SetStartupId(const char* startup_id) {
 
   if (widget_ && widget_->GetNativeWindow())
     SetShellStartupId(widget_->GetNativeWindow(), startup_id_);
+}
+
+void FullscreenShellSurface::SetSurface(Surface* surface) {
+  if (root_surface())
+    root_surface()->RemoveSurfaceObserver(this);
+  SetRootSurface(surface);
+  set_owned_by_client();
+  SetShellMainSurface(widget_->GetNativeWindow(), root_surface());
+  if (surface) {
+    surface->AddSurfaceObserver(this);
+    host_window()->Show();
+    widget_->Show();
+  } else {
+    host_window()->Hide();
+    widget_->Hide();
+  }
 }
 
 void FullscreenShellSurface::Maximize() {
@@ -172,7 +187,7 @@ bool FullscreenShellSurface::WidgetHasHitTestMask() const {
   return true;
 }
 
-void FullscreenShellSurface::GetWidgetHitTestMask(gfx::Path* mask) const {
+void FullscreenShellSurface::GetWidgetHitTestMask(SkPath* mask) const {
   GetHitTestMask(mask);
   gfx::Point origin = host_window()->bounds().origin();
   SkMatrix matrix;
@@ -195,24 +210,35 @@ void FullscreenShellSurface::OnWindowDestroying(aura::Window* window) {
   window->RemoveObserver(this);
 }
 
+void FullscreenShellSurface::UpdateHostWindowBounds() {
+  // This method applies multiple changes to the window tree. Use ScopedPause
+  // to ensure that occlusion isn't recomputed before all changes have been
+  // applied.
+  aura::WindowOcclusionTracker::ScopedPause pause_occlusion;
+
+  host_window()->SetBounds(
+      gfx::Rect(root_surface()->window()->bounds().size()));
+  host_window()->SetTransparent(!root_surface()->FillsBoundsOpaquely());
+}
+
 void FullscreenShellSurface::CreateFullscreenShellSurfaceWidget(
     ui::WindowShowState show_state) {
-  DCHECK(enabled());
+  DCHECK(GetEnabled());
   DCHECK(!widget_);
 
   views::Widget::InitParams params;
   params.type = views::Widget::InitParams::TYPE_WINDOW_FRAMELESS;
   params.ownership = views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET;
   params.delegate = this;
-  params.shadow_type = views::Widget::InitParams::SHADOW_TYPE_NONE;
-  params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
+  params.shadow_type = views::Widget::InitParams::ShadowType::kNone;
+  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.show_state = show_state;
   params.activatable = views::Widget::InitParams::ACTIVATABLE_YES;
   params.parent = WMHelper::GetInstance()->GetRootWindowForNewWindows();
   params.bounds = gfx::Rect(params.parent->bounds().size());
 
   widget_ = new views::Widget();
-  widget_->Init(params);
+  widget_->Init(std::move(params));
 
   aura::Window* window = widget_->GetNativeWindow();
   window->SetName("FullscreenShellSurface");
@@ -237,10 +263,24 @@ void FullscreenShellSurface::CommitWidget() {
 }
 
 bool FullscreenShellSurface::OnPreWidgetCommit() {
-  if (!widget_ && enabled() && host_window()->bounds().IsEmpty())
+  if (!widget_ && GetEnabled() && host_window()->bounds().IsEmpty())
     return false;
 
   return true;
+}
+
+void FullscreenShellSurface::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ax::mojom::Role::kClient;
+
+  if (child_ax_tree_id_ == ui::AXTreeIDUnknown())
+    return;
+
+  node_data->AddStringAttribute(ax::mojom::StringAttribute::kChildTreeId,
+                                child_ax_tree_id_.ToString());
+}
+
+void FullscreenShellSurface::SetChildAxTreeId(ui::AXTreeID child_ax_tree_id) {
+  child_ax_tree_id_ = child_ax_tree_id;
 }
 
 }  // namespace exo

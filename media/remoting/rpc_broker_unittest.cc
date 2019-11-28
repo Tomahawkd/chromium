@@ -31,8 +31,7 @@ class FakeMessageSender {
   FakeMessageSender()
       : received_rpc_(new pb::RpcMessage()),
         has_sent_message_(false),
-        send_count_(0),
-        weak_factory_(this) {}
+        send_count_(0) {}
   ~FakeMessageSender() = default;
 
   void OnSendMessageAndQuit(std::unique_ptr<std::vector<uint8_t>> message) {
@@ -55,14 +54,14 @@ class FakeMessageSender {
   std::unique_ptr<pb::RpcMessage> received_rpc_;
   bool has_sent_message_;
   int send_count_;
-  base::WeakPtrFactory<FakeMessageSender> weak_factory_;
+  base::WeakPtrFactory<FakeMessageSender> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageSender);
 };
 
 class FakeMessageReceiver {
  public:
-  FakeMessageReceiver() : has_received_message_(false), weak_factory_(this) {}
+  FakeMessageReceiver() : has_received_message_(false) {}
   ~FakeMessageReceiver() = default;
 
   // RpcBroker::MessageReceiver implementation.
@@ -81,7 +80,7 @@ class FakeMessageReceiver {
  private:
   std::unique_ptr<pb::RpcMessage> received_rpc_;
   int has_received_message_;
-  base::WeakPtrFactory<FakeMessageReceiver> weak_factory_;
+  base::WeakPtrFactory<FakeMessageReceiver> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageReceiver);
 };
@@ -98,12 +97,13 @@ TEST_F(RpcBrokerTest, TestProcessMessageFromRemoteRegistered) {
   ASSERT_FALSE(fake_receiver->has_received_message());
 
   // Creates receiver RpcBroker and registers FakeMessageReceiver.
-  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::Bind(
+  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::BindRepeating(
       &FakeMessageReceiver::OnSendMessage, fake_receiver->GetWeakPtr())));
 
   int handle = rpc_broker->GetUniqueHandle();
-  const RpcBroker::ReceiveMessageCallback receive_callback = base::Bind(
-      &FakeMessageReceiver::OnReceivedRpc, fake_receiver->GetWeakPtr());
+  const RpcBroker::ReceiveMessageCallback receive_callback =
+      base::BindRepeating(&FakeMessageReceiver::OnReceivedRpc,
+                          fake_receiver->GetWeakPtr());
   rpc_broker->RegisterMessageReceiverCallback(handle, receive_callback);
 
   std::unique_ptr<pb::RpcMessage> rpc(new pb::RpcMessage());
@@ -117,12 +117,13 @@ TEST_F(RpcBrokerTest, TestProcessMessageFromRemoteUnregistered) {
   ASSERT_FALSE(fake_receiver->has_received_message());
 
   // Creates receiver RpcBroker and registers FakeMessageReceiver.
-  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::Bind(
+  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::BindRepeating(
       &FakeMessageReceiver::OnSendMessage, fake_receiver->GetWeakPtr())));
 
   int handle = rpc_broker->GetUniqueHandle();
-  const RpcBroker::ReceiveMessageCallback receive_callback = base::Bind(
-      &FakeMessageReceiver::OnReceivedRpc, fake_receiver->GetWeakPtr());
+  const RpcBroker::ReceiveMessageCallback receive_callback =
+      base::BindRepeating(&FakeMessageReceiver::OnReceivedRpc,
+                          fake_receiver->GetWeakPtr());
   rpc_broker->RegisterMessageReceiverCallback(handle, receive_callback);
 
   std::unique_ptr<pb::RpcMessage> rpc(new pb::RpcMessage());
@@ -138,7 +139,7 @@ TEST_F(RpcBrokerTest, TestSendMessageToRemote) {
   ASSERT_FALSE(fake_sender->has_sent_message());
 
   // Creates RpcBroker and set message callback.
-  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::Bind(
+  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::BindRepeating(
       &FakeMessageSender::OnSendMessage, fake_sender->GetWeakPtr())));
 
   for (int i = 0; i < 10; ++i) {
@@ -155,7 +156,7 @@ TEST_F(RpcBrokerTest, RpcBrokerSendMessageCallback) {
   ASSERT_FALSE(fake_sender->has_sent_message());
 
   // Creates RpcBroker and set message callback.
-  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::Bind(
+  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::BindRepeating(
       &FakeMessageSender::OnSendMessageAndQuit, fake_sender->GetWeakPtr())));
 
   // Sends RPC message.
@@ -182,11 +183,12 @@ TEST_F(RpcBrokerTest, RpcBrokerProcessMessageWithRegisteredHandle) {
   ASSERT_FALSE(fake_receiver->has_received_message());
 
   // Creates receiver RpcBroker and registers FakeMessageReceiver.
-  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::Bind(
+  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::BindRepeating(
       &FakeMessageReceiver::OnSendMessage, fake_receiver->GetWeakPtr())));
   int handle = rpc_broker->GetUniqueHandle();
-  const RpcBroker::ReceiveMessageCallback receive_callback = base::Bind(
-      &FakeMessageReceiver::OnReceivedRpc, fake_receiver->GetWeakPtr());
+  const RpcBroker::ReceiveMessageCallback receive_callback =
+      base::BindRepeating(&FakeMessageReceiver::OnReceivedRpc,
+                          fake_receiver->GetWeakPtr());
   rpc_broker->RegisterMessageReceiverCallback(handle, receive_callback);
 
   // Generates RPC message with handle value |handle| and send it to receover
@@ -213,11 +215,12 @@ TEST_F(RpcBrokerTest, RpcBrokerProcessMessageWithUnregisteredHandle) {
   ASSERT_FALSE(fake_receiver->has_received_message());
 
   // Creates receiver RpcBroker and registers FakeMessageReceiver.
-  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::Bind(
+  std::unique_ptr<RpcBroker> rpc_broker(new RpcBroker(base::BindRepeating(
       &FakeMessageReceiver::OnSendMessage, fake_receiver->GetWeakPtr())));
   int handle = rpc_broker->GetUniqueHandle();
-  const RpcBroker::ReceiveMessageCallback receive_callback = base::Bind(
-      &FakeMessageReceiver::OnReceivedRpc, fake_receiver->GetWeakPtr());
+  const RpcBroker::ReceiveMessageCallback receive_callback =
+      base::BindRepeating(&FakeMessageReceiver::OnReceivedRpc,
+                          fake_receiver->GetWeakPtr());
   rpc_broker->RegisterMessageReceiverCallback(handle, receive_callback);
 
   // Generates RPC message with handle value |handle| and send it to receover

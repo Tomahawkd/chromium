@@ -95,7 +95,12 @@ bool Model::default_browsing_enabled() const {
   return get_last_opaque_mode() == kModeBrowsing;
 }
 
-bool Model::voice_search_enabled() const {
+bool Model::voice_search_available() const {
+  return speech.has_or_can_request_record_audio_permission && !incognito &&
+         !active_capturing.audio_capture_enabled;
+}
+
+bool Model::voice_search_active() const {
   return get_last_opaque_mode() == kModeVoiceSearch;
 }
 
@@ -131,6 +136,16 @@ const ControllerModel& Model::primary_controller() const {
 
 ControllerModel& Model::mutable_primary_controller() {
   return controllers[0];
+}
+
+void Model::set_omnibox_text_field_info(EditedText text) {
+  omnibox_text_field_info = std::move(text);
+  omnibox_text_field_touched = current_time;
+}
+
+void Model::set_web_input_text_field_info(EditedText text) {
+  web_input_text_field_info = std::move(text);
+  web_input_text_field_touched = current_time;
 }
 
 }  // namespace vr

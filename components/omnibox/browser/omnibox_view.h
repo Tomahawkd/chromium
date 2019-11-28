@@ -143,12 +143,18 @@ class OmniboxView {
   // defines a method with that name.
   virtual void CloseOmniboxPopup();
 
-  // Sets the focus to the omnibox.
-  virtual void SetFocus() = 0;
+  // Sets the focus to the omnibox. |is_user_initiated| is true when the user
+  // explicitly focused the omnibox, and false when the omnibox was
+  // automatically focused (like for browser startup or NTP load).
+  virtual void SetFocus(bool is_user_initiated) = 0;
 
   // Shows or hides the caret based on whether the model's is_caret_visible() is
   // true.
   virtual void ApplyCaretVisibility() = 0;
+
+  // Updates the accessibility state by enunciating any on-focus text.
+  virtual void SetAccessibilityLabel(const base::string16& display_text,
+                                     const AutocompleteMatch& match) {}
 
   // Called when the temporary text in the model may have changed.
   // |display_text| is the new text to show; |match_type| is the type of the
@@ -173,7 +179,8 @@ class OmniboxView {
 
   // Called when the temporary text has been reverted by the user.  This will
   // reset the user's original selection.
-  virtual void OnRevertTemporaryText() = 0;
+  virtual void OnRevertTemporaryText(const base::string16& display_text,
+                                     const AutocompleteMatch& match) = 0;
 
   // Checkpoints the current edit state before an operation that might trigger
   // a new autocomplete run to open or modify the popup. Call this before
@@ -193,13 +200,6 @@ class OmniboxView {
   // to the rich edit control, the IME window is the relative window. Otherwise,
   // the top-most window is the relative window.
   virtual gfx::NativeView GetRelativeWindowForPopup() const = 0;
-
-  // Returns the width in pixels needed to display the current text. The
-  // returned value includes margins.
-  virtual int GetTextWidth() const = 0;
-
-  // Returns the omnibox's width in pixels.
-  virtual int GetWidth() const = 0;
 
   // Returns true if the user is composing something in an IME.
   virtual bool IsImeComposing() const = 0;
@@ -225,11 +225,19 @@ class OmniboxView {
   static base::string16 StripJavascriptSchemas(const base::string16& text);
 
   // Automatically collapses internal whitespace as follows:
-  // * If the only whitespace in |text| is newlines, users are most likely
-  // pasting in URLs split into multiple lines by terminals, email programs,
-  // etc. So all newlines are removed.
-  // * Otherwise, users may be pasting in search data, e.g. street addresses. In
-  // this case, runs of whitespace are collapsed down to single spaces.
+  // * Leading and trailing whitespace are often copied accidentally and rarely
+  //   affect behavior, so they are stripped.  If this collapses the whole
+  //   string, returns a space, since pasting nothing feels broken.
+  // * Internal whitespace sequences not containing CR/LF may be integral to the
+  //   meaning of the string and are preserved exactly.  The presence of any of
+  //   these also suggests the input is more likely a search than a navigation,
+  //   which affects the next bullet.
+  // * Internal whitespace sequences containing CR/LF have likely been split
+  //   across lines by terminals, email programs, etc., and are collapsed.  If
+  //   there are any internal non-CR/LF whitespace sequences, the input is more
+  //   likely search data (e.g. street addresses), so collapse these to a single
+  //   space.  If not, the input might be a navigation (e.g. a line-broken URL),
+  //   so collapse these away entirely.
   //
   // Finally, calls StripJavascriptSchemas() on the resulting string.
   static base::string16 SanitizeTextForPaste(const base::string16& text);
@@ -283,8 +291,8 @@ class OmniboxView {
   // everything is emphasized equally, whereas for URLs the scheme may be styled
   // based on the current security state, with parts of the URL de-emphasized to
   // draw attention to whatever best represents the "identity" of the current
-  // URL.
-  void UpdateTextStyle(const base::string16& display_text,
+  // URL. Returns true if the path component is eligible for fadeout.
+  bool UpdateTextStyle(const base::string16& display_text,
                        const bool text_is_url,
                        const AutocompleteSchemeClassifier& classifier);
 

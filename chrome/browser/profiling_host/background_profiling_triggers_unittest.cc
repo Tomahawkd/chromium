@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
@@ -16,8 +15,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
-#include "services/resource_coordinator/public/cpp/memory_instrumentation/coordinator.h"
+#include "content/public/test/browser_task_environment.h"
 #include "services/resource_coordinator/public/mojom/memory_instrumentation/memory_instrumentation.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,12 +36,14 @@ OSMemDumpPtr GetFakeOSMemDump(uint32_t resident_set_kb,
                               uint32_t private_footprint_kb,
                               uint32_t shared_footprint_kb) {
   return memory_instrumentation::mojom::OSMemDump::New(
-      resident_set_kb, private_footprint_kb, shared_footprint_kb
+      resident_set_kb, resident_set_kb /* peak_resident_set_kb */,
+      true /* is_peak_rss_resettable */, private_footprint_kb,
+      shared_footprint_kb
 #if defined(OS_LINUX) || defined(OS_ANDROID)
       ,
       0
 #endif
-      );
+  );
 }
 
 void PopulateMetrics(GlobalMemoryDumpPtr* global_dump,
@@ -98,9 +98,7 @@ class FakeBackgroundProfilingTriggers : public BackgroundProfilingTriggers {
 class BackgroundProfilingTriggersTest : public testing::Test {
  public:
   BackgroundProfilingTriggersTest()
-      : scoped_task_envrionment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
-        testing_profile_manager_(TestingBrowserProcess::GetGlobal()),
+      : testing_profile_manager_(TestingBrowserProcess::GetGlobal()),
         triggers_(&host_),
         is_metrics_enabled_(true) {}
 
@@ -118,8 +116,7 @@ class BackgroundProfilingTriggersTest : public testing::Test {
   }
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_envrionment_;
-  content::TestBrowserThreadBundle thread_bundle;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfileManager testing_profile_manager_;
 
   ProfilingProcessHost host_;

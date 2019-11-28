@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "components/arc/common/file_system.mojom.h"
+#include "components/arc/mojom/file_system.mojom.h"
 
 class GURL;
 
@@ -82,6 +82,10 @@ std::string StripMimeSubType(const std::string& mime_type);
 // internal list of Android mime types. On success, the first matching MIME type
 // is returned. On failure, nullptr is returned.
 std::string FindArcMimeTypeFromExtension(const std::string& ext);
+
+// Returns an ID of a Documents Provider volume.
+std::string GetDocumentsProviderVolumeId(const std::string& authority,
+                                         const std::string& root_id);
 
 }  // namespace arc
 

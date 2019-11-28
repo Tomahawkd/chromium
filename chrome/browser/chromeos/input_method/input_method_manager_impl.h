@@ -16,6 +16,7 @@
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/chromeos/input_method/candidate_window_controller.h"
+#include "chrome/browser/chromeos/input_method/ime_service_connector.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chrome/browser/profiles/profile.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
@@ -104,7 +105,7 @@ class InputMethodManagerImpl : public InputMethodManager,
     void SetInputMethodLoginDefaultFromVPD(const std::string& locale,
                                            const std::string& layout) override;
     void SwitchToNextInputMethod() override;
-    void SwitchToPreviousInputMethod() override;
+    void SwitchToLastUsedInputMethod() override;
     InputMethodDescriptor GetCurrentInputMethod() const override;
     bool ReplaceEnabledInputMethods(
         const std::vector<std::string>& new_active_input_method_ids) override;
@@ -116,11 +117,16 @@ class InputMethodManagerImpl : public InputMethodManager,
     void DisableInputView() override;
     const GURL& GetInputViewUrl() const override;
 
+    // Connect to an InputEngineManager instance in an IME Mojo service.
+    void ConnectMojoManager(
+        mojo::PendingReceiver<chromeos::ime::mojom::InputEngineManager>
+            receiver);
+
     // ------------------------- Data members.
     Profile* const profile;
 
     // The input method which was/is selected.
-    InputMethodDescriptor previous_input_method;
+    InputMethodDescriptor last_used_input_method;
     InputMethodDescriptor current_input_method;
 
     // The active input method ids cache.
@@ -162,6 +168,8 @@ class InputMethodManagerImpl : public InputMethodManager,
     // Returns the first hardware input method that is allowed or the first
     // allowed input method, if no hardware input method is allowed.
     std::string GetAllowedFallBackKeyboardLayout() const;
+
+    std::unique_ptr<ImeServiceConnector> ime_service_connector_;
   };
 
   // Constructs an InputMethodManager instance. The client is responsible for
@@ -189,6 +197,9 @@ class InputMethodManagerImpl : public InputMethodManager,
   std::unique_ptr<InputMethodDescriptors> GetSupportedInputMethods()
       const override;
   void ActivateInputMethodMenuItem(const std::string& key) override;
+  void ConnectInputEngineManager(
+      mojo::PendingReceiver<chromeos::ime::mojom::InputEngineManager> receiver)
+      override;
   bool IsISOLevel5ShiftUsedByCurrentInputMethod() const override;
   bool IsAltGrUsedByCurrentInputMethod() const override;
   void NotifyImeMenuItemsChanged(
@@ -309,7 +320,7 @@ class InputMethodManagerImpl : public InputMethodManager,
   bool enable_extension_loading_;
 
   // Whether the expanded IME menu is activated.
-  bool is_ime_menu_activated_;
+  bool is_ime_menu_activated_ = false;
 
   // The enabled state of keyboard features.
   uint32_t features_enabled_state_;

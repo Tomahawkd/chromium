@@ -21,6 +21,7 @@
 #include "base/time/time.h"
 #include "base/trace_event/traced_value.h"
 #include "components/subresource_filter/core/common/common_features.h"
+#include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 
 namespace subresource_filter {
 
@@ -285,7 +286,7 @@ Configuration Configuration::MakePresetForLiveRunOnPhishingSites() {
 Configuration Configuration::MakePresetForPerformanceTestingDryRunOnAllSites() {
   Configuration config(mojom::ActivationLevel::kDryRun,
                        ActivationScope::ALL_SITES);
-  config.activation_options.performance_measurement_rate = 1.0;
+  config.activation_options.performance_measurement_rate = 0.01;
   config.activation_conditions.priority = 500;
   return config;
 }
@@ -395,7 +396,7 @@ scoped_refptr<ConfigurationList> GetEnabledConfigurations() {
 }
 
 bool HasEnabledConfiguration(const Configuration& config) {
-  return base::ContainsValue(
+  return base::Contains(
       GetEnabledConfigurations()->configs_by_decreasing_priority(), config);
 }
 

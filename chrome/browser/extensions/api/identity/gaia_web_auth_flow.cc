@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/identity/gaia_web_auth_flow.h"
 
+#include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -12,10 +13,10 @@
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/chrome_device_id_helper.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/ubertoken_fetcher.h"
+#include "google_apis/gaia/gaia_auth_fetcher.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/escape.h"
 
@@ -29,13 +30,9 @@ GaiaWebAuthFlow::GaiaWebAuthFlow(Delegate* delegate,
     : delegate_(delegate),
       profile_(profile),
       account_id_(token_key->account_id) {
-  TRACE_EVENT_ASYNC_BEGIN2("identity",
-                           "GaiaWebAuthFlow",
-                           this,
-                           "extension_id",
-                           token_key->extension_id,
-                           "account_id",
-                           token_key->account_id);
+  TRACE_EVENT_ASYNC_BEGIN2("identity", "GaiaWebAuthFlow", this, "extension_id",
+                           token_key->extension_id, "account_id",
+                           token_key->account_id.id);
 
   const char kOAuth2RedirectPathFormat[] = "/%s";
   const char kOAuth2AuthorizeFormat[] =
@@ -88,18 +85,29 @@ GaiaWebAuthFlow::~GaiaWebAuthFlow() {
 }
 
 void GaiaWebAuthFlow::Start() {
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-  ubertoken_fetcher_.reset(
-      new UbertokenFetcher(token_service, this, gaia::GaiaSource::kChrome,
-                           profile_->GetURLLoaderFactory()));
-  ubertoken_fetcher_->set_is_bound_to_channel_id(false);
-  ubertoken_fetcher_->StartFetchingToken(account_id_);
+  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile_);
+  ubertoken_fetcher_ = identity_manager->CreateUbertokenFetcherForAccount(
+      account_id_,
+      base::BindOnce(&GaiaWebAuthFlow::OnUbertokenFetchComplete,
+                     base::Unretained(this)),
+      gaia::GaiaSource::kChrome, profile_->GetURLLoaderFactory());
 }
 
-void GaiaWebAuthFlow::OnUbertokenSuccess(const std::string& token) {
-  TRACE_EVENT_ASYNC_STEP_PAST0(
-      "identity", "GaiaWebAuthFlow", this, "OnUbertokenSuccess");
+void GaiaWebAuthFlow::OnUbertokenFetchComplete(GoogleServiceAuthError error,
+                                               const std::string& token) {
+  if (error != GoogleServiceAuthError::AuthErrorNone()) {
+    TRACE_EVENT_ASYNC_STEP_PAST1("identity", "GaiaWebAuthFlow", this,
+                                 "OnUbertokenFetchComplete", "error",
+                                 error.ToString());
+
+    DVLOG(1) << "OnUbertokenFetchComplete failure: " << error.error_message();
+    delegate_->OnGaiaFlowFailure(GaiaWebAuthFlow::SERVICE_AUTH_ERROR, error,
+                                 std::string());
+    return;
+  }
+
+  TRACE_EVENT_ASYNC_STEP_PAST0("identity", "GaiaWebAuthFlow", this,
+                               "OnUbertokenFetchComplete");
 
   const char kMergeSessionQueryFormat[] = "?uberauth=%s&"
                                           "continue=%s&"
@@ -114,19 +122,6 @@ void GaiaWebAuthFlow::OnUbertokenSuccess(const std::string& token) {
 
   web_flow_ = CreateWebAuthFlow(merge_url);
   web_flow_->Start();
-}
-
-void GaiaWebAuthFlow::OnUbertokenFailure(const GoogleServiceAuthError& error) {
-  TRACE_EVENT_ASYNC_STEP_PAST1("identity",
-                               "GaiaWebAuthFlow",
-                               this,
-                               "OnUbertokenSuccess",
-                               "error",
-                               error.ToString());
-
-  DVLOG(1) << "OnUbertokenFailure: " << error.error_message();
-  delegate_->OnGaiaFlowFailure(
-      GaiaWebAuthFlow::SERVICE_AUTH_ERROR, error, std::string());
 }
 
 void GaiaWebAuthFlow::OnAuthFlowFailure(WebAuthFlow::Failure failure) {

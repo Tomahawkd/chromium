@@ -10,6 +10,8 @@
 // clang-format off
 #include "third_party/blink/renderer/bindings/tests/results/core/v8_test_interface_named_constructor_2.h"
 
+#include <algorithm>
+
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
@@ -21,6 +23,7 @@
 #include "third_party/blink/renderer/platform/bindings/v8_object_constructor.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_context_data.h"
 #include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
+#include "third_party/blink/renderer/platform/scheduler/public/cooperative_scheduling_manager.h"
 #include "third_party/blink/renderer/platform/wtf/get_ptr.h"
 
 namespace blink {
@@ -148,8 +151,10 @@ void V8TestInterfaceNamedConstructor2Constructor::NamedConstructorAttributeGette
       per_context_data->ConstructorForType(V8TestInterfaceNamedConstructor2Constructor::GetWrapperTypeInfo());
 
   // Set the prototype of named constructors to the regular constructor.
+  static const V8PrivateProperty::SymbolKey kPrivatePropertyInitialized;
   auto private_property =
-      V8PrivateProperty::GetNamedConstructorInitialized(info.GetIsolate());
+      V8PrivateProperty::GetSymbol(
+          info.GetIsolate(), kPrivatePropertyInitialized);
   v8::Local<v8::Context> current_context = info.GetIsolate()->GetCurrentContext();
   v8::Local<v8::Value> private_value;
 
@@ -157,14 +162,20 @@ void V8TestInterfaceNamedConstructor2Constructor::NamedConstructorAttributeGette
       private_value->IsUndefined()) {
     v8::Local<v8::Function> interface =
         per_context_data->ConstructorForType(V8TestInterfaceNamedConstructor2::GetWrapperTypeInfo());
-    v8::Local<v8::Value> interfacePrototype =
+    v8::Local<v8::Value> interface_prototype =
         interface->Get(current_context, V8AtomicString(info.GetIsolate(), "prototype"))
         .ToLocalChecked();
-    bool result = named_constructor->Set(
+    // https://heycam.github.io/webidl/#named-constructors
+    // 8. Perform ! DefinePropertyOrThrow(F, "prototype",
+    //        PropertyDescriptor{[[Value]]: proto, [[Writable]]: false,
+    //                           [[Enumerable]]: false,
+    //                           [Configurable]]: false}).
+    const v8::PropertyAttribute prototype_attributes =
+        static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete);
+    bool result = named_constructor->DefineOwnProperty(
         current_context, V8AtomicString(info.GetIsolate(), "prototype"),
-        interfacePrototype).ToChecked();
-    if (!result)
-      return;
+        interface_prototype, prototype_attributes).ToChecked();
+    CHECK(result);
     private_property.Set(named_constructor, v8::True(info.GetIsolate()));
   }
 

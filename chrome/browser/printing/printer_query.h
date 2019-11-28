@@ -9,15 +9,13 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/values.h"
 #include "printing/print_job_constants.h"
 #include "printing/print_settings.h"
 #include "printing/printing_context.h"
 
 namespace base {
-class DictionaryValue;
 class Location;
-class SequencedTaskRunner;
 }
 
 namespace printing {
@@ -25,7 +23,7 @@ namespace printing {
 class PrintJobWorker;
 
 // Query the printer for settings.
-class PrinterQuery : public base::RefCountedThreadSafe<PrinterQuery> {
+class PrinterQuery {
  public:
   // GetSettings() UI parameter.
   enum class GetSettingsAskParam {
@@ -35,22 +33,23 @@ class PrinterQuery : public base::RefCountedThreadSafe<PrinterQuery> {
 
   // Can only be called on the IO thread.
   PrinterQuery(int render_process_id, int render_frame_id);
-
-  // Virtual so that tests can override.
-  virtual void GetSettingsDone(const PrintSettings& new_settings,
-                               PrintingContext::Result result);
+  virtual ~PrinterQuery();
 
   // Detach the PrintJobWorker associated to this object. Virtual so that tests
   // can override.
+  // Called on the UI thread.
+  // TODO(thestig): Do |worker_| and |callback_| need locks?
   virtual std::unique_ptr<PrintJobWorker> DetachWorker();
 
-  // Virtual so that tests can override.
-  virtual const PrintSettings& settings() const;
+  const PrintSettings& settings() const;
+
+  std::unique_ptr<PrintSettings> ExtractSettings();
 
   // Initializes the printing context. It is fine to call this function multiple
   // times to reinitialize the settings. |web_contents_observer| can be queried
   // to find the owner of the print setting dialog box. It is unused when
   // |ask_for_user_settings| is DEFAULTS.
+  // Caller has to ensure that |this| is alive until |callback| is run.
   void GetSettings(GetSettingsAskParam ask_user_for_settings,
                    int expected_page_count,
                    bool has_selection,
@@ -60,20 +59,19 @@ class PrinterQuery : public base::RefCountedThreadSafe<PrinterQuery> {
                    base::OnceClosure callback);
 
   // Updates the current settings with |new_settings| dictionary values.
-  virtual void SetSettings(std::unique_ptr<base::DictionaryValue> new_settings,
+  // Caller has to ensure that |this| is alive until |callback| is run.
+  virtual void SetSettings(base::Value new_settings,
                            base::OnceClosure callback);
 
 #if defined(OS_CHROMEOS)
   // Updates the current settings with |new_settings|.
-  void SetSettingsFromPOD(std::unique_ptr<printing::PrintSettings> new_settings,
+  // Caller has to ensure that |this| is alive until |callback| is run.
+  void SetSettingsFromPOD(std::unique_ptr<PrintSettings> new_settings,
                           base::OnceClosure callback);
 #endif
 
   // Stops the worker thread since the client is done with this object.
   virtual void StopWorker();
-
-  // Returns true if a GetSettings() call is pending completion.
-  bool is_callback_pending() const;
 
   int cookie() const;
   PrintingContext::Result last_status() const { return last_status_; }
@@ -81,28 +79,27 @@ class PrinterQuery : public base::RefCountedThreadSafe<PrinterQuery> {
   // Returns if a worker thread is still associated to this instance.
   bool is_valid() const;
 
-  // Returns true if tasks posted to this TaskRunner are sequenced
-  // with this call.
-  bool RunsTasksInCurrentSequence() const;
-
   // Posts the given task to be run.
   bool PostTask(const base::Location& from_here, base::OnceClosure task);
 
  protected:
-  // Refcounted class.
-  friend class base::RefCountedThreadSafe<PrinterQuery>;
+  // Virtual so that tests can override.
+  virtual void GetSettingsDone(base::OnceClosure callback,
+                               std::unique_ptr<PrintSettings> new_settings,
+                               PrintingContext::Result result);
 
-  virtual ~PrinterQuery();
+  void PostSettingsDoneToIO(base::OnceClosure callback,
+                            std::unique_ptr<PrintSettings> new_settings,
+                            PrintingContext::Result result);
 
-  // For unit tests to manually set the print callback.
-  void set_callback(base::OnceClosure callback);
+  void SetSettingsForTest(std::unique_ptr<PrintSettings> settings);
 
  private:
   // Lazy create the worker thread. There is one worker thread per print job.
-  void StartWorker(base::OnceClosure callback);
+  void StartWorker();
 
   // Cache of the print context settings for access in the UI thread.
-  PrintSettings settings_;
+  std::unique_ptr<PrintSettings> settings_;
 
   // Is the Print... dialog box currently shown.
   bool is_print_dialog_box_shown_ = false;
@@ -112,13 +109,6 @@ class PrinterQuery : public base::RefCountedThreadSafe<PrinterQuery> {
 
   // Results from the last GetSettingsDone() callback.
   PrintingContext::Result last_status_ = PrintingContext::FAILED;
-
-  // Callback waiting to be run.
-  base::OnceClosure callback_;
-
-  // Task runner reference. Used to send notifications in the right
-  // thread.
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // All the UI is done in a worker thread because many Win32 print functions
   // are blocking and enters a message loop without your consent. There is one

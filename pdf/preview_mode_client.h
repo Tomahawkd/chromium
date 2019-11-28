@@ -27,6 +27,7 @@ class PreviewModeClient : public PDFEngine::Client {
   ~PreviewModeClient() override {}
 
   // PDFEngine::Client implementation.
+  void ProposeDocumentLayout(const DocumentLayout& layout) override;
   void Invalidate(const pp::Rect& rect) override;
   void DidScroll(const pp::Point& point) override;
   void ScrollToX(int x_in_screen_coords) override;
@@ -59,12 +60,9 @@ class PreviewModeClient : public PDFEngine::Client {
   std::vector<SearchStringResult> SearchString(const base::char16* string,
                                                const base::char16* term,
                                                bool case_sensitive) override;
-  void DocumentPaintOccurred() override;
   void DocumentLoadComplete(
-      const PDFEngine::DocumentFeatures& document_features,
-      uint32_t file_size) override;
+      const PDFEngine::DocumentFeatures& document_features) override;
   void DocumentLoadFailed() override;
-  void FontSubstituted() override;
   pp::Instance* GetPluginInstance() override;
   void DocumentHasUnsupportedFeature(const std::string& feature) override;
   void FormTextFieldFocusChange(bool in_focus) override;

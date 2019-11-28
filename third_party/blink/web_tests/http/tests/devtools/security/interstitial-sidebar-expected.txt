@@ -3,11 +3,13 @@ Tests that the sidebar origin list disappears and appers when an interstitial is
 Before interstitial is shown:
 <DIV >
     <#document-fragment >
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
+        </STYLE>
+        <STYLE >
         </STYLE>
         <DIV class=tree-outline-disclosure >
             <OL class=tree-outline role=tree tabindex=-1 >
@@ -66,7 +68,7 @@ Secure origins
                         </SPAN>
                         <DIV class=icon security-property security-property-secure >
                         </DIV>
-                        <SPAN is=url-text >
+                        <SPAN >
                             <SPAN class=url-scheme-secure >
 https
                             </SPAN>
@@ -87,7 +89,7 @@ foo.test
                         </SPAN>
                         <DIV class=icon security-property security-property-secure >
                         </DIV>
-                        <SPAN is=url-text >
+                        <SPAN >
                             <SPAN class=url-scheme-secure >
 https
                             </SPAN>
@@ -113,20 +115,22 @@ Unknown / canceled
                 </OL>
             </OL>
         </DIV>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
     </#document-fragment>
 </DIV>
 After interstitial is shown:
 <DIV >
     <#document-fragment >
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
+        </STYLE>
+        <STYLE >
         </STYLE>
         <DIV class=tree-outline-disclosure >
             <OL class=tree-outline role=tree tabindex=-1 >
@@ -185,7 +189,7 @@ Secure origins
                         </SPAN>
                         <DIV class=icon security-property security-property-secure >
                         </DIV>
-                        <SPAN is=url-text >
+                        <SPAN >
                             <SPAN class=url-scheme-secure >
 https
                             </SPAN>
@@ -206,7 +210,7 @@ foo.test
                         </SPAN>
                         <DIV class=icon security-property security-property-secure >
                         </DIV>
-                        <SPAN is=url-text >
+                        <SPAN >
                             <SPAN class=url-scheme-secure >
 https
                             </SPAN>
@@ -232,20 +236,22 @@ Unknown / canceled
                 </OL>
             </OL>
         </DIV>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
     </#document-fragment>
 </DIV>
 After interstitial is hidden:
 <DIV >
     <#document-fragment >
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
+        </STYLE>
+        <STYLE >
         </STYLE>
         <DIV class=tree-outline-disclosure >
             <OL class=tree-outline role=tree tabindex=-1 >
@@ -304,7 +310,7 @@ Secure origins
                         </SPAN>
                         <DIV class=icon security-property security-property-secure >
                         </DIV>
-                        <SPAN is=url-text >
+                        <SPAN >
                             <SPAN class=url-scheme-secure >
 https
                             </SPAN>
@@ -325,7 +331,7 @@ foo.test
                         </SPAN>
                         <DIV class=icon security-property security-property-secure >
                         </DIV>
-                        <SPAN is=url-text >
+                        <SPAN >
                             <SPAN class=url-scheme-secure >
 https
                             </SPAN>
@@ -351,9 +357,9 @@ Unknown / canceled
                 </OL>
             </OL>
         </DIV>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
-        <STYLE type=text/css >
+        <STYLE >
         </STYLE>
     </#document-fragment>
 </DIV>

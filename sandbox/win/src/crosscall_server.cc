@@ -7,10 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <atomic>
 #include <string>
 #include <vector>
 
-#include "base/atomicops.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "sandbox/win/src/crosscall_client.h"
@@ -94,7 +94,7 @@ bool IsSizeWithinRange(uint32_t buffer_size,
   return true;
 }
 
-CrossCallParamsEx::CrossCallParamsEx() : CrossCallParams(0, 0) {}
+CrossCallParamsEx::CrossCallParamsEx() : CrossCallParams(IpcTag::UNUSED, 0) {}
 
 // We override the delete operator because the object's backing memory
 // is hand allocated in CreateFromBuffer. We don't override the new operator
@@ -161,7 +161,7 @@ CrossCallParamsEx* CrossCallParamsEx::CreateFromBuffer(void* buffer_base,
     // Avoid compiler optimizations across this point. Any value stored in
     // memory should be stored for real, and values previously read from memory
     // should be actually read.
-    base::subtle::MemoryBarrier();
+    std::atomic_thread_fence(std::memory_order_seq_cst);
 
     min_declared_size =
         sizeof(CrossCallParams) + ((param_count + 1) * sizeof(ParamInfo));
@@ -181,19 +181,23 @@ CrossCallParamsEx* CrossCallParamsEx::CreateFromBuffer(void* buffer_base,
     return nullptr;
   }
 
-  const char* last_byte = &backing_mem[declared_size];
-  const char* first_byte = &backing_mem[min_declared_size];
+  // Here and below we're making use of uintptr_t to have well-defined integer
+  // overflow when doing pointer arithmetic.
+  auto backing_mem_ptr = reinterpret_cast<uintptr_t>(backing_mem);
+  auto last_byte = reinterpret_cast<uintptr_t>(&backing_mem[declared_size]);
+  auto first_byte =
+      reinterpret_cast<uintptr_t>(&backing_mem[min_declared_size]);
 
   // Verify here that all and each parameters make sense. This is done in the
   // local copy.
   for (uint32_t ix = 0; ix != param_count; ++ix) {
     uint32_t size = 0;
     ArgType type;
-    char* address = reinterpret_cast<char*>(
+    auto address = reinterpret_cast<uintptr_t>(
         copied_params->GetRawParameter(ix, &size, &type));
     if ((!address) ||                                     // No null params.
         (INVALID_TYPE >= type) || (LAST_TYPE <= type) ||  // Unknown type.
-        (address < backing_mem) ||         // Start cannot point before buffer.
+        (address < backing_mem_ptr) ||     // Start cannot point before buffer.
         (address < first_byte) ||          // Start cannot point too low.
         (address > last_byte) ||           // Start cannot point past buffer.
         ((address + size) < address) ||    // Invalid size.
@@ -245,8 +249,7 @@ bool CrossCallParamsEx::GetParameterVoidPtr(uint32_t index, void** param) {
 
 // Covers the common case of reading a string. Note that the string is not
 // scanned for invalid characters.
-bool CrossCallParamsEx::GetParameterStr(uint32_t index,
-                                        base::string16* string) {
+bool CrossCallParamsEx::GetParameterStr(uint32_t index, std::wstring* string) {
   DCHECK(string->empty());
   uint32_t size = 0;
   ArgType type;
@@ -256,14 +259,16 @@ bool CrossCallParamsEx::GetParameterStr(uint32_t index,
 
   // Check if this is an empty string.
   if (size == 0) {
-    *string = base::WideToUTF16(L"");
+    *string = std::wstring();
     return true;
   }
 
   if (!start || ((size % sizeof(wchar_t)) != 0))
     return false;
-  return base::WideToUTF16(reinterpret_cast<wchar_t*>(start),
-                           size / sizeof(wchar_t), string);
+
+  string->assign(reinterpret_cast<const wchar_t*>(start),
+                 size / sizeof(wchar_t));
+  return true;
 }
 
 bool CrossCallParamsEx::GetParameterPtr(uint32_t index,

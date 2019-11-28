@@ -10,15 +10,11 @@
 #include "base/scoped_observer.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/common/extension.h"
 
-class PrefService;
 class Profile;
-
-namespace extensions {
-class ExtensionRegistry;
-}
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -35,11 +31,13 @@ class AppShortcutManager : public KeyedService,
 
   ~AppShortcutManager() override;
 
-  // Updates all shortcuts if kAppShortcutsVersion in prefs is less than
-  // kCurrentAppShortcutsVersion.
+  // Schedules a call to UpdateShortcutsForAllAppsNow() if kAppShortcutsVersion
+  // in prefs is less than kCurrentAppShortcutsVersion.
   void UpdateShortcutsForAllAppsIfNeeded();
 
   // extensions::ExtensionRegistryObserver.
+  void OnExtensionLoaded(content::BrowserContext* browser_context,
+                         const extensions::Extension* extension) override;
   void OnExtensionWillBeInstalled(content::BrowserContext* browser_context,
                                   const extensions::Extension* extension,
                                   bool is_update,
@@ -52,17 +50,18 @@ class AppShortcutManager : public KeyedService,
   void OnProfileWillBeRemoved(const base::FilePath& profile_path) override;
 
  private:
+  void UpdateShortcutsForAllAppsNow();
+  void SetCurrentAppShortcutsVersion();
   void DeleteApplicationShortcuts(const extensions::Extension* extension);
 
   Profile* profile_;
   bool is_profile_attributes_storage_observer_;
-  PrefService* prefs_;
 
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
-  base::WeakPtrFactory<AppShortcutManager> weak_ptr_factory_;
+  base::WeakPtrFactory<AppShortcutManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppShortcutManager);
 };

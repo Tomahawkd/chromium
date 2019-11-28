@@ -50,17 +50,14 @@ ScopedReplacedContentPaintState::ScopedReplacedContentPaintState(
 
   const auto* content_transform = paint_properties->ReplacedContentTransform();
   if (content_transform && replaced.IsSVGRoot()) {
-    new_properties.SetTransform(content_transform);
+    new_properties.SetTransform(*content_transform);
     adjusted_paint_info_.emplace(input_paint_info_);
-    adjusted_paint_info_->TransformCullRect(content_transform);
+    adjusted_paint_info_->TransformCullRect(*content_transform);
     property_changed = true;
   }
 
-  bool painter_implements_content_box_clip = replaced.IsLayoutImage();
-  if (paint_properties->OverflowClip() &&
-      (!painter_implements_content_box_clip ||
-       replaced.StyleRef().HasBorderRadius())) {
-    new_properties.SetClip(paint_properties->OverflowClip());
+  if (const auto* clip = paint_properties->OverflowClip()) {
+    new_properties.SetClip(*clip);
     property_changed = true;
   }
 
@@ -100,17 +97,15 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info) {
 
   const auto& local_paint_info = paint_state.GetPaintInfo();
   auto paint_offset = paint_state.PaintOffset();
-  LayoutRect border_rect(paint_offset, layout_replaced_.Size());
+  PhysicalRect border_rect(paint_offset, layout_replaced_.Size());
 
   if (ShouldPaintBoxDecorationBackground(local_paint_info)) {
     bool should_paint_background = false;
     if (layout_replaced_.StyleRef().Visibility() == EVisibility::kVisible) {
       if (layout_replaced_.HasBoxDecorationBackground())
         should_paint_background = true;
-      if (RuntimeEnabledFeatures::PaintTouchActionRectsEnabled() &&
-          layout_replaced_.HasEffectiveWhitelistedTouchAction()) {
+      if (layout_replaced_.HasEffectiveAllowedTouchAction())
         should_paint_background = true;
-      }
     }
     if (should_paint_background) {
       if (layout_replaced_.HasLayer() &&
@@ -120,12 +115,9 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info) {
               ->GetCompositedLayerMapping()
               ->DrawsBackgroundOntoContentLayer()) {
         // If the background paints into the content layer, we can skip painting
-        // the background but still need to paint the touch action rects.
-        if (RuntimeEnabledFeatures::PaintTouchActionRectsEnabled()) {
-          BoxPainter(layout_replaced_)
-              .RecordHitTestData(local_paint_info, border_rect,
-                                 layout_replaced_);
-        }
+        // the background but still need to paint the hit test rects.
+        BoxPainter(layout_replaced_)
+            .RecordHitTestData(local_paint_info, border_rect, layout_replaced_);
         return;
       }
 
@@ -157,9 +149,10 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info) {
       !layout_replaced_.IsSelected())
     return;
 
-  bool skip_clip = layout_replaced_.IsSVGRoot() &&
-                   !ToLayoutSVGRoot(layout_replaced_).ShouldApplyViewportClip();
-  if (skip_clip || !layout_replaced_.PhysicalContentBoxRect().IsEmpty()) {
+  bool has_clip =
+      layout_replaced_.FirstFragment().PaintProperties() &&
+      layout_replaced_.FirstFragment().PaintProperties()->OverflowClip();
+  if (!has_clip || !layout_replaced_.PhysicalContentBoxRect().IsEmpty()) {
     ScopedReplacedContentPaintState content_paint_state(paint_state,
                                                         layout_replaced_);
     layout_replaced_.PaintReplaced(content_paint_state.GetPaintInfo(),
@@ -186,8 +179,9 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info) {
   if (draw_selection_tint && !DrawingRecorder::UseCachedDrawingIfPossible(
                                  local_paint_info.context, layout_replaced_,
                                  DisplayItem::kSelectionTint)) {
-    LayoutRect selection_painting_rect = layout_replaced_.LocalSelectionRect();
-    selection_painting_rect.MoveBy(paint_offset);
+    PhysicalRect selection_painting_rect =
+        layout_replaced_.LocalSelectionVisualRect();
+    selection_painting_rect.Move(paint_offset);
     IntRect selection_painting_int_rect =
         PixelSnappedIntRect(selection_painting_rect);
 
@@ -204,6 +198,7 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info) {
 bool ReplacedPainter::ShouldPaint(const ScopedPaintState& paint_state) const {
   const auto& paint_info = paint_state.GetPaintInfo();
   if (paint_info.phase != PaintPhase::kForeground &&
+      paint_info.phase != PaintPhase::kForcedColorsModeBackplate &&
       !ShouldPaintSelfOutline(paint_info.phase) &&
       paint_info.phase != PaintPhase::kSelection &&
       paint_info.phase != PaintPhase::kMask &&
@@ -220,9 +215,8 @@ bool ReplacedPainter::ShouldPaint(const ScopedPaintState& paint_state) const {
       layout_replaced_.StyleRef().Visibility() != EVisibility::kVisible)
     return false;
 
-  LayoutRect local_rect(layout_replaced_.VisualOverflowRect());
-  local_rect.Unite(layout_replaced_.LocalSelectionRect());
-  layout_replaced_.FlipForWritingMode(local_rect);
+  PhysicalRect local_rect = layout_replaced_.PhysicalVisualOverflowRect();
+  local_rect.Unite(layout_replaced_.LocalSelectionVisualRect());
   if (!paint_state.LocalRectIntersectsCullRect(local_rect))
     return false;
 

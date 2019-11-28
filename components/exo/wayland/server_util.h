@@ -16,16 +16,6 @@
 
 struct wl_resource;
 
-namespace display {
-class Display;
-}
-
-namespace gfx {
-class Insets;
-class Rect;
-class Size;
-}  // namespace gfx
-
 namespace exo {
 
 class DataOffer;
@@ -69,21 +59,6 @@ void SetSurfaceResource(Surface* surface, wl_resource* resource);
 wl_resource* GetDataOfferResource(const DataOffer* data_offer);
 void SetDataOfferResource(DataOffer* data_offer,
                           wl_resource* data_offer_resource);
-
-// Scale the |child_bounds| in such a way that if it should fill the
-// |parent_size|'s width/height, it returns the |parent_size_in_pixel|'s
-// width/height.
-gfx::Rect ScaleBoundsToPixelSnappedToParent(
-    const gfx::Size& parent_size_in_pixel,
-    const gfx::Size& parent_size,
-    float device_scale_factor,
-    const gfx::Rect& child_bounds);
-
-// Create the insets make sure that work area will be within the chrome's
-// work area when converted to the pixel on client side.
-// TODO(oshima): We should send these information in pixel so that
-// client do not have to convert it back.
-gfx::Insets GetAdjustedInsets(const display::Display& display);
 
 }  // namespace wayland
 }  // namespace exo

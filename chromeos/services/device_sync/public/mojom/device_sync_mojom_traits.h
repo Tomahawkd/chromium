@@ -1,77 +1,46 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CHROMEOS_SERVICES_DEVICE_SYNC_PUBLIC_MOJOM_DEVICE_SYNC_MOJOM_TRAITS_H_
 #define CHROMEOS_SERVICES_DEVICE_SYNC_PUBLIC_MOJOM_DEVICE_SYNC_MOJOM_TRAITS_H_
 
-#include <string>
-#include <vector>
-
-#include "base/time/time.h"
-#include "chromeos/components/multidevice/remote_device.h"
+#include "chromeos/services/device_sync/feature_status_change.h"
+#include "chromeos/services/device_sync/proto/cryptauth_common.pb.h"
+#include "chromeos/services/device_sync/proto/cryptauth_devicesync.pb.h"
 #include "chromeos/services/device_sync/public/mojom/device_sync.mojom.h"
-#include "components/cryptauth/proto/cryptauth_api.pb.h"
 #include "mojo/public/cpp/bindings/enum_traits.h"
-#include "mojo/public/cpp/bindings/struct_traits.h"
 
 namespace mojo {
 
 template <>
-class StructTraits<chromeos::device_sync::mojom::BeaconSeedDataView,
-                   cryptauth::BeaconSeed> {
+class EnumTraits<chromeos::device_sync::mojom::ConnectivityStatus,
+                 cryptauthv2::ConnectivityStatus> {
  public:
-  static const std::string& data(const cryptauth::BeaconSeed& beacon_seed);
-  static base::Time start_time(const cryptauth::BeaconSeed& beacon_seed);
-  static base::Time end_time(const cryptauth::BeaconSeed& beacon_seed);
-
-  static bool Read(chromeos::device_sync::mojom::BeaconSeedDataView in,
-                   cryptauth::BeaconSeed* out);
+  static chromeos::device_sync::mojom::ConnectivityStatus ToMojom(
+      cryptauthv2::ConnectivityStatus input);
+  static bool FromMojom(chromeos::device_sync::mojom::ConnectivityStatus input,
+                        cryptauthv2::ConnectivityStatus* out);
 };
 
 template <>
-class StructTraits<chromeos::device_sync::mojom::RemoteDeviceDataView,
-                   chromeos::multidevice::RemoteDevice> {
+class EnumTraits<chromeos::device_sync::mojom::FeatureStatusChange,
+                 chromeos::device_sync::FeatureStatusChange> {
  public:
-  static std::string device_id(
-      const chromeos::multidevice::RemoteDevice& remote_device);
-  static const std::string& user_id(
-      const chromeos::multidevice::RemoteDevice& remote_device);
-  static const std::string& device_name(
-      const chromeos::multidevice::RemoteDevice& remote_device);
-  static const std::string& persistent_symmetric_key(
-      const chromeos::multidevice::RemoteDevice& remote_device);
-  static base::Time last_update_time(
-      const chromeos::multidevice::RemoteDevice& remote_device);
-  static const std::map<cryptauth::SoftwareFeature,
-                        chromeos::multidevice::SoftwareFeatureState>&
-  software_features(const chromeos::multidevice::RemoteDevice& remote_device);
-  static const std::vector<cryptauth::BeaconSeed>& beacon_seeds(
-      const chromeos::multidevice::RemoteDevice& remote_device);
-
-  static bool Read(chromeos::device_sync::mojom::RemoteDeviceDataView in,
-                   chromeos::multidevice::RemoteDevice* out);
+  static chromeos::device_sync::mojom::FeatureStatusChange ToMojom(
+      chromeos::device_sync::FeatureStatusChange input);
+  static bool FromMojom(chromeos::device_sync::mojom::FeatureStatusChange input,
+                        chromeos::device_sync::FeatureStatusChange* out);
 };
 
 template <>
-class EnumTraits<chromeos::device_sync::mojom::SoftwareFeature,
-                 cryptauth::SoftwareFeature> {
+class EnumTraits<chromeos::device_sync::mojom::CryptAuthService,
+                 cryptauthv2::TargetService> {
  public:
-  static chromeos::device_sync::mojom::SoftwareFeature ToMojom(
-      cryptauth::SoftwareFeature input);
-  static bool FromMojom(chromeos::device_sync::mojom::SoftwareFeature input,
-                        cryptauth::SoftwareFeature* out);
-};
-
-template <>
-class EnumTraits<chromeos::device_sync::mojom::SoftwareFeatureState,
-                 chromeos::multidevice::SoftwareFeatureState> {
- public:
-  static chromeos::device_sync::mojom::SoftwareFeatureState ToMojom(
-      chromeos::multidevice::SoftwareFeatureState input);
-  static bool FromMojom(
-      chromeos::device_sync::mojom::SoftwareFeatureState input,
-      chromeos::multidevice::SoftwareFeatureState* out);
+  static chromeos::device_sync::mojom::CryptAuthService ToMojom(
+      cryptauthv2::TargetService input);
+  static bool FromMojom(chromeos::device_sync::mojom::CryptAuthService input,
+                        cryptauthv2::TargetService* out);
 };
 
 }  // namespace mojo

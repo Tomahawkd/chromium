@@ -7,6 +7,7 @@
 #include "ash/magnifier/magnification_controller.h"
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/shell.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "chrome/browser/browser_process.h"
@@ -20,7 +21,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_prefs/user_prefs.h"
@@ -98,12 +99,14 @@ void PrepareNonNewProfile(const AccountId& account_id) {
 }
 
 // Simulates how UserSessionManager starts a user session by loading user
-// profile and mark session as started.
+// profile, notify user profile is loaded, and mark session as started.
 void StartUserSession(const AccountId& account_id) {
   ProfileHelper::GetProfileByUserIdHashForTest(
       user_manager::UserManager::Get()->FindUser(account_id)->username_hash());
 
-  session_manager::SessionManager::Get()->SessionStarted();
+  auto* session_manager = session_manager::SessionManager::Get();
+  session_manager->NotifyUserProfileLoaded(account_id);
+  session_manager->SessionStarted();
 }
 
 }  // namespace

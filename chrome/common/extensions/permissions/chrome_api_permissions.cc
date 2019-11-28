@@ -87,6 +87,8 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
     {APIPermission::kSignedInDevices, "signedInDevices"},
     {APIPermission::kTab, "tabs"},
     {APIPermission::kTopSites, "topSites"},
+    {APIPermission::kTransientBackground, "transientBackground",
+     APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kTts, "tts", APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kTtsEngine, "ttsEngine",
      APIPermissionInfo::kFlagCannotBeOptional},
@@ -123,8 +125,6 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
     {APIPermission::kMediaRouterPrivate, "mediaRouterPrivate",
      APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kNetworkingCastPrivate, "networking.castPrivate"},
-    {APIPermission::kPreferencesPrivate, "preferencesPrivate",
-     APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kSystemPrivate, "systemPrivate",
      APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kCloudPrintPrivate, "cloudPrintPrivate",
@@ -159,8 +159,6 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
     {APIPermission::kWebrtcLoggingPrivateAudioDebug,
      "webrtcLoggingPrivate.audioDebug",
      APIPermissionInfo::kFlagCannotBeOptional},
-    {APIPermission::kFirstRunPrivate, "firstRunPrivate",
-     APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kSettingsPrivate, "settingsPrivate",
      APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kAutofillPrivate, "autofillPrivate",
@@ -174,7 +172,6 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
     {APIPermission::kResourcesPrivate, "resourcesPrivate",
      APIPermissionInfo::kFlagCannotBeOptional},
     {APIPermission::kSafeBrowsingPrivate, "safeBrowsingPrivate"},
-    {APIPermission::kArcAppsPrivate, "arcAppsPrivate"},
 
     // Full url access permissions.
     {APIPermission::kDebugger, "debugger",
@@ -197,7 +194,6 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
     // Platform-app permissions.
 
     {APIPermission::kFileSystemProvider, "fileSystemProvider"},
-    {APIPermission::kPointerLock, "pointerLock"},
     {APIPermission::kCastStreaming, "cast.streaming"},
     {APIPermission::kLauncherSearchProvider, "launcherSearchProvider"},
 

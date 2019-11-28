@@ -21,28 +21,28 @@
 #include "content/shell/common/web_test/web_test_bluetooth_fake_adapter_setter.mojom.h"
 #include "content/shell/test_runner/test_preferences.h"
 #include "content/shell/test_runner/web_test_delegate.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "v8/include/v8.h"
 
 class SkBitmap;
 
 namespace base {
 class DictionaryValue;
-}
+}  // namespace base
 
 namespace blink {
-class WebURLRequest;
 class WebView;
 }  // namespace blink
 
 namespace test_runner {
 class AppBannerService;
-}
+}  // namespace test_runner
 
 namespace content {
 
 // This is the renderer side of the webkit test runner.
-// TODO(lukasza): Rename to LayoutTestRenderViewObserver for consistency with
-// LayoutTestRenderFrameObserver.
+// TODO(lukasza): Rename to WebTestRenderViewObserver for consistency with
+// WebTestRenderFrameObserver.
 class BlinkTestRunner : public RenderViewObserver,
                         public RenderViewObserverTracker<BlinkTestRunner>,
                         public test_runner::WebTestDelegate {
@@ -53,11 +53,6 @@ class BlinkTestRunner : public RenderViewObserver,
   // RenderViewObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
   void DidClearWindowObject(blink::WebLocalFrame* frame) override;
-  void Navigate(const GURL& url) override;
-  void DidCommitProvisionalLoad(blink::WebLocalFrame* frame,
-                                bool is_new_navigation) override;
-  void DidFailProvisionalLoad(blink::WebLocalFrame* frame,
-                              const blink::WebURLError& error) override;
 
   // WebTestDelegate implementation.
   void ClearEditCommand() override;
@@ -73,8 +68,8 @@ class BlinkTestRunner : public RenderViewObserver,
   blink::WebString GetAbsoluteWebStringFromUTF8Path(
       const std::string& utf8_path) override;
   blink::WebURL LocalFileToDataURL(const blink::WebURL& file_url) override;
-  blink::WebURL RewriteLayoutTestsURL(const std::string& utf8_url,
-                                      bool is_wpt_mode) override;
+  blink::WebURL RewriteWebTestsURL(const std::string& utf8_url,
+                                   bool is_wpt_mode) override;
   test_runner::TestPreferences* Preferences() override;
   void ApplyPreferences() override;
   void SetPopupBlockingEnabled(bool block_popups) override;
@@ -82,6 +77,7 @@ class BlinkTestRunner : public RenderViewObserver,
   void EnableAutoResizeMode(const blink::WebSize& min_size,
                             const blink::WebSize& max_size) override;
   void DisableAutoResizeMode(const blink::WebSize& new_size) override;
+  void ResetAutoResizeMode() override;
   void NavigateSecondaryWindow(const GURL& url) override;
   void InspectSecondaryWindow() override;
   void ClearAllDatabases() override;
@@ -92,13 +88,13 @@ class BlinkTestRunner : public RenderViewObserver,
       const base::Optional<base::string16>& reply) override;
   void SimulateWebNotificationClose(const std::string& title,
                                     bool by_user) override;
+  void SimulateWebContentIndexDelete(const std::string& id) override;
   void SetDeviceScaleFactor(float factor) override;
   void SetDeviceColorSpace(const std::string& name) override;
-  float GetWindowToViewportScale() override;
   std::unique_ptr<blink::WebInputEvent> TransformScreenToWidgetCoordinates(
-      test_runner::WebWidgetTestProxyBase* web_widget_test_proxy_base,
+      test_runner::WebWidgetTestProxy* web_widget_test_proxy,
       const blink::WebInputEvent& event) override;
-  test_runner::WebWidgetTestProxyBase* GetWebWidgetTestProxyBase(
+  test_runner::WebWidgetTestProxy* GetWebWidgetTestProxy(
       blink::WebLocalFrame* frame) override;
   void EnableUseZoomForDSF() override;
   bool IsUseZoomForDSFEnabled() override;
@@ -127,41 +123,35 @@ class BlinkTestRunner : public RenderViewObserver,
   bool AllowExternalPages() override;
   void FetchManifest(
       blink::WebView* view,
-      base::OnceCallback<void(const GURL&, const blink::Manifest&)> callback)
-      override;
+      base::OnceCallback<void(const blink::WebURL&, const blink::Manifest&)>
+          callback) override;
   void SetPermission(const std::string& name,
                      const std::string& value,
                      const GURL& origin,
                      const GURL& embedding_origin) override;
   void ResetPermissions() override;
-  bool AddMediaStreamVideoSourceAndTrack(
-      blink::WebMediaStream* stream) override;
-  bool AddMediaStreamAudioSourceAndTrack(
-      blink::WebMediaStream* stream) override;
   void DispatchBeforeInstallPromptEvent(
       const std::vector<std::string>& event_platforms,
       base::OnceCallback<void(bool)> callback) override;
   void ResolveBeforeInstallPromptPromise(const std::string& platform) override;
   blink::WebPlugin* CreatePluginPlaceholder(
       const blink::WebPluginParams& params) override;
-  float GetDeviceScaleFactor() const override;
   void RunIdleTasks(base::OnceClosure callback) override;
   void ForceTextInputStateUpdate(blink::WebLocalFrame* frame) override;
-  bool IsNavigationInitiatedByRenderer(
-      const blink::WebURLRequest& request) override;
 
-  // Resets a RenderView to a known state for layout tests. It is used both when
+  // Resets a RenderView to a known state for web tests. It is used both when
   // a RenderView is created and when reusing an existing RenderView for the
   // next test case.
   // When reusing an existing RenderView, |for_new_test| should be true, which
   // also resets additional state, like the main frame's name and opener.
   void Reset(bool for_new_test);
 
-  // Message handlers forwarded by LayoutTestRenderFrameObserver.
+  // Message handlers forwarded by WebTestRenderFrameObserver.
   void OnSetTestConfiguration(mojom::ShellTestConfigurationPtr params);
   void OnReplicateTestConfiguration(mojom::ShellTestConfigurationPtr params);
   void OnSetupSecondaryRenderer();
   void CaptureDump(mojom::WebTestControl::CaptureDumpCallback callback);
+  void DidCommitNavigationInMainFrame();
 
  private:
   // Message handlers.
@@ -183,13 +173,13 @@ class BlinkTestRunner : public RenderViewObserver,
   void CaptureDumpComplete();
   void CaptureLocalAudioDump();
   void CaptureLocalLayoutDump();
-  // Returns true if the browser should capture pixels instead.
-  bool CaptureLocalPixelsDump();
+  void CaptureLocalPixelsDump();
 
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
 
   mojom::WebTestBluetoothFakeAdapterSetter& GetBluetoothFakeAdapterSetter();
-  mojom::WebTestBluetoothFakeAdapterSetterPtr bluetooth_fake_adapter_setter_;
+  mojo::Remote<mojom::WebTestBluetoothFakeAdapterSetter>
+      bluetooth_fake_adapter_setter_;
 
   test_runner::TestPreferences prefs_;
 
@@ -199,9 +189,9 @@ class BlinkTestRunner : public RenderViewObserver,
       base::OnceCallback<void(const std::vector<std::string>&)>>
       get_bluetooth_events_callbacks_;
 
-  bool is_main_window_;
+  bool is_main_window_ = false;
 
-  bool focus_on_next_commit_;
+  bool waiting_for_reset_ = false;
 
   std::unique_ptr<test_runner::AppBannerService> app_banner_service_;
 

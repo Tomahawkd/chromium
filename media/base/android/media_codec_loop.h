@@ -21,6 +21,7 @@
 #include "media/base/encryption_scheme.h"
 #include "media/base/media_export.h"
 #include "media/base/subsample_entry.h"
+#include "media/base/waiting.h"
 
 // MediaCodecLoop is based on Android's MediaCodec API.
 // The MediaCodec API is required to play encrypted (as in EME) content on
@@ -28,7 +29,7 @@
 // One MediaCodecLoop instance owns a single MediaCodec(Bridge) instance, and
 // drives it to perform decoding in conjunction with a MediaCodecLoop::Client.
 // The Client provides the input data and consumes the output data.  A typical
-// example is AndroidVideoDecodeAccelerator.
+// example is MediaCodecAudioDecoder.
 
 // Implementation notes.
 //
@@ -126,7 +127,8 @@ class MEDIA_EXPORT MediaCodecLoop {
     base::TimeDelta presentation_time;
 
     bool is_eos = false;
-    EncryptionScheme encryption_scheme;
+    EncryptionScheme encryption_scheme = EncryptionScheme::kUnencrypted;
+    base::Optional<EncryptionPattern> encryption_pattern;
   };
 
   // Handy enum for "no buffer".
@@ -183,6 +185,9 @@ class MEDIA_EXPORT MediaCodecLoop {
     // returning, then the client must call DoPendingWork when it releases it.
     // If this returns false, then we transition to STATE_ERROR.
     virtual bool OnDecodedFrame(const OutputBuffer& out) = 0;
+
+    // Notify the client when waiting for |reason|, e.g. STATE_WAITING_FOR_KEY.
+    virtual void OnWaiting(WaitingReason reason) = 0;
 
     // Processes the output format change on |media_codec|.  Returns true on
     // success, or false to transition to the error state.
@@ -290,9 +295,6 @@ class MEDIA_EXPORT MediaCodecLoop {
   // Helper method to change the state.
   void SetState(State new_state);
 
-  // Helper method to tell us if MediaCodecBridge::Flush() doesn't work.
-  bool CodecNeedsFlushWorkaround() const;
-
   // A helper function for logging.
   static const char* AsString(State state);
 
@@ -333,7 +335,7 @@ class MEDIA_EXPORT MediaCodecLoop {
   const bool disable_timer_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<MediaCodecLoop> weak_factory_;
+  base::WeakPtrFactory<MediaCodecLoop> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaCodecLoop);
 };

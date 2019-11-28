@@ -35,9 +35,9 @@ public class ContextualSearchInternalStateTest {
         }
 
         @Override
-        public void showContextualSearchTapUi() {
+        public void showContextualSearchResolvingUi() {
             mDidShow = true;
-            stubForWorkOnState(InternalState.SHOW_FULL_TAP_UI);
+            stubForWorkOnState(InternalState.SHOW_RESOLVING_UI);
         }
 
         @Override
@@ -89,7 +89,7 @@ public class ContextualSearchInternalStateTest {
         }
 
         // Stub for doing work on some state.
-        private void stubForWorkOnState(InternalState state) {
+        private void stubForWorkOnState(@InternalState int state) {
             mInternalStateController.notifyStartingWorkOn(state);
             // Work completes (possibly async)
             mInternalStateController.notifyFinishedWorkOn(state);
@@ -131,11 +131,11 @@ public class ContextualSearchInternalStateTest {
     }
 
     private void mocksForTap() {
-        when(mMockedPolicy.shouldPreviousTapResolve()).thenReturn(true);
+        when(mMockedPolicy.shouldPreviousGestureResolve()).thenReturn(true);
     }
 
     private void mocksForNonResolvingTap() {
-        when(mMockedPolicy.shouldPreviousTapResolve()).thenReturn(false);
+        when(mMockedPolicy.shouldPreviousGestureResolve()).thenReturn(false);
     }
 
     private void mocksForLongpress() {

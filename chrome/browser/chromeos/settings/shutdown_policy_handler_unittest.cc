@@ -7,10 +7,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/run_loop.h"
-#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
+#include "chrome/browser/chromeos/settings/scoped_testing_cros_settings.h"
+#include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/settings/cros_settings_names.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -25,13 +26,13 @@ class ShutdownPolicyHandlerTest : public testing::Test,
   void SetUp() override {
     testing::Test::SetUp();
     DBusThreadManager::Initialize();
-    settings_helper_.ReplaceDeviceSettingsProviderWithStub();
   }
 
   void TearDown() override { DBusThreadManager::Shutdown(); }
 
   void SetRebootOnShutdown(bool reboot_on_shutdown) {
-    settings_helper_.SetBoolean(kRebootOnShutdown, reboot_on_shutdown);
+    scoped_testing_cros_settings_.device_settings()->SetBoolean(
+        kRebootOnShutdown, reboot_on_shutdown);
     base::RunLoop().RunUntilIdle();
   }
 
@@ -42,8 +43,8 @@ class ShutdownPolicyHandlerTest : public testing::Test,
   }
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
-  ScopedCrosSettingsTestHelper settings_helper_;
+  content::BrowserTaskEnvironment task_environment_;
+  ScopedTestingCrosSettings scoped_testing_cros_settings_;
   bool reboot_on_shutdown_;
   int delegate_invocations_count_;
 };

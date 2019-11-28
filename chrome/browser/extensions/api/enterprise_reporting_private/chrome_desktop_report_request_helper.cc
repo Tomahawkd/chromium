@@ -16,7 +16,6 @@
 #include "chrome/browser/extensions/api/enterprise_reporting_private/prefs.h"
 #include "chrome/browser/policy/browser_dm_token_storage.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
-#include "chrome/browser/policy/machine_level_user_cloud_policy_controller.h"
 #include "chrome/browser/policy/policy_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/channel_info.h"
@@ -82,11 +81,6 @@ void AppendAdditionalBrowserInformation(em::ChromeDesktopReportRequest* request,
                                         Profile* profile) {
   const PrefService* prefs = profile->GetPrefs();
 
-#if defined(OS_WIN)
-  request->mutable_browser_report()->set_serial_number(
-      policy::BrowserDMTokenStorage::Get()->RetrieveSerialNumber());
-#endif
-
   // Set Chrome version number
   request->mutable_browser_report()->set_browser_version(
       version_info::GetVersionNumber());
@@ -118,8 +112,10 @@ void AppendAdditionalBrowserInformation(em::ChromeDesktopReportRequest* request,
     // the future.
     request->mutable_browser_report()
         ->mutable_chrome_user_profile_reports(0)
-        ->set_policy_data(
-            policy::GetAllPolicyValuesAsJSON(profile, true, false));
+        ->set_policy_data(policy::DictionaryPolicyConversions()
+                              .WithBrowserContext(profile)
+                              .EnablePrettyPrint(false)
+                              .ToJSON());
 
     int64_t timestamp = GetMachineLevelUserCloudPolicyFetchTimestamp();
     if (timestamp > 0) {
@@ -167,6 +163,11 @@ void AppendPlatformInformation(em::ChromeDesktopReportRequest* request,
   base::Value os_user = base::Value(base::Value::Type::DICTIONARY);
   os_user.SetKey(kUsername, base::Value(policy::GetOSUsername()));
   base::JSONWriter::Write(os_user, request->mutable_os_user());
+
+#if defined(OS_WIN)
+  request->set_serial_number(
+      policy::BrowserDMTokenStorage::Get()->RetrieveSerialNumber());
+#endif
 }
 
 std::unique_ptr<em::ChromeUserProfileReport>
@@ -230,7 +231,7 @@ GenerateChromeDesktopReportRequest(const base::DictionaryValue& report,
           report.FindKeyOfType(kBrowserReport, base::Value::Type::DICTIONARY)) {
     if (const base::Value* profile_reports = browser_report->FindKeyOfType(
             kChromeUserProfileReport, base::Value::Type::LIST)) {
-      if (profile_reports->GetList().size() > 0) {
+      if (!profile_reports->GetList().empty()) {
         DCHECK_EQ(1u, profile_reports->GetList().size());
         // Currently, profile send their browser reports individually.
         std::unique_ptr<em::ChromeUserProfileReport> profile_report_request =

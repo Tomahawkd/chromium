@@ -7,36 +7,28 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/dom/events/event_listener.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/processing_instruction.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/xml/xsl_style_sheet.h"
 #include "third_party/blink/renderer/core/xml/xslt_processor.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
 class DOMContentLoadedListener final
-    : public EventListener,
+    : public NativeEventListener,
       public ProcessingInstruction::DetachableEventListener {
   USING_GARBAGE_COLLECTED_MIXIN(DOMContentLoadedListener);
 
  public:
-  static DOMContentLoadedListener* Create(ProcessingInstruction* pi) {
-    return MakeGarbageCollected<DOMContentLoadedListener>(pi);
-  }
-
-  DOMContentLoadedListener(ProcessingInstruction* pi)
-      : EventListener(EventListener::kCPPEventListenerType),
-        processing_instruction_(pi) {}
-
-  bool operator==(const EventListener& rhs) const override {
-    return this == &rhs;
-  }
+  explicit DOMContentLoadedListener(ProcessingInstruction* pi)
+      : processing_instruction_(pi) {}
 
   void Invoke(ExecutionContext* execution_context, Event* event) override {
     DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
@@ -64,7 +56,7 @@ class DOMContentLoadedListener final
 
   void Trace(blink::Visitor* visitor) override {
     visitor->Trace(processing_instruction_);
-    EventListener::Trace(visitor);
+    NativeEventListener::Trace(visitor);
     ProcessingInstruction::DetachableEventListener::Trace(visitor);
   }
 
@@ -98,17 +90,14 @@ void DocumentXSLT::ApplyXSLTransform(Document& document,
   LocalFrame* owner_frame = document.GetFrame();
   processor->CreateDocumentFromSource(new_source, result_encoding,
                                       result_mime_type, &document, owner_frame);
-  probe::frameDocumentUpdated(owner_frame);
+  probe::FrameDocumentUpdated(owner_frame);
   document.SetParsingState(Document::kFinishedParsing);
 }
 
 ProcessingInstruction* DocumentXSLT::FindXSLStyleSheet(Document& document) {
   for (Node* node = document.firstChild(); node; node = node->nextSibling()) {
-    if (node->getNodeType() != Node::kProcessingInstructionNode)
-      continue;
-
-    ProcessingInstruction* pi = ToProcessingInstruction(node);
-    if (pi->IsXSL())
+    auto* pi = DynamicTo<ProcessingInstruction>(node);
+    if (pi && pi->IsXSL())
       return pi;
   }
   return nullptr;
@@ -123,7 +112,7 @@ bool DocumentXSLT::ProcessingInstructionInsertedIntoDocument(
   if (!RuntimeEnabledFeatures::XSLTEnabled() || !document.GetFrame())
     return true;
 
-  DOMContentLoadedListener* listener = DOMContentLoadedListener::Create(pi);
+  auto* listener = MakeGarbageCollected<DOMContentLoadedListener>(pi);
   document.addEventListener(event_type_names::kDOMContentLoaded, listener,
                             false);
   DCHECK(!pi->EventListenerForXSLT());

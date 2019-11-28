@@ -38,17 +38,17 @@ const ExtensionIconSet& IconsInfo::GetIcons(const Extension* extension) {
 // static
 ExtensionResource IconsInfo::GetIconResource(
     const Extension* extension,
-    int size,
+    int size_in_px,
     ExtensionIconSet::MatchType match_type) {
-  const std::string& path = GetIcons(extension).Get(size, match_type);
+  const std::string& path = GetIcons(extension).Get(size_in_px, match_type);
   return path.empty() ? ExtensionResource() : extension->GetResource(path);
 }
 
 // static
 GURL IconsInfo::GetIconURL(const Extension* extension,
-                           int size,
+                           int size_in_px,
                            ExtensionIconSet::MatchType match_type) {
-  const std::string& path = GetIcons(extension).Get(size, match_type);
+  const std::string& path = GetIcons(extension).Get(size_in_px, match_type);
   return path.empty() ? GURL() : extension->GetResourceURL(path);
 }
 
@@ -60,7 +60,7 @@ IconsHandler::~IconsHandler() {
 
 bool IconsHandler::Parse(Extension* extension, base::string16* error) {
   std::unique_ptr<IconsInfo> icons_info(new IconsInfo);
-  const base::DictionaryValue* icons_dict = NULL;
+  const base::Value* icons_dict = nullptr;
   if (!extension->manifest()->GetDictionary(keys::kIcons, &icons_dict)) {
     *error = base::ASCIIToUTF16(manifest_errors::kInvalidIcons);
     return false;

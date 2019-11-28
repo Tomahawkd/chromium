@@ -133,7 +133,7 @@ void CommandBufferHelper::FreeRingBuffer() {
   }
 }
 
-gpu::ContextResult CommandBufferHelper::Initialize(int32_t ring_buffer_size) {
+gpu::ContextResult CommandBufferHelper::Initialize(uint32_t ring_buffer_size) {
   ring_buffer_size_ = ring_buffer_size;
   if (!AllocateRingBuffer()) {
     // This would fail if CreateTransferBuffer fails, which will not fail for
@@ -260,8 +260,18 @@ bool CommandBufferHelper::HasTokenPassed(int32_t token) {
   // Don't update state if we don't have to.
   if (token <= cached_last_token_read_)
     return true;
+  RefreshCachedToken();
+  return token <= cached_last_token_read_;
+}
+
+void CommandBufferHelper::RefreshCachedToken() {
   CommandBuffer::State last_state = command_buffer_->GetLastState();
   UpdateCachedState(last_state);
+}
+
+bool CommandBufferHelper::HasCachedTokenPassed(int32_t token) {
+  if (token > token_)
+    return true;
   return token <= cached_last_token_read_;
 }
 

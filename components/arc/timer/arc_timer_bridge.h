@@ -15,8 +15,8 @@
 #include "base/optional.h"
 #include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
-#include "components/arc/common/timer.mojom.h"
-#include "components/arc/connection_observer.h"
+#include "components/arc/mojom/timer.mojom.h"
+#include "components/arc/session/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
@@ -69,13 +69,6 @@ class ArcTimerBridge : public KeyedService,
   // Callback for (powerd API) call made in |DeleteArcTimers|.
   void OnDeleteArcTimers(bool result);
 
-  // Callback for delete timers (powerd API) call made in |CreateTimers|.
-  void OnDeleteBeforeCreateArcTimers(
-      std::vector<std::pair<clockid_t, base::ScopedFD>>
-          create_arc_timers_requests,
-      CreateTimersCallback callback,
-      bool result);
-
   // Callback for powerd's D-Bus API called in |CreateTimers|.
   void OnCreateArcTimers(std::vector<clockid_t> clock_ids,
                          CreateTimersCallback callback,
@@ -94,7 +87,7 @@ class ArcTimerBridge : public KeyedService,
 
   mojo::Binding<mojom::TimerHost> binding_;
 
-  base::WeakPtrFactory<ArcTimerBridge> weak_ptr_factory_;
+  base::WeakPtrFactory<ArcTimerBridge> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ArcTimerBridge);
 };

@@ -45,21 +45,21 @@ bool BluetoothAdapterFactoryWrapper::IsLowEnergySupported() {
 
 void BluetoothAdapterFactoryWrapper::AcquireAdapter(
     BluetoothAdapter::Observer* observer,
-    const AcquireAdapterCallback& callback) {
+    AcquireAdapterCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!GetAdapter(observer));
 
   AddAdapterObserver(observer);
-  if (adapter_.get()) {
+  if (adapter_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(callback, base::Unretained(adapter_.get())));
+        FROM_HERE, base::BindOnce(std::move(callback), adapter_));
     return;
   }
 
   DCHECK(BluetoothAdapterFactory::Get().IsLowEnergySupported());
   BluetoothAdapterFactory::GetAdapter(
-      base::Bind(&BluetoothAdapterFactoryWrapper::OnGetAdapter,
-                 weak_ptr_factory_.GetWeakPtr(), callback));
+      base::BindOnce(&BluetoothAdapterFactoryWrapper::OnGetAdapter,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void BluetoothAdapterFactoryWrapper::ReleaseAdapter(
@@ -88,25 +88,24 @@ void BluetoothAdapterFactoryWrapper::SetBluetoothAdapterForTesting(
   set_adapter(std::move(mock_adapter));
 }
 
-BluetoothAdapterFactoryWrapper::BluetoothAdapterFactoryWrapper()
-    : weak_ptr_factory_(this) {
+BluetoothAdapterFactoryWrapper::BluetoothAdapterFactoryWrapper() {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
 void BluetoothAdapterFactoryWrapper::OnGetAdapter(
-    const AcquireAdapterCallback& continuation,
+    AcquireAdapterCallback continuation,
     scoped_refptr<BluetoothAdapter> adapter) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   set_adapter(adapter);
-  continuation.Run(adapter_.get());
+  std::move(continuation).Run(adapter_);
 }
 
 bool BluetoothAdapterFactoryWrapper::HasAdapter(
     BluetoothAdapter::Observer* observer) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  return base::ContainsKey(adapter_observers_, observer);
+  return base::Contains(adapter_observers_, observer);
 }
 
 void BluetoothAdapterFactoryWrapper::AddAdapterObserver(

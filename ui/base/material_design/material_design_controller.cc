@@ -10,18 +10,16 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/no_destructor.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/buildflag.h"
+#include "ui/base/buildflags.h"
 #include "ui/base/material_design/material_design_controller_observer.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/base/ui_features.h"
 #include "ui/gfx/animation/linear_animation.h"
-#include "ui/gfx/color_palette.h"
-#include "ui/gfx/color_utils.h"
 
 #if defined(OS_WIN)
 #include "base/win/win_util.h"
@@ -68,10 +66,10 @@ void MaterialDesignController::Initialize() {
   if (!touch && (switch_value != switches::kTopChromeTouchUiDisabled) &&
       features::IsAutomaticUiAdjustmentsForTouchEnabled()) {
 #if defined(OS_CHROMEOS)
-    // TabletModeClient's default state is in non-tablet mode.
+    // TabletModePageBehavior's default state is in non-tablet mode.
     automatic_touch_ui_ = true;
 #elif defined(OS_WIN)
-    if (base::win::GetVersion() >= base::win::VERSION_WIN10) {
+    if (base::win::GetVersion() >= base::win::Version::WIN10) {
       // Win 10+ uses dynamic mode by default and checks the current tablet mode
       // state to determine whether to start in touch mode.
       automatic_touch_ui_ = true;
@@ -87,11 +85,8 @@ void MaterialDesignController::Initialize() {
   }
   SetTouchUi(touch);
 
-  // Ideally, there would be a more general, "initialize random stuff here"
-  // function into which these things and a call to this function can be placed.
-  // TODO(crbug.com/864544)
-  color_utils::SetDarkestColor(gfx::kGoogleGrey900);
-
+  // TODO(crbug.com/864544): Ideally, there would be a more general, "initialize
+  // random stuff here" function into which this sort of thing can be placed.
   double animation_duration_scale;
   if (base::StringToDouble(
           command_line->GetSwitchValueASCII(switches::kAnimationDurationScale),

@@ -9,6 +9,8 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/cancelable_callback.h"
 #include "base/command_line.h"
 #include "base/location.h"
@@ -29,7 +31,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/common/extension_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -43,7 +45,7 @@ namespace extensions {
 class FullStreamUIPolicyTest : public testing::Test {
  public:
   FullStreamUIPolicyTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP) {
+      : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP) {
 #if defined OS_CHROMEOS
     test_user_manager_.reset(new chromeos::ScopedTestUserManager());
 #endif
@@ -55,6 +57,10 @@ class FullStreamUIPolicyTest : public testing::Test {
     extension_service_ = static_cast<TestExtensionSystem*>(
         ExtensionSystem::Get(profile_.get()))->CreateExtensionService
             (&no_program_command_line, base::FilePath(), false);
+
+    // Run pending async tasks resulting from profile construction to ensure
+    // these are complete before the test begins.
+    base::RunLoop().RunUntilIdle();
   }
 
   ~FullStreamUIPolicyTest() override {
@@ -323,7 +329,7 @@ class FullStreamUIPolicyTest : public testing::Test {
  protected:
   ExtensionService* extension_service_;
   std::unique_ptr<TestingProfile> profile_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
 #if defined OS_CHROMEOS
   chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
@@ -424,6 +430,20 @@ TEST_F(FullStreamUIPolicyTest, LogAndFetchFilteredActions) {
   CheckReadFilteredData(
       policy, extension->id(), Action::ACTION_API_CALL, "tabs.testMethod", "",
       "", -1,
+      base::BindOnce(
+          &FullStreamUIPolicyTest::RetrieveActions_FetchFilteredActions1));
+
+  // Test for case insensitive matching for api_call.
+  CheckReadFilteredData(
+      policy, extension->id(), Action::ACTION_API_CALL, "tabs.testmethod", "",
+      "", -1,
+      base::BindOnce(
+          &FullStreamUIPolicyTest::RetrieveActions_FetchFilteredActions1));
+
+  // Test for prefix matching for api_call.
+  CheckReadFilteredData(
+      policy, extension->id(), Action::ACTION_API_CALL, "tabs.testM", "", "",
+      -1,
       base::BindOnce(
           &FullStreamUIPolicyTest::RetrieveActions_FetchFilteredActions1));
 

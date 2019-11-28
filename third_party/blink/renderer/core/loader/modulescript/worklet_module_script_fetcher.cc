@@ -15,12 +15,12 @@ WorkletModuleScriptFetcher::WorkletModuleScriptFetcher(
 void WorkletModuleScriptFetcher::Fetch(
     FetchParameters& fetch_params,
     ResourceFetcher* fetch_client_settings_object_fetcher,
+    const Modulator* modulator_for_built_in_modules,
     ModuleGraphLevel level,
     ModuleScriptFetcher::Client* client) {
   if (module_responses_map_->GetEntry(
           fetch_params.Url(), client,
-          fetch_client_settings_object_fetcher->Context()
-              .GetLoadingTaskRunner())) {
+          fetch_client_settings_object_fetcher->GetTaskRunner())) {
     return;
   }
 
@@ -45,11 +45,12 @@ void WorkletModuleScriptFetcher::NotifyFinished(Resource* resource) {
   base::Optional<ModuleScriptCreationParams> params;
   ScriptResource* script_resource = ToScriptResource(resource);
   HeapVector<Member<ConsoleMessage>> error_messages;
-  if (WasModuleLoadSuccessful(script_resource, &error_messages)) {
-    params.emplace(
-        script_resource->GetResponse().CurrentRequestUrl(),
-        script_resource->SourceText(),
-        script_resource->GetResourceRequest().GetFetchCredentialsMode());
+  ModuleScriptCreationParams::ModuleType module_type;
+  if (WasModuleLoadSuccessful(script_resource, &error_messages, &module_type)) {
+    params.emplace(script_resource->GetResponse().CurrentRequestUrl(),
+                   module_type, script_resource->SourceText(),
+                   script_resource->CacheHandler(),
+                   script_resource->GetResourceRequest().GetCredentialsMode());
   }
 
   // This will eventually notify |client| passed to

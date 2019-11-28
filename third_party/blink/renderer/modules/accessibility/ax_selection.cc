@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/core/editing/text_affinity.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object.h"
+#include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 
 namespace blink {
 
@@ -119,16 +120,48 @@ void AXSelection::ClearCurrentSelection(Document& document) {
 AXSelection AXSelection::FromCurrentSelection(
     const Document& document,
     const AXSelectionBehavior selection_behavior) {
-  LocalFrame* frame = document.GetFrame();
+  const LocalFrame* frame = document.GetFrame();
   if (!frame)
     return {};
 
-  FrameSelection& frame_selection = frame->Selection();
+  const FrameSelection& frame_selection = frame->Selection();
   if (!frame_selection.IsAvailable())
     return {};
 
   return FromSelection(frame_selection.GetSelectionInDOMTree(),
                        selection_behavior);
+}
+
+// static
+AXSelection AXSelection::FromCurrentSelection(
+    const TextControlElement& text_control) {
+  const Document& document = text_control.GetDocument();
+  AXObjectCache* ax_object_cache = document.ExistingAXObjectCache();
+  if (!ax_object_cache)
+    return {};
+
+  auto* ax_object_cache_impl = static_cast<AXObjectCacheImpl*>(ax_object_cache);
+  const AXObject* ax_text_control =
+      ax_object_cache_impl->GetOrCreate(&text_control);
+  DCHECK(ax_text_control);
+  const TextAffinity extent_affinity = text_control.Selection().Affinity();
+  const TextAffinity base_affinity =
+      text_control.selectionStart() == text_control.selectionEnd()
+          ? extent_affinity
+          : TextAffinity::kDownstream;
+  const auto ax_base = AXPosition::CreatePositionInTextObject(
+      *ax_text_control, static_cast<int>(text_control.selectionStart()),
+      base_affinity);
+  const auto ax_extent = AXPosition::CreatePositionInTextObject(
+      *ax_text_control, static_cast<int>(text_control.selectionEnd()),
+      extent_affinity);
+
+  if (!ax_base.IsValid() || !ax_extent.IsValid())
+    return {};
+
+  AXSelection::Builder selection_builder;
+  selection_builder.SetBase(ax_base).SetExtent(ax_extent);
+  return selection_builder.Build();
 }
 
 // static
@@ -141,38 +174,51 @@ AXSelection AXSelection::FromSelection(
 
   const Position dom_base = selection.Base();
   const Position dom_extent = selection.Extent();
-  const TextAffinity base_affinity = TextAffinity::kDownstream;
   const TextAffinity extent_affinity = selection.Affinity();
+  const TextAffinity base_affinity =
+      selection.IsCaret() ? extent_affinity : TextAffinity::kDownstream;
 
   AXPositionAdjustmentBehavior base_adjustment =
       AXPositionAdjustmentBehavior::kMoveRight;
   AXPositionAdjustmentBehavior extent_adjustment =
       AXPositionAdjustmentBehavior::kMoveRight;
-  switch (selection_behavior) {
-    case AXSelectionBehavior::kShrinkToValidDOMRange:
-      if (selection.IsBaseFirst()) {
-        base_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
-        extent_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
-      } else {
-        base_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
-        extent_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
-      }
-      break;
-    case AXSelectionBehavior::kExtendToValidDOMRange:
-      if (selection.IsBaseFirst()) {
-        base_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
-        extent_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
-      } else {
-        base_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
-        extent_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
-      }
-      break;
+  // If the selection is not collapsed, extend or shrink the DOM selection if
+  // there is no equivalent selection in the accessibility tree, i.e. if the
+  // corresponding endpoints are either ignored or unavailable in the
+  // accessibility tree. If the selection is collapsed, move both endpoints to
+  // the next valid position in the accessibility tree but do not extend or
+  // shrink the selection, because this will result in a non-collapsed selection
+  // in the accessibility tree.
+  if (!selection.IsCaret()) {
+    switch (selection_behavior) {
+      case AXSelectionBehavior::kShrinkToValidDOMRange:
+        if (selection.IsBaseFirst()) {
+          base_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
+          extent_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
+        } else {
+          base_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
+          extent_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
+        }
+        break;
+      case AXSelectionBehavior::kExtendToValidDOMRange:
+        if (selection.IsBaseFirst()) {
+          base_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
+          extent_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
+        } else {
+          base_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
+          extent_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
+        }
+        break;
+    }
   }
 
   const auto ax_base =
       AXPosition::FromPosition(dom_base, base_affinity, base_adjustment);
   const auto ax_extent =
       AXPosition::FromPosition(dom_extent, extent_affinity, extent_adjustment);
+
+  if (!ax_base.IsValid() || !ax_extent.IsValid())
+    return {};
 
   AXSelection::Builder selection_builder;
   selection_builder.SetBase(ax_base).SetExtent(ax_extent);
@@ -239,24 +285,24 @@ const SelectionInDOMTree AXSelection::AsSelection(
     return {};
 
   AXPositionAdjustmentBehavior base_adjustment =
-      AXPositionAdjustmentBehavior::kMoveRight;
+      AXPositionAdjustmentBehavior::kMoveLeft;
   AXPositionAdjustmentBehavior extent_adjustment =
-      AXPositionAdjustmentBehavior::kMoveRight;
+      AXPositionAdjustmentBehavior::kMoveLeft;
   switch (selection_behavior) {
     case AXSelectionBehavior::kShrinkToValidDOMRange:
-      if (base_ <= extent_) {
+      if (base_ < extent_) {
         base_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
         extent_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
-      } else {
+      } else if (base_ > extent_) {
         base_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
         extent_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
       }
       break;
     case AXSelectionBehavior::kExtendToValidDOMRange:
-      if (base_ <= extent_) {
+      if (base_ < extent_) {
         base_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
         extent_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
-      } else {
+      } else if (base_ > extent_) {
         base_adjustment = AXPositionAdjustmentBehavior::kMoveRight;
         extent_adjustment = AXPositionAdjustmentBehavior::kMoveLeft;
       }
@@ -392,7 +438,7 @@ bool operator!=(const AXSelection& a, const AXSelection& b) {
 }
 
 std::ostream& operator<<(std::ostream& ostream, const AXSelection& selection) {
-  return ostream << selection.ToString().Utf8().data();
+  return ostream << selection.ToString().Utf8();
 }
 
 }  // namespace blink

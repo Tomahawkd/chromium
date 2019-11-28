@@ -65,8 +65,7 @@ const char kDrawTexFrag[] =
 
 namespace remoting {
 
-GlCanvas::GlCanvas(int gl_version)
-    : gl_version_(gl_version), weak_factory_(this) {
+GlCanvas::GlCanvas(int gl_version) : gl_version_(gl_version) {
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size_);
 
   vertex_shader_ = CompileShader(GL_VERTEX_SHADER, kTexCoordToViewVert);
@@ -140,8 +139,9 @@ void GlCanvas::DrawTexture(int texture_id,
 
   glVertexAttribPointer(position_location_, kVertexSize, GL_FLOAT, GL_FALSE, 0,
                         0);
-  glVertexAttribPointer(tex_cord_location_, kVertexSize, GL_FLOAT, GL_FALSE, 0,
-                        static_cast<float*>(0) + kVertexSize * kVertexCount);
+  glVertexAttribPointer(
+      tex_cord_location_, kVertexSize, GL_FLOAT, GL_FALSE, 0,
+      reinterpret_cast<void*>(kVertexSize * kVertexCount * sizeof(GLfloat)));
 
   glDrawArrays(GL_TRIANGLE_STRIP, 0, kVertexCount);
   glBindBuffer(GL_ARRAY_BUFFER, 0);

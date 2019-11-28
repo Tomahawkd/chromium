@@ -252,8 +252,12 @@ void AUHALStream::Start(AudioSourceCallback* callback) {
 
   Stop();
   OSSTATUS_DLOG(ERROR, result) << "AudioOutputUnitStart() failed.";
-  callback->OnError();
+  callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
 }
+
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void AUHALStream::Flush() {}
 
 void AUHALStream::Stop() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -265,7 +269,7 @@ void AUHALStream::Stop() {
   OSSTATUS_DLOG_IF(ERROR, result != noErr, result)
       << "AudioOutputUnitStop() failed.";
   if (result != noErr)
-    source_->OnError();
+    source_->OnError(AudioSourceCallback::ErrorType::kUnknown);
   ReportAndResetStats();
   source_ = nullptr;
   stopped_ = true;

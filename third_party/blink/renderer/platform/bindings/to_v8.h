@@ -12,6 +12,7 @@
 
 #include "base/containers/span.h"
 #include "base/optional.h"
+#include "base/time/time.h"
 #include "third_party/blink/renderer/platform/bindings/callback_function_base.h"
 #include "third_party/blink/renderer/platform/bindings/callback_interface_base.h"
 #include "third_party/blink/renderer/platform/bindings/dom_data_store.h"
@@ -47,10 +48,11 @@ inline v8::Local<v8::Value> ToV8(CallbackFunctionBase* callback,
                                  v8::Isolate* isolate) {
   // |creation_context| is intentionally ignored. Callback functions are not
   // wrappers nor clonable. ToV8 on a callback function must be used only when
-  // it's the same origin-domain in the same world.
-  DCHECK(!callback || (callback->CallbackRelevantScriptState()->GetContext() ==
-                       creation_context->CreationContext()));
-  return callback ? callback->CallbackFunction().As<v8::Value>()
+  // it's in the same world.
+  DCHECK(!callback ||
+         (&callback->GetWorld() ==
+          &ScriptState::From(creation_context->CreationContext())->World()));
+  return callback ? callback->CallbackObject().As<v8::Value>()
                   : v8::Null(isolate).As<v8::Value>();
 }
 
@@ -59,11 +61,12 @@ inline v8::Local<v8::Value> ToV8(CallbackFunctionBase* callback,
 inline v8::Local<v8::Value> ToV8(CallbackInterfaceBase* callback,
                                  v8::Local<v8::Object> creation_context,
                                  v8::Isolate* isolate) {
-  // |creation_context| is intentionally ignored. Callback interface objects
-  // are not wrappers nor clonable. ToV8 on a callback interface object must
-  // be used only when it's the same origin-domain in the same world.
-  DCHECK(!callback || (callback->CallbackRelevantScriptState()->GetContext() ==
-                       creation_context->CreationContext()));
+  // |creation_context| is intentionally ignored. Callback interfaces are not
+  // wrappers nor clonable. ToV8 on a callback interface must be used only when
+  // it's in the same world.
+  DCHECK(!callback ||
+         (&callback->GetWorld() ==
+          &ScriptState::From(creation_context->CreationContext())->World()));
   return callback ? callback->CallbackObject().As<v8::Value>()
                   : v8::Null(isolate).As<v8::Value>();
 }
@@ -124,37 +127,25 @@ inline v8::Local<v8::Value> ToV8UnsignedIntegerInternal<8>(
   return v8::Number::New(isolate, value);
 }
 
-inline v8::Local<v8::Value> ToV8(int value,
+inline v8::Local<v8::Value> ToV8(int32_t value,
                                  v8::Local<v8::Object> creation_context,
                                  v8::Isolate* isolate) {
   return ToV8SignedIntegerInternal<sizeof value>(value, isolate);
 }
 
-inline v8::Local<v8::Value> ToV8(long value,
+inline v8::Local<v8::Value> ToV8(int64_t value,
                                  v8::Local<v8::Object> creation_context,
                                  v8::Isolate* isolate) {
   return ToV8SignedIntegerInternal<sizeof value>(value, isolate);
 }
 
-inline v8::Local<v8::Value> ToV8(long long value,
-                                 v8::Local<v8::Object> creation_context,
-                                 v8::Isolate* isolate) {
-  return ToV8SignedIntegerInternal<sizeof value>(value, isolate);
-}
-
-inline v8::Local<v8::Value> ToV8(unsigned value,
+inline v8::Local<v8::Value> ToV8(uint32_t value,
                                  v8::Local<v8::Object> creation_context,
                                  v8::Isolate* isolate) {
   return ToV8UnsignedIntegerInternal<sizeof value>(value, isolate);
 }
 
-inline v8::Local<v8::Value> ToV8(unsigned long value,
-                                 v8::Local<v8::Object> creation_context,
-                                 v8::Isolate* isolate) {
-  return ToV8UnsignedIntegerInternal<sizeof value>(value, isolate);
-}
-
-inline v8::Local<v8::Value> ToV8(unsigned long long value,
+inline v8::Local<v8::Value> ToV8(uint64_t value,
                                  v8::Local<v8::Object> creation_context,
                                  v8::Isolate* isolate) {
   return ToV8UnsignedIntegerInternal<sizeof value>(value, isolate);
@@ -331,6 +322,12 @@ template <typename T>
 inline v8::Local<v8::Value> ToV8(T&& value, ScriptState* script_state) {
   return ToV8(std::forward<T>(value), script_state->GetContext()->Global(),
               script_state->GetIsolate());
+}
+
+// Date
+inline v8::Local<v8::Value> ToV8(base::Time date, ScriptState* script_state) {
+  return v8::Date::New(script_state->GetContext(), date.ToJsTimeIgnoringNull())
+      .ToLocalChecked();
 }
 
 // Only declare ToV8(void*,...) for checking function overload mismatch.

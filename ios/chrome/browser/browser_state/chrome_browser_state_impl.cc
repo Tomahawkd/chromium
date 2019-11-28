@@ -31,9 +31,8 @@
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/prefs/browser_prefs.h"
 #include "ios/chrome/browser/prefs/ios_chrome_pref_service_factory.h"
-#include "ios/chrome/browser/signin/identity_service_creator.h"
-#include "ios/web/public/web_thread.h"
-#include "services/identity/public/mojom/constants.mojom.h"
+#include "ios/chrome/browser/send_tab_to_self/send_tab_to_self_client_service_factory.h"
+#include "ios/web/public/thread/web_thread.h"
 
 namespace {
 
@@ -77,8 +76,6 @@ ChromeBrowserStateImpl::ChromeBrowserStateImpl(
       state_path_(path),
       pref_registry_(new user_prefs::PrefRegistrySyncable),
       io_data_(new ChromeBrowserStateImplIOData::Handle(this)) {
-  BrowserState::Initialize(this, state_path_);
-
   otr_state_path_ = state_path_.Append(FILE_PATH_LITERAL("OTR"));
 
   // It would be nice to use PathService for fetching this directory, but
@@ -93,7 +90,7 @@ ChromeBrowserStateImpl::ChromeBrowserStateImpl(
 
   RegisterBrowserStatePrefs(pref_registry_.get());
   BrowserStateDependencyManager::GetInstance()
-      ->RegisterBrowserStatePrefsForServices(this, pref_registry_.get());
+      ->RegisterBrowserStatePrefsForServices(pref_registry_.get());
 
   prefs_ = CreateBrowserStatePrefs(state_path_, GetIOTaskRunner().get(),
                                    pref_registry_);
@@ -109,20 +106,19 @@ ChromeBrowserStateImpl::ChromeBrowserStateImpl(
       this);
 
   base::FilePath cookie_path = state_path_.Append(kIOSChromeCookieFilename);
-  base::FilePath channel_id_path =
-      state_path_.Append(kIOSChromeChannelIDFilename);
   base::FilePath cache_path = GetCachePath(base_cache_path);
   int cache_max_size = 0;
 
   // Make sure we initialize the io_data_ after everything else has been
   // initialized that we might be reading from the IO thread.
-  io_data_->Init(cookie_path, channel_id_path, cache_path, cache_max_size,
-                 state_path_);
+  io_data_->Init(cookie_path, cache_path, cache_max_size, state_path_);
 
   // Listen for bookmark model load, to bootstrap the sync service.
   bookmarks::BookmarkModel* model =
       ios::BookmarkModelFactory::GetForBrowserState(this);
   model->AddObserver(new BookmarkModelLoadedObserver(this));
+
+  send_tab_to_self::SendTabToSelfClientServiceFactory::GetForBrowserState(this);
 }
 
 ChromeBrowserStateImpl::~ChromeBrowserStateImpl() {
@@ -171,19 +167,6 @@ base::FilePath ChromeBrowserStateImpl::GetStatePath() const {
   return state_path_;
 }
 
-std::unique_ptr<service_manager::Service>
-ChromeBrowserStateImpl::HandleServiceRequest(
-    const std::string& service_name,
-    service_manager::mojom::ServiceRequest request) {
-  // TODO(crbug.com/787794): It would be nice to avoid ChromeBrowserState/
-  // Profile needing to know explicitly about every service that it is
-  // embedding.
-  if (service_name == identity::mojom::kServiceName)
-    return CreateIdentityService(this, std::move(request));
-
-  return nullptr;
-}
-
 void ChromeBrowserStateImpl::SetOffTheRecordChromeBrowserState(
     std::unique_ptr<ios::ChromeBrowserState> otr_state) {
   DCHECK(!otr_state_);
@@ -210,12 +193,6 @@ net::URLRequestContextGetter* ChromeBrowserStateImpl::CreateRequestContext(
           protocol_handlers, application_context->GetLocalState(),
           application_context->GetIOSChromeIOThread())
       .get();
-}
-
-net::URLRequestContextGetter*
-ChromeBrowserStateImpl::CreateIsolatedRequestContext(
-    const base::FilePath& partition_path) {
-  return io_data_->CreateIsolatedAppRequestContextGetter(partition_path).get();
 }
 
 void ChromeBrowserStateImpl::ClearNetworkingHistorySince(

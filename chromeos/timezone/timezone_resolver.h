@@ -8,9 +8,9 @@
 #include <memory>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
-#include "chromeos/chromeos_export.h"
 #include "url/gurl.h"
 
 class PrefRegistrySimple;
@@ -25,17 +25,18 @@ namespace chromeos {
 struct TimeZoneResponseData;
 
 // This class implements periodic timezone synchronization.
-class CHROMEOS_EXPORT TimeZoneResolver {
+class COMPONENT_EXPORT(CHROMEOS_TIMEZONE) TimeZoneResolver {
  public:
   class TimeZoneResolverImpl;
 
   // This callback will be called when new timezone arrives.
   using ApplyTimeZoneCallback =
-      base::Callback<void(const TimeZoneResponseData*)>;
+      base::RepeatingCallback<void(const TimeZoneResponseData*)>;
 
   // chromeos::DelayNetworkCall cannot be used directly due to link
   // restrictions.
-  using DelayNetworkCallClosure = base::Callback<void(const base::Closure&)>;
+  using DelayNetworkCallClosure =
+      base::RepeatingCallback<void(base::OnceClosure)>;
 
   class Delegate {
    public:

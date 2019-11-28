@@ -8,7 +8,6 @@ import static org.chromium.chrome.browser.download.DownloadBroadcastManager.getS
 import static org.chromium.chrome.browser.download.DownloadSnackbarController.INVALID_NOTIFICATION_ID;
 
 import android.app.Notification;
-import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -19,16 +18,20 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.drawable.shapes.OvalShape;
-import android.support.annotation.IntDef;
 import android.text.TextUtils;
+
+import androidx.annotation.IntDef;
+import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.StrictModeContext;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.flags.FeatureUtilities;
+import org.chromium.chrome.browser.notifications.NotificationManagerProxy;
+import org.chromium.chrome.browser.notifications.NotificationManagerProxyImpl;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.offline_items_collection.ContentId;
@@ -82,6 +85,8 @@ public class DownloadNotificationService {
             "org.chromium.chrome.browser.download.OfflineItemsStateAtCancel";
 
     static final String EXTRA_NOTIFICATION_BUNDLE_ICON_ID = "Chrome.NotificationBundleIconIdExtra";
+    static final String EXTRA_IS_AUTO_RESUMPTION =
+            "org.chromium.chrome.browser.download.IS_AUTO_RESUMPTION";
     /** Notification Id starting value, to avoid conflicts from IDs used in prior versions. */
     private static final int STARTING_NOTIFICATION_ID = 1000000;
 
@@ -93,7 +98,7 @@ public class DownloadNotificationService {
     @VisibleForTesting
     final List<ContentId> mDownloadsInProgress = new ArrayList<ContentId>();
 
-    private NotificationManager mNotificationManager;
+    private NotificationManagerProxy mNotificationManager;
     private Bitmap mDownloadSuccessLargeIcon;
     private DownloadSharedPreferenceHelper mDownloadSharedPreferenceHelper;
     private DownloadForegroundServiceManager mDownloadForegroundServiceManager;
@@ -113,8 +118,7 @@ public class DownloadNotificationService {
     @VisibleForTesting
     DownloadNotificationService() {
         mNotificationManager =
-                (NotificationManager) ContextUtils.getApplicationContext().getSystemService(
-                        Context.NOTIFICATION_SERVICE);
+                new NotificationManagerProxyImpl(ContextUtils.getApplicationContext());
         mDownloadSharedPreferenceHelper = DownloadSharedPreferenceHelper.getInstance();
         mDownloadForegroundServiceManager = new DownloadForegroundServiceManager();
     }
@@ -242,7 +246,7 @@ public class DownloadNotificationService {
                                                 .setPendingState(pendingState)
                                                 .build();
         Notification notification = DownloadNotificationFactory.buildNotification(
-                context, DownloadStatus.IN_PROGRESS, downloadUpdate);
+                context, DownloadStatus.IN_PROGRESS, downloadUpdate, notificationId);
         updateNotification(notificationId, notification, id,
                 new DownloadSharedPreferenceEntry(id, notificationId, isOffTheRecord,
                         canDownloadWhileMetered, fileName, true, isTransient));
@@ -253,7 +257,7 @@ public class DownloadNotificationService {
         startTrackingInProgressDownload(id);
     }
 
-    public void cancelNotification(int notificationId) {
+    private void cancelNotification(int notificationId) {
         // TODO(b/65052774): Add back NOTIFICATION_NAMESPACE when able to.
         mNotificationManager.cancel(notificationId);
     }
@@ -343,7 +347,7 @@ public class DownloadNotificationService {
                                                 .build();
 
         Notification notification = DownloadNotificationFactory.buildNotification(
-                context, DownloadStatus.PAUSED, downloadUpdate);
+                context, DownloadStatus.PAUSED, downloadUpdate, notificationId);
         updateNotification(notificationId, notification, id,
                 new DownloadSharedPreferenceEntry(id, notificationId, isOffTheRecord,
                         canDownloadWhileMetered, fileName, isAutoResumable, isTransient));
@@ -401,7 +405,7 @@ public class DownloadNotificationService {
                                                 .setTotalBytes(totalBytes)
                                                 .build();
         Notification notification = DownloadNotificationFactory.buildNotification(
-                context, DownloadStatus.COMPLETED, downloadUpdate);
+                context, DownloadStatus.COMPLETED, downloadUpdate, notificationId);
 
         updateNotification(notificationId, notification, id, null);
         mDownloadForegroundServiceManager.updateDownloadStatus(
@@ -445,7 +449,7 @@ public class DownloadNotificationService {
                                                 .setFailState(failState)
                                                 .build();
         Notification notification = DownloadNotificationFactory.buildNotification(
-                context, DownloadStatus.FAILED, downloadUpdate);
+                context, DownloadStatus.FAILED, downloadUpdate, notificationId);
 
         updateNotification(notificationId, notification, id, null);
         mDownloadForegroundServiceManager.updateDownloadStatus(
@@ -482,7 +486,7 @@ public class DownloadNotificationService {
     void updateNotification(int id, Notification notification) {
         // TODO(b/65052774): Add back NOTIFICATION_NAMESPACE when able to.
         // Disabling StrictMode to avoid violations (crbug.com/789134).
-        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+        try (StrictModeContext ignored = StrictModeContext.allowDiskReads()) {
             mNotificationManager.notify(id, notification);
         }
     }
@@ -509,10 +513,6 @@ public class DownloadNotificationService {
                         ? NotificationUmaTracker.SystemNotificationType.DOWNLOAD_PAGES
                         : NotificationUmaTracker.SystemNotificationType.DOWNLOAD_FILES,
                 notification);
-
-        // Record the number of other notifications when there's a new notification.
-        DownloadNotificationUmaHelper.recordExistingNotificationsCountHistogram(
-                mDownloadSharedPreferenceHelper.getEntries().size(), true /* withForeground */);
     }
 
     private static boolean canResumeDownload(Context context, DownloadSharedPreferenceEntry entry) {
@@ -528,6 +528,8 @@ public class DownloadNotificationService {
      * already in progress, do nothing.
      */
     void resumeAllPendingDownloads() {
+        if (FeatureUtilities.isDownloadAutoResumptionEnabledInNative()) return;
+
         // Limit the number of auto resumption attempts in case Chrome falls into a vicious cycle.
         DownloadResumptionScheduler.getDownloadResumptionScheduler().cancel();
         int numAutoResumptionAtemptLeft = getResumptionAttemptLeft();
@@ -550,6 +552,7 @@ public class DownloadNotificationService {
             intent.setAction(ACTION_DOWNLOAD_RESUME);
             intent.putExtra(EXTRA_DOWNLOAD_CONTENTID_ID, entry.id.id);
             intent.putExtra(EXTRA_DOWNLOAD_CONTENTID_NAMESPACE, entry.id.namespace);
+            intent.putExtra(EXTRA_IS_AUTO_RESUMPTION, true);
 
             resumeDownload(intent);
         }
@@ -707,7 +710,7 @@ public class DownloadNotificationService {
     private void cancelOffTheRecordDownloads() {
         boolean cancelActualDownload =
                 BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
-                        .isStartupSuccessfullyCompleted()
+                        .isFullBrowserStarted()
                 && Profile.getLastUsedProfile().hasOffTheRecordProfile();
 
         List<DownloadSharedPreferenceEntry> entries = mDownloadSharedPreferenceHelper.getEntries();

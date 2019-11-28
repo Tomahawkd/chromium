@@ -13,7 +13,6 @@
 #include "base/callback.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "device/bluetooth/test/mock_bluetooth_device.h"
-#include "device/bluetooth/test/mock_bluetooth_discovery_session.h"
 #include "device/bluetooth/test/mock_bluetooth_gatt_characteristic.h"
 #include "device/bluetooth/test/mock_bluetooth_gatt_notify_session.h"
 #include "device/bluetooth/test/mock_bluetooth_gatt_service.h"
@@ -21,7 +20,7 @@
 namespace content {
 
 // Implements fake adapters with named mock data set for use in tests as a
-// result of layout tests calling testRunner.setBluetoothFakeAdapter.
+// result of web tests calling testRunner.setBluetoothFakeAdapter.
 
 // An adapter named 'FooAdapter' in
 // https://webbluetoothcg.github.io/web-bluetooth/tests/ is provided by a
@@ -503,16 +502,6 @@ class WebTestBluetoothAdapterProvider {
   //          GetDisconnectingService
   static scoped_refptr<testing::NiceMock<device::MockBluetoothAdapter>>
   GetFailingGATTOperationsAdapter();
-
-  // Discovery Sessions
-
-  // |DiscoverySession|
-  // Mock Functions:
-  //  - Stop:
-  //      Run success callback.
-  static std::unique_ptr<
-      testing::NiceMock<device::MockBluetoothDiscoverySession>>
-  GetDiscoverySession();
 
   // Devices
 

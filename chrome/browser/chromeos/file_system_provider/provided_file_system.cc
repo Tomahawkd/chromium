@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/files/file.h"
 #include "base/macros.h"
@@ -141,8 +143,7 @@ ProvidedFileSystem::ProvidedFileSystem(
           new RequestManager(profile,
                              file_system_info.provider_id().GetExtensionId(),
                              notification_manager_.get())),
-      watcher_queue_(1),
-      weak_ptr_factory_(this) {
+      watcher_queue_(1) {
   DCHECK_EQ(ProviderId::EXTENSION, file_system_info.provider_id().GetType());
 }
 
@@ -214,7 +215,9 @@ AbortCallback ProvidedFileSystem::GetActions(
           new operations::GetActions(event_router_, file_system_info_,
                                      entry_paths, callback)));
   if (!request_id) {
-    callback.Run(Actions(), base::File::FILE_ERROR_SECURITY);
+    // If the provider doesn't listen for GetActions requests, treat it as
+    // having no actions.
+    callback.Run(Actions(), base::File::FILE_OK);
     return AbortCallback();
   }
 

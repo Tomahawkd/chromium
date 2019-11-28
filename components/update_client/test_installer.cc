@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/task/post_task.h"
@@ -43,8 +44,8 @@ void TestInstaller::Install(const base::FilePath& unpack_path,
 
 void TestInstaller::InstallComplete(Callback callback,
                                     const Result& result) const {
-  base::PostTaskWithTraits(FROM_HERE, {base::MayBlock()},
-                           base::BindOnce(std::move(callback), result));
+  base::PostTask(FROM_HERE, {base::ThreadPool(), base::MayBlock()},
+                 base::BindOnce(std::move(callback), result));
 }
 
 bool TestInstaller::GetInstalledFile(const std::string& file,
@@ -74,7 +75,7 @@ VersionedTestInstaller::VersionedTestInstaller() {
 }
 
 VersionedTestInstaller::~VersionedTestInstaller() {
-  base::DeleteFile(install_directory_, true);
+  base::DeleteFileRecursively(install_directory_);
 }
 
 void VersionedTestInstaller::Install(const base::FilePath& unpack_path,

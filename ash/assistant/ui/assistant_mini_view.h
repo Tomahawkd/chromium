@@ -10,7 +10,9 @@
 
 #include "ash/assistant/model/assistant_interaction_model_observer.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
+#include "base/component_export.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
 #include "ui/views/controls/button/button.h"
 
@@ -20,27 +22,17 @@ class Label;
 
 namespace ash {
 
-class AssistantController;
-
-// AssistantMiniViewDelegate ---------------------------------------------------
-
-class AssistantMiniViewDelegate {
- public:
-  // Invoked when the AssistantMiniView is pressed.
-  virtual void OnAssistantMiniViewPressed() {}
-
- protected:
-  virtual ~AssistantMiniViewDelegate() = default;
-};
+class AssistantViewDelegate;
 
 // AssistantMiniView -----------------------------------------------------------
 
-class AssistantMiniView : public views::Button,
-                          public views::ButtonListener,
-                          public AssistantInteractionModelObserver,
-                          public AssistantUiModelObserver {
+class COMPONENT_EXPORT(ASSISTANT_UI) AssistantMiniView
+    : public views::Button,
+      public views::ButtonListener,
+      public AssistantInteractionModelObserver,
+      public AssistantUiModelObserver {
  public:
-  explicit AssistantMiniView(AssistantController* assistant_controller);
+  explicit AssistantMiniView(AssistantViewDelegate* delegate);
   ~AssistantMiniView() override;
 
   // views::View:
@@ -55,7 +47,7 @@ class AssistantMiniView : public views::Button,
   // AssistantInteractionModelObserver:
   void OnInputModalityChanged(InputModality input_modality) override;
   void OnResponseChanged(
-      const std::shared_ptr<AssistantResponse>& response) override;
+      const scoped_refptr<AssistantResponse>& response) override;
 
   // AssistantUiModelObserver:
   void OnUiVisibilityChanged(
@@ -64,18 +56,12 @@ class AssistantMiniView : public views::Button,
       base::Optional<AssistantEntryPoint> entry_point,
       base::Optional<AssistantExitPoint> exit_point) override;
 
-  void set_delegate(AssistantMiniViewDelegate* delegate) {
-    delegate_ = delegate;
-  }
-
  private:
   void InitLayout();
   void UpdatePrompt();
 
-  AssistantController* const assistant_controller_;  // Owned by Shell.
+  AssistantViewDelegate* const delegate_;
   views::Label* label_;                              // Owned by view hierarchy.
-
-  AssistantMiniViewDelegate* delegate_ = nullptr;
 
   // The most recent active query for the current Assistant UI session. If there
   // has been no active query for the current UI session, this is empty.

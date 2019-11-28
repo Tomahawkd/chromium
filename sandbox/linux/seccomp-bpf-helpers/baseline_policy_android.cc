@@ -76,13 +76,15 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     case __NR_flock:
     case __NR_fsync:
     case __NR_ftruncate:
-#if defined(__i386__) || defined(__arm__) || defined(__mips32__)
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
     case __NR_ftruncate64:
 #endif
 #if defined(__x86_64__) || defined(__aarch64__)
     case __NR_newfstatat:
     case __NR_fstatfs:
-#elif defined(__i386__) || defined(__arm__) || defined(__mips32__)
+#elif defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
     case __NR_fstatat64:
     case __NR_fstatfs64:
 #endif
@@ -92,6 +94,7 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     case __NR_getdents64:
     case __NR_getpriority:
     case __NR_ioctl:
+    case __NR_membarrier:  // https://crbug.com/966433
     case __NR_mremap:
 #if defined(__i386__)
     // Used on pre-N to initialize threads in ART.
@@ -138,9 +141,6 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
     case __NR_socket:
 #endif
 
-    // Ptrace is allowed so the Breakpad Microdumper can fork in a renderer
-    // and then ptrace the parent.
-    case __NR_ptrace:
       override_and_allow = true;
       break;
   }
@@ -148,6 +148,12 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
   // https://crbug.com/772441 and https://crbug.com/760020.
   if (SyscallSets::IsEventFd(sysno)) {
     return Allow();
+  }
+
+  // Ptrace is allowed so the crash reporter can fork in a renderer
+  // and then ptrace the parent. https://crbug.com/933418
+  if (sysno == __NR_ptrace) {
+    return RestrictPtrace();
   }
 
   // https://crbug.com/644759
@@ -210,7 +216,8 @@ ResultExpr BaselinePolicyAndroid::EvaluateSyscall(int sysno) const {
                     AnyOf(option == SO_SNDTIMEO,
                           option == SO_RCVTIMEO,
                           option == SO_SNDBUF,
-                          option == SO_REUSEADDR)),
+                          option == SO_REUSEADDR,
+                          option == SO_PASSCRED)),
               Allow())
            .Else(BaselinePolicy::EvaluateSyscall(sysno));
   }

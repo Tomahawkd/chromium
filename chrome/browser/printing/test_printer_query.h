@@ -9,13 +9,10 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/printing/printer_query.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace printing {
 
@@ -26,8 +23,9 @@ class TestPrintQueriesQueue : public PrintQueriesQueue {
   // Creates a TestPrinterQuery. Sets up the printer query with the printer
   // settings indicated by |printable_offset_x_|, |printable_offset_y_|, and
   // |printer_type_|.
-  scoped_refptr<PrinterQuery> CreatePrinterQuery(int render_process_id,
-                                                 int render_frame_id) override;
+  std::unique_ptr<PrinterQuery> CreatePrinterQuery(
+      int render_process_id,
+      int render_frame_id) override;
 
   // Sets the printer's printable area offsets to |offset_x| and |offset_y|,
   // which should be in pixels. Used to fill in printer settings that would
@@ -56,11 +54,12 @@ class TestPrinterQuery : public PrinterQuery {
  public:
   // Can only be called on the IO thread, since this inherits from PrinterQuery.
   TestPrinterQuery(int render_process_id, int render_frame_id);
+  ~TestPrinterQuery() override;
 
   // Updates the current settings with |new_settings| dictionary values. Also
   // fills in the settings with values from |offsets_| and |printer_type_| that
   // would normally be filled in by the PrintingContext.
-  void SetSettings(std::unique_ptr<base::DictionaryValue> new_settings,
+  void SetSettings(base::Value new_settings,
                    base::OnceClosure callback) override;
 
 #if defined(OS_WIN)
@@ -76,8 +75,6 @@ class TestPrinterQuery : public PrinterQuery {
   void StopWorker() override;
 
  private:
-  ~TestPrinterQuery() override;
-
   base::Optional<gfx::Point> offsets_;
 #if defined(OS_WIN)
   base::Optional<PrintSettings::PrinterType> printer_type_;

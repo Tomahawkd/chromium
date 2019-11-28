@@ -5,14 +5,12 @@
 package org.chromium.chrome.browser.download.home.list;
 
 import org.chromium.base.Callback;
-import org.chromium.chrome.browser.modelutil.PropertyKey;
-import org.chromium.chrome.browser.modelutil.PropertyModel.WritableBooleanPropertyKey;
-import org.chromium.chrome.browser.modelutil.PropertyModel.WritableObjectPropertyKey;
 import org.chromium.components.offline_items_collection.OfflineItem;
 import org.chromium.components.offline_items_collection.OfflineItemVisuals;
 import org.chromium.components.offline_items_collection.VisualsCallback;
-
-import java.util.List;
+import org.chromium.ui.modelutil.PropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /**
  * The properties required to build a {@link ListItem} which contain two types of properties for the
@@ -57,16 +55,12 @@ public interface ListProperties {
     WritableObjectPropertyKey<Callback<OfflineItem>> CALLBACK_SHARE =
             new WritableObjectPropertyKey<>();
 
-    /** The callback for when a UI action should share all selected {@link OfflineItem}s. */
-    WritableObjectPropertyKey < Callback < List<OfflineItem>>> CALLBACK_SHARE_ALL =
-            new WritableObjectPropertyKey<>();
-
     /** The callback for when a UI action should remove a {@link OfflineItem}. */
     WritableObjectPropertyKey<Callback<OfflineItem>> CALLBACK_REMOVE =
             new WritableObjectPropertyKey<>();
 
-    /** The callback for when a UI action should remove all selected {@link OfflineItem}s. */
-    WritableObjectPropertyKey < Callback < List<OfflineItem>>> CALLBACK_REMOVE_ALL =
+    /** The callback for when a UI action should rename a {@link OfflineItem}. */
+    WritableObjectPropertyKey<Callback<OfflineItem>> CALLBACK_RENAME =
             new WritableObjectPropertyKey<>();
 
     /** The provider to retrieve expensive assets for a {@link OfflineItem}. */
@@ -79,16 +73,12 @@ public interface ListProperties {
     /** Whether or not selection mode is currently active. */
     WritableBooleanPropertyKey SELECTION_MODE_ACTIVE = new WritableBooleanPropertyKey();
 
-    /**
-     * The callback to trigger when a UI action starts general selection mode.  This is different
-     * from {@link #CALLBACK_SELECTION} in that it should be triggered when the UI enters selection
-     * mode without any particularly attached {@link ListItem}.
-     */
-    WritableObjectPropertyKey<Runnable> CALLBACK_START_SELECTION =
+    /** The callback to trigger when a pagination header is clicked. */
+    WritableObjectPropertyKey<Runnable> CALLBACK_PAGINATION_CLICK =
             new WritableObjectPropertyKey<>();
 
     PropertyKey[] ALL_KEYS = new PropertyKey[] {ENABLE_ITEM_ANIMATIONS, CALLBACK_OPEN,
-            CALLBACK_PAUSE, CALLBACK_RESUME, CALLBACK_CANCEL, CALLBACK_SHARE, CALLBACK_SHARE_ALL,
-            CALLBACK_REMOVE, CALLBACK_REMOVE_ALL, PROVIDER_VISUALS, CALLBACK_SELECTION,
-            SELECTION_MODE_ACTIVE, CALLBACK_START_SELECTION};
+            CALLBACK_PAUSE, CALLBACK_RESUME, CALLBACK_CANCEL, CALLBACK_SHARE, CALLBACK_REMOVE,
+            CALLBACK_RENAME, PROVIDER_VISUALS, CALLBACK_SELECTION, SELECTION_MODE_ACTIVE,
+            CALLBACK_PAGINATION_CLICK};
 }

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
@@ -25,8 +26,8 @@ namespace {
 
 void ClearImageBurner() {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::BindOnce(&ClearImageBurner));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&ClearImageBurner));
     return;
   }
 
@@ -44,7 +45,7 @@ void Operation::Write(const base::Closure& continuation) {
   // Note this has to be run on the FILE thread to avoid concurrent access.
   AddCleanUpFunction(base::Bind(&ClearImageBurner));
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&Operation::UnmountVolumes, this, continuation));
 }

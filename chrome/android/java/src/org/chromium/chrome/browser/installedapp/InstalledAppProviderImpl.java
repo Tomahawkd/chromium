@@ -6,10 +6,13 @@ package org.chromium.chrome.browser.installedapp;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
 import android.util.Pair;
+
+import androidx.annotation.VisibleForTesting;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -17,9 +20,10 @@ import org.json.JSONObject;
 
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.installedapp.mojom.InstalledAppProvider;
 import org.chromium.installedapp.mojom.RelatedApplication;
 import org.chromium.mojo.system.MojoException;
@@ -27,7 +31,6 @@ import org.chromium.mojo.system.MojoException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
-
 /**
  * Android implementation of the InstalledAppProvider service defined in
  * installed_app_provider.mojom
@@ -159,9 +162,26 @@ public class InstalledAppProviderImpl implements InstalledAppProvider {
             }
         }
 
+        for (RelatedApplication installedApp : installedApps) {
+            setVersionInfo(installedApp);
+        }
+
         RelatedApplication[] installedAppsArray = new RelatedApplication[installedApps.size()];
         installedApps.toArray(installedAppsArray);
         return Pair.create(installedAppsArray, delayMillis);
+    }
+
+    /**
+     * Sets the version information, if available, to |installedApp|.
+     * @param installedApp
+     */
+    private void setVersionInfo(RelatedApplication installedApp) {
+        assert installedApp.id != null;
+        try {
+            PackageInfo info = mContext.getPackageManager().getPackageInfo(installedApp.id, 0);
+            installedApp.version = info.versionName;
+        } catch (NameNotFoundException e) {
+        }
     }
 
     /**
@@ -353,6 +373,6 @@ public class InstalledAppProviderImpl implements InstalledAppProvider {
      * @return True if the Runnable was successfully placed into the message queue.
      */
     protected void delayThenRun(Runnable r, long delayMillis) {
-        ThreadUtils.postOnUiThreadDelayed(r, delayMillis);
+        PostTask.postDelayedTask(UiThreadTaskTraits.DEFAULT, r, delayMillis);
     }
 }

@@ -5,7 +5,7 @@
 #include "ui/gfx/win/singleton_hwnd.h"
 
 #include "base/memory/singleton.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "ui/gfx/win/singleton_hwnd_observer.h"
 
 namespace gfx {
@@ -21,6 +21,16 @@ BOOL SingletonHwnd::ProcessWindowMessage(HWND window,
                                          LPARAM lparam,
                                          LRESULT& result,
                                          DWORD msg_map_id) {
+  if (!base::MessageLoopCurrentForUI::IsSet()) {
+    // If there is no MessageLoop and SingletonHwnd is receiving messages, this
+    // means it is receiving messages via an external message pump such as COM
+    // uninitialization.
+    //
+    // It is unsafe to forward these messages as observers may depend on the
+    // existence of a MessageLoop to proceed.
+    return false;
+  }
+
   for (SingletonHwndObserver& observer : observer_list_)
     observer.OnWndProc(window, message, wparam, lparam);
   return false;

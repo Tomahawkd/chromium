@@ -65,12 +65,7 @@ in buckets are restricted to 1GB, you'll have to shard the file over many
 files. Select gzip compression and use `<your_bucket>/site_urls.*.json.gz` as
 your destination.
 
-Once exported, you can download the files from your bucket and extract them
-into a single file for processing:
-
-```sh
-ls site_urls.*.gz | xargs gunzip -c > site_urls
-```
+Once exported, you can download the files from your bucket.
 
 ## 2. Acquire a filter list in the indexed format
 Chromium's tools are designed to work with a binary indexed version of filter
@@ -89,15 +84,21 @@ An example using [EasyList](https://easylist.to/easylist/easylist.txt) follows:
 ## 3. Generate the smaller filter list
 ```sh
 1. ninja -C out/Release subresource_filter_tools
-2. out/Release/subresource_filter_tool --ruleset=easylist_indexed match_rules --input_file=site_urls > ordered_list.txt
+2. cat site_urls.*.json.gz | gunzip - | out/Release/subresource_filter_tool --ruleset=easylist_indexed match_rules > ordered_list.txt
 3. head -n 1000 ordered_list.txt | cut -d' ' -f2 > smaller_list.txt
 ```
 
-## 4. Turn the smaller list into a form usable by Chromium tools
-The smaller filterlist has been generated. If you'd like to convert it to Chromium's binary indexed format, proceed with the following steps:
+## 4. Append all of the whitelist rules to be safe
+```sh
+1. grep ^@@ easylist.txt >> smaller_list.txt
+2. sort smaller_list.txt | uniq > final_list.txt
+```
+
+## 5. Turn the final list into a form usable by Chromium tools
+The final filterlist has been generated. If you'd like to convert it to Chromium's binary indexed format, proceed with the following steps:
 
 ```sh
 1. ninja -C out/Release/ subresource_filter_tools
-2. out/Release/ruleset_converter --input_format=filter-list --output_format=unindexed-ruleset --input_files=smaller_list.txt --output_file=smaller_list_unindexed
-3. out/Release/subresource_indexing_tool smaller_list_unindexed smaller_list_indexed
+2. out/Release/ruleset_converter --input_format=filter-list --output_format=unindexed-ruleset --input_files=final_list.txt --output_file=final_list_unindexed
+3. out/Release/subresource_indexing_tool final_list_unindexed final_list_indexed
 ```

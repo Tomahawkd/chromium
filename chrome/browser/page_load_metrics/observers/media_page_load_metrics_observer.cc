@@ -4,8 +4,8 @@
 
 #include "chrome/browser/page_load_metrics/observers/media_page_load_metrics_observer.h"
 
-#include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
-#include "chrome/common/page_load_metrics/page_load_timing.h"
+#include "components/page_load_metrics/browser/page_load_metrics_util.h"
+#include "components/page_load_metrics/common/page_load_timing.h"
 
 namespace {
 
@@ -23,33 +23,36 @@ MediaPageLoadMetricsObserver::MediaPageLoadMetricsObserver()
 
 MediaPageLoadMetricsObserver::~MediaPageLoadMetricsObserver() = default;
 
-void MediaPageLoadMetricsObserver::OnLoadedResource(
-    const page_load_metrics::ExtraRequestCompleteInfo&
-        extra_request_complete_info) {
-  if (extra_request_complete_info.was_cached) {
-    cache_bytes_ += extra_request_complete_info.raw_body_bytes;
-  } else {
-    network_bytes_ += extra_request_complete_info.raw_body_bytes;
+void MediaPageLoadMetricsObserver::OnResourceDataUseObserved(
+    content::RenderFrameHost* rfh,
+    const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
+        resources) {
+  for (auto const& resource : resources) {
+    if (resource->is_complete) {
+      if (resource->cache_type ==
+          page_load_metrics::mojom::CacheType::kNotCached)
+        network_bytes_ += resource->encoded_body_length;
+      else
+        cache_bytes_ += resource->encoded_body_length;
+    }
   }
 }
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 MediaPageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& info) {
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
   // FlushMetricsOnAppEnterBackground is invoked on Android in cases where the
   // app is about to be backgrounded, as part of the Activity.onPause()
   // flow. After this method is invoked, Chrome may be killed without further
   // notification, so we record final metrics collected up to this point.
-  if (info.did_commit && played_media_) {
+  if (GetDelegate().DidCommit() && played_media_) {
     RecordByteHistograms();
   }
   return STOP_OBSERVING;
 }
 
 void MediaPageLoadMetricsObserver::OnComplete(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& info) {
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
   if (!played_media_)
     return;
   RecordByteHistograms();
@@ -57,7 +60,7 @@ void MediaPageLoadMetricsObserver::OnComplete(
 
 void MediaPageLoadMetricsObserver::MediaStartedPlaying(
     const content::WebContentsObserver::MediaPlayerInfo& video_type,
-    bool is_in_main_frame) {
+    content::RenderFrameHost* render_frame_host) {
   if (played_media_)
     return;
   // Track media (audio or video) in all frames of the page load.

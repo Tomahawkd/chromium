@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/values.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/network_device_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
 #include "net/base/ip_endpoint.h"
@@ -19,7 +19,8 @@
 
 namespace chromeos {
 
-class CHROMEOS_EXPORT MockNetworkDeviceHandler : public NetworkDeviceHandler {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) MockNetworkDeviceHandler
+    : public NetworkDeviceHandler {
  public:
   MockNetworkDeviceHandler();
   virtual ~MockNetworkDeviceHandler();
@@ -37,20 +38,9 @@ class CHROMEOS_EXPORT MockNetworkDeviceHandler : public NetworkDeviceHandler {
                     const base::Closure& callback,
                     const network_handler::ErrorCallback& error_callback));
 
-  MOCK_METHOD3(RequestRefreshIPConfigs,
-               void(const std::string& device_path,
-                    const base::Closure& callback,
-                    const network_handler::ErrorCallback& error_callback));
-
   MOCK_METHOD4(RegisterCellularNetwork,
                void(const std::string& device_path,
                     const std::string& network_id,
-                    const base::Closure& callback,
-                    const network_handler::ErrorCallback& error_callback));
-
-  MOCK_METHOD4(SetCarrier,
-               void(const std::string& device_path,
-                    const std::string& carrier,
                     const base::Closure& callback,
                     const network_handler::ErrorCallback& error_callback));
 
@@ -84,6 +74,9 @@ class CHROMEOS_EXPORT MockNetworkDeviceHandler : public NetworkDeviceHandler {
   MOCK_METHOD1(SetCellularAllowRoaming, void(bool allow_roaming));
 
   MOCK_METHOD1(SetMACAddressRandomizationEnabled, void(bool enabled));
+
+  MOCK_METHOD1(SetUsbEthernetMacAddressSource,
+               void(const std::string& enabled));
 
   MOCK_METHOD4(SetWifiTDLSEnabled,
                void(const std::string& ip_or_mac_address,

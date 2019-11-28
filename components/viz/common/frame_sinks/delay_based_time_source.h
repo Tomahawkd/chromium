@@ -76,11 +76,11 @@ class VIZ_COMMON_EXPORT DelayBasedTimeSource {
   base::TimeTicks last_tick_time_;
   base::TimeTicks next_tick_time_;
 
-  base::CancelableClosure tick_closure_;
+  base::CancelableOnceClosure tick_closure_;
 
   base::SingleThreadTaskRunner* task_runner_;
 
-  base::WeakPtrFactory<DelayBasedTimeSource> weak_factory_;
+  base::WeakPtrFactory<DelayBasedTimeSource> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DelayBasedTimeSource);
 };

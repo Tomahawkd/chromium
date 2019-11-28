@@ -4,11 +4,12 @@
 
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
 
-#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/containers/flat_map.h"
 #include "base/containers/id_map.h"
 #include "base/feature_list.h"
 #include "base/lazy_instance.h"
@@ -24,6 +25,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/printing/background_printing_manager.h"
 #include "chrome/browser/printing/print_preview_data_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -31,6 +33,7 @@
 #include "chrome/browser/ui/webui/metrics_handler.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_handler.h"
 #include "chrome/browser/ui/webui/theme_source.h"
+#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -41,13 +44,13 @@
 #include "chrome/grit/print_preview_resources.h"
 #include "chrome/grit/print_preview_resources_map.h"
 #include "components/prefs/pref_service.h"
+#include "components/printing/browser/print_manager_utils.h"
 #include "components/printing/common/print_messages.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "content/public/common/content_features.h"
 #include "extensions/common/constants.h"
 #include "printing/page_size_margins.h"
 #include "printing/print_job_constants.h"
@@ -60,11 +63,16 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #elif defined(OS_WIN)
-#include "base/win/win_util.h"
+#include "base/enterprise_util.h"
+#endif
+
+#if !BUILDFLAG(OPTIMIZE_WEBUI)
+#include "chrome/browser/ui/webui/managed_ui_handler.h"
 #endif
 
 using content::WebContents;
-using printing::PageSizeMargins;
+
+namespace printing {
 
 namespace {
 
@@ -75,9 +83,14 @@ const char kBasicPrintShortcut[] = "\x28\xE2\x8c\xA5\xE2\x8C\x98\x50\x29";
 const char kBasicPrintShortcut[] = "(Ctrl+Shift+P)";
 #endif
 
-PrintPreviewUI::TestingDelegate* g_testing_delegate = nullptr;
+#if !BUILDFLAG(OPTIMIZE_WEBUI)
+constexpr char kGeneratedPath[] =
+    "@out_folder@/gen/chrome/browser/resources/print_preview/";
+#endif
 
-// Thread-safe wrapper around a std::map to keep track of mappings from
+PrintPreviewUI::TestDelegate* g_test_delegate = nullptr;
+
+// Thread-safe wrapper around a base::flat_map to keep track of mappings from
 // PrintPreviewUI IDs to most recent print preview request IDs.
 class PrintPreviewRequestIdMapWithLock {
  public:
@@ -109,7 +122,7 @@ class PrintPreviewRequestIdMapWithLock {
 
  private:
   // Mapping from PrintPreviewUI ID to print preview request ID.
-  typedef std::map<int, int> PrintPreviewRequestIdMap;
+  using PrintPreviewRequestIdMap = base::flat_map<int, int>;
 
   PrintPreviewRequestIdMap map_;
   base::Lock lock_;
@@ -126,242 +139,176 @@ base::LazyInstance<PrintPreviewRequestIdMapWithLock>::DestructorAtExit
 base::LazyInstance<base::IDMap<PrintPreviewUI*>>::DestructorAtExit
     g_print_preview_ui_id_map = LAZY_INSTANCE_INITIALIZER;
 
-// PrintPreviewUI serves data for chrome://print requests.
-//
-// The format for requesting PDF data is as follows:
-// chrome://print/<PrintPreviewUIID>/<PageIndex>/print.pdf
-//
-// Parameters (< > required):
-//    <PrintPreviewUIID> = PrintPreview UI ID
-//    <PageIndex> = Page index is zero-based or
-//                  |printing::COMPLETE_PREVIEW_DOCUMENT_INDEX| to represent
-//                  a print ready PDF.
-//
-// Example:
-//    chrome://print/123/10/print.pdf
-//
-// Requests to chrome://print with paths not ending in /print.pdf are used
-// to return the markup or other resources for the print preview page itself.
-bool HandleRequestCallback(
+bool ShouldHandleRequestCallback(const std::string& path) {
+  // ChromeWebUIDataSource handles most requests except for the print preview
+  // data.
+  return PrintPreviewUI::ParseDataPath(path, nullptr, nullptr);
+}
+
+// Get markup or other resources for the print preview page.
+void HandleRequestCallback(
     const std::string& path,
     const content::WebUIDataSource::GotDataCallback& callback) {
   // ChromeWebUIDataSource handles most requests except for the print preview
   // data.
-  std::string file_path = path.substr(0, path.find_first_of('?'));
-  if (!base::EndsWith(file_path, "/print.pdf", base::CompareCase::SENSITIVE))
-    return false;
+  int preview_ui_id;
+  int page_index;
+  CHECK(PrintPreviewUI::ParseDataPath(path, &preview_ui_id, &page_index));
 
-  // Print Preview data.
   scoped_refptr<base::RefCountedMemory> data;
-  std::vector<std::string> url_substr = base::SplitString(
-      path, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  int preview_ui_id = -1;
-  int page_index = 0;
-  if (url_substr.size() == 3 &&
-      base::StringToInt(url_substr[0], &preview_ui_id),
-      base::StringToInt(url_substr[1], &page_index) &&
-      preview_ui_id >= 0) {
-    PrintPreviewDataService::GetInstance()->GetDataEntry(
-        preview_ui_id, page_index, &data);
-  }
+  PrintPreviewDataService::GetInstance()->GetDataEntry(preview_ui_id,
+                                                       page_index, &data);
   if (data.get()) {
     callback.Run(data.get());
-    return true;
+    return;
   }
   // Invalid request.
   auto empty_bytes = base::MakeRefCounted<base::RefCountedBytes>();
   callback.Run(empty_bytes.get());
-  return true;
 }
 
 void AddPrintPreviewStrings(content::WebUIDataSource* source) {
-  source->AddLocalizedString("title", IDS_PRINT_PREVIEW_TITLE);
-  source->AddLocalizedString("learnMore", IDS_LEARN_MORE);
-  source->AddLocalizedString("loading", IDS_PRINT_PREVIEW_LOADING);
-  source->AddLocalizedString("noPlugin", IDS_PRINT_PREVIEW_NO_PLUGIN);
-  source->AddLocalizedString("previewFailed", IDS_PRINT_PREVIEW_FAILED);
-  source->AddLocalizedString("invalidPrinterSettings",
-                             IDS_PRINT_INVALID_PRINTER_SETTINGS);
-  source->AddLocalizedString("unsupportedCloudPrinter",
-                             IDS_PRINT_PREVIEW_UNSUPPORTED_CLOUD_PRINTER);
-  source->AddLocalizedString("printButton", IDS_PRINT_PREVIEW_PRINT_BUTTON);
-  source->AddLocalizedString("saveButton", IDS_PRINT_PREVIEW_SAVE_BUTTON);
-  source->AddLocalizedString("printing", IDS_PRINT_PREVIEW_PRINTING);
-  source->AddLocalizedString("saving", IDS_PRINT_PREVIEW_SAVING);
-  source->AddLocalizedString("destinationLabel",
-                             IDS_PRINT_PREVIEW_DESTINATION_LABEL);
-  source->AddLocalizedString("copiesLabel", IDS_PRINT_PREVIEW_COPIES_LABEL);
-  source->AddLocalizedString("scalingLabel", IDS_PRINT_PREVIEW_SCALING_LABEL);
-  source->AddLocalizedString("pagesPerSheetLabel",
-                             IDS_PRINT_PREVIEW_PAGES_PER_SHEET_LABEL);
+  static constexpr webui::LocalizedString kLocalizedStrings[] = {
+    {"accept", IDS_PRINT_PREVIEW_ACCEPT_INVITE},
+    {"acceptForGroup", IDS_PRINT_PREVIEW_ACCEPT_GROUP_INVITE},
+    {"accountSelectTitle", IDS_PRINT_PREVIEW_ACCOUNT_SELECT_TITLE},
+    {"addAccountTitle", IDS_PRINT_PREVIEW_ADD_ACCOUNT_TITLE},
+    {"advancedSettingsDialogConfirm",
+     IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_DIALOG_CONFIRM},
+    {"advancedSettingsDialogTitle",
+     IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_DIALOG_TITLE},
+    {"advancedSettingsSearchBoxPlaceholder",
+     IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_SEARCH_BOX_PLACEHOLDER},
+    {"bottom", IDS_PRINT_PREVIEW_BOTTOM_MARGIN_LABEL},
+    {"cancel", IDS_CANCEL},
+    {"cloudPrintPromotion", IDS_PRINT_PREVIEW_CLOUD_PRINT_PROMOTION},
+    {"copiesInstruction", IDS_PRINT_PREVIEW_COPIES_INSTRUCTION},
+    {"copiesLabel", IDS_PRINT_PREVIEW_COPIES_LABEL},
+    {"couldNotPrint", IDS_PRINT_PREVIEW_COULD_NOT_PRINT},
+    {"customMargins", IDS_PRINT_PREVIEW_CUSTOM_MARGINS},
+    {"defaultMargins", IDS_PRINT_PREVIEW_DEFAULT_MARGINS},
+    {"destinationLabel", IDS_PRINT_PREVIEW_DESTINATION_LABEL},
+    {"destinationSearchTitle", IDS_PRINT_PREVIEW_DESTINATION_SEARCH_TITLE},
+    {"dpiItemLabel", IDS_PRINT_PREVIEW_DPI_ITEM_LABEL},
+    {"dpiLabel", IDS_PRINT_PREVIEW_DPI_LABEL},
+    {"examplePageRangeText", IDS_PRINT_PREVIEW_EXAMPLE_PAGE_RANGE_TEXT},
+    {"extensionDestinationIconTooltip",
+     IDS_PRINT_PREVIEW_EXTENSION_DESTINATION_ICON_TOOLTIP},
+    {"goBackButton", IDS_PRINT_PREVIEW_BUTTON_GO_BACK},
+    {"groupPrinterSharingInviteText", IDS_PRINT_PREVIEW_GROUP_INVITE_TEXT},
+    {"invalidPrinterSettings", IDS_PRINT_PREVIEW_INVALID_PRINTER_SETTINGS},
+    {"layoutLabel", IDS_PRINT_PREVIEW_LAYOUT_LABEL},
+    {"learnMore", IDS_LEARN_MORE},
+    {"left", IDS_PRINT_PREVIEW_LEFT_MARGIN_LABEL},
+    {"loading", IDS_PRINT_PREVIEW_LOADING},
+    {"manage", IDS_PRINT_PREVIEW_MANAGE},
+    {"managedSettings", IDS_PRINT_PREVIEW_MANAGED_SETTINGS_TEXT},
+    {"marginsLabel", IDS_PRINT_PREVIEW_MARGINS_LABEL},
+    {"mediaSizeLabel", IDS_PRINT_PREVIEW_MEDIA_SIZE_LABEL},
+    {"minimumMargins", IDS_PRINT_PREVIEW_MINIMUM_MARGINS},
+    {"moreOptionsLabel", IDS_MORE_OPTIONS_LABEL},
+    {"newShowAdvancedOptions", IDS_PRINT_PREVIEW_NEW_SHOW_ADVANCED_OPTIONS},
+    {"noAdvancedSettingsMatchSearchHint",
+     IDS_PRINT_PREVIEW_NO_ADVANCED_SETTINGS_MATCH_SEARCH_HINT},
+    {"noDestinationsMessage", IDS_PRINT_PREVIEW_NO_DESTINATIONS_MESSAGE},
+    {"noLongerSupported", IDS_PRINT_PREVIEW_NO_LONGER_SUPPORTED},
+    {"noLongerSupportedFragment",
+     IDS_PRINT_PREVIEW_NO_LONGER_SUPPORTED_FRAGMENT},
+    {"noMargins", IDS_PRINT_PREVIEW_NO_MARGINS},
+    {"noPlugin", IDS_PRINT_PREVIEW_NO_PLUGIN},
+    {"nonIsotropicDpiItemLabel",
+     IDS_PRINT_PREVIEW_NON_ISOTROPIC_DPI_ITEM_LABEL},
+    {"offline", IDS_PRINT_PREVIEW_OFFLINE},
+    {"offlineForMonth", IDS_PRINT_PREVIEW_OFFLINE_FOR_MONTH},
+    {"offlineForWeek", IDS_PRINT_PREVIEW_OFFLINE_FOR_WEEK},
+    {"offlineForYear", IDS_PRINT_PREVIEW_OFFLINE_FOR_YEAR},
+    {"optionAllPages", IDS_PRINT_PREVIEW_OPTION_ALL_PAGES},
+    {"optionBackgroundColorsAndImages",
+     IDS_PRINT_PREVIEW_OPTION_BACKGROUND_COLORS_AND_IMAGES},
+    {"optionBw", IDS_PRINT_PREVIEW_OPTION_BW},
+    {"optionCollate", IDS_PRINT_PREVIEW_OPTION_COLLATE},
+    {"optionColor", IDS_PRINT_PREVIEW_OPTION_COLOR},
+    {"optionCustomPages", IDS_PRINT_PREVIEW_OPTION_CUSTOM_PAGES},
+    {"optionCustomScaling", IDS_PRINT_PREVIEW_OPTION_CUSTOM_SCALING},
+    {"optionDefaultScaling", IDS_PRINT_PREVIEW_OPTION_DEFAULT_SCALING},
+    {"optionFitToPage", IDS_PRINT_PREVIEW_OPTION_FIT_TO_PAGE},
+    {"optionFitToPaper", IDS_PRINT_PREVIEW_OPTION_FIT_TO_PAPER},
+    {"optionHeaderFooter", IDS_PRINT_PREVIEW_OPTION_HEADER_FOOTER},
+    {"optionLandscape", IDS_PRINT_PREVIEW_OPTION_LANDSCAPE},
+    {"optionLongEdge", IDS_PRINT_PREVIEW_OPTION_LONG_EDGE},
+    {"optionPortrait", IDS_PRINT_PREVIEW_OPTION_PORTRAIT},
+    {"optionRasterize", IDS_PRINT_PREVIEW_OPTION_RASTERIZE},
+    {"optionSelectionOnly", IDS_PRINT_PREVIEW_OPTION_SELECTION_ONLY},
+    {"optionShortEdge", IDS_PRINT_PREVIEW_OPTION_SHORT_EDGE},
+    {"optionTwoSided", IDS_PRINT_PREVIEW_OPTION_TWO_SIDED},
+    {"optionsLabel", IDS_PRINT_PREVIEW_OPTIONS_LABEL},
+    {"pageRangeLimitInstructionWithValue",
+     IDS_PRINT_PREVIEW_PAGE_RANGE_LIMIT_INSTRUCTION_WITH_VALUE},
+    {"pageRangeSyntaxInstruction",
+     IDS_PRINT_PREVIEW_PAGE_RANGE_SYNTAX_INSTRUCTION},
+    {"pagesLabel", IDS_PRINT_PREVIEW_PAGES_LABEL},
+    {"pagesPerSheetLabel", IDS_PRINT_PREVIEW_PAGES_PER_SHEET_LABEL},
+    {"previewFailed", IDS_PRINT_PREVIEW_FAILED},
+    {"printOnBothSidesLabel", IDS_PRINT_PREVIEW_PRINT_ON_BOTH_SIDES_LABEL},
+    {"printButton", IDS_PRINT_PREVIEW_PRINT_BUTTON},
+    {"printDestinationsTitle", IDS_PRINT_PREVIEW_PRINT_DESTINATIONS_TITLE},
+    {"printPagesLabel", IDS_PRINT_PREVIEW_PRINT_PAGES_LABEL},
+    {"printPreviewPageLabelPlural", IDS_PRINT_PREVIEW_PAGE_LABEL_PLURAL},
+    {"printPreviewPageLabelSingular", IDS_PRINT_PREVIEW_PAGE_LABEL_SINGULAR},
+    {"printPreviewNewSummaryFormatShort",
+     IDS_PRINT_PREVIEW_NEW_SUMMARY_FORMAT_SHORT},
+    {"printPreviewSheetsLabelPlural", IDS_PRINT_PREVIEW_SHEETS_LABEL_PLURAL},
+    {"printPreviewSheetsLabelSingular",
+     IDS_PRINT_PREVIEW_SHEETS_LABEL_SINGULAR},
+    {"printPreviewSummaryFormatShort", IDS_PRINT_PREVIEW_SUMMARY_FORMAT_SHORT},
+    {"printToGoogleDrive", IDS_PRINT_PREVIEW_PRINT_TO_GOOGLE_DRIVE},
+    {"printToPDF", IDS_PRINT_PREVIEW_PRINT_TO_PDF},
+    {"printerSharingInviteText", IDS_PRINT_PREVIEW_INVITE_TEXT},
+    {"printing", IDS_PRINT_PREVIEW_PRINTING},
+    {"recentDestinationsTitle", IDS_PRINT_PREVIEW_RECENT_DESTINATIONS_TITLE},
+    {"registerPrinterInformationMessage",
+     IDS_CLOUD_PRINT_REGISTER_PRINTER_INFORMATION},
+    {"reject", IDS_PRINT_PREVIEW_REJECT_INVITE},
+    {"resolveExtensionUSBDialogTitle",
+     IDS_PRINT_PREVIEW_RESOLVE_EXTENSION_USB_DIALOG_TITLE},
+    {"resolveExtensionUSBErrorMessage",
+     IDS_PRINT_PREVIEW_RESOLVE_EXTENSION_USB_ERROR_MESSAGE},
+    {"resolveExtensionUSBPermissionMessage",
+     IDS_PRINT_PREVIEW_RESOLVE_EXTENSION_USB_PERMISSION_MESSAGE},
+    {"right", IDS_PRINT_PREVIEW_RIGHT_MARGIN_LABEL},
+    {"saveButton", IDS_PRINT_PREVIEW_SAVE_BUTTON},
+    {"saving", IDS_PRINT_PREVIEW_SAVING},
+    {"scalingInstruction", IDS_PRINT_PREVIEW_SCALING_INSTRUCTION},
+    {"scalingLabel", IDS_PRINT_PREVIEW_SCALING_LABEL},
+    {"searchBoxPlaceholder", IDS_PRINT_PREVIEW_SEARCH_BOX_PLACEHOLDER},
+    {"selectButton", IDS_PRINT_PREVIEW_BUTTON_SELECT},
+    {"seeMore", IDS_PRINT_PREVIEW_SEE_MORE},
+    {"seeMoreDestinationsLabel", IDS_PRINT_PREVIEW_SEE_MORE_DESTINATIONS_LABEL},
+    {"title", IDS_PRINT_PREVIEW_TITLE},
+    {"top", IDS_PRINT_PREVIEW_TOP_MARGIN_LABEL},
+    {"unsupportedCloudPrinter", IDS_PRINT_PREVIEW_UNSUPPORTED_CLOUD_PRINTER},
+#if defined(OS_CHROMEOS)
+    {"configuringFailedText", IDS_PRINT_CONFIGURING_FAILED_TEXT},
+    {"configuringInProgressText", IDS_PRINT_CONFIGURING_IN_PROGRESS_TEXT},
+    {"optionPin", IDS_PRINT_PREVIEW_OPTION_PIN},
+    {"pinErrorMessage", IDS_PRINT_PREVIEW_PIN_ERROR_MESSAGE},
+    {"pinPlaceholder", IDS_PRINT_PREVIEW_PIN_PLACEHOLDER},
+#endif
+#if defined(OS_MACOSX)
+    {"openPdfInPreviewOption", IDS_PRINT_PREVIEW_OPEN_PDF_IN_PREVIEW_APP},
+    {"openingPDFInPreview", IDS_PRINT_PREVIEW_OPENING_PDF_IN_PREVIEW_APP},
+#endif
+  };
+  AddLocalizedStringsBulk(source, kLocalizedStrings);
 
-  source->AddLocalizedString("examplePageRangeText",
-                             IDS_PRINT_PREVIEW_EXAMPLE_PAGE_RANGE_TEXT);
-  source->AddLocalizedString("layoutLabel", IDS_PRINT_PREVIEW_LAYOUT_LABEL);
-  source->AddLocalizedString("optionAllPages",
-                             IDS_PRINT_PREVIEW_OPTION_ALL_PAGES);
-  source->AddLocalizedString("optionCustomPages",
-                             IDS_PRINT_PREVIEW_OPTION_CUSTOM_PAGES);
-  source->AddLocalizedString("optionBw", IDS_PRINT_PREVIEW_OPTION_BW);
-  source->AddLocalizedString("optionCollate", IDS_PRINT_PREVIEW_OPTION_COLLATE);
-  source->AddLocalizedString("optionColor", IDS_PRINT_PREVIEW_OPTION_COLOR);
-  source->AddLocalizedString("optionLandscape",
-                             IDS_PRINT_PREVIEW_OPTION_LANDSCAPE);
-  source->AddLocalizedString("optionPortrait",
-                             IDS_PRINT_PREVIEW_OPTION_PORTRAIT);
-  source->AddLocalizedString("optionTwoSided",
-                             IDS_PRINT_PREVIEW_OPTION_TWO_SIDED);
-  source->AddLocalizedString("pagesLabel", IDS_PRINT_PREVIEW_PAGES_LABEL);
-  source->AddLocalizedString("printToPDF", IDS_PRINT_PREVIEW_PRINT_TO_PDF);
-  source->AddLocalizedString("printPreviewSummaryFormatShort",
-                             IDS_PRINT_PREVIEW_SUMMARY_FORMAT_SHORT);
-  source->AddLocalizedString("printPreviewSheetsLabelSingular",
-                             IDS_PRINT_PREVIEW_SHEETS_LABEL_SINGULAR);
-  source->AddLocalizedString("printPreviewSheetsLabelPlural",
-                             IDS_PRINT_PREVIEW_SHEETS_LABEL_PLURAL);
-  source->AddLocalizedString("printPreviewPageLabelSingular",
-                             IDS_PRINT_PREVIEW_PAGE_LABEL_SINGULAR);
-  source->AddLocalizedString("printPreviewPageLabelPlural",
-                             IDS_PRINT_PREVIEW_PAGE_LABEL_PLURAL);
-  source->AddLocalizedString("selectButton",
-                             IDS_PRINT_PREVIEW_BUTTON_SELECT);
-  source->AddLocalizedString("goBackButton",
-                             IDS_PRINT_PREVIEW_BUTTON_GO_BACK);
-  source->AddLocalizedString(
-      "resolveExtensionUSBDialogTitle",
-      IDS_PRINT_PREVIEW_RESOLVE_EXTENSION_USB_DIALOG_TITLE);
-  source->AddLocalizedString(
-      "resolveExtensionUSBPermissionMessage",
-      IDS_PRINT_PREVIEW_RESOLVE_EXTENSION_USB_PERMISSION_MESSAGE);
-  source->AddLocalizedString(
-      "resolveExtensionUSBErrorMessage",
-      IDS_PRINT_PREVIEW_RESOLVE_EXTENSION_USB_ERROR_MESSAGE);
-  source->AddString(
-      "settingsPrintingPage",
-      chrome::GetSettingsUrl(chrome::kPrintingSettingsSubPage).spec());
   source->AddString("gcpCertificateErrorLearnMoreURL",
                     chrome::kCloudPrintCertificateErrorLearnMoreURL);
-  source->AddLocalizedString(
-      "pageRangeLimitInstructionWithValue",
-      IDS_PRINT_PREVIEW_PAGE_RANGE_LIMIT_INSTRUCTION_WITH_VALUE);
-  source->AddLocalizedString("pageRangeSyntaxInstruction",
-                             IDS_PRINT_PREVIEW_PAGE_RANGE_SYNTAX_INSTRUCTION);
-  source->AddLocalizedString("copiesInstruction",
-                             IDS_PRINT_PREVIEW_COPIES_INSTRUCTION);
-  source->AddLocalizedString("scalingInstruction",
-                             IDS_PRINT_PREVIEW_SCALING_INSTRUCTION);
-  source->AddLocalizedString("printPagesLabel",
-                             IDS_PRINT_PREVIEW_PRINT_PAGES_LABEL);
-  source->AddLocalizedString("optionsLabel", IDS_PRINT_PREVIEW_OPTIONS_LABEL);
-  source->AddLocalizedString("optionHeaderFooter",
-                             IDS_PRINT_PREVIEW_OPTION_HEADER_FOOTER);
-  source->AddLocalizedString("optionFitToPage",
-                             IDS_PRINT_PREVIEW_OPTION_FIT_TO_PAGE);
-  source->AddLocalizedString(
-      "optionBackgroundColorsAndImages",
-      IDS_PRINT_PREVIEW_OPTION_BACKGROUND_COLORS_AND_IMAGES);
-  source->AddLocalizedString("optionSelectionOnly",
-                             IDS_PRINT_PREVIEW_OPTION_SELECTION_ONLY);
-  source->AddLocalizedString("optionRasterize",
-                             IDS_PRINT_PREVIEW_OPTION_RASTERIZE);
-  source->AddLocalizedString("marginsLabel", IDS_PRINT_PREVIEW_MARGINS_LABEL);
-  source->AddLocalizedString("defaultMargins",
-                             IDS_PRINT_PREVIEW_DEFAULT_MARGINS);
-  source->AddLocalizedString("noMargins", IDS_PRINT_PREVIEW_NO_MARGINS);
-  source->AddLocalizedString("customMargins", IDS_PRINT_PREVIEW_CUSTOM_MARGINS);
-  source->AddLocalizedString("minimumMargins",
-                             IDS_PRINT_PREVIEW_MINIMUM_MARGINS);
-  source->AddLocalizedString("top", IDS_PRINT_PREVIEW_TOP_MARGIN_LABEL);
-  source->AddLocalizedString("bottom", IDS_PRINT_PREVIEW_BOTTOM_MARGIN_LABEL);
-  source->AddLocalizedString("left", IDS_PRINT_PREVIEW_LEFT_MARGIN_LABEL);
-  source->AddLocalizedString("right", IDS_PRINT_PREVIEW_RIGHT_MARGIN_LABEL);
-  source->AddLocalizedString("mediaSizeLabel",
-                             IDS_PRINT_PREVIEW_MEDIA_SIZE_LABEL);
-  source->AddLocalizedString("dpiLabel", IDS_PRINT_PREVIEW_DPI_LABEL);
-  source->AddLocalizedString("dpiItemLabel", IDS_PRINT_PREVIEW_DPI_ITEM_LABEL);
-  source->AddLocalizedString("nonIsotropicDpiItemLabel",
-                             IDS_PRINT_PREVIEW_NON_ISOTROPIC_DPI_ITEM_LABEL);
-  source->AddLocalizedString("destinationSearchTitle",
-                             IDS_PRINT_PREVIEW_DESTINATION_SEARCH_TITLE);
-  source->AddLocalizedString("accountSelectTitle",
-                             IDS_PRINT_PREVIEW_ACCOUNT_SELECT_TITLE);
-  source->AddLocalizedString("addAccountTitle",
-                             IDS_PRINT_PREVIEW_ADD_ACCOUNT_TITLE);
-  source->AddLocalizedString("cloudPrintPromotion",
-                             IDS_PRINT_PREVIEW_CLOUD_PRINT_PROMOTION);
-  source->AddLocalizedString("searchBoxPlaceholder",
-                             IDS_PRINT_PREVIEW_SEARCH_BOX_PLACEHOLDER);
-  source->AddLocalizedString("noDestinationsMessage",
-                             IDS_PRINT_PREVIEW_NO_DESTINATIONS_MESSAGE);
-  source->AddLocalizedString("destinationCount",
-                             IDS_PRINT_PREVIEW_DESTINATION_COUNT);
-  source->AddLocalizedString("recentDestinationsTitle",
-                             IDS_PRINT_PREVIEW_RECENT_DESTINATIONS_TITLE);
-  source->AddLocalizedString("printDestinationsTitle",
-                             IDS_PRINT_PREVIEW_PRINT_DESTINATIONS_TITLE);
-  source->AddLocalizedString("manage", IDS_PRINT_PREVIEW_MANAGE);
-  source->AddLocalizedString("changeDestination",
-                             IDS_PRINT_PREVIEW_CHANGE_DESTINATION);
-  source->AddLocalizedString("offlineForYear",
-                             IDS_PRINT_PREVIEW_OFFLINE_FOR_YEAR);
-  source->AddLocalizedString("offlineForMonth",
-                             IDS_PRINT_PREVIEW_OFFLINE_FOR_MONTH);
-  source->AddLocalizedString("offlineForWeek",
-                             IDS_PRINT_PREVIEW_OFFLINE_FOR_WEEK);
-  source->AddLocalizedString("offline", IDS_PRINT_PREVIEW_OFFLINE);
-  source->AddLocalizedString("noLongerSupportedFragment",
-                             IDS_PRINT_PREVIEW_NO_LONGER_SUPPORTED_FRAGMENT);
-  source->AddLocalizedString("noLongerSupported",
-                             IDS_PRINT_PREVIEW_NO_LONGER_SUPPORTED);
-  source->AddLocalizedString("couldNotPrint",
-                             IDS_PRINT_PREVIEW_COULD_NOT_PRINT);
-  source->AddLocalizedString(
-      "extensionDestinationIconTooltip",
-      IDS_PRINT_PREVIEW_EXTENSION_DESTINATION_ICON_TOOLTIP);
-  source->AddLocalizedString(
-      "advancedSettingsSearchBoxPlaceholder",
-      IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_SEARCH_BOX_PLACEHOLDER);
-  source->AddLocalizedString("advancedSettingsDialogTitle",
-                             IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_DIALOG_TITLE);
-  source->AddLocalizedString(
-      "noAdvancedSettingsMatchSearchHint",
-      IDS_PRINT_PREVIEW_NO_ADVANCED_SETTINGS_MATCH_SEARCH_HINT);
-  source->AddLocalizedString(
-      "advancedSettingsDialogConfirm",
-      IDS_PRINT_PREVIEW_ADVANCED_SETTINGS_DIALOG_CONFIRM);
-  source->AddLocalizedString("cancel", IDS_CANCEL);
-  source->AddLocalizedString("newShowAdvancedOptions",
-                             IDS_PRINT_PREVIEW_NEW_SHOW_ADVANCED_OPTIONS);
 
-  source->AddLocalizedString("accept", IDS_PRINT_PREVIEW_ACCEPT_INVITE);
-  source->AddLocalizedString(
-      "acceptForGroup", IDS_PRINT_PREVIEW_ACCEPT_GROUP_INVITE);
-  source->AddLocalizedString("reject", IDS_PRINT_PREVIEW_REJECT_INVITE);
-  source->AddLocalizedString(
-      "groupPrinterSharingInviteText", IDS_PRINT_PREVIEW_GROUP_INVITE_TEXT);
-  source->AddLocalizedString(
-      "printerSharingInviteText", IDS_PRINT_PREVIEW_INVITE_TEXT);
-  source->AddLocalizedString("registerPrinterInformationMessage",
-                             IDS_CLOUD_PRINT_REGISTER_PRINTER_INFORMATION);
-  source->AddLocalizedString("moreOptionsLabel", IDS_MORE_OPTIONS_LABEL);
-  source->AddLocalizedString("managedOption",
-                             IDS_PRINT_PREVIEW_MANAGED_OPTION_TEXT);
-#if defined(OS_CHROMEOS)
-  source->AddLocalizedString("configuringInProgressText",
-                             IDS_PRINT_CONFIGURING_IN_PROGRESS_TEXT);
-  source->AddLocalizedString("configuringFailedText",
-                             IDS_PRINT_CONFIGURING_FAILED_TEXT);
-#else
+#if !defined(OS_CHROMEOS)
   const base::string16 shortcut_text(base::UTF8ToUTF16(kBasicPrintShortcut));
   source->AddString("systemDialogOption",
                     l10n_util::GetStringFUTF16(
                         IDS_PRINT_PREVIEW_SYSTEM_DIALOG_OPTION, shortcut_text));
-#endif
-#if defined(OS_MACOSX)
-  source->AddLocalizedString("openingPDFInPreview",
-                             IDS_PRINT_PREVIEW_OPENING_PDF_IN_PREVIEW_APP);
-  source->AddLocalizedString("openPdfInPreviewOption",
-                             IDS_PRINT_PREVIEW_OPEN_PDF_IN_PREVIEW_APP);
 #endif
 }
 
@@ -380,13 +327,9 @@ void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
   enterprise_managed = connector->IsEnterpriseManaged();
 #elif defined(OS_WIN)
-  enterprise_managed = base::win::IsEnterpriseManaged();
+  enterprise_managed = base::IsMachineExternallyManaged();
 #endif
   source->AddBoolean("isEnterpriseManaged", enterprise_managed);
-
-  bool nup_printing_enabled =
-      base::FeatureList::IsEnabled(features::kNupPrinting);
-  source->AddBoolean("pagesPerSheetEnabled", nup_printing_enabled);
 
   bool cloud_printer_handler_enabled =
       base::FeatureList::IsEnabled(features::kCloudPrinterHandler);
@@ -395,90 +338,53 @@ void AddPrintPreviewFlags(content::WebUIDataSource* source, Profile* profile) {
 }
 
 void SetupPrintPreviewPlugin(content::WebUIDataSource* source) {
-  source->AddResourcePath("pdf/index.html", IDR_PDF_INDEX_HTML);
-  source->AddResourcePath("pdf/index.css", IDR_PDF_INDEX_CSS);
-  source->AddResourcePath("pdf/main.js", IDR_PDF_MAIN_JS);
-  source->AddResourcePath("pdf/pdf_viewer.js", IDR_PDF_PDF_VIEWER_JS);
-  source->AddResourcePath("pdf/toolbar_manager.js", IDR_PDF_UI_MANAGER_JS);
-  source->AddResourcePath("pdf/pdf_fitting_type.js",
-                          IDR_PDF_PDF_FITTING_TYPE_JS);
-  source->AddResourcePath("pdf/viewport.js", IDR_PDF_VIEWPORT_JS);
-  source->AddResourcePath("pdf/open_pdf_params_parser.js",
-                          IDR_PDF_OPEN_PDF_PARAMS_PARSER_JS);
-  source->AddResourcePath("pdf/navigator.js", IDR_PDF_NAVIGATOR_JS);
-  source->AddResourcePath("pdf/viewport_scroller.js",
-                          IDR_PDF_VIEWPORT_SCROLLER_JS);
-  source->AddResourcePath("pdf/pdf_scripting_api.js",
-                          IDR_PDF_PDF_SCRIPTING_API_JS);
-  source->AddResourcePath("pdf/zoom_manager.js", IDR_PDF_ZOOM_MANAGER_JS);
-  source->AddResourcePath("pdf/gesture_detector.js",
-                          IDR_PDF_GESTURE_DETECTOR_JS);
-  source->AddResourcePath("pdf/browser_api.js", IDR_PDF_BROWSER_API_JS);
-  source->AddResourcePath("pdf/metrics.js", IDR_PDF_METRICS_JS);
+  static constexpr struct {
+    const char* path;
+    int id;
+  } kPdfResources[] = {
+    {"pdf/browser_api.js", IDR_PDF_BROWSER_API_JS},
+    {"pdf/controller.js", IDR_PDF_CONTROLLER_JS},
+    {"pdf/elements/icons.js", IDR_PDF_ICONS_JS},
+    {"pdf/elements/shared-vars.js", IDR_PDF_SHARED_VARS_JS},
+    {"pdf/elements/viewer-bookmark.js", IDR_PDF_VIEWER_BOOKMARK_JS},
+    {"pdf/elements/viewer-error-screen.js", IDR_PDF_VIEWER_ERROR_SCREEN_JS},
+#if defined(OS_CHROMEOS)
+    {"pdf/elements/viewer-ink-host.js", IDR_PDF_VIEWER_INK_HOST_JS},
+#endif
+    {"pdf/elements/viewer-page-indicator.js", IDR_PDF_VIEWER_PAGE_INDICATOR_JS},
+    {"pdf/elements/viewer-page-selector.js", IDR_PDF_VIEWER_PAGE_SELECTOR_JS},
+    {"pdf/elements/viewer-password-screen.js",
+     IDR_PDF_VIEWER_PASSWORD_SCREEN_JS},
+    {"pdf/elements/viewer-pdf-toolbar.js", IDR_PDF_VIEWER_PDF_TOOLBAR_JS},
+#if defined(OS_CHROMEOS)
+    {"pdf/elements/viewer-form-warning.js", IDR_PDF_VIEWER_FORM_WARNING_JS},
+    {"pdf/elements/viewer-pen-options.js", IDR_PDF_VIEWER_PEN_OPTIONS_JS},
+#endif
+    {"pdf/elements/viewer-toolbar-dropdown.js",
+     IDR_PDF_VIEWER_TOOLBAR_DROPDOWN_JS},
+    {"pdf/elements/viewer-zoom-button.js", IDR_PDF_VIEWER_ZOOM_BUTTON_JS},
+    {"pdf/elements/viewer-zoom-toolbar.js", IDR_PDF_VIEWER_ZOOM_SELECTOR_JS},
+    {"pdf/gesture_detector.js", IDR_PDF_GESTURE_DETECTOR_JS},
+    {"pdf/index.css", IDR_PDF_INDEX_CSS},
+    {"pdf/index.html", IDR_PDF_INDEX_HTML},
+    {"pdf/main.js", IDR_PDF_MAIN_JS},
+    {"pdf/metrics.js", IDR_PDF_METRICS_JS},
+    {"pdf/navigator.js", IDR_PDF_NAVIGATOR_JS},
+    {"pdf/open_pdf_params_parser.js", IDR_PDF_OPEN_PDF_PARAMS_PARSER_JS},
+    {"pdf/pdf_fitting_type.js", IDR_PDF_PDF_FITTING_TYPE_JS},
+    {"pdf/pdf_scripting_api.js", IDR_PDF_PDF_SCRIPTING_API_JS},
+    {"pdf/pdf_viewer.js", IDR_PDF_PDF_VIEWER_JS},
+    {"pdf/toolbar_manager.js", IDR_PDF_TOOLBAR_MANAGER_JS},
+    {"pdf/viewport.js", IDR_PDF_VIEWPORT_JS},
+    {"pdf/viewport_scroller.js", IDR_PDF_VIEWPORT_SCROLLER_JS},
+    {"pdf/zoom_manager.js", IDR_PDF_ZOOM_MANAGER_JS},
+  };
+  for (const auto& resource : kPdfResources) {
+    source->AddResourcePath(resource.path, resource.id);
+  }
 
-  source->AddResourcePath("pdf/elements/shared-vars.html",
-                          IDR_PDF_SHARED_VARS_HTML);
-  source->AddResourcePath("pdf/elements/icons.html", IDR_PDF_ICONS_HTML);
-  source->AddResourcePath("pdf/elements/viewer-bookmark/viewer-bookmark.html",
-                          IDR_PDF_VIEWER_BOOKMARK_HTML);
-  source->AddResourcePath("pdf/elements/viewer-bookmark/viewer-bookmark.js",
-                          IDR_PDF_VIEWER_BOOKMARK_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-bookmarks-content/viewer-bookmarks-content.html",
-      IDR_PDF_VIEWER_BOOKMARKS_CONTENT_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-bookmarks-content/viewer-bookmarks-content.js",
-      IDR_PDF_VIEWER_BOOKMARKS_CONTENT_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-error-screen/viewer-error-screen.html",
-      IDR_PDF_VIEWER_ERROR_SCREEN_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-error-screen/viewer-error-screen.js",
-      IDR_PDF_VIEWER_ERROR_SCREEN_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-page-indicator/viewer-page-indicator.html",
-      IDR_PDF_VIEWER_PAGE_INDICATOR_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-page-indicator/viewer-page-indicator.js",
-      IDR_PDF_VIEWER_PAGE_INDICATOR_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-page-selector/viewer-page-selector.html",
-      IDR_PDF_VIEWER_PAGE_SELECTOR_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-page-selector/viewer-page-selector.js",
-      IDR_PDF_VIEWER_PAGE_SELECTOR_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-password-screen/viewer-password-screen.html",
-      IDR_PDF_VIEWER_PASSWORD_SCREEN_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-password-screen/viewer-password-screen.js",
-      IDR_PDF_VIEWER_PASSWORD_SCREEN_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-pdf-toolbar/viewer-pdf-toolbar.html",
-      IDR_PDF_VIEWER_PDF_TOOLBAR_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-pdf-toolbar/viewer-pdf-toolbar.js",
-      IDR_PDF_VIEWER_PDF_TOOLBAR_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-toolbar-dropdown/viewer-toolbar-dropdown.html",
-      IDR_PDF_VIEWER_TOOLBAR_DROPDOWN_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-toolbar-dropdown/viewer-toolbar-dropdown.js",
-      IDR_PDF_VIEWER_TOOLBAR_DROPDOWN_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-zoom-toolbar/viewer-zoom-button.html",
-      IDR_PDF_VIEWER_ZOOM_BUTTON_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-zoom-toolbar/viewer-zoom-button.js",
-      IDR_PDF_VIEWER_ZOOM_BUTTON_JS);
-  source->AddResourcePath(
-      "pdf/elements/viewer-zoom-toolbar/viewer-zoom-toolbar.html",
-      IDR_PDF_VIEWER_ZOOM_SELECTOR_HTML);
-  source->AddResourcePath(
-      "pdf/elements/viewer-zoom-toolbar/viewer-zoom-toolbar.js",
-      IDR_PDF_VIEWER_ZOOM_SELECTOR_JS);
-
-  source->SetRequestFilter(base::BindRepeating(&HandleRequestCallback));
+  source->SetRequestFilter(base::BindRepeating(&ShouldHandleRequestCallback),
+                           base::BindRepeating(&HandleRequestCallback));
   source->OverrideContentSecurityPolicyChildSrc("child-src 'self';");
   source->DisableDenyXFrameOptions();
   source->OverrideContentSecurityPolicyObjectSrc("object-src 'self';");
@@ -487,22 +393,17 @@ void SetupPrintPreviewPlugin(content::WebUIDataSource* source) {
 content::WebUIDataSource* CreatePrintPreviewUISource(Profile* profile) {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIPrintHost);
-  AddPrintPreviewStrings(source);
-  source->SetJsonPath("strings.js");
 #if BUILDFLAG(OPTIMIZE_WEBUI)
-  source->AddResourcePath("crisper.js", IDR_PRINT_PREVIEW_CRISPER_JS);
-  source->SetDefaultResource(IDR_PRINT_PREVIEW_VULCANIZED_HTML);
-  source->SetDefaultResource(
-      base::FeatureList::IsEnabled(features::kWebUIPolymer2) ?
-          IDR_PRINT_PREVIEW_VULCANIZED_P2_HTML :
-          IDR_PRINT_PREVIEW_VULCANIZED_HTML);
+  webui::SetupBundledWebUIDataSource(source, "print_preview.js",
+                                     IDR_PRINT_PREVIEW_PRINT_PREVIEW_ROLLUP_JS,
+                                     IDR_PRINT_PREVIEW_PRINT_PREVIEW_HTML);
 #else
-  for (size_t i = 0; i < kPrintPreviewResourcesSize; ++i) {
-    source->AddResourcePath(kPrintPreviewResources[i].name,
-                            kPrintPreviewResources[i].value);
-  }
-  source->SetDefaultResource(IDR_PRINT_PREVIEW_NEW_HTML);
+  webui::SetupWebUIDataSource(
+      source,
+      base::make_span(kPrintPreviewResources, kPrintPreviewResourcesSize),
+      kGeneratedPath, IDR_PRINT_PREVIEW_PRINT_PREVIEW_HTML);
 #endif
+  AddPrintPreviewStrings(source);
   SetupPrintPreviewPlugin(source);
   AddPrintPreviewFlags(source, profile);
   return source;
@@ -532,7 +433,12 @@ PrintPreviewUI::PrintPreviewUI(content::WebUI* web_ui)
       handler_(CreatePrintPreviewHandlers(web_ui)) {
   // Set up the chrome://print/ data source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, CreatePrintPreviewUISource(profile));
+  content::WebUIDataSource* source = CreatePrintPreviewUISource(profile);
+#if !BUILDFLAG(OPTIMIZE_WEBUI)
+  // For the Polymer 3 demo page.
+  ManagedUIHandler::Initialize(web_ui, source);
+#endif
+  content::WebUIDataSource::Add(profile, source);
 
   // Set up the chrome://theme/ source.
   content::URLDataSource::Add(profile, std::make_unique<ThemeSource>(profile));
@@ -565,6 +471,34 @@ void PrintPreviewUI::SetPrintPreviewDataForIndex(
                                                        std::move(data));
 }
 
+// static
+bool PrintPreviewUI::ParseDataPath(const std::string& path,
+                                   int* ui_id,
+                                   int* page_index) {
+  std::string file_path = path.substr(0, path.find_first_of('?'));
+  if (!base::EndsWith(file_path, "/print.pdf", base::CompareCase::SENSITIVE))
+    return false;
+
+  std::vector<std::string> url_substr =
+      base::SplitString(path, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (url_substr.size() != 3)
+    return false;
+
+  int preview_ui_id = -1;
+  if (!base::StringToInt(url_substr[0], &preview_ui_id) || preview_ui_id < 0)
+    return false;
+
+  int preview_page_index = 0;
+  if (!base::StringToInt(url_substr[1], &preview_page_index))
+    return false;
+
+  if (ui_id)
+    *ui_id = preview_ui_id;
+  if (page_index)
+    *page_index = preview_page_index;
+  return true;
+}
+
 void PrintPreviewUI::ClearAllPreviewData() {
   PrintPreviewDataService::GetInstance()->RemoveEntry(*id_);
 }
@@ -572,6 +506,10 @@ void PrintPreviewUI::ClearAllPreviewData() {
 void PrintPreviewUI::SetInitiatorTitle(
     const base::string16& job_title) {
   initiator_title_ = job_title;
+}
+
+bool PrintPreviewUI::ShouldCompositeDocumentUsingIndividualPages() const {
+  return printing::IsOopifEnabled() && source_is_modifiable_;
 }
 
 bool PrintPreviewUI::LastPageComposited(int page_number) const {
@@ -607,7 +545,9 @@ void PrintPreviewUI::SetInitialParams(
     return;
   PrintPreviewUI* print_preview_ui = static_cast<PrintPreviewUI*>(
       print_preview_dialog->GetWebUI()->GetController());
+  print_preview_ui->source_is_arc_ = params.is_from_arc;
   print_preview_ui->source_is_modifiable_ = params.is_modifiable;
+  print_preview_ui->source_is_pdf_ = params.is_pdf;
   print_preview_ui->source_has_selection_ = params.has_selection;
   print_preview_ui->print_selection_only_ = params.selection_only;
 }
@@ -626,7 +566,7 @@ base::Optional<int32_t> PrintPreviewUI::GetIDForPrintPreviewUI() const {
 
 void PrintPreviewUI::OnPrintPreviewDialogClosed() {
   WebContents* preview_dialog = web_ui()->GetWebContents();
-  printing::BackgroundPrintingManager* background_printing_manager =
+  BackgroundPrintingManager* background_printing_manager =
       g_browser_process->background_printing_manager();
   if (background_printing_manager->HasPrintPreviewDialog(preview_dialog))
     return;
@@ -637,7 +577,7 @@ void PrintPreviewUI::OnInitiatorClosed() {
   // Should only get here if the initiator was still tracked by the Print
   // Preview Dialog Controller, so the print job has not yet been sent.
   WebContents* preview_dialog = web_ui()->GetWebContents();
-  printing::BackgroundPrintingManager* background_printing_manager =
+  BackgroundPrintingManager* background_printing_manager =
       g_browser_process->background_printing_manager();
   if (background_printing_manager->HasPrintPreviewDialog(preview_dialog)) {
     // Dialog is hidden but is still generating the preview. Cancel the print
@@ -674,8 +614,8 @@ void PrintPreviewUI::OnDidStartPreview(
   page_size_ = params.page_size;
   ClearAllPreviewData();
 
-  if (g_testing_delegate)
-    g_testing_delegate->DidGetPreviewPageCount(params.page_count);
+  if (g_test_delegate)
+    g_test_delegate->DidGetPreviewPageCount(params.page_count);
   handler_->SendPageCountReady(params.page_count, params.fit_to_page_scaling,
                                request_id);
 }
@@ -696,18 +636,16 @@ void PrintPreviewUI::OnDidGetDefaultPageLayout(
   printable_area_ = printable_area;
 
   base::DictionaryValue layout;
-  layout.SetDouble(printing::kSettingMarginTop, page_layout.margin_top);
-  layout.SetDouble(printing::kSettingMarginLeft, page_layout.margin_left);
-  layout.SetDouble(printing::kSettingMarginBottom, page_layout.margin_bottom);
-  layout.SetDouble(printing::kSettingMarginRight, page_layout.margin_right);
-  layout.SetDouble(printing::kSettingContentWidth, page_layout.content_width);
-  layout.SetDouble(printing::kSettingContentHeight, page_layout.content_height);
-  layout.SetInteger(printing::kSettingPrintableAreaX, printable_area.x());
-  layout.SetInteger(printing::kSettingPrintableAreaY, printable_area.y());
-  layout.SetInteger(printing::kSettingPrintableAreaWidth,
-                    printable_area.width());
-  layout.SetInteger(printing::kSettingPrintableAreaHeight,
-                    printable_area.height());
+  layout.SetDouble(kSettingMarginTop, page_layout.margin_top);
+  layout.SetDouble(kSettingMarginLeft, page_layout.margin_left);
+  layout.SetDouble(kSettingMarginBottom, page_layout.margin_bottom);
+  layout.SetDouble(kSettingMarginRight, page_layout.margin_right);
+  layout.SetDouble(kSettingContentWidth, page_layout.content_width);
+  layout.SetDouble(kSettingContentHeight, page_layout.content_height);
+  layout.SetInteger(kSettingPrintableAreaX, printable_area.x());
+  layout.SetInteger(kSettingPrintableAreaY, printable_area.y());
+  layout.SetInteger(kSettingPrintableAreaWidth, printable_area.width());
+  layout.SetInteger(kSettingPrintableAreaHeight, printable_area.height());
   handler_->SendPageLayoutReady(layout, has_custom_page_size_style, request_id);
 }
 
@@ -728,8 +666,8 @@ void PrintPreviewUI::OnDidPreviewPage(
 
   SetPrintPreviewDataForIndex(page_number, std::move(data));
 
-  if (g_testing_delegate)
-    g_testing_delegate->DidRenderPreviewPage(web_ui()->GetWebContents());
+  if (g_test_delegate)
+    g_test_delegate->DidRenderPreviewPage(web_ui()->GetWebContents());
   handler_->SendPagePreviewReady(page_number, *id_, preview_request_id);
 }
 
@@ -743,16 +681,13 @@ void PrintPreviewUI::OnPreviewDataIsAvailable(
   if (!initial_preview_start_time_.is_null()) {
     UMA_HISTOGRAM_TIMES("PrintPreview.InitialDisplayTime",
                         base::TimeTicks::Now() - initial_preview_start_time_);
-    UMA_HISTOGRAM_COUNTS_1M("PrintPreview.PageCount.Initial",
-                            expected_pages_count);
     UMA_HISTOGRAM_COUNTS_1M(
         "PrintPreview.RegeneratePreviewRequest.BeforeFirstData",
         handler_->regenerate_preview_request_count());
     initial_preview_start_time_ = base::TimeTicks();
   }
 
-  SetPrintPreviewDataForIndex(printing::COMPLETE_PREVIEW_DOCUMENT_INDEX,
-                              std::move(data));
+  SetPrintPreviewDataForIndex(COMPLETE_PREVIEW_DOCUMENT_INDEX, std::move(data));
 
   handler_->OnPrintPreviewReady(*id_, preview_request_id);
 }
@@ -771,7 +706,7 @@ void PrintPreviewUI::OnInvalidPrinterSettings(int request_id) {
 
 void PrintPreviewUI::OnHidePreviewDialog() {
   WebContents* preview_dialog = web_ui()->GetWebContents();
-  printing::BackgroundPrintingManager* background_printing_manager =
+  BackgroundPrintingManager* background_printing_manager =
       g_browser_process->background_printing_manager();
   if (background_printing_manager->HasPrintPreviewDialog(preview_dialog))
     return;
@@ -806,17 +741,16 @@ void PrintPreviewUI::OnSetOptionsFromDocument(
 }
 
 // static
-void PrintPreviewUI::SetDelegateForTesting(TestingDelegate* delegate) {
-  g_testing_delegate = delegate;
+void PrintPreviewUI::SetDelegateForTesting(TestDelegate* delegate) {
+  g_test_delegate = delegate;
 }
 
 void PrintPreviewUI::SetSelectedFileForTesting(const base::FilePath& path) {
   handler_->FileSelectedForTesting(path, 0, nullptr);
 }
 
-void PrintPreviewUI::SetPdfSavedClosureForTesting(
-    const base::Closure& closure) {
-  handler_->SetPdfSavedClosureForTesting(closure);
+void PrintPreviewUI::SetPdfSavedClosureForTesting(base::OnceClosure closure) {
+  handler_->SetPdfSavedClosureForTesting(std::move(closure));
 }
 
 void PrintPreviewUI::SendEnableManipulateSettingsForTest() {
@@ -843,3 +777,5 @@ void PrintPreviewUI::SetPreviewUIId() {
   id_ = g_print_preview_ui_id_map.Get().Add(this);
   g_print_preview_request_id_map.Get().Set(*id_, -1);
 }
+
+}  // namespace printing

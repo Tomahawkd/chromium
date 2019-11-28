@@ -11,7 +11,8 @@
 #include "base/compiler_specific.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/public/mojom/test/fake_bluetooth.mojom.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 
 namespace bluetooth {
 
@@ -26,9 +27,11 @@ class FakeRemoteGattService;
 // device/bluetooth/bluetooth_adapter.h.
 //
 // Not intended for direct use by clients.  See README.md.
-class FakeCentral : public mojom::FakeCentral, public device::BluetoothAdapter {
+class FakeCentral final : public mojom::FakeCentral,
+                          public device::BluetoothAdapter {
  public:
-  FakeCentral(mojom::CentralState state, mojom::FakeCentralRequest request);
+  FakeCentral(mojom::CentralState state,
+              mojo::PendingReceiver<mojom::FakeCentral> receiver);
 
   // FakeCentral overrides:
   void SimulatePreconnectedPeripheral(
@@ -39,6 +42,7 @@ class FakeCentral : public mojom::FakeCentral, public device::BluetoothAdapter {
   void SimulateAdvertisementReceived(
       mojom::ScanResultPtr scan_result_ptr,
       SimulateAdvertisementReceivedCallback callback) override;
+  void SetState(mojom::CentralState state, SetStateCallback callback) override;
   void SetNextGATTConnectionResponse(
       const std::string& address,
       uint16_t code,
@@ -180,19 +184,15 @@ class FakeCentral : public mojom::FakeCentral, public device::BluetoothAdapter {
 #endif
   device::BluetoothLocalGattService* GetGattService(
       const std::string& identifier) const override;
+  base::WeakPtr<BluetoothAdapter> GetWeakPtr() override;
   bool SetPoweredImpl(bool powered) override;
-  void AddDiscoverySession(
-      device::BluetoothDiscoveryFilter* discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
-  void RemoveDiscoverySession(
-      device::BluetoothDiscoveryFilter* discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
-  void SetDiscoveryFilter(
+  void UpdateFilter(
       std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
-      const base::Closure& callback,
-      DiscoverySessionErrorCallback error_callback) override;
+      DiscoverySessionResultCallback callback) override;
+  void StartScanWithFilter(
+      std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
+      DiscoverySessionResultCallback callback) override;
+  void StopScan(DiscoverySessionResultCallback callback) override;
   void RemovePairingDelegateInternal(
       device::BluetoothDevice::PairingDelegate* pairing_delegate) override;
 
@@ -214,10 +214,9 @@ class FakeCentral : public mojom::FakeCentral, public device::BluetoothAdapter {
       const std::string& characteristic_id,
       const std::string& descriptor_id) const;
 
-  bool has_pending_or_active_discovery_session_;
-
   mojom::CentralState state_;
-  mojo::Binding<mojom::FakeCentral> binding_;
+  mojo::Receiver<mojom::FakeCentral> receiver_;
+  base::WeakPtrFactory<FakeCentral> weak_ptr_factory_{this};
 };
 
 }  // namespace bluetooth

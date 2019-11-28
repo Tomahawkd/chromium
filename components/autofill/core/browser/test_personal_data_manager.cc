@@ -14,6 +14,15 @@ TestPersonalDataManager::TestPersonalDataManager()
 
 TestPersonalDataManager::~TestPersonalDataManager() {}
 
+void TestPersonalDataManager::OnSyncServiceInitialized(
+    syncer::SyncService* sync_service) {
+  sync_service_initialized_ = true;
+}
+
+AutofillSyncSigninState TestPersonalDataManager::GetSyncSigninState() const {
+  return sync_and_signin_state_;
+}
+
 void TestPersonalDataManager::RecordUseOf(const AutofillDataModel& data_model) {
   CreditCard* credit_card = GetCreditCardWithGUID(data_model.guid().c_str());
   if (credit_card)
@@ -37,11 +46,15 @@ std::string TestPersonalDataManager::SaveImportedCreditCard(
   return imported_credit_card.guid();
 }
 
+void TestPersonalDataManager::AddVPA(const std::string& profile) {
+  num_times_save_vpa_called_++;
+}
+
 void TestPersonalDataManager::AddProfile(const AutofillProfile& profile) {
   std::unique_ptr<AutofillProfile> profile_ptr =
       std::make_unique<AutofillProfile>(profile);
   web_profiles_.push_back(std::move(profile_ptr));
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::UpdateProfile(const AutofillProfile& profile) {
@@ -77,7 +90,7 @@ void TestPersonalDataManager::AddCreditCard(const CreditCard& credit_card) {
   std::unique_ptr<CreditCard> local_credit_card =
       std::make_unique<CreditCard>(credit_card);
   local_credit_cards_.push_back(std::move(local_credit_card));
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::DeleteLocalCreditCards(
@@ -85,7 +98,7 @@ void TestPersonalDataManager::DeleteLocalCreditCards(
   for (const auto& card : cards)
     RemoveByGUID(card.guid());
 
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 void TestPersonalDataManager::UpdateCreditCard(const CreditCard& credit_card) {
@@ -178,11 +191,7 @@ void TestPersonalDataManager::LoadCreditCards() {
 }
 
 bool TestPersonalDataManager::IsAutofillEnabled() const {
-  // Return the value of autofill_enabled_ if it has been set, otherwise fall
-  // back to the normal behavior of checking the pref_service.
-  if (autofill_enabled_.has_value())
-    return autofill_enabled_.value();
-  return PersonalDataManager::IsAutofillEnabled();
+  return IsAutofillProfileEnabled() || IsAutofillCreditCardEnabled();
 }
 
 bool TestPersonalDataManager::IsAutofillProfileEnabled() const {
@@ -213,8 +222,7 @@ bool TestPersonalDataManager::ShouldSuggestServerCards() const {
   return IsAutofillCreditCardEnabled() && IsAutofillWalletImportEnabled();
 }
 
-std::string TestPersonalDataManager::CountryCodeForCurrentTimezone()
-    const {
+std::string TestPersonalDataManager::CountryCodeForCurrentTimezone() const {
   return timezone_country_code_;
 }
 
@@ -243,7 +251,8 @@ bool TestPersonalDataManager::IsSyncFeatureEnabled() const {
   return sync_feature_enabled_;
 }
 
-AccountInfo TestPersonalDataManager::GetAccountInfoForPaymentsServer() const {
+CoreAccountInfo TestPersonalDataManager::GetAccountInfoForPaymentsServer()
+    const {
   return account_info_;
 }
 
@@ -277,7 +286,7 @@ void TestPersonalDataManager::AddServerCreditCard(
   std::unique_ptr<CreditCard> server_credit_card =
       std::make_unique<CreditCard>(credit_card);
   server_credit_cards_.push_back(std::move(server_credit_card));
-  NotifyPersonalDataChanged();
+  NotifyPersonalDataObserver();
 }
 
 }  // namespace autofill

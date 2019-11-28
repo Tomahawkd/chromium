@@ -10,17 +10,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/feature_list.h"
 #include "base/macros.h"
-#include "base/metrics/field_trial.h"
-#include "base/metrics/field_trial_params.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features_test_support.h"
 #include "components/subresource_filter/core/common/common_features.h"
-#include "components/variations/variations_associated_data.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -28,35 +24,47 @@ namespace subresource_filter {
 
 namespace {
 
-constexpr const char kTestFieldTrialName[] = "FieldTrialNameShouldNotMatter";
-constexpr const char kTestExperimentGroupName[] = "GroupNameShouldNotMatter";
-
 class ScopedExperimentalStateToggle {
  public:
-  ScopedExperimentalStateToggle(
-      base::FeatureList::OverrideState feature_state,
-      std::map<std::string, std::string> variation_params)
-      : field_trial_list_(nullptr /* entropy_provider */),
-        scoped_configurator_(nullptr) {
-    EXPECT_TRUE(base::AssociateFieldTrialParams(
-        kTestFieldTrialName, kTestExperimentGroupName, variation_params));
-    base::FieldTrial* field_trial = base::FieldTrialList::CreateFieldTrial(
-        kTestFieldTrialName, kTestExperimentGroupName);
+  ScopedExperimentalStateToggle(base::FeatureList::OverrideState feature_state,
+                                base::FieldTrialParams variation_params)
+      : scoped_configurator_(nullptr) {
+    const base::Feature& kFeature = kSafeBrowsingSubresourceFilter;
 
-    std::unique_ptr<base::FeatureList> feature_list =
-        std::make_unique<base::FeatureList>();
-    feature_list->RegisterFieldTrialOverride(
-        kSafeBrowsingSubresourceFilter.name, feature_state, field_trial);
-    scoped_feature_list_.InitWithFeatureList(std::move(feature_list));
+    // Handle OVERRIDE_USE_DEFAULT which ScopedFeatureList does not support.
+    if (feature_state == base::FeatureList::OVERRIDE_USE_DEFAULT) {
+      // Init a temp ScopedFeatureList to query the current default state.
+      // Note that this will take account any overrides coming from the
+      // command-line, unlike testing the feature's |default_state|.
+      base::test::ScopedFeatureList temp_scoped_feature_list;
+      temp_scoped_feature_list.Init();
+      if (base::FeatureList::IsEnabled(kFeature)) {
+        feature_state = base::FeatureList::OVERRIDE_ENABLE_FEATURE;
+      } else {
+        feature_state = base::FeatureList::OVERRIDE_DISABLE_FEATURE;
+      }
+    }
+
+    switch (feature_state) {
+      case base::FeatureList::OVERRIDE_ENABLE_FEATURE:
+        scoped_feature_list_.InitAndEnableFeatureWithParameters(
+            kFeature, variation_params);
+        break;
+
+      case base::FeatureList::OVERRIDE_DISABLE_FEATURE:
+        scoped_feature_list_.InitAndDisableFeature(kFeature);
+        break;
+
+      case base::FeatureList::OVERRIDE_USE_DEFAULT:
+        NOTREACHED();
+        break;
+    }
   }
 
   ~ScopedExperimentalStateToggle() {
-    variations::testing::ClearAllVariationParams();
   }
 
  private:
-  base::FieldTrialList field_trial_list_;
-
   testing::ScopedSubresourceFilterConfigurator scoped_configurator_;
   base::test::ScopedFeatureList scoped_feature_list_;
 
@@ -74,7 +82,7 @@ void ExpectAndRetrieveExactlyOneExtraEnabledConfig(
     Configuration* actual_config) {
   DCHECK(actual_config);
   const auto config_list = GetEnabledConfigurations();
-  ASSERT_EQ(3u, config_list->configs_by_decreasing_priority().size());
+  ASSERT_EQ(4u, config_list->configs_by_decreasing_priority().size());
   *actual_config = config_list->configs_by_decreasing_priority().back();
 }
 
@@ -513,7 +521,9 @@ TEST_F(SubresourceFilterFeaturesTest,
       config_list->configs_by_decreasing_priority(),
       ::testing::ElementsAre(
           Configuration::MakePresetForLiveRunOnPhishingSites(),
-          Configuration::MakePresetForLiveRunForBetterAds(), Configuration()));
+          Configuration::MakePresetForLiveRunForBetterAds(),
+          Configuration::MakePresetForPerformanceTestingDryRunOnAllSites(),
+          Configuration()));
   EXPECT_EQ(std::string(),
             config_list->lexicographically_greatest_ruleset_flavor());
 }
@@ -528,7 +538,7 @@ TEST_F(SubresourceFilterFeaturesTest,
       {{kActivationLevelParameterName, kActivationLevelDryRun},
        {kActivationScopeParameterName, kActivationScopeAllSites},
        {kActivationPriorityParameterName, "500"},
-       {kPerformanceMeasurementRateParameterName, "1.0"}});
+       {kPerformanceMeasurementRateParameterName, "0.01"}});
 }
 
 TEST_F(SubresourceFilterFeaturesTest, PresetForLiveRunOnBetterAdsSites) {
@@ -571,10 +581,10 @@ TEST_F(SubresourceFilterFeaturesTest, EnableDisableMultiplePresets) {
 
   // The default config comes from the empty experimental configuration.
   const std::vector<Configuration> kEmptyConfig = {Configuration()};
-  const std::vector<Configuration> kDefaultConfig = {
+  const std::vector<Configuration> kSmallConfig = {
       Configuration::MakePresetForLiveRunOnPhishingSites(),
       Configuration::MakePresetForLiveRunForBetterAds(), Configuration()};
-  const std::vector<Configuration> kAllConfigs = {
+  const std::vector<Configuration> kDefaultConfig = {
       Configuration::MakePresetForLiveRunOnPhishingSites(),
       Configuration::MakePresetForLiveRunForBetterAds(),
       Configuration::MakePresetForPerformanceTestingDryRunOnAllSites(),
@@ -588,15 +598,15 @@ TEST_F(SubresourceFilterFeaturesTest, EnableDisableMultiplePresets) {
       {"", "", kDefaultConfig},
       {"garbage1", "garbage2", kDefaultConfig},
       {"", kPhishing + "," + kPerfTest + "," + kBAS, kEmptyConfig},
-      {kPhishing, kPerfTest, kDefaultConfig},
-      {kPerfTest, "garbage", kAllConfigs},
-      {kPerfTest, base::ToUpperASCII(kPerfTest), kDefaultConfig},
+      {kPhishing, kPerfTest, kSmallConfig},
+      {kPerfTest, "garbage", kDefaultConfig},
+      {kPerfTest, base::ToUpperASCII(kPerfTest), kSmallConfig},
       {kPerfTest + "," + kPhishing + "," + kBAS,
        ",,garbage, ," + kPerfTest + "," + kPhishing + "," + kBAS, kEmptyConfig},
       {base::ToUpperASCII(kPhishing) + "," + base::ToUpperASCII(kPerfTest), "",
-       kAllConfigs},
-      {",, ," + kPerfTest + ",," + kPhishing, "", kAllConfigs},
-      {"garbage,garbage2," + kPerfTest + "," + kPhishing, "", kAllConfigs}};
+       kDefaultConfig},
+      {",, ," + kPerfTest + ",," + kPhishing, "", kDefaultConfig},
+      {"garbage,garbage2," + kPerfTest + "," + kPhishing, "", kDefaultConfig}};
 
   for (const auto& test_case : kTestCases) {
     SCOPED_TRACE(
@@ -656,7 +666,7 @@ TEST_F(SubresourceFilterFeaturesTest, AdTagging_EnablesDryRun) {
       Configuration::MakePresetForPerformanceTestingDryRunOnAllSites();
   base::test::ScopedFeatureList scoped_feature;
   scoped_feature.InitAndEnableFeature(kAdTagging);
-  EXPECT_TRUE(base::ContainsValue(
+  EXPECT_TRUE(base::Contains(
       GetEnabledConfigurations()->configs_by_decreasing_priority(), dryrun));
 }
 
@@ -665,7 +675,7 @@ TEST_F(SubresourceFilterFeaturesTest, AdTaggingDisabled_DisablesDryRun) {
       Configuration::MakePresetForPerformanceTestingDryRunOnAllSites();
   base::test::ScopedFeatureList scoped_feature;
   scoped_feature.InitAndDisableFeature(kAdTagging);
-  EXPECT_FALSE(base::ContainsValue(
+  EXPECT_FALSE(base::Contains(
       GetEnabledConfigurations()->configs_by_decreasing_priority(), dryrun));
 }
 

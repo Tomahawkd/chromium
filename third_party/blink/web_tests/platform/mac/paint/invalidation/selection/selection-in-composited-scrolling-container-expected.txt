@@ -1,17 +1,6 @@
 {
   "layers": [
     {
-      "name": "LayoutView #document",
-      "bounds": [800, 600],
-      "drawsContent": false,
-      "backgroundColor": "#FFFFFF"
-    },
-    {
-      "name": "Scrolling Layer",
-      "bounds": [800, 600],
-      "drawsContent": false
-    },
-    {
       "name": "Scrolling Contents Layer",
       "bounds": [800, 600],
       "contentsOpaque": true,
@@ -31,6 +20,11 @@
           "object": "LayoutBlockFlow DIV",
           "rect": [11, 11, 34, 13],
           "reason": "paint property change"
+        },
+        {
+          "object": "InlineTextBox 'test test test'",
+          "rect": [11, 11, 14, 13],
+          "reason": "selection"
         }
       ]
     }

@@ -13,8 +13,11 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/bind.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/android/chrome_jni_headers/MostVisitedSitesBridge_jni.h"
+#include "chrome/android/chrome_jni_headers/MostVisitedSites_jni.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.h"
@@ -25,9 +28,6 @@
 #include "components/ntp_tiles/metrics.h"
 #include "components/ntp_tiles/most_visited_sites.h"
 #include "components/ntp_tiles/section_type.h"
-#include "components/rappor/rappor_service_impl.h"
-#include "jni/MostVisitedSitesBridge_jni.h"
-#include "jni/MostVisitedSites_jni.h"
 #include "ui/gfx/android/java_bitmap.h"
 
 using base::android::AttachCurrentThread;
@@ -60,9 +60,7 @@ class JavaHomepageClient : public MostVisitedSites::HomepageClient {
 
  private:
   void OnTitleEntryFound(TitleCallback title_callback,
-                         bool success,
-                         const history::URLRow& row,
-                         const history::VisitVector& visits);
+                         history::QueryURLResult result);
 
   ScopedJavaGlobalRef<jobject> client_;
   Profile* profile_;
@@ -105,14 +103,12 @@ void JavaHomepageClient::QueryHomepageTitle(TitleCallback title_callback) {
 }
 
 void JavaHomepageClient::OnTitleEntryFound(TitleCallback title_callback,
-                                           bool success,
-                                           const history::URLRow& row,
-                                           const history::VisitVector& visits) {
-  if (!success) {
+                                           history::QueryURLResult result) {
+  if (!result.success) {
     std::move(title_callback).Run(base::nullopt);
     return;
   }
-  std::move(title_callback).Run(row.title());
+  std::move(title_callback).Run(result.row.title());
 }
 
 bool JavaHomepageClient::IsHomepageTileEnabled() const {
@@ -259,11 +255,9 @@ void MostVisitedSitesBridge::RecordTileImpression(
   favicon_base::IconType icon_type =
       static_cast<favicon_base::IconType>(jicon_type);
 
-  ntp_tiles::metrics::RecordTileImpression(
-      ntp_tiles::NTPTileImpression(
-          jindex, source, title_source, visual_type, icon_type,
-          base::Time::FromJavaTime(jdata_generation_time_ms), url),
-      g_browser_process->rappor_service());
+  ntp_tiles::metrics::RecordTileImpression(ntp_tiles::NTPTileImpression(
+      jindex, source, title_source, visual_type, icon_type,
+      base::Time::FromJavaTime(jdata_generation_time_ms), url));
 }
 
 void MostVisitedSitesBridge::RecordOpenedMostVisitedItem(

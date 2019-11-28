@@ -14,6 +14,7 @@
 #include "base/containers/flat_map.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/base/math_util.h"
@@ -587,7 +588,7 @@ void PictureLayerTiling::ComputeTilePriorityRects(
       &visible_rect_in_layer_space, &skewport_in_layer_space,
       &soon_border_rect_in_layer_space, &eventually_rect_in_layer_space};
   gfx::Rect output_rects[4];
-  for (size_t i = 0; i < arraysize(input_rects); ++i)
+  for (size_t i = 0; i < base::size(input_rects); ++i)
     output_rects[i] = EnclosingContentsRectFromLayerRect(*input_rects[i]);
   // Make sure the eventually rect is aligned to tile bounds.
   output_rects[3] =
@@ -625,12 +626,11 @@ void PictureLayerTiling::SetTilePriorityRects(
   // since skewport.Contains(visible_rect) is always true.
   max_skewport_extent_in_screen_space_ =
       current_content_to_screen_scale_ *
-      std::max(std::max(current_visible_rect_.x() - current_skewport_rect_.x(),
-                        current_skewport_rect_.right() -
-                            current_visible_rect_.right()),
-               std::max(current_visible_rect_.y() - current_skewport_rect_.y(),
-                        current_skewport_rect_.bottom() -
-                            current_visible_rect_.bottom()));
+      std::max(
+          {current_visible_rect_.x() - current_skewport_rect_.x(),
+           current_skewport_rect_.right() - current_visible_rect_.right(),
+           current_visible_rect_.y() - current_skewport_rect_.y(),
+           current_skewport_rect_.bottom() - current_visible_rect_.bottom()});
 }
 
 void PictureLayerTiling::SetLiveTilesRect(

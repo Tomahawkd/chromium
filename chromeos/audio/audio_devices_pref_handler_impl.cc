@@ -13,7 +13,7 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "chromeos/audio/audio_device.h"
-#include "chromeos/chromeos_pref_names.h"
+#include "chromeos/constants/chromeos_pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -248,9 +248,9 @@ AudioDevicesPrefHandlerImpl::~AudioDevicesPrefHandlerImpl() = default;
 
 void AudioDevicesPrefHandlerImpl::InitializePrefObservers() {
   pref_change_registrar_.Init(local_state_);
-  base::Closure callback =
-      base::Bind(&AudioDevicesPrefHandlerImpl::NotifyAudioPolicyChange,
-                 base::Unretained(this));
+  base::RepeatingClosure callback =
+      base::BindRepeating(&AudioDevicesPrefHandlerImpl::NotifyAudioPolicyChange,
+                          base::Unretained(this));
   pref_change_registrar_.Add(prefs::kAudioOutputAllowed, callback);
 }
 

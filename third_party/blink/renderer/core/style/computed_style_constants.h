@@ -49,17 +49,6 @@ inline bool EnumHasFlags(Enum v, Enum mask) {
 // from top.
 enum class BoxSide : unsigned { kTop, kRight, kBottom, kLeft };
 
-// See core/style/stylerecalc.md for an explanation on what each state means
-enum StyleRecalcChange {
-  kNoChange,
-  kNoInherit,
-  kUpdatePseudoElements,
-  kIndependentInherit,
-  kInherit,
-  kForce,
-  kReattach
-};
-
 // Static pseudo styles. Dynamic ones are produced on the fly.
 enum PseudoId {
   // The order must be NOP ID, public IDs, and then internal IDs.
@@ -70,6 +59,7 @@ enum PseudoId {
   kPseudoIdFirstLetter,
   kPseudoIdBefore,
   kPseudoIdAfter,
+  kPseudoIdMarker,
   kPseudoIdBackdrop,
   kPseudoIdSelection,
   kPseudoIdScrollbar,
@@ -88,6 +78,7 @@ enum PseudoId {
   kFirstInternalPseudoId = kPseudoIdFirstLineInherited,
   kElementPseudoIdMask = (1 << (kPseudoIdBefore - kFirstPublicPseudoId)) |
                          (1 << (kPseudoIdAfter - kFirstPublicPseudoId)) |
+                         (1 << (kPseudoIdMarker - kFirstPublicPseudoId)) |
                          (1 << (kPseudoIdBackdrop - kFirstPublicPseudoId))
 };
 
@@ -181,9 +172,8 @@ enum Containment {
   kContainsStyle = 0x2,
   kContainsPaint = 0x4,
   kContainsSize = 0x8,
-  kContainsStrict =
-      kContainsLayout | kContainsStyle | kContainsPaint | kContainsSize,
-  kContainsContent = kContainsLayout | kContainsStyle | kContainsPaint,
+  kContainsStrict = kContainsLayout | kContainsPaint | kContainsSize,
+  kContainsContent = kContainsLayout | kContainsPaint,
 };
 inline Containment operator|(Containment a, Containment b) {
   return Containment(int(a) | int(b));

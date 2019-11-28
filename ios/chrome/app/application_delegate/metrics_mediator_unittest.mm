@@ -14,9 +14,13 @@
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 #import "ios/chrome/browser/metrics/previous_session_info_private.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
-#import "ios/chrome/browser/ui/main/browser_view_information.h"
-#import "ios/chrome/test/base/scoped_block_swizzler.h"
+#import "ios/chrome/browser/ui/main/browser_interface_provider.h"
+#import "ios/chrome/browser/ui/main/test/stub_browser_interface.h"
+#import "ios/chrome/browser/ui/main/test/stub_browser_interface_provider.h"
+#import "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
+#import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/test/ocmock/OCMockObject+BreakpadControllerTesting.h"
+#import "ios/testing/scoped_block_swizzler.h"
 #include "net/base/network_change_notifier.h"
 #include "testing/platform_test.h"
 #import "third_party/breakpad/breakpad/src/client/ios/BreakpadController.h"
@@ -121,14 +125,21 @@ typedef void (^logLaunchMetricsBlock)(id, const char*, int);
 
 class MetricsMediatorLogLaunchTest : public PlatformTest {
  protected:
-  MetricsMediatorLogLaunchTest() : has_been_called_(FALSE) {}
+  MetricsMediatorLogLaunchTest()
+      : has_been_called_(FALSE),
+        web_state_list_(
+            std::make_unique<WebStateList>(&web_state_list_delegate_)) {}
 
   void initiateMetricsMediator(BOOL coldStart, int tabCount) {
     id mainTabModel = [OCMockObject mockForClass:[TabModel class]];
     [[[mainTabModel stub] andReturnValue:@(tabCount)] count];
-    browser_view_information_ =
-        [OCMockObject mockForProtocol:@protocol(BrowserViewInformation)];
-    [[[browser_view_information_ stub] andReturn:mainTabModel] mainTabModel];
+    WebStateList* web_state_list = web_state_list_.get();
+    [[[mainTabModel stub] andReturnValue:OCMOCK_VALUE(web_state_list)]
+        webStateList];
+    StubBrowserInterfaceProvider* concreteProvider =
+        [[StubBrowserInterfaceProvider alloc] init];
+    concreteProvider.mainInterface.tabModel = mainTabModel;
+    interface_provider_ = concreteProvider;
 
     swizzle_block_ = [^(id self, int numTab) {
       has_been_called_ = YES;
@@ -148,13 +159,17 @@ class MetricsMediatorLogLaunchTest : public PlatformTest {
 
   void verifySwizzleHasBeenCalled() { EXPECT_TRUE(has_been_called_); }
 
-  id getBrowserViewInformation() { return browser_view_information_; }
+  id<BrowserInterfaceProvider> getInterfaceProvider() {
+    return interface_provider_;
+  }
 
  private:
-  id browser_view_information_;
+  id<BrowserInterfaceProvider> interface_provider_;
   __block BOOL has_been_called_;
   logLaunchMetricsBlock swizzle_block_;
   std::unique_ptr<ScopedBlockSwizzler> uma_histogram_swizzler_;
+  std::unique_ptr<WebStateList> web_state_list_;
+  FakeWebStateListDelegate web_state_list_delegate_;
 };
 
 // Verifies that the log of the number of open tabs is sent and verifies
@@ -172,12 +187,6 @@ TEST_F(MetricsMediatorLogLaunchTest,
   [[startupInformation expect]
       expireFirstUserActionRecorderAfterDelay:kFirstUserActionTimeout];
 
-  id currentTabModel = [OCMockObject mockForClass:[TabModel class]];
-  [[[currentTabModel stub] andReturn:nil] currentTab];
-
-  id browserViewInformation = getBrowserViewInformation();
-  [[[browserViewInformation stub] andReturn:currentTabModel] currentTabModel];
-
   [[NSUserDefaults standardUserDefaults]
       setObject:[NSDate date]
          forKey:metrics_mediator::kAppEnteredBackgroundDateKey];
@@ -185,7 +194,7 @@ TEST_F(MetricsMediatorLogLaunchTest,
   // Action.
   [MetricsMediator
       logLaunchMetricsWithStartupInformation:startupInformation
-                      browserViewInformation:getBrowserViewInformation()];
+                           interfaceProvider:getInterfaceProvider()];
 
   // Tests.
   NSDate* dateStored = [[NSUserDefaults standardUserDefaults]
@@ -212,7 +221,7 @@ TEST_F(MetricsMediatorLogLaunchTest, logLaunchMetricsNoBackgroundDate) {
   // Action.
   [MetricsMediator
       logLaunchMetricsWithStartupInformation:startupInformation
-                      browserViewInformation:getBrowserViewInformation()];
+                           interfaceProvider:getInterfaceProvider()];
 
   // Tests.
   verifySwizzleHasBeenCalled();

@@ -26,37 +26,33 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_WEB_IDB_DATABASE_CALLBACKS_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_WEB_IDB_DATABASE_CALLBACKS_H_
 
-#include "third_party/blink/public/platform/web_vector.h"
-#include "third_party/blink/renderer/modules/indexeddb/web_idb_database_error.h"
-#include "third_party/blink/renderer/modules/modules_export.h"
-
-#include <unordered_map>
 #include <utility>
-#include <vector>
+
+#include "third_party/blink/renderer/modules/indexeddb/idb_database_error.h"
+#include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
+#include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
 namespace blink {
 
-struct WebIDBObservation;
+class IDBObservation;
 
 class WebIDBDatabaseCallbacks {
  public:
-  using ObservationIndexMap = std::unordered_map<int32_t, WebVector<int32_t>>;
+  using ObservationIndexMap = HashMap<int32_t, Vector<int32_t>>;
 
   // Maps observer to transaction, which needs an id and a scope.
-  using TransactionMap =
-      std::unordered_map<int32_t, std::pair<int64_t, WebVector<int64_t>>>;
+  using TransactionMap = HashMap<int32_t, std::pair<int64_t, Vector<int64_t>>>;
 
   virtual ~WebIDBDatabaseCallbacks() = default;
 
   virtual void OnForcedClose() = 0;
-  virtual void OnVersionChange(long long old_version,
-                               long long new_version) = 0;
+  virtual void OnVersionChange(int64_t old_version, int64_t new_version) = 0;
 
-  virtual void OnAbort(long long transaction_id,
-                       const WebIDBDatabaseError&) = 0;
-  virtual void OnComplete(long long transaction_id) = 0;
+  virtual void OnAbort(int64_t transaction_id, const IDBDatabaseError&) = 0;
+  virtual void OnComplete(int64_t transaction_id) = 0;
   virtual void OnChanges(const ObservationIndexMap&,
-                         WebVector<WebIDBObservation> observations,
+                         Vector<Persistent<IDBObservation>> observations,
                          const TransactionMap& transactions) = 0;
   virtual void Detach() = 0;
 };

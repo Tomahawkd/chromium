@@ -10,13 +10,16 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_url_parameters.h"
+#include "components/download/public/common/quarantine_connection.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/save_page_type.h"
-
+#include "content/public/browser/web_contents.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -66,9 +69,6 @@ using DownloadTargetCallback =
 // Called when a download delayed by the delegate has completed.
 using DownloadOpenDelayedCallback = base::Callback<void(bool)>;
 
-// Called with the result of CheckForFileExistence().
-using CheckForFileExistenceCallback = base::OnceCallback<void(bool result)>;
-
 // On failure, |next_id| is equal to kInvalidId.
 using DownloadIdCallback = base::Callback<void(uint32_t /* next_id */)>;
 
@@ -112,7 +112,7 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // has been called or the function has returned true for a particular
   // download it should continue to return true for that download.
   virtual bool ShouldCompleteDownload(download::DownloadItem* item,
-                                      const base::Closure& complete_callback);
+                                      base::OnceClosure complete_callback);
 
   // Allows the delegate to override opening the download. If this function
   // returns false, the delegate needs to call callback when it's done
@@ -123,19 +123,20 @@ class CONTENT_EXPORT DownloadManagerDelegate {
 
   // Checks and hands off the downloading to be handled by another system based
   // on mime type. Returns true if the download was intercepted.
-  virtual bool InterceptDownloadIfApplicable(const GURL& url,
-                                             const std::string& mime_type,
-                                             const std::string& request_origin,
-                                             WebContents* web_contents);
-
-  // Returns true if we need to generate a binary hash for downloads.
-  virtual bool GenerateFileHash();
+  virtual bool InterceptDownloadIfApplicable(
+      const GURL& url,
+      const std::string& user_agent,
+      const std::string& content_disposition,
+      const std::string& mime_type,
+      const std::string& request_origin,
+      int64_t content_length,
+      bool is_transient,
+      WebContents* web_contents);
 
   // Retrieve the directories to save html pages and downloads to.
   virtual void GetSaveDir(BrowserContext* browser_context,
                           base::FilePath* website_save_dir,
-                          base::FilePath* download_save_dir,
-                          bool* skip_dir_check) {}
+                          base::FilePath* download_save_dir) {}
 
   // Asks the user for the path to save a page. The delegate calls the callback
   // to give the answer.
@@ -159,20 +160,19 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // relative path.
   virtual void SanitizeSavePackageResourceName(base::FilePath* filename) {}
 
+  // Sanitize a download parameters
+  //
+  // If the delegate does nothing, the default parameters already populated in
+  // |params| will be used. Otherwise, the delegate can update |params| to
+  // the desired parameters.
+  virtual void SanitizeDownloadParameters(
+      download::DownloadUrlParameters* params) {}
+
   // Opens the file associated with this download.
   virtual void OpenDownload(download::DownloadItem* download) {}
 
-  // Returns whether this is the most recent download in the rare event where
-  // multiple downloads are associated with the same file path.
-  virtual bool IsMostRecentDownloadItemAtFilePath(
-      download::DownloadItem* download);
-
   // Shows the download via the OS shell.
   virtual void ShowDownloadInShell(download::DownloadItem* download) {}
-
-  // Checks whether a downloaded file still exists.
-  virtual void CheckForFileExistence(download::DownloadItem* download,
-                                     CheckForFileExistenceCallback callback) {}
 
   // Return a GUID string used for identifying the application to the system AV
   // function for scanning downloaded files. If no GUID is provided or if the
@@ -180,15 +180,21 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // performed manually without passing the download to the system AV function.
   //
   // This GUID is only used on Windows.
-  virtual std::string ApplicationClientIdForFileScanning() const;
+  virtual std::string ApplicationClientIdForFileScanning();
 
   // Checks whether download is allowed to continue. |check_download_allowed_cb|
   // is called with the decision on completion.
   virtual void CheckDownloadAllowed(
-      const ResourceRequestInfo::WebContentsGetter& web_contents_getter,
+      const WebContents::Getter& web_contents_getter,
       const GURL& url,
       const std::string& request_method,
+      base::Optional<url::Origin> request_initiator,
       CheckDownloadAllowedCallback check_download_allowed_cb);
+
+  // Gets a callback which can connect the download manager to a Quarantine
+  // Service instance if available.
+  virtual download::QuarantineConnectionCallback
+  GetQuarantineConnectionCallback();
 
  protected:
   virtual ~DownloadManagerDelegate();

@@ -12,10 +12,15 @@
 #include "base/memory/weak_ptr.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
-#include "net/third_party/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
+
+// Returns whether this frame type is subject to caps on how many
+// frames can be queued at any given time.
+NET_EXPORT_PRIVATE bool IsSpdyFrameTypeWriteCapped(
+    spdy::SpdyFrameType frame_type);
 
 class SpdyBufferProducer;
 class SpdyStream;
@@ -72,6 +77,10 @@ class NET_EXPORT_PRIVATE SpdyWriteQueue {
   // Returns the estimate of dynamically allocated memory in bytes.
   size_t EstimateMemoryUsage() const;
 
+  // Returns the number of currently queued capped frames including all
+  // priorities.
+  int num_queued_capped_frames() const { return num_queued_capped_frames_; }
+
  private:
   // A struct holding a frame producer and its associated stream.
   struct PendingWrite {
@@ -98,6 +107,11 @@ class NET_EXPORT_PRIVATE SpdyWriteQueue {
   };
 
   bool removing_writes_;
+
+  // Number of currently queued capped frames including all priorities.
+  int num_queued_capped_frames_ = 0;
+  // Highest seen value of num_queued_capped_frames_.
+  int highest_num_queued_capped_frames_ = 1;
 
   // The actual write queue, binned by priority.
   base::circular_deque<PendingWrite> queue_[NUM_PRIORITIES];

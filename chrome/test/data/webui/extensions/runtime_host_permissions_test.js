@@ -2,9 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://extensions/extensions.js';
+
+import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {eventToPromise, isVisible} from '../test_util.m.js';
+
+import {TestService} from './test_service.js';
+
 suite('RuntimeHostPermissions', function() {
-  /** @type {extensions.RuntimeHostPermissionsElement} */ let element;
-  /** @type {extensions.TestService} */ let delegate;
+  /** @type {RuntimeHostPermissionsElement} */ let element;
+  /** @type {TestService} */ let delegate;
 
   const HostAccess = chrome.developerPrivate.HostAccess;
   const ITEM_ID = 'a'.repeat(32);
@@ -12,7 +20,7 @@ suite('RuntimeHostPermissions', function() {
   setup(function() {
     PolymerTest.clearBody();
     element = document.createElement('extensions-runtime-host-permissions');
-    delegate = new extensions.TestService();
+    delegate = new TestService();
     element.delegate = delegate;
     element.itemId = ITEM_ID;
 
@@ -31,23 +39,21 @@ suite('RuntimeHostPermissions', function() {
     };
 
     element.set('permissions', permissions);
-    Polymer.dom.flush();
+    flush();
 
-    const testIsVisible = extension_test_util.isVisible.bind(null, element);
+    const testIsVisible = isVisible.bind(null, element);
     expectTrue(testIsVisible('#host-access'));
 
     const selectHostAccess = element.$$('#host-access');
-    expectEquals(HostAccess.ON_CLICK, selectHostAccess.value);
+    expectEquals(HostAccess.ON_CLICK, selectHostAccess.selected);
     // For on-click mode, there should be no runtime hosts listed.
     expectFalse(testIsVisible('#hosts'));
-    expectFalse(testIsVisible('#add-hosts-section'));
 
     // Changing the data's access should change the UI appropriately.
     element.set('permissions.hostAccess', HostAccess.ON_ALL_SITES);
-    Polymer.dom.flush();
-    expectEquals(HostAccess.ON_ALL_SITES, selectHostAccess.value);
+    flush();
+    expectEquals(HostAccess.ON_ALL_SITES, selectHostAccess.selected);
     expectFalse(testIsVisible('#hosts'));
-    expectFalse(testIsVisible('#add-hosts-section'));
 
     // Setting the mode to on specific sites should display the runtime hosts
     // list.
@@ -56,11 +62,12 @@ suite('RuntimeHostPermissions', function() {
       {host: 'https://example.com', granted: true},
       {host: 'https://chromium.org', granted: true}
     ]);
-    Polymer.dom.flush();
-    expectEquals(HostAccess.ON_SPECIFIC_SITES, selectHostAccess.value);
+    flush();
+    expectEquals(HostAccess.ON_SPECIFIC_SITES, selectHostAccess.selected);
     expectTrue(testIsVisible('#hosts'));
-    expectTrue(testIsVisible('#add-hosts-section'));
-    expectEquals(2, element.$$('#hosts').getElementsByTagName('li').length);
+    // Expect three entries in the list: the two hosts + the add-host button.
+    expectEquals(3, element.$$('#hosts').getElementsByTagName('li').length);
+    expectTrue(testIsVisible('#add-host'));
   });
 
   test('permissions selection', function() {
@@ -71,7 +78,7 @@ suite('RuntimeHostPermissions', function() {
     };
 
     element.set('permissions', permissions);
-    Polymer.dom.flush();
+    flush();
 
     const selectHostAccess = element.$$('#host-access');
     assertTrue(!!selectHostAccess);
@@ -80,9 +87,7 @@ suite('RuntimeHostPermissions', function() {
     // event, then verifies that the delegate was called with the correct
     // value.
     function expectDelegateCallOnAccessChange(newValue) {
-      selectHostAccess.value = newValue;
-      selectHostAccess.dispatchEvent(
-          new CustomEvent('change', {target: selectHostAccess}));
+      selectHostAccess.selected = newValue;
       return delegate.whenCalled('setItemHostAccess').then((args) => {
         expectEquals(ITEM_ID, args[0] /* id */);
         expectEquals(newValue, args[1] /* access */);
@@ -105,15 +110,14 @@ suite('RuntimeHostPermissions', function() {
     };
 
     element.permissions = permissions;
-    Polymer.dom.flush();
+    flush();
 
     const selectHostAccess = element.$$('#host-access');
     assertTrue(!!selectHostAccess);
 
-    selectHostAccess.value = HostAccess.ON_SPECIFIC_SITES;
-    selectHostAccess.dispatchEvent(new CustomEvent('change'));
+    selectHostAccess.selected = HostAccess.ON_SPECIFIC_SITES;
 
-    Polymer.dom.flush();
+    flush();
     const dialog = element.$$('extensions-runtime-hosts-dialog');
     assertTrue(!!dialog);
 
@@ -122,11 +126,11 @@ suite('RuntimeHostPermissions', function() {
     // Canceling the dialog should reset the selectHostAccess value to ON_CLICK,
     // since no host was added.
     assertTrue(dialog.isOpen());
-    let whenClosed = test_util.eventToPromise('close', dialog);
+    let whenClosed = eventToPromise('close', dialog);
     dialog.$$('.cancel-button').click();
     return whenClosed.then(() => {
-      Polymer.dom.flush();
-      expectEquals(HostAccess.ON_CLICK, selectHostAccess.value);
+      flush();
+      expectEquals(HostAccess.ON_CLICK, selectHostAccess.selected);
     });
   });
 
@@ -138,16 +142,14 @@ suite('RuntimeHostPermissions', function() {
     };
 
     element.set('permissions', permissions);
-    Polymer.dom.flush();
+    flush();
 
     const selectHostAccess = element.$$('#host-access');
     assertTrue(!!selectHostAccess);
 
-    selectHostAccess.value = HostAccess.ON_SPECIFIC_SITES;
-    selectHostAccess.dispatchEvent(
-        new CustomEvent('change', {target: selectHostAccess}));
+    selectHostAccess.selected = HostAccess.ON_SPECIFIC_SITES;
 
-    Polymer.dom.flush();
+    flush();
     const dialog = element.$$('extensions-runtime-hosts-dialog');
     assertTrue(!!dialog);
 
@@ -161,11 +163,11 @@ suite('RuntimeHostPermissions', function() {
     // Closing the dialog (as opposed to canceling) should keep the
     // selectHostAccess value at ON_SPECIFIC_SITES.
     assertTrue(dialog.isOpen());
-    let whenClosed = test_util.eventToPromise('close', dialog);
+    let whenClosed = eventToPromise('close', dialog);
     dialog.$$('.action-button').click();
     return whenClosed.then(() => {
-      Polymer.dom.flush();
-      expectEquals(HostAccess.ON_SPECIFIC_SITES, selectHostAccess.value);
+      flush();
+      expectEquals(HostAccess.ON_SPECIFIC_SITES, selectHostAccess.selected);
 
       // Simulate the new host being added.
       const updatedPermissions = {
@@ -177,7 +179,7 @@ suite('RuntimeHostPermissions', function() {
         ],
       };
       element.permissions = updatedPermissions;
-      Polymer.dom.flush();
+      flush();
 
       // Open the dialog by clicking to edit the host permission.
       const editHost = element.$$('.edit-host');
@@ -186,7 +188,7 @@ suite('RuntimeHostPermissions', function() {
       const actionMenuEdit = actionMenu.querySelector('#action-menu-edit');
       assertTrue(!!actionMenuEdit);
       actionMenuEdit.click();
-      Polymer.dom.flush();
+      flush();
 
       // Verify that the dialog does not want to update the old host access.
       // Regression test for https://crbug.com/903082.
@@ -210,14 +212,14 @@ suite('RuntimeHostPermissions', function() {
     };
 
     element.set('permissions', permissions);
-    Polymer.dom.flush();
+    flush();
 
     const addHostButton = element.$$('#add-host');
     assertTrue(!!addHostButton);
-    expectTrue(extension_test_util.isVisible(element, '#add-host'));
+    expectTrue(isVisible(element, '#add-host'));
 
     addHostButton.click();
-    Polymer.dom.flush();
+    flush();
     const dialog = element.$$('extensions-runtime-hosts-dialog');
     assertTrue(!!dialog);
     expectTrue(dialog.$.dialog.open);
@@ -236,7 +238,7 @@ suite('RuntimeHostPermissions', function() {
       ],
     };
     element.set('permissions', permissions);
-    Polymer.dom.flush();
+    flush();
 
     const editHost = element.$$('.edit-host');
     assertTrue(!!editHost);
@@ -267,7 +269,7 @@ suite('RuntimeHostPermissions', function() {
       ],
     };
     element.set('permissions', permissions);
-    Polymer.dom.flush();
+    flush();
 
     const editHost = element.$$('.edit-host');
     editHost.click();
@@ -277,7 +279,7 @@ suite('RuntimeHostPermissions', function() {
     assertTrue(!!actionMenuEdit);
 
     actionMenuEdit.click();
-    Polymer.dom.flush();
+    flush();
     const dialog = element.$$('extensions-runtime-hosts-dialog');
     assertTrue(!!dialog);
     expectTrue(dialog.$.dialog.open);

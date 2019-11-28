@@ -10,8 +10,8 @@
 
 #include "ash/ash_export.h"
 #include "ash/public/cpp/shelf_types.h"
+#include "ash/public/cpp/wallpaper_controller_observer.h"
 #include "ash/shelf/shelf_observer.h"
-#include "ash/wallpaper/wallpaper_controller_observer.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -27,7 +27,7 @@ enum class AnimationChangeType;
 class Shelf;
 class ShelfBackgroundAnimatorObserver;
 class ShelfBackgroundAnimatorTestApi;
-class WallpaperController;
+class WallpaperControllerImpl;
 
 // Central controller for the Shelf and Dock opacity animations.
 //
@@ -38,8 +38,7 @@ class WallpaperController;
 //
 //  Material Design:
 //    1. Shelf button backgrounds
-//    2. Overlay for the SHELF_BACKGROUND_OVERLAP and SHELF_BACKGROUND_MAXIMIZED
-//       states.
+//    2. Overlay for the SHELF_BACKGROUND_MAXIMIZED state.
 class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
                                            public gfx::AnimationDelegate,
                                            public WallpaperControllerObserver {
@@ -47,13 +46,14 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   // The maximum alpha value that can be used.
   static const int kMaxAlpha = SK_AlphaOPAQUE;
 
+  ShelfBackgroundAnimator(Shelf* shelf,
+                          WallpaperControllerImpl* wallpaper_controller);
+  ~ShelfBackgroundAnimator() override;
+
   // Initializes this with the given |background_type|. This will observe the
   // |shelf| for background type changes and the |wallpaper_controller| for
   // wallpaper changes if not null.
-  ShelfBackgroundAnimator(ShelfBackgroundType background_type,
-                          Shelf* shelf,
-                          WallpaperController* wallpaper_controller);
-  ~ShelfBackgroundAnimator() override;
+  void Init(ShelfBackgroundType background_type);
 
   ShelfBackgroundType target_background_type() const {
     return target_background_type_;
@@ -83,8 +83,8 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
 
-  // Gets the alpha value of |background_type|.
-  int GetBackgroundAlphaValue(ShelfBackgroundType background_type) const;
+  // Gets the color corresponding with |background_type|.
+  SkColor GetBackgroundColor(ShelfBackgroundType background_type) const;
 
  protected:
   // ShelfObserver:
@@ -147,8 +147,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   // Sets the target values for |shelf_background_values| and
   // |item_background_values| according to |background_type|.
   void GetTargetValues(ShelfBackgroundType background_type,
-                       AnimationValues* shelf_background_values,
-                       AnimationValues* item_background_values) const;
+                       AnimationValues* shelf_background_values) const;
 
   // Updates the animation values corresponding to the |t| value between 0 and
   // 1.
@@ -161,7 +160,7 @@ class ASH_EXPORT ShelfBackgroundAnimator : public ShelfObserver,
   Shelf* shelf_;
 
   // The wallpaper controller to observe for changes and to extract colors from.
-  WallpaperController* wallpaper_controller_;
+  WallpaperControllerImpl* wallpaper_controller_;
 
   // The background type that this is animating towards or has reached.
   ShelfBackgroundType target_background_type_ = SHELF_BACKGROUND_DEFAULT;

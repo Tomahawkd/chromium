@@ -6,8 +6,8 @@
 #define COMPONENTS_HISTORY_IOS_BROWSER_WEB_STATE_TOP_SITES_OBSERVER_H_
 
 #include "base/macros.h"
-#include "ios/web/public/web_state/web_state_observer.h"
-#include "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 namespace history {
 
@@ -29,13 +29,14 @@ class WebStateTopSitesObserver
   WebStateTopSitesObserver(web::WebState* web_state, TopSites* top_sites);
 
   // web::WebStateObserver implementation.
-  void NavigationItemCommitted(
-      web::WebState* web_state,
-      const web::LoadCommittedDetails& load_details) override;
+  void DidFinishNavigation(web::WebState* web_state,
+                           web::NavigationContext* navigation_context) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // Underlying TopSites instance, may be null during testing.
   TopSites* top_sites_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(WebStateTopSitesObserver);
 };

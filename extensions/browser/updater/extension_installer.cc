@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -41,8 +42,8 @@ void ExtensionInstaller::OnUpdateError(int error) {
 void ExtensionInstaller::Install(const base::FilePath& unpack_path,
                                  const std::string& public_key,
                                  UpdateClientCallback update_client_callback) {
-  auto ui_thread = base::CreateSingleThreadTaskRunnerWithTraits(
-      {content::BrowserThread::UI});
+  auto ui_thread =
+      base::CreateSingleThreadTaskRunner({content::BrowserThread::UI});
   DCHECK(ui_thread);
   DCHECK(!extension_installer_callback_.is_null());
   if (base::PathExists(unpack_path)) {

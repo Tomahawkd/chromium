@@ -27,11 +27,13 @@
 #include "content/public/browser/gpu_data_manager_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/web_preferences.h"
 #include "content/shell/browser/web_test/leak_detector.h"
 #include "content/shell/common/web_test.mojom.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "ui/gfx/geometry/size.h"
 
 class SkBitmap;
@@ -40,7 +42,6 @@ namespace content {
 
 class DevToolsProtocolTestBindings;
 class RenderFrameHost;
-class RenderProcessHost;
 class Shell;
 class WebTestBluetoothChooserFactory;
 class WebTestDevToolsBindings;
@@ -184,6 +185,7 @@ class BlinkTestController : public WebContentsObserver,
     ~Node();
 
     RenderFrameHost* render_frame_host = nullptr;
+    GlobalFrameRoutingId render_frame_host_id;
     std::vector<Node*> children;
 
     DISALLOW_COPY_AND_ASSIGN(Node);
@@ -220,7 +222,7 @@ class BlinkTestController : public WebContentsObserver,
   void OnSendBluetoothManualChooserEvent(const std::string& event,
                                          const std::string& argument);
   void OnBlockThirdPartyCookies(bool block);
-  mojom::WebTestControlAssociatedPtr& GetWebTestControlPtr(
+  mojo::AssociatedRemote<mojom::WebTestControl>& GetWebTestControlRemote(
       RenderFrameHost* frame);
   void HandleWebTestControlError(const GlobalFrameRoutingId& key);
 
@@ -241,7 +243,7 @@ class BlinkTestController : public WebContentsObserver,
   void CompositeAllFramesThen(base::OnceCallback<void()> callback);
 
  private:
-  Node* BuildFrameTree(const std::vector<RenderFrameHost*>& frames);
+  Node* BuildFrameTree(WebContents* web_contents);
   void CompositeNodeQueueThen(base::OnceCallback<void()> callback);
   void BuildDepthFirstQueue(Node* node);
 
@@ -271,9 +273,6 @@ class BlinkTestController : public WebContentsObserver,
   // What phase of running an individual test we are currently in.
   TestPhase test_phase_;
 
-  // True if the currently running test is a compositing test.
-  bool is_compositing_test_;
-
   // Per test config.
   std::string expected_pixel_hash_;
   gfx::Size initial_size_;
@@ -298,12 +297,12 @@ class BlinkTestController : public WebContentsObserver,
 
   // Map from frame_tree_node_id into frame-specific dumps.
   std::map<int, std::string> frame_to_layout_dump_map_;
-  // Number of LayoutTestControl.DumpFrameLayout responses we are waiting for.
+  // Number of WebTestControl.DumpFrameLayout responses we are waiting for.
   int pending_layout_dumps_;
 
   // Renderer processes are observed to detect crashes.
   ScopedObserver<RenderProcessHost, RenderProcessHostObserver>
-      render_process_host_observer_;
+      render_process_host_observer_{this};
   std::set<RenderProcessHost*> all_observed_render_process_hosts_;
   std::set<RenderProcessHost*> main_window_render_process_hosts_;
 
@@ -319,16 +318,16 @@ class BlinkTestController : public WebContentsObserver,
   bool waiting_for_pixel_results_ = false;
   bool waiting_for_main_frame_dump_ = false;
 
-  std::vector<Node> composite_all_frames_node_storage_;
+  std::vector<std::unique_ptr<Node>> composite_all_frames_node_storage_;
   std::queue<Node*> composite_all_frames_node_queue_;
 
   // Map from one frame to one mojo pipe.
-  std::map<GlobalFrameRoutingId, mojom::WebTestControlAssociatedPtr>
+  std::map<GlobalFrameRoutingId, mojo::AssociatedRemote<mojom::WebTestControl>>
       web_test_control_map_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<BlinkTestController> weak_factory_;
+  base::WeakPtrFactory<BlinkTestController> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BlinkTestController);
 };

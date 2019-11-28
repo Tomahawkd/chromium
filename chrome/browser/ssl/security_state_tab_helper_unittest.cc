@@ -8,32 +8,18 @@
 
 #include "base/command_line.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "chrome/browser/ssl/tls_deprecation_test_utils.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/security_state/content/ssl_status_input_event_data.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/navigation_handle.h"
+#include "content/public/test/mock_navigation_handle.h"
+#include "content/public/test/navigation_simulator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-const char kHTTPBadNavigationHistogram[] =
-    "Security.HTTPBad.NavigationStartedAfterUserWarnedAboutSensitiveInput";
-const char kHTTPBadWebContentsDestroyedHistogram[] =
-    "Security.HTTPBad.WebContentsDestroyedAfterUserWarnedAboutSensitiveInput";
 const char kFormSubmissionSecurityLevelHistogram[] =
     "Security.SecurityLevel.FormSubmission";
-
-// Gets the Insecure Input Events from the entry's SSLStatus user data.
-security_state::InsecureInputEventData GetInputEvents(
-    content::NavigationEntry* entry) {
-  security_state::SSLStatusInputEventData* input_events =
-      static_cast<security_state::SSLStatusInputEventData*>(
-          entry->GetSSL().user_data.get());
-  if (input_events)
-    return *input_events->input_events();
-
-  return security_state::InsecureInputEventData();
-}
 
 // Stores the Insecure Input Events to the entry's SSLStatus user data.
 void SetInputEvents(content::NavigationEntry* entry,
@@ -51,8 +37,7 @@ void SetInputEvents(content::NavigationEntry* entry,
 }
 
 class SecurityStateTabHelperHistogramTest
-    : public ChromeRenderViewHostTestHarness,
-      public testing::WithParamInterface<bool> {
+    : public ChromeRenderViewHostTestHarness {
  public:
   SecurityStateTabHelperHistogramTest() : helper_(nullptr) {}
   ~SecurityStateTabHelperHistogramTest() override {}
@@ -66,18 +51,6 @@ class SecurityStateTabHelperHistogramTest
   }
 
  protected:
-  void SignalSensitiveInput() {
-    content::NavigationEntry* entry =
-        web_contents()->GetController().GetVisibleEntry();
-    security_state::InsecureInputEventData input_events = GetInputEvents(entry);
-    if (GetParam())
-      input_events.password_field_shown = true;
-    else
-      input_events.credit_card_field_edited = true;
-    SetInputEvents(entry, input_events);
-    helper_->DidChangeVisibleSecurityState();
-  }
-
   void ClearInputEvents() {
     content::NavigationEntry* entry =
         web_contents()->GetController().GetVisibleEntry();
@@ -85,91 +58,76 @@ class SecurityStateTabHelperHistogramTest
     helper_->DidChangeVisibleSecurityState();
   }
 
-  const std::string HistogramName() {
-    if (GetParam())
-      return "Security.HTTPBad.UserWarnedAboutSensitiveInput.Password";
-    else
-      return "Security.HTTPBad.UserWarnedAboutSensitiveInput.CreditCard";
-  }
-
   void StartFormSubmissionNavigation() {
-    std::unique_ptr<content::NavigationHandle> handle =
-        content::NavigationHandle::CreateNavigationHandleForTesting(
-            GURL("http://example.test"), web_contents()->GetMainFrame(), true,
-            net::OK, false, false, ui::PAGE_TRANSITION_LINK, true);
+    content::MockNavigationHandle handle(GURL("http://example.test"),
+                                         web_contents()->GetMainFrame());
+    handle.set_is_form_submission(true);
+    helper_->DidStartNavigation(&handle);
+
+    handle.set_has_committed(true);
+    helper_->DidFinishNavigation(&handle);
   }
 
   void NavigateToHTTP() { NavigateAndCommit(GURL("http://example.test")); }
-
-  void NavigateToDifferentHTTPPage() {
-    NavigateAndCommit(GURL("http://example2.test"));
-  }
 
  private:
   SecurityStateTabHelper* helper_;
   DISALLOW_COPY_AND_ASSIGN(SecurityStateTabHelperHistogramTest);
 };
 
-// Tests that an UMA histogram is recorded after setting the security
-// level to HTTP_SHOW_WARNING and navigating away.
-TEST_P(SecurityStateTabHelperHistogramTest,
-       HTTPOmniboxWarningNavigationHistogram) {
-  base::HistogramTester histograms;
-  SignalSensitiveInput();
-  // Make sure that if the omnibox warning gets dynamically hidden, the
-  // histogram still gets recorded.
-  NavigateToDifferentHTTPPage();
-  if (GetParam()) {
-    ClearInputEvents();
-  }
-  // Destroy the WebContents to simulate the tab being closed after a
-  // navigation.
-  SetContents(nullptr);
-  histograms.ExpectTotalCount(kHTTPBadNavigationHistogram, 1);
-  histograms.ExpectTotalCount(kHTTPBadWebContentsDestroyedHistogram, 0);
-}
-
-// Tests that an UMA histogram is recorded after setting the security
-// level to HTTP_SHOW_WARNING and closing the tab.
-TEST_P(SecurityStateTabHelperHistogramTest,
-       HTTPOmniboxWarningTabClosedHistogram) {
-  base::HistogramTester histograms;
-  SignalSensitiveInput();
-  // Destroy the WebContents to simulate the tab being closed.
-  SetContents(nullptr);
-  histograms.ExpectTotalCount(kHTTPBadNavigationHistogram, 0);
-  histograms.ExpectTotalCount(kHTTPBadWebContentsDestroyedHistogram, 1);
-}
-
-TEST_P(SecurityStateTabHelperHistogramTest, FormSubmissionHistogram) {
+TEST_F(SecurityStateTabHelperHistogramTest, FormSubmissionHistogram) {
   base::HistogramTester histograms;
   StartFormSubmissionNavigation();
   histograms.ExpectUniqueSample(kFormSubmissionSecurityLevelHistogram,
-                                security_state::HTTP_SHOW_WARNING, 1);
+                                security_state::WARNING, 1);
 }
 
-// Tests that UMA logs the omnibox warning when security level is
-// HTTP_SHOW_WARNING.
-TEST_P(SecurityStateTabHelperHistogramTest, HTTPOmniboxWarningHistogram) {
+// Tests that form submission histograms are recorded correctly on a page that
+// uses legacy TLS (TLS 1.0/1.1).
+TEST_F(SecurityStateTabHelperHistogramTest, LegacyTLSFormSubmissionHistogram) {
   base::HistogramTester histograms;
-  SignalSensitiveInput();
-  histograms.ExpectUniqueSample(HistogramName(), true, 1);
+  InitializeEmptyLegacyTLSConfig();
 
-  // Fire again and ensure no sample is recorded.
-  SignalSensitiveInput();
-  histograms.ExpectUniqueSample(HistogramName(), true, 1);
+  auto navigation =
+      CreateLegacyTLSNavigation(GURL(kLegacyTLSDefaultURL), web_contents());
+  navigation->Commit();
 
-  // Navigate to a new page and ensure a sample is recorded.
-  NavigateToDifferentHTTPPage();
-  histograms.ExpectUniqueSample(HistogramName(), true, 1);
-  SignalSensitiveInput();
-  histograms.ExpectUniqueSample(HistogramName(), true, 2);
+  StartFormSubmissionNavigation();
+
+  histograms.ExpectUniqueSample("Security.LegacyTLS.FormSubmission", true, 1);
 }
 
-INSTANTIATE_TEST_CASE_P(SecurityStateTabHelperHistogramTest,
-                        SecurityStateTabHelperHistogramTest,
-                        // Here 'true' to test password field triggered
-                        // histogram and 'false' to test credit card field.
-                        testing::Bool());
+// Tests that form submission histograms are recorded as not coming from a page
+// that triggered legacy TLS warnings for a page that uses legacy TLS but is
+// marked as a control site that should suppress legacy TLS warnings.
+TEST_F(SecurityStateTabHelperHistogramTest,
+       LegacyTLSControlSiteFormSubmissionHistogram) {
+  base::HistogramTester histograms;
+  InitializeLegacyTLSConfigWithControl();
+
+  auto navigation =
+      CreateLegacyTLSNavigation(GURL(kLegacyTLSControlURL), web_contents());
+  navigation->Commit();
+
+  StartFormSubmissionNavigation();
+
+  histograms.ExpectUniqueSample("Security.LegacyTLS.FormSubmission", false, 1);
+}
+
+// Tests that form submission histograms are recorded as not coming from a page
+// that triggered legacy TLS warnings for a page that uses modern TLS.
+TEST_F(SecurityStateTabHelperHistogramTest,
+       LegacyTLSGoodSiteFormSubmissionHistogram) {
+  base::HistogramTester histograms;
+  InitializeEmptyLegacyTLSConfig();
+
+  auto navigation =
+      CreateNonlegacyTLSNavigation(GURL("https://good.test"), web_contents());
+  navigation->Commit();
+
+  StartFormSubmissionNavigation();
+
+  histograms.ExpectUniqueSample("Security.LegacyTLS.FormSubmission", false, 1);
+}
 
 }  // namespace

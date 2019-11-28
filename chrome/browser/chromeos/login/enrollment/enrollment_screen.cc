@@ -15,22 +15,21 @@
 #include "chrome/browser/chromeos/login/configuration_keys.h"
 #include "chrome/browser/chromeos/login/enrollment/enrollment_uma.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
-#include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/enrollment_status_chromeos.h"
+#include "chrome/browser/chromeos/policy/tpm_auto_update_mode_policy_handler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "components/pairing/controller_pairing_controller.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/user_manager/user_manager.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
-using namespace pairing_chromeos;
 using policy::EnrollmentConfig;
 
 // Do not change the UMA histogram parameters without renaming the histograms!
@@ -85,6 +84,40 @@ std::string GetLicenseIdByType(::policy::LicenseType type) {
   }
 }
 
+bool HasPublicUser() {
+  // Some tests don't initialize the UserManager.
+  if (!user_manager::UserManager::IsInitialized())
+    return false;
+
+  for (const user_manager::User* user :
+       user_manager::UserManager::Get()->GetUsers()) {
+    if (user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT)
+      return true;
+  }
+  return false;
+}
+
+bool ShouldAttemptRestart() {
+  // Restart browser to switch from DeviceCloudPolicyManagerChromeOS to
+  // DeviceActiveDirectoryPolicyManager.
+  if (g_browser_process->platform_part()
+          ->browser_policy_connector_chromeos()
+          ->IsActiveDirectoryManaged()) {
+    // TODO(tnagel): Refactor BrowserPolicyConnectorChromeOS so that device
+    // policy providers are only registered after enrollment has finished and
+    // thus the correct one can be picked without restarting the browser.
+    return true;
+  }
+
+  // Restart browser to switch to Views account picker if we have public
+  // accounts (which have user pods on the login screen).
+  // TODO(crbug.com/943720): Switch to Views account without Chrome restart.
+  if (HasPublicUser())
+    return true;
+
+  return false;
+}
+
 }  // namespace
 
 namespace chromeos {
@@ -92,14 +125,14 @@ namespace chromeos {
 // static
 EnrollmentScreen* EnrollmentScreen::Get(ScreenManager* manager) {
   return static_cast<EnrollmentScreen*>(
-      manager->GetScreen(OobeScreen::SCREEN_OOBE_ENROLLMENT));
+      manager->GetScreen(EnrollmentScreenView::kScreenId));
 }
 
-EnrollmentScreen::EnrollmentScreen(BaseScreenDelegate* base_screen_delegate,
-                                   EnrollmentScreenView* view)
-    : BaseScreen(base_screen_delegate, OobeScreen::SCREEN_OOBE_ENROLLMENT),
+EnrollmentScreen::EnrollmentScreen(EnrollmentScreenView* view,
+                                   const ScreenExitCallback& exit_callback)
+    : BaseScreen(EnrollmentScreenView::kScreenId),
       view_(view),
-      weak_ptr_factory_(this) {
+      exit_callback_(exit_callback) {
   retry_policy_.num_errors_to_ignore = 0;
   retry_policy_.initial_delay_ms = kInitialDelayMS;
   retry_policy_.multiply_factor = kMultiplyFactor;
@@ -116,9 +149,8 @@ EnrollmentScreen::~EnrollmentScreen() {
          DBusThreadManager::Get()->IsUsingFakes());
 }
 
-void EnrollmentScreen::SetParameters(
-    const policy::EnrollmentConfig& enrollment_config,
-    pairing_chromeos::ControllerPairingController* shark_controller) {
+void EnrollmentScreen::SetEnrollmentConfig(
+    const policy::EnrollmentConfig& enrollment_config) {
   enrollment_config_ = enrollment_config;
   switch (enrollment_config_.auth_mechanism) {
     case EnrollmentConfig::AUTH_MECHANISM_INTERACTIVE:
@@ -139,7 +171,6 @@ void EnrollmentScreen::SetParameters(
       NOTREACHED();
       break;
   }
-  shark_controller_ = shark_controller;
   SetConfig();
 }
 
@@ -157,12 +188,14 @@ void EnrollmentScreen::SetConfig() {
                        ? policy::EnrollmentConfig::MODE_ATTESTATION_LOCAL_FORCED
                        : policy::EnrollmentConfig::MODE_ATTESTATION;
   }
-  view_->SetParameters(this, config_);
+  view_->SetEnrollmentConfig(this, config_);
   enrollment_helper_ = nullptr;
 }
 
 bool EnrollmentScreen::AdvanceToNextAuth() {
   if (current_auth_ != last_auth_ && current_auth_ == AUTH_ATTESTATION) {
+    LOG(WARNING) << "User stopped using auth: " << current_auth_
+                 << ", current auth: " << last_auth_ << ".";
     current_auth_ = last_auth_;
     SetConfig();
     return true;
@@ -236,7 +269,14 @@ void EnrollmentScreen::AuthenticateUsingAttestation() {
   elapsed_timer_.reset(new base::ElapsedTimer());
   view_->Show();
   CreateEnrollmentHelper();
-  enrollment_helper_->EnrollUsingAttestation();
+  if (enrollment_config_.mode ==
+      policy::EnrollmentConfig::MODE_ATTESTATION_ENROLLMENT_TOKEN) {
+    view_->ShowEnrollmentSpinnerScreen();
+    enrollment_helper_->EnrollUsingEnrollmentToken(
+        enrollment_config_.enrollment_token);
+  } else {
+    enrollment_helper_->EnrollUsingAttestation();
+  }
 }
 
 void EnrollmentScreen::OnLoginDone(const std::string& user,
@@ -249,8 +289,7 @@ void EnrollmentScreen::OnLoginDone(const std::string& user,
 
   view_->ShowEnrollmentSpinnerScreen();
   CreateEnrollmentHelper();
-  enrollment_helper_->EnrollUsingAuthCode(
-      auth_code, shark_controller_ != nullptr /* fetch_additional_token */);
+  enrollment_helper_->EnrollUsingAuthCode(auth_code);
 }
 
 void EnrollmentScreen::OnLicenseTypeSelected(const std::string& license_type) {
@@ -278,7 +317,7 @@ void EnrollmentScreen::AutomaticRetry() {
 void EnrollmentScreen::ProcessRetry() {
   ++num_retries_;
   LOG(WARNING) << "Enrollment retries: " << num_retries_
-               << ", current_auth_: " << current_auth_;
+               << ", current auth: " << current_auth_ << ".";
   Show();
 }
 
@@ -305,26 +344,21 @@ void EnrollmentScreen::OnCancel() {
   if (authpolicy_login_helper_)
     authpolicy_login_helper_->CancelRequestsAndRestart();
 
-  const ScreenExitCode exit_code =
-      config_.is_forced() ? ScreenExitCode::ENTERPRISE_ENROLLMENT_BACK
-                          : ScreenExitCode::ENTERPRISE_ENROLLMENT_COMPLETED;
-  ClearAuth(
-      base::Bind(&EnrollmentScreen::Finish, base::Unretained(this), exit_code));
+  // The callback passed to ClearAuth is called either immediately or gets
+  // wrapped in a callback bound to a weak pointer from |weak_factory_| - in
+  // either case, passing exit_callback_ directly should be safe.
+  ClearAuth(base::BindRepeating(
+      exit_callback_, config_.is_forced() ? Result::BACK : Result::COMPLETED));
 }
 
 void EnrollmentScreen::OnConfirmationClosed() {
-  ClearAuth(base::Bind(&EnrollmentScreen::Finish, base::Unretained(this),
-                       ScreenExitCode::ENTERPRISE_ENROLLMENT_COMPLETED));
-  // Restart browser to switch from DeviceCloudPolicyManagerChromeOS to
-  // DeviceActiveDirectoryPolicyManager.
-  if (g_browser_process->platform_part()
-          ->browser_policy_connector_chromeos()
-          ->IsActiveDirectoryManaged()) {
-    // TODO(tnagel): Refactor BrowserPolicyConnectorChromeOS so that device
-    // policy providers are only registered after enrollment has finished and
-    // thus the correct one can be picked without restarting the browser.
+  // The callback passed to ClearAuth is called either immediately or gets
+  // wrapped in a callback bound to a weak pointer from |weak_factory_| - in
+  // either case, passing exit_callback_ directly should be safe.
+  ClearAuth(base::BindRepeating(exit_callback_, Result::COMPLETED));
+
+  if (ShouldAttemptRestart())
     chrome::AttemptRestart();
-  }
 }
 
 void EnrollmentScreen::OnAuthError(const GoogleServiceAuthError& error) {
@@ -383,12 +417,16 @@ void EnrollmentScreen::OnOtherError(
     AutomaticRetry();
 }
 
-void EnrollmentScreen::OnDeviceEnrolled(const std::string& additional_token) {
+void EnrollmentScreen::OnDeviceEnrolled() {
   enrollment_succeeded_ = true;
-  if (!additional_token.empty())
-    SendEnrollmentAuthToken(additional_token);
-
   enrollment_helper_->GetDeviceAttributeUpdatePermission();
+
+  // Evaluates device policy TPMFirmwareUpdateSettings and updates the TPM if
+  // the policy is set to auto-update vulnerable TPM firmware at enrollment.
+  g_browser_process->platform_part()
+      ->browser_policy_connector_chromeos()
+      ->GetTPMAutoUpdateModePolicyHandler()
+      ->UpdateOnEnrollmentIfNeeded();
 }
 
 void EnrollmentScreen::OnActiveDirectoryCredsProvided(
@@ -491,11 +529,6 @@ void EnrollmentScreen::ShowAttributePromptScreen() {
   view_->ShowAttributePromptScreen(asset_id, location);
 }
 
-void EnrollmentScreen::SendEnrollmentAuthToken(const std::string& token) {
-  DCHECK(shark_controller_);
-  shark_controller_->OnAuthenticationDone(enrolling_user_domain_, token);
-}
-
 void EnrollmentScreen::ShowEnrollmentStatusOnSuccess() {
   retry_backoff_->InformOfRequest(true);
   if (elapsed_timer_)
@@ -531,7 +564,7 @@ void EnrollmentScreen::JoinDomain(const std::string& dm_token,
                                   const std::string& domain_join_config,
                                   OnDomainJoinedCallback on_joined_callback) {
   if (!authpolicy_login_helper_)
-    authpolicy_login_helper_ = std::make_unique<AuthPolicyLoginHelper>();
+    authpolicy_login_helper_ = std::make_unique<AuthPolicyHelper>();
   authpolicy_login_helper_->set_dm_token(dm_token);
   on_joined_callback_ = std::move(on_joined_callback);
   view_->ShowActiveDirectoryScreen(

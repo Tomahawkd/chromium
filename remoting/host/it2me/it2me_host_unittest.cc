@@ -10,24 +10,25 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/policy/policy_constants.h"
+#include "net/base/network_change_notifier.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/chromoting_host.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 #include "remoting/host/policy_watcher.h"
+#include "remoting/host/xmpp_register_support_host_request.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/transport_context.h"
 #include "remoting/signaling/fake_signal_strategy.h"
+#include "remoting/signaling/xmpp_log_to_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_LINUX)
@@ -94,7 +95,7 @@ void FakeIt2MeConfirmationDialog::Show(const std::string& remote_user_email,
   EXPECT_STREQ(remote_user_email_.c_str(), remote_user_email.c_str());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, dialog_result_));
+      FROM_HERE, base::BindOnce(callback, dialog_result_));
 }
 
 class FakeIt2MeDialogFactory : public It2MeConfirmationDialogFactory {
@@ -186,21 +187,23 @@ class It2MeHostTest : public testing::Test, public It2MeHost::Observer {
  private:
   void StartupHostStateHelper(const base::Closure& quit_closure);
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   std::unique_ptr<base::RunLoop> run_loop_;
   std::unique_ptr<FakeSignalStrategy> fake_bot_signal_strategy_;
+
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
 
   std::unique_ptr<ChromotingHostContext> host_context_;
   scoped_refptr<AutoThreadTaskRunner> network_task_runner_;
   scoped_refptr<AutoThreadTaskRunner> ui_task_runner_;
 
-  base::WeakPtrFactory<It2MeHostTest> weak_factory_;
+  base::WeakPtrFactory<It2MeHostTest> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(It2MeHostTest);
 };
 
-It2MeHostTest::It2MeHostTest() : weak_factory_(this) {}
+It2MeHostTest::It2MeHostTest() {}
 It2MeHostTest::~It2MeHostTest() = default;
 
 void It2MeHostTest::SetUp() {
@@ -210,6 +213,8 @@ void It2MeHostTest::SetUp() {
   base::GetLinuxDistro();
 #endif
   run_loop_.reset(new base::RunLoop());
+
+  network_change_notifier_ = net::NetworkChangeNotifier::CreateIfNeeded();
 
   host_context_ = ChromotingHostContext::Create(new AutoThreadTaskRunner(
       base::ThreadTaskRunnerHandle::Get(), run_loop_->QuitClosure()));
@@ -253,8 +258,8 @@ void It2MeHostTest::StartupHostStateHelper(const base::Closure& quit_closure) {
   if (last_host_state_ == It2MeHostState::kRequestedAccessCode) {
     network_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&It2MeHost::SetStateForTesting, it2me_host_.get(),
-                   It2MeHostState::kReceivedAccessCode, ErrorCode::OK));
+        base::BindOnce(&It2MeHost::SetStateForTesting, it2me_host_.get(),
+                       It2MeHostState::kReceivedAccessCode, ErrorCode::OK));
   } else if (last_host_state_ != It2MeHostState::kStarting) {
     quit_closure.Run();
     return;
@@ -275,7 +280,7 @@ void It2MeHostTest::StartHost(bool enable_dialogs) {
   protocol::IceConfig ice_config;
   ice_config.stun_servers.push_back(rtc::SocketAddress(kTestStunServer, 100));
   ice_config.expiration_time =
-      base::Time::Now() + base::TimeDelta::FromHours(1);
+      base::Time::Now() + base::TimeDelta::FromHours(2);
 
   auto fake_signal_strategy =
       std::make_unique<FakeSignalStrategy>(SignalingAddress("fake_local_jid"));
@@ -287,10 +292,16 @@ void It2MeHostTest::StartHost(bool enable_dialogs) {
     // false should only be run on ChromeOS.
     it2me_host_->set_enable_dialogs(enable_dialogs);
   }
-  it2me_host_->Connect(host_context_->Copy(), policies_->CreateDeepCopy(),
-                       std::move(dialog_factory), weak_factory_.GetWeakPtr(),
-                       std::move(fake_signal_strategy), kTestUserName,
-                       "fake_bot_jid", ice_config);
+  auto register_host_request =
+      std::make_unique<XmppRegisterSupportHostRequest>("fake_bot_jid");
+  auto log_to_server = std::make_unique<XmppLogToServer>(
+      ServerLogEntry::IT2ME, fake_signal_strategy.get(), "fake_bot_jid",
+      host_context_->network_task_runner());
+  it2me_host_->Connect(
+      host_context_->Copy(), policies_->CreateDeepCopy(),
+      std::move(dialog_factory), std::move(register_host_request),
+      std::move(log_to_server), weak_factory_.GetWeakPtr(),
+      std::move(fake_signal_strategy), kTestUserName, ice_config);
 
   base::RunLoop run_loop;
   state_change_callback_ =
@@ -315,9 +326,10 @@ void It2MeHostTest::RunValidationCallback(const std::string& remote_jid) {
 
   network_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(it2me_host_->GetValidationCallbackForTesting(), remote_jid,
-                 base::Bind(&It2MeHostTest::OnValidationComplete,
-                            base::Unretained(this), run_loop.QuitClosure())));
+      base::BindOnce(
+          it2me_host_->GetValidationCallbackForTesting(), remote_jid,
+          base::Bind(&It2MeHostTest::OnValidationComplete,
+                     base::Unretained(this), run_loop.QuitClosure())));
 
   run_loop.Run();
 }
@@ -334,7 +346,7 @@ void It2MeHostTest::OnStateChanged(It2MeHostState state, ErrorCode error_code) {
 
   if (state_change_callback_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::ResetAndReturn(&state_change_callback_));
+        FROM_HERE, std::move(state_change_callback_));
   }
 }
 

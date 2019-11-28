@@ -2,7 +2,7 @@
 
 <link rel="import" href="chrome://resources/cr_elements/shared_vars_css.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-resizable-behavior/iron-resizable-behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-behaviors/paper-inky-focus-behavior.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/paper-behaviors/paper-ripple-behavior.html">
 <link rel="import" href="../prefs/prefs_behavior.html">
 
 <dom-module id="night-light-slider">
@@ -23,7 +23,7 @@
       }
 
       #sliderBar {
-        background-color: var(--google-blue-600-opacity-24);
+        background-color: rgba(var(--google-blue-600-rgb), .24);
         background-size: 100%;
         display: inline-block;
         height: 2px;

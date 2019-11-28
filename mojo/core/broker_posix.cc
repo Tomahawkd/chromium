@@ -66,7 +66,8 @@ Channel::MessagePtr WaitForBrokerMessage(
 
 }  // namespace
 
-Broker::Broker(PlatformHandle handle) : sync_channel_(std::move(handle)) {
+Broker::Broker(PlatformHandle handle, bool wait_for_channel_handle)
+    : sync_channel_(std::move(handle)) {
   CHECK(sync_channel_.is_valid());
 
   int fd = sync_channel_.GetFD().get();
@@ -75,6 +76,9 @@ Broker::Broker(PlatformHandle handle) : sync_channel_(std::move(handle)) {
   PCHECK(flags != -1);
   flags = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
   PCHECK(flags != -1);
+
+  if (!wait_for_channel_handle)
+    return;
 
   // Wait for the first message, which should contain a handle.
   std::vector<PlatformHandle> incoming_platform_handles;
@@ -111,10 +115,10 @@ base::WritableSharedMemoryRegion Broker::GetWritableSharedMemoryRegion(
     return base::WritableSharedMemoryRegion();
   }
 
-#if !defined(OS_POSIX) || defined(OS_ANDROID) || defined(OS_FUCHSIA) || \
+#if !defined(OS_POSIX) || defined(OS_ANDROID) || \
     (defined(OS_MACOSX) && !defined(OS_IOS))
-  // Non-POSIX systems, as well as Android, Fuchsia, and non-iOS Mac, only use
-  // a single handle to represent a writable region.
+  // Non-POSIX systems, as well as Android, and non-iOS Mac, only use a single
+  // handle to represent a writable region.
   constexpr size_t kNumExpectedHandles = 1;
 #else
   constexpr size_t kNumExpectedHandles = 2;

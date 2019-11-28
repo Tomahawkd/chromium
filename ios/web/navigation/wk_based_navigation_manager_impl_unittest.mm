@@ -11,12 +11,12 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/navigation/wk_navigation_util.h"
-#include "ios/web/public/load_committed_details.h"
-#include "ios/web/public/navigation_item.h"
-#include "ios/web/public/reload_type.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/reload_type.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/test/fakes/crw_fake_back_forward_list.h"
@@ -57,6 +57,7 @@ bool WebUIUrlRewriter(GURL* url, BrowserState* browser_state) {
     GURL::Replacements scheme_replacements;
     scheme_replacements.SetSchemeStr(kTestWebUIScheme);
     *url = url->ReplaceComponents(scheme_replacements);
+    return true;
   }
   return false;
 }
@@ -70,16 +71,22 @@ class MockNavigationManagerDelegate : public NavigationManagerDelegate {
   }
 
   MOCK_METHOD0(ClearTransientContent, void());
+  MOCK_METHOD0(ClearDialogs, void());
   MOCK_METHOD0(RecordPageStateInNavigationItem, void());
   MOCK_METHOD2(OnGoToIndexSameDocumentNavigation,
                void(NavigationInitiationType type, bool has_user_gesture));
   MOCK_METHOD0(WillChangeUserAgentType, void());
-  MOCK_METHOD0(LoadCurrentItem, void());
+  MOCK_METHOD1(LoadCurrentItem, void(NavigationInitiationType type));
   MOCK_METHOD0(LoadIfNecessary, void());
   MOCK_METHOD0(Reload, void());
   MOCK_METHOD1(OnNavigationItemsPruned, void(size_t));
-  MOCK_METHOD0(OnNavigationItemChanged, void());
-  MOCK_METHOD1(OnNavigationItemCommitted, void(const LoadCommittedDetails&));
+  MOCK_METHOD1(OnNavigationItemCommitted, void(NavigationItem* item));
+  MOCK_METHOD4(GoToBackForwardListItem,
+               void(WKBackForwardListItem*,
+                    NavigationItem*,
+                    NavigationInitiationType,
+                    bool));
+  MOCK_METHOD0(GetPendingItem, NavigationItemImpl*());
 
  private:
   WebState* GetWebState() override { return nullptr; }
@@ -109,10 +116,7 @@ class WKBasedNavigationManagerTest : public PlatformTest {
 
   // Returns the value of the "#session=" URL hash component from |url|.
   static std::string ExtractRestoredSession(const GURL& url) {
-    std::string decoded = net::UnescapeURLComponent(
-        url.ref(), net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
-                       net::UnescapeRule::SPACES |
-                       net::UnescapeRule::PATH_SEPARATORS);
+    std::string decoded = net::UnescapeBinaryURLComponent(url.ref());
     return decoded.substr(
         strlen(wk_navigation_util::kRestoreSessionSessionHashPrefix));
   }
@@ -274,7 +278,7 @@ TEST_F(WKBasedNavigationManagerTest, GetItemAtIndexAfterCommitPending) {
 }
 
 // Tests that AddPendingItem does not create a new NavigationItem if the new
-// pending item is a back forward navigation.
+// pending item is a back forward navigation or when reloading a redirect page.
 TEST_F(WKBasedNavigationManagerTest, ReusePendingItemForHistoryNavigation) {
   // Simulate two regular navigations.
   [mock_wk_list_ setCurrentURL:@"http://www.1.com"
@@ -293,14 +297,27 @@ TEST_F(WKBasedNavigationManagerTest, ReusePendingItemForHistoryNavigation) {
   mock_wk_list_.currentItem = wk_item0;
   mock_wk_list_.backList = nil;
   mock_wk_list_.forwardList = @[ wk_item1 ];
-  OCMExpect([mock_web_view_ URL])
+  OCMStub([mock_web_view_ URL])
       .andReturn([[NSURL alloc] initWithString:@"http://www.0.com"]);
-
   manager_->AddPendingItem(
       GURL("http://www.0.com"), Referrer(), ui::PAGE_TRANSITION_TYPED,
       web::NavigationInitiationType::BROWSER_INITIATED,
       web::NavigationManager::UserAgentOverrideOption::MOBILE);
 
+  EXPECT_EQ(original_item0, manager_->GetPendingItem());
+
+  // Simulate reloading a redirect url.  This happens when one restores while
+  // offline.
+  GURL redirect_url = wk_navigation_util::CreateRedirectUrl(
+      manager_->GetPendingItem()->GetURL());
+  [mock_wk_list_ setCurrentURL:base::SysUTF8ToNSString(redirect_url.spec())
+                  backListURLs:nil
+               forwardListURLs:nil];
+  original_item0 = manager_->GetItemAtIndex(0);
+  manager_->AddPendingItem(
+      GURL("http://www.0.com"), Referrer(), ui::PAGE_TRANSITION_RELOAD,
+      web::NavigationInitiationType::BROWSER_INITIATED,
+      web::NavigationManager::UserAgentOverrideOption::MOBILE);
   EXPECT_EQ(original_item0, manager_->GetPendingItem());
 }
 
@@ -387,11 +404,11 @@ TEST_F(WKBasedNavigationManagerTest, GoBackWithoutTransientItem) {
 
   ASSERT_TRUE(manager_->CanGoBack());
 
-  // The cast is necessary because without it, compiler cannot disambiguate
-  // between UIWebView's goBack and WKWebView's goBack. Not using C++ style cast
-  // because it doesn't work on id type.
-  [(WKWebView*)[mock_web_view_ expect]
-      goToBackForwardListItem:mock_wk_list_.backList[0]];
+  EXPECT_CALL(delegate_,
+              GoToBackForwardListItem(
+                  mock_wk_list_.backList[0], manager_->GetItemAtIndex(0),
+                  NavigationInitiationType::BROWSER_INITIATED,
+                  /*has_user_gesture=*/true));
   manager_->GoBack();
   [mock_web_view_ verify];
 }
@@ -413,8 +430,11 @@ TEST_F(WKBasedNavigationManagerTest, GoBackFromTransientItem) {
   manager_->AddTransientItem(GURL("http://www.1.com/transient"));
 
   ASSERT_TRUE(manager_->CanGoBack());
-  [(WKWebView*)[mock_web_view_ expect]
-      goToBackForwardListItem:mock_wk_list_.currentItem];
+  EXPECT_CALL(delegate_,
+              GoToBackForwardListItem(
+                  mock_wk_list_.currentItem, manager_->GetItemAtIndex(0),
+                  NavigationInitiationType::BROWSER_INITIATED,
+                  /*has_user_gesture=*/true));
   manager_->GoBack();
   [mock_web_view_ verify];
 
@@ -443,8 +463,11 @@ TEST_F(WKBasedNavigationManagerTest, GoForward) {
   [mock_wk_list_ moveCurrentToIndex:0];
   ASSERT_TRUE(manager_->CanGoForward());
 
-  [(WKWebView*)[mock_web_view_ expect]
-      goToBackForwardListItem:mock_wk_list_.forwardList[0]];
+  EXPECT_CALL(delegate_,
+              GoToBackForwardListItem(
+                  mock_wk_list_.forwardList[0], manager_->GetItemAtIndex(1),
+                  NavigationInitiationType::BROWSER_INITIATED,
+                  /*has_user_gesture=*/true));
   manager_->GoForward();
   [mock_web_view_ verify];
 }
@@ -478,8 +501,11 @@ TEST_F(WKBasedNavigationManagerTest, GoForwardShouldDiscardsUncommittedItems) {
   EXPECT_NE(nullptr, manager_->GetPendingItem());
   EXPECT_NE(nullptr, manager_->GetTransientItem());
 
-  [(WKWebView*)[mock_web_view_ expect]
-      goToBackForwardListItem:mock_wk_list_.forwardList[0]];
+  EXPECT_CALL(delegate_,
+              GoToBackForwardListItem(
+                  mock_wk_list_.forwardList[0], manager_->GetItemAtIndex(1),
+                  NavigationInitiationType::BROWSER_INITIATED,
+                  /*has_user_gesture=*/true));
   manager_->GoForward();
   [mock_web_view_ verify];
 
@@ -597,10 +623,13 @@ TEST_F(WKBasedNavigationManagerTest, CanGoToOffset) {
   EXPECT_FALSE(manager_->CanGoToOffset(2));
 }
 
-// Tests that non-empty session history can be restored.
+// Tests that non-empty session history can be restored, and are re-written if
+// necessary.
 TEST_F(WKBasedNavigationManagerTest, RestoreSessionWithHistory) {
+  manager_->AddTransientURLRewriter(&WebUIUrlRewriter);
   auto item0 = std::make_unique<NavigationItemImpl>();
-  item0->SetURL(GURL("http://www.0.com"));
+  GURL url(url::SchemeHostPort(kSchemeToRewrite, "test", 0).Serialize());
+  item0->SetURL(url);
   item0->SetTitle(base::ASCIIToUTF16("Test Website 0"));
   auto item1 = std::make_unique<NavigationItemImpl>();
   item1->SetURL(GURL("http://www.1.com"));
@@ -613,16 +642,19 @@ TEST_F(WKBasedNavigationManagerTest, RestoreSessionWithHistory) {
   manager_->Restore(1 /* last_committed_item_index */, std::move(items));
   EXPECT_TRUE(manager_->IsRestoreSessionInProgress());
 
-  NavigationItem* pending_item = manager_->GetPendingItem();
-  ASSERT_TRUE(pending_item != nullptr);
+  ASSERT_FALSE(manager_->GetPendingItem());
+  NavigationItem* pending_item =
+      manager_->GetPendingItemInCurrentOrRestoredSession();
+  ASSERT_TRUE(pending_item);
   GURL pending_url = pending_item->GetURL();
   EXPECT_TRUE(pending_url.SchemeIsFile());
   EXPECT_EQ("restore_session.html", pending_url.ExtractFileName());
-  EXPECT_EQ("http://www.0.com/", pending_item->GetVirtualURL());
+  EXPECT_EQ(url.spec(), pending_item->GetVirtualURL());
   EXPECT_EQ("Test Website 0", base::UTF16ToUTF8(pending_item->GetTitle()));
 
   EXPECT_EQ("{\"offset\":0,\"titles\":[\"Test Website 0\",\"\"],"
-            "\"urls\":[\"http://www.0.com/\",\"http://www.1.com/\"]}",
+            "\"urls\":[\"testwebui://test/\","
+            "\"http://www.1.com/\"]}",
             ExtractRestoredSession(pending_url));
 
   // Check that cached visible item is returned.
@@ -689,7 +721,9 @@ TEST_F(WKBasedNavigationManagerTest, RestoreSessionResetsHistory) {
   EXPECT_EQ(-1, manager_->GetPendingItemIndex());
 
   // Check that the only pending item is restore_session.html.
-  NavigationItem* pending_item = manager_->GetPendingItem();
+  ASSERT_FALSE(manager_->GetPendingItem());
+  NavigationItem* pending_item =
+      manager_->GetPendingItemInCurrentOrRestoredSession();
   ASSERT_TRUE(pending_item != nullptr);
   GURL pending_url = pending_item->GetURL();
   EXPECT_TRUE(pending_url.SchemeIsFile());
@@ -717,6 +751,19 @@ TEST_F(WKBasedNavigationManagerTest, HideInternalRedirectUrl) {
   NavigationItem* item = manager_->GetItemAtIndex(0);
   ASSERT_TRUE(item);
   EXPECT_EQ(target_url, item->GetVirtualURL());
+  EXPECT_EQ(url, item->GetURL());
+}
+
+// Tests that the virtual URL of a placeholder item is updated to the original
+// URL.
+TEST_F(WKBasedNavigationManagerTest, HideInternalPlaceholderUrl) {
+  GURL original_url = GURL("http://www.1.com?query=special%26chars");
+  GURL url = wk_navigation_util::CreatePlaceholderUrlForUrl(original_url);
+  NSString* url_spec = base::SysUTF8ToNSString(url.spec());
+  [mock_wk_list_ setCurrentURL:url_spec];
+  NavigationItem* item = manager_->GetItemAtIndex(0);
+  ASSERT_TRUE(item);
+  EXPECT_EQ(original_url, item->GetVirtualURL());
   EXPECT_EQ(url, item->GetURL());
 }
 
@@ -779,6 +826,8 @@ TEST_F(WKBasedNavigationManagerTest, EmptyWindowOpenNavigation) {
 
   [mock_wk_list_ setCurrentURL:@"http://www.2.com"];
   manager_->CommitPendingItem();
+  OCMExpect([mock_web_view_ URL])
+      .andReturn([[NSURL alloc] initWithString:@"http://www.2.com"]);
 
   const NavigationItem* last_committed_item_2 =
       manager_->GetLastCommittedItem();
@@ -827,6 +876,11 @@ class WKBasedNavigationManagerDetachedModeTest
     ASSERT_EQ(url0_, manager_->GetItemAtIndex(0)->GetURL());
     ASSERT_EQ(url1_, manager_->GetItemAtIndex(1)->GetURL());
     ASSERT_EQ(url2_, manager_->GetItemAtIndex(2)->GetURL());
+  }
+
+  NSString* CreateRedirectUrlForWKList(GURL url) {
+    GURL redirect_url = wk_navigation_util::CreateRedirectUrl(url);
+    return base::SysUTF8ToNSString(redirect_url.spec());
   }
 
   GURL url0_;
@@ -896,11 +950,14 @@ TEST_F(WKBasedNavigationManagerDetachedModeTest, Reload) {
   delegate_.RemoveWebView();
 
   manager_->Reload(web::ReloadType::NORMAL, false /* check_for_repost */);
+  NavigationItem* pending_item =
+      manager_->GetPendingItemInCurrentOrRestoredSession();
   EXPECT_EQ(
       "{\"offset\":-1,\"titles\":[\"\",\"\",\"\"],\"urls\":[\"http://www.0.com/"
       "\",\"http://www.1.com/\",\"http://www.2.com/\"]}",
-      ExtractRestoredSession(manager_->GetPendingItem()->GetURL()));
-  EXPECT_EQ(url0_, manager_->GetPendingItem()->GetVirtualURL());
+      ExtractRestoredSession(pending_item->GetURL()));
+
+  EXPECT_EQ(url0_, pending_item->GetVirtualURL());
   EXPECT_EQ(url1_, manager_->GetVisibleItem()->GetURL());
 
   histogram_tester_.ExpectTotalCount(kRestoreNavigationItemCount, 1);
@@ -914,11 +971,14 @@ TEST_F(WKBasedNavigationManagerDetachedModeTest, GoToIndex) {
   delegate_.RemoveWebView();
 
   manager_->GoToIndex(0);
+  NavigationItem* pending_item =
+      manager_->GetPendingItemInCurrentOrRestoredSession();
+
   EXPECT_EQ(
       "{\"offset\":-2,\"titles\":[\"\",\"\",\"\"],\"urls\":[\"http://www.0.com/"
       "\",\"http://www.1.com/\",\"http://www.2.com/\"]}",
-      ExtractRestoredSession(manager_->GetPendingItem()->GetURL()));
-  EXPECT_EQ(url0_, manager_->GetPendingItem()->GetVirtualURL());
+      ExtractRestoredSession(pending_item->GetURL()));
+  EXPECT_EQ(url0_, pending_item->GetVirtualURL());
   EXPECT_EQ(url0_, manager_->GetVisibleItem()->GetURL());
 
   histogram_tester_.ExpectTotalCount(kRestoreNavigationItemCount, 1);
@@ -931,11 +991,14 @@ TEST_F(WKBasedNavigationManagerDetachedModeTest, LoadIfNecessary) {
   delegate_.RemoveWebView();
 
   manager_->LoadIfNecessary();
+  NavigationItem* pending_item =
+      manager_->GetPendingItemInCurrentOrRestoredSession();
+
   EXPECT_EQ(
       "{\"offset\":-1,\"titles\":[\"\",\"\",\"\"],\"urls\":[\"http://www.0.com/"
       "\",\"http://www.1.com/\",\"http://www.2.com/\"]}",
-      ExtractRestoredSession(manager_->GetPendingItem()->GetURL()));
-  EXPECT_EQ(url0_, manager_->GetPendingItem()->GetVirtualURL());
+      ExtractRestoredSession(pending_item->GetURL()));
+  EXPECT_EQ(url0_, pending_item->GetVirtualURL());
   EXPECT_EQ(url1_, manager_->GetVisibleItem()->GetURL());
 
   histogram_tester_.ExpectTotalCount(kRestoreNavigationItemCount, 1);
@@ -951,15 +1014,54 @@ TEST_F(WKBasedNavigationManagerDetachedModeTest, LoadURLWithParams) {
   GURL url("http://www.3.com");
   NavigationManager::WebLoadParams params(url);
   manager_->LoadURLWithParams(params);
+  NavigationItem* pending_item =
+      manager_->GetPendingItemInCurrentOrRestoredSession();
   EXPECT_EQ(
       "{\"offset\":0,\"titles\":[\"\",\"\",\"\"],\"urls\":[\"http://www.0.com/"
       "\",\"http://www.1.com/\",\"http://www.3.com/\"]}",
-      ExtractRestoredSession(manager_->GetPendingItem()->GetURL()));
-  EXPECT_EQ(url0_, manager_->GetPendingItem()->GetVirtualURL());
+      ExtractRestoredSession(pending_item->GetURL()));
+  EXPECT_EQ(url0_, pending_item->GetVirtualURL());
   EXPECT_EQ(url, manager_->GetVisibleItem()->GetURL());
 
   histogram_tester_.ExpectTotalCount(kRestoreNavigationItemCount, 1);
   histogram_tester_.ExpectBucketCount(kRestoreNavigationItemCount, 3, 1);
+}
+
+// Tests that detaching placeholder urls are cleaned before being cached.
+TEST_F(WKBasedNavigationManagerDetachedModeTest, CachedPlaceholders) {
+  [mock_wk_list_ setCurrentURL:CreateRedirectUrlForWKList(url1_)
+                  backListURLs:@[ CreateRedirectUrlForWKList(url0_) ]
+               forwardListURLs:@[ CreateRedirectUrlForWKList(url2_) ]];
+  manager_->DetachFromWebView();
+
+  EXPECT_EQ(url0_, manager_->GetNavigationItemImplAtIndex(0)->GetURL());
+  EXPECT_EQ(url1_, manager_->GetNavigationItemImplAtIndex(1)->GetURL());
+  EXPECT_EQ(url2_, manager_->GetNavigationItemImplAtIndex(2)->GetURL());
+}
+
+// Tests that pending item is set to serializable when appropriate.
+TEST_F(WKBasedNavigationManagerDetachedModeTest, NotSerializable) {
+  manager_->AddPendingItem(
+      GURL("http://www.0.com"), Referrer(), ui::PAGE_TRANSITION_TYPED,
+      web::NavigationInitiationType::BROWSER_INITIATED,
+      web::NavigationManager::UserAgentOverrideOption::DESKTOP);
+  EXPECT_FALSE(manager_->GetPendingItemInCurrentOrRestoredSession()
+                   ->ShouldSkipSerialization());
+
+  manager_->SetWKWebViewNextPendingUrlNotSerializable(GURL("http://www.1.com"));
+  manager_->AddPendingItem(
+      GURL("http://www.1.com"), Referrer(), ui::PAGE_TRANSITION_TYPED,
+      web::NavigationInitiationType::BROWSER_INITIATED,
+      web::NavigationManager::UserAgentOverrideOption::DESKTOP);
+  EXPECT_TRUE(manager_->GetPendingItemInCurrentOrRestoredSession()
+                  ->ShouldSkipSerialization());
+
+  manager_->AddPendingItem(
+      GURL("http://www.1.com"), Referrer(), ui::PAGE_TRANSITION_TYPED,
+      web::NavigationInitiationType::BROWSER_INITIATED,
+      web::NavigationManager::UserAgentOverrideOption::DESKTOP);
+  EXPECT_FALSE(manager_->GetPendingItemInCurrentOrRestoredSession()
+                   ->ShouldSkipSerialization());
 }
 
 }  // namespace web

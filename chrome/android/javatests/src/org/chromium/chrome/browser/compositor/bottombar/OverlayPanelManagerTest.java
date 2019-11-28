@@ -109,7 +109,7 @@ public class OverlayPanelManagerTest {
          */
         private static class MockOverlayPanelContent extends OverlayPanelContent {
             public MockOverlayPanelContent() {
-                super(null, null, null, 0);
+                super(null, null, null, false, 0);
             }
 
             @Override
@@ -343,7 +343,7 @@ public class OverlayPanelManagerTest {
     @SmallTest
     @Feature({"OverlayPanel"})
     @UiThreadTest
-    public void testManagerObserver() throws InterruptedException, TimeoutException {
+    public void testManagerObserver() throws TimeoutException {
         Context context = InstrumentationRegistry.getTargetContext();
 
         final CallbackHelper shownHelper = new CallbackHelper();

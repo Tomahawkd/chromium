@@ -48,15 +48,14 @@ DeviceController::DeviceController(std::unique_ptr<Socket> host_socket,
                                    int exit_notifier_fd)
     : host_socket_(std::move(host_socket)),
       exit_notifier_fd_(exit_notifier_fd),
-      construction_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_ptr_factory_(this) {
+      construction_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   host_socket_->AddEventFd(exit_notifier_fd);
 }
 
 void DeviceController::AcceptHostCommandSoon() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DeviceController::AcceptHostCommandInternal,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&DeviceController::AcceptHostCommandInternal,
+                                base::Unretained(this)));
 }
 
 void DeviceController::AcceptHostCommandInternal() {
@@ -68,9 +67,8 @@ void DeviceController::AcceptHostCommandInternal() {
       LOG(INFO) << "Received exit notification";
     return;
   }
-  base::ScopedClosureRunner accept_next_client(
-      base::Bind(&DeviceController::AcceptHostCommandSoon,
-                 base::Unretained(this)));
+  base::ScopedClosureRunner accept_next_client(base::BindOnce(
+      &DeviceController::AcceptHostCommandSoon, base::Unretained(this)));
   // So that |socket| doesn't block on read if it has notifications.
   socket->AddEventFd(exit_notifier_fd_);
   int port;
@@ -79,9 +77,9 @@ void DeviceController::AcceptHostCommandInternal() {
     LOG(ERROR) << "Invalid command received.";
     return;
   }
-  const ListenersMap::iterator listener_it = listeners_.find(port);
-  DeviceListener* const listener = listener_it == listeners_.end()
-      ? static_cast<DeviceListener*>(NULL) : listener_it->second.get();
+  const auto listener_it = listeners_.find(port);
+  DeviceListener* const listener =
+      listener_it == listeners_.end() ? nullptr : listener_it->second.get();
   switch (command) {
     case command::LISTEN: {
       if (listener != NULL) {
@@ -91,8 +89,8 @@ void DeviceController::AcceptHostCommandInternal() {
       }
       std::unique_ptr<DeviceListener> new_listener(DeviceListener::Create(
           std::move(socket), port,
-          base::Bind(&DeviceController::DeleteListenerOnError,
-                     weak_ptr_factory_.GetWeakPtr())));
+          base::BindOnce(&DeviceController::DeleteListenerOnError,
+                         weak_ptr_factory_.GetWeakPtr())));
       if (!new_listener)
         return;
       new_listener->Start();
@@ -100,9 +98,7 @@ void DeviceController::AcceptHostCommandInternal() {
       // call DeviceListener::listener_port() to retrieve the currently
       // allocated port to this new listener.
       const int listener_port = new_listener->listener_port();
-      listeners_.insert(
-          std::make_pair(listener_port,
-                         linked_ptr<DeviceListener>(new_listener.release())));
+      listeners_.emplace(listener_port, std::move(new_listener));
       LOG(INFO) << "Forwarding device port " << listener_port << " to host.";
       break;
     }

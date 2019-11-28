@@ -20,6 +20,8 @@
 #include "content/public/common/screen_info.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/platform/web_input_event.h"
 #include "third_party/blink/public/platform/web_mouse_event.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -34,8 +36,7 @@ DevToolsEyeDropper::DevToolsEyeDropper(content::WebContents* web_contents,
       callback_(callback),
       last_cursor_x_(-1),
       last_cursor_y_(-1),
-      host_(nullptr),
-      weak_factory_(this) {
+      host_(nullptr) {
   mouse_event_callback_ =
       base::Bind(&DevToolsEyeDropper::HandleMouseEvent, base::Unretained(this));
   content::RenderViewHost* rvh = web_contents->GetRenderViewHost();
@@ -80,7 +81,7 @@ void DevToolsEyeDropper::DetachFromHost() {
     return;
   host_->RemoveMouseEventCallback(mouse_event_callback_);
   content::CursorInfo cursor_info;
-  cursor_info.type = blink::WebCursorInfo::kTypePointer;
+  cursor_info.type = ui::CursorType::kPointer;
   host_->SetCursor(cursor_info);
   video_capturer_.reset();
   host_ = nullptr;
@@ -131,19 +132,10 @@ bool DevToolsEyeDropper::HandleMouseEvent(const blink::WebMouseEvent& event) {
 
     // The picked colors are expected to be sRGB. Convert from |frame_|'s color
     // space to sRGB.
-    // TODO(ccameron): We don't actually know |frame_|'s color space, so just
-    // use |host_|'s current display's color space. This will almost always be
-    // the right color space, but is sloppy.
-    // http://crbug.com/758057
-    content::ScreenInfo screen_info;
-    host_->GetScreenInfo(&screen_info);
-    gfx::ColorSpace frame_color_space = screen_info.color_space;
-
     SkPixmap pm(
         SkImageInfo::Make(1, 1, kBGRA_8888_SkColorType, kUnpremul_SkAlphaType,
-                          frame_color_space.ToSkColorSpace()),
+                          frame_.refColorSpace()),
         &sk_color, sizeof(sk_color));
-
     uint8_t rgba_color[4];
     bool ok = pm.readPixels(
         SkImageInfo::Make(1, 1, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType,
@@ -263,7 +255,7 @@ void DevToolsEyeDropper::UpdateCursor() {
   canvas.drawCircle(kCursorSize / 2, kCursorSize / 2, kDiameter / 2, paint);
 
   content::CursorInfo cursor_info;
-  cursor_info.type = blink::WebCursorInfo::kTypeCustom;
+  cursor_info.type = ui::CursorType::kCustom;
   cursor_info.image_scale_factor = device_scale_factor;
   cursor_info.custom_image = result;
   cursor_info.hotspot = gfx::Point(kHotspotOffset * device_scale_factor,
@@ -274,9 +266,9 @@ void DevToolsEyeDropper::UpdateCursor() {
 void DevToolsEyeDropper::OnFrameCaptured(
     base::ReadOnlySharedMemoryRegion data,
     ::media::mojom::VideoFrameInfoPtr info,
-    const gfx::Rect& update_rect,
     const gfx::Rect& content_rect,
-    viz::mojom::FrameSinkVideoConsumerFrameCallbacksPtr callbacks) {
+    mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+        callbacks) {
   gfx::Size view_size = host_->GetView()->GetViewBounds().size();
   if (view_size != content_rect.size()) {
     video_capturer_->SetResolutionConstraints(view_size, view_size, true);
@@ -284,8 +276,11 @@ void DevToolsEyeDropper::OnFrameCaptured(
     return;
   }
 
+  mojo::Remote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+      callbacks_remote(std::move(callbacks));
+
   if (!data.IsValid()) {
-    callbacks->Done();
+    callbacks_remote->Done();
     return;
   }
   base::ReadOnlySharedMemoryMapping mapping = data.Map();
@@ -296,6 +291,10 @@ void DevToolsEyeDropper::OnFrameCaptured(
   if (mapping.size() <
       media::VideoFrame::AllocationSize(info->pixel_format, info->coded_size)) {
     DLOG(ERROR) << "Shared memory size was less than expected.";
+    return;
+  }
+  if (!info->color_space) {
+    DLOG(ERROR) << "Missing mandatory color space info.";
     return;
   }
 
@@ -311,18 +310,20 @@ void DevToolsEyeDropper::OnFrameCaptured(
     base::ReadOnlySharedMemoryMapping mapping;
     // Prevents FrameSinkVideoCapturer from recycling the shared memory that
     // backs |frame_|.
-    viz::mojom::FrameSinkVideoConsumerFrameCallbacksPtr releaser;
+    mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+        releaser;
   };
   frame_.installPixels(
       SkImageInfo::MakeN32(content_rect.width(), content_rect.height(),
-                           kPremul_SkAlphaType),
+                           kPremul_SkAlphaType,
+                           info->color_space->ToSkColorSpace()),
       pixels,
       media::VideoFrame::RowBytes(media::VideoFrame::kARGBPlane,
                                   info->pixel_format, info->coded_size.width()),
       [](void* addr, void* context) {
         delete static_cast<FramePinner*>(context);
       },
-      new FramePinner{std::move(mapping), std::move(callbacks)});
+      new FramePinner{std::move(mapping), callbacks_remote.Unbind()});
   frame_.setImmutable();
 
   UpdateCursor();

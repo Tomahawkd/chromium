@@ -2,25 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-(function() {
-
-'use strict';
+import {FittingType} from './pdf_fitting_type.js';
 
 /**
  * Parses the open pdf parameters passed in the url to set initial viewport
  * settings for opening the pdf.
  */
-window.OpenPDFParamsParser = class {
+export class OpenPdfParamsParser {
   /**
-   * @param {function(Object)} postMessageCallback
+   * @param {function(string):void} getNamedDestinationCallback
    *     Function called to fetch information for a named destination.
    */
-  constructor(postMessageCallback) {
+  constructor(getNamedDestinationCallback) {
     /** @private {!Array<!Object>} */
     this.outstandingRequests_ = [];
 
-    /** @private {!function(Object)} */
-    this.postMessageCallback_ = postMessageCallback;
+    /** @private {!function(string):void} */
+    this.getNamedDestinationCallback_ = getNamedDestinationCallback;
   }
 
   /**
@@ -33,13 +31,15 @@ window.OpenPDFParamsParser = class {
    */
   parseZoomParam_(paramValue) {
     const paramValueSplit = paramValue.split(',');
-    if (paramValueSplit.length != 1 && paramValueSplit.length != 3)
+    if (paramValueSplit.length != 1 && paramValueSplit.length != 3) {
       return {};
+    }
 
     // User scale of 100 means zoom value of 100% i.e. zoom factor of 1.0.
     const zoomFactor = parseFloat(paramValueSplit[0]) / 100;
-    if (Number.isNaN(zoomFactor))
+    if (Number.isNaN(zoomFactor)) {
       return {};
+    }
 
     // Handle #zoom=scale.
     if (paramValueSplit.length == 1) {
@@ -64,8 +64,9 @@ window.OpenPDFParamsParser = class {
    */
   parseViewParam_(paramValue) {
     const viewModeComponents = paramValue.toLowerCase().split(',');
-    if (viewModeComponents.length < 1)
+    if (viewModeComponents.length < 1) {
       return {};
+    }
 
     const params = {};
     const viewMode = viewModeComponents[0];
@@ -81,12 +82,14 @@ window.OpenPDFParamsParser = class {
       acceptsPositionParam = true;
     }
 
-    if (!acceptsPositionParam || viewModeComponents.length < 2)
+    if (!acceptsPositionParam || viewModeComponents.length < 2) {
       return params;
+    }
 
     const position = parseFloat(viewModeComponents[1]);
-    if (!Number.isNaN(position))
+    if (!Number.isNaN(position)) {
       params['viewPosition'] = position;
+    }
 
     return params;
   }
@@ -102,8 +105,9 @@ window.OpenPDFParamsParser = class {
     const params = {};
 
     const paramIndex = url.search('#');
-    if (paramIndex == -1)
+    if (paramIndex == -1) {
       return params;
+    }
 
     const paramTokens = url.substring(paramIndex + 1).split('&');
     if ((paramTokens.length == 1) && (paramTokens[0].search('=') == -1)) {
@@ -116,8 +120,9 @@ window.OpenPDFParamsParser = class {
 
     for (const paramToken of paramTokens) {
       const keyValueSplit = paramToken.split('=');
-      if (keyValueSplit.length != 2)
+      if (keyValueSplit.length != 2) {
         continue;
+      }
       params[keyValueSplit[0]] = keyValueSplit[1];
     }
 
@@ -136,8 +141,9 @@ window.OpenPDFParamsParser = class {
     const params = this.parseUrlParams_(url);
     const uiParams = {toolbar: true};
 
-    if ('toolbar' in params && params['toolbar'] == 0)
+    if ('toolbar' in params && params['toolbar'] == 0) {
       uiParams.toolbar = false;
+    }
 
     return uiParams;
   }
@@ -160,22 +166,22 @@ window.OpenPDFParamsParser = class {
     if ('page' in urlParams) {
       // |pageNumber| is 1-based, but goToPage() take a zero-based page number.
       const pageNumber = parseInt(urlParams['page'], 10);
-      if (!Number.isNaN(pageNumber) && pageNumber > 0)
+      if (!Number.isNaN(pageNumber) && pageNumber > 0) {
         params['page'] = pageNumber - 1;
+      }
     }
 
-    if ('view' in urlParams)
+    if ('view' in urlParams) {
       Object.assign(params, this.parseViewParam_(urlParams['view']));
+    }
 
-    if ('zoom' in urlParams)
+    if ('zoom' in urlParams) {
       Object.assign(params, this.parseZoomParam_(urlParams['zoom']));
+    }
 
     if (params.page === undefined && 'nameddest' in urlParams) {
       this.outstandingRequests_.push({callback: callback, params: params});
-      this.postMessageCallback_({
-        type: 'getNamedDestination',
-        namedDestination: urlParams['nameddest']
-      });
+      this.getNamedDestinationCallback_(urlParams['nameddest']);
     } else {
       callback(params);
     }
@@ -190,10 +196,9 @@ window.OpenPDFParamsParser = class {
    */
   onNamedDestinationReceived(pageNumber) {
     const outstandingRequest = this.outstandingRequests_.shift();
-    if (pageNumber != -1)
+    if (pageNumber != -1) {
       outstandingRequest.params.page = pageNumber;
+    }
     outstandingRequest.callback(outstandingRequest.params);
   }
-};
-
-}());
+}

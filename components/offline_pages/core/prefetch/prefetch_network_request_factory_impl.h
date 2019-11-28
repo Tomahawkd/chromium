@@ -13,6 +13,7 @@
 
 #include "components/offline_pages/core/prefetch/prefetch_dispatcher.h"
 #include "components/offline_pages/core/prefetch/prefetch_network_request_factory.h"
+#include "components/prefs/pref_service.h"
 #include "components/version_info/channel.h"
 
 namespace network {
@@ -28,7 +29,8 @@ class PrefetchNetworkRequestFactoryImpl : public PrefetchNetworkRequestFactory {
   PrefetchNetworkRequestFactoryImpl(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       version_info::Channel channel,
-      const std::string& user_agent);
+      const std::string& user_agent,
+      PrefService* prefs);
 
   ~PrefetchNetworkRequestFactoryImpl() override;
 
@@ -88,7 +90,9 @@ class PrefetchNetworkRequestFactoryImpl : public PrefetchNetworkRequestFactory {
   // Used to id GeneratePageBundle requests so they can be removed from the map.
   uint64_t request_id_ = 0;
 
-  base::WeakPtrFactory<PrefetchNetworkRequestFactoryImpl> weak_factory_;
+  PrefService* prefs_;
+
+  base::WeakPtrFactory<PrefetchNetworkRequestFactoryImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrefetchNetworkRequestFactoryImpl);
 };

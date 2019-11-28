@@ -10,8 +10,7 @@ title: test1
 	MediaKeys
 	Nodes
 	Resources
-	ScriptPromises
-	PausableObjects
+	ContextLifecycleStateObservers
 	V8PerContextDatas
 	WorkerGlobalScopes
 	UACSSResources
@@ -27,6 +26,7 @@ title: test1
 	V8CompileDuration
 	TaskDuration
 	TaskOtherDuration
+	ThreadTime
 	JSHeapUsedSize
 	JSHeapTotalSize
 	FirstMeaningfulPaint
@@ -43,8 +43,7 @@ title: test1
 	MediaKeys
 	Nodes
 	Resources
-	ScriptPromises
-	PausableObjects
+	ContextLifecycleStateObservers
 	V8PerContextDatas
 	WorkerGlobalScopes
 	UACSSResources
@@ -60,6 +59,7 @@ title: test1
 	V8CompileDuration
 	TaskDuration
 	TaskOtherDuration
+	ThreadTime
 	JSHeapUsedSize
 	JSHeapTotalSize
 	FirstMeaningfulPaint
@@ -76,8 +76,7 @@ title:
 	MediaKeys
 	Nodes
 	Resources
-	ScriptPromises
-	PausableObjects
+	ContextLifecycleStateObservers
 	V8PerContextDatas
 	WorkerGlobalScopes
 	UACSSResources
@@ -93,6 +92,7 @@ title:
 	V8CompileDuration
 	TaskDuration
 	TaskOtherDuration
+	ThreadTime
 	JSHeapUsedSize
 	JSHeapTotalSize
 	FirstMeaningfulPaint

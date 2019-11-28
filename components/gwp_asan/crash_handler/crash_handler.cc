@@ -5,10 +5,11 @@
 #include "components/gwp_asan/crash_handler/crash_handler.h"
 
 #include <stddef.h>
+#include <memory>
+#include <string>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
 #include "components/gwp_asan/crash_handler/crash.pb.h"
 #include "components/gwp_asan/crash_handler/crash_analyzer.h"
 #include "third_party/crashpad/crashpad/minidump/minidump_user_extension_stream_data_source.h"
@@ -18,14 +19,12 @@ namespace gwp_asan {
 namespace internal {
 namespace {
 
-using GwpAsanCrashAnalysisResult = CrashAnalyzer::GwpAsanCrashAnalysisResult;
-
 // Return a serialized protobuf using a wrapper interface that
 // crashpad::UserStreamDataSource expects us to return.
 class BufferExtensionStreamDataSource final
     : public crashpad::MinidumpUserExtensionStreamDataSource {
  public:
-  BufferExtensionStreamDataSource(uint32_t stream_type, Crash& crash);
+  BufferExtensionStreamDataSource(uint32_t stream_type, const Crash& crash);
 
   size_t StreamDataSize() override;
   bool ReadStreamData(Delegate* delegate) override;
@@ -38,7 +37,7 @@ class BufferExtensionStreamDataSource final
 
 BufferExtensionStreamDataSource::BufferExtensionStreamDataSource(
     uint32_t stream_type,
-    Crash& crash)
+    const Crash& crash)
     : crashpad::MinidumpUserExtensionStreamDataSource(stream_type) {
   bool result = crash.SerializeToString(&data_);
   DCHECK(result);
@@ -67,23 +66,48 @@ const char* ErrorToString(Crash_ErrorType type) {
       return "double-free";
     case Crash::UNKNOWN:
       return "unknown";
+    case Crash::FREE_INVALID_ADDRESS:
+      return "free-invalid-address";
     default:
       return "unexpected error type";
+  }
+}
+
+const char* AllocatorToString(Crash_Allocator allocator) {
+  switch (allocator) {
+    case Crash::MALLOC:
+      return "malloc";
+    case Crash::PARTITIONALLOC:
+      return "partitionalloc";
+    default:
+      return "unexpected allocator type";
   }
 }
 
 std::unique_ptr<crashpad::MinidumpUserExtensionStreamDataSource>
 HandleException(const crashpad::ProcessSnapshot& snapshot) {
   gwp_asan::Crash proto;
-  auto result = CrashAnalyzer::GetExceptionInfo(snapshot, &proto);
-  UMA_HISTOGRAM_ENUMERATION("GwpAsan.CrashAnalysisResult", result);
-
-  if (result != GwpAsanCrashAnalysisResult::kGwpAsanCrash)
+  CrashAnalyzer::GetExceptionInfo(snapshot, &proto);
+  // The missing_metadata field is always set for all exceptions.
+  if (!proto.has_missing_metadata())
     return nullptr;
 
-  LOG(ERROR) << "Detected GWP-ASan crash for allocation at 0x" << std::hex
-             << proto.allocation_address() << std::dec << " of type "
-             << ErrorToString(proto.error_type());
+  if (proto.missing_metadata()) {
+    LOG(ERROR) << "Detected GWP-ASan crash with missing metadata.";
+  } else {
+    LOG(ERROR) << "Detected GWP-ASan crash for allocation at 0x" << std::hex
+               << proto.allocation_address() << std::dec << " ("
+               << AllocatorToString(proto.allocator()) << ") of type "
+               << ErrorToString(proto.error_type());
+  }
+
+  if (proto.has_free_invalid_address()) {
+    LOG(ERROR) << "Invalid address passed to free() is " << std::hex
+               << proto.free_invalid_address() << std::dec;
+  }
+
+  if (proto.has_internal_error())
+    LOG(ERROR) << "Experienced internal error: " << proto.internal_error();
 
   return std::make_unique<BufferExtensionStreamDataSource>(
       kGwpAsanMinidumpStreamType, proto);

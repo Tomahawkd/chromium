@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.sync;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * Fake some ProfileSyncService methods for testing.
  *
@@ -11,6 +14,10 @@ package org.chromium.chrome.browser.sync;
  */
 public class FakeProfileSyncService extends ProfileSyncService {
     private boolean mEngineInitialized;
+    private int mNumberOfSyncedDevices;
+    private boolean mPassphraseRequiredForPreferredDataTypes;
+    private Set<Integer> mChosenTypes = new HashSet<>();
+    private boolean mCanSyncFeatureStart;
 
     public FakeProfileSyncService() {
         super();
@@ -28,5 +35,43 @@ public class FakeProfileSyncService extends ProfileSyncService {
     @Override
     public boolean isUsingSecondaryPassphrase() {
         return true;
+    }
+
+    @Override
+    public int getNumberOfSyncedDevices() {
+        return mNumberOfSyncedDevices;
+    }
+
+    public void setNumberOfSyncedDevices(int numDevices) {
+        mNumberOfSyncedDevices = numDevices;
+    }
+
+    @Override
+    public void setChosenDataTypes(boolean syncEverything, Set<Integer> enabledTypes) {
+        mChosenTypes = enabledTypes;
+    }
+
+    @Override
+    public Set<Integer> getPreferredDataTypes() {
+        return mChosenTypes;
+    }
+
+    @Override
+    public boolean isPassphraseRequiredForPreferredDataTypes() {
+        return mPassphraseRequiredForPreferredDataTypes;
+    }
+
+    public void setPassphraseRequiredForPreferredDataTypes(
+            boolean passphraseRequiredForPreferredDataTypes) {
+        mPassphraseRequiredForPreferredDataTypes = passphraseRequiredForPreferredDataTypes;
+    }
+
+    @Override
+    public boolean canSyncFeatureStart() {
+        return mCanSyncFeatureStart;
+    }
+
+    public void setCanSyncFeatureStart(boolean canSyncFeatureStart) {
+        mCanSyncFeatureStart = canSyncFeatureStart;
     }
 }

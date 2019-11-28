@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_FETCH_DISPATCHER_H_
 
 #include <memory>
+#include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
@@ -15,23 +16,19 @@
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/common/content_export.h"
-#include "content/common/service_worker/service_worker.mojom.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/resource_type.h"
 #include "mojo/public/cpp/system/data_pipe.h"
-#include "net/log/net_log_with_source.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
-#include "third_party/blink/public/mojom/blob/blob.mojom.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_event_status.mojom.h"
 
-namespace net {
-class URLRequest;
-}  // namespace net
-
 namespace content {
 
+class ServiceWorkerContextWrapper;
 class ServiceWorkerVersion;
 class URLLoaderFactoryGetter;
 
@@ -53,31 +50,23 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
                               blink::mojom::ServiceWorkerStreamHandlePtr,
                               blink::mojom::ServiceWorkerFetchEventTimingPtr,
                               scoped_refptr<ServiceWorkerVersion>)>;
+  using WebContentsGetter = base::RepeatingCallback<WebContents*()>;
 
-  // |request_body_*| and |client_id| are used in non-S13nServiceWorker only.
-  ServiceWorkerFetchDispatcher(
-      std::unique_ptr<network::ResourceRequest> request,
-      const std::string& request_body_blob_uuid,
-      uint64_t request_body_blob_size,
-      blink::mojom::BlobPtr request_body_blob,
-      const std::string& client_id,
-      scoped_refptr<ServiceWorkerVersion> version,
-      const net::NetLogWithSource& net_log,
-      base::OnceClosure prepare_callback,
-      FetchCallback fetch_callback);
+  ServiceWorkerFetchDispatcher(blink::mojom::FetchAPIRequestPtr request,
+                               ResourceType resource_type,
+                               const std::string& client_id,
+                               scoped_refptr<ServiceWorkerVersion> version,
+                               base::OnceClosure prepare_callback,
+                               FetchCallback fetch_callback);
   ~ServiceWorkerFetchDispatcher();
 
   // If appropriate, starts the navigation preload request and creates
   // |preload_handle_|. Returns true if it started navigation preload.
-  // |on_response| is invoked in OnReceiveResponse().
-  bool MaybeStartNavigationPreload(net::URLRequest* original_request,
-                                   base::OnceClosure on_response);
-  // S13nServiceWorker
-  // Same as above but for S13N.
-  bool MaybeStartNavigationPreloadWithURLLoader(
+  bool MaybeStartNavigationPreload(
       const network::ResourceRequest& original_request,
       URLLoaderFactoryGetter* url_loader_factory_getter,
-      base::OnceClosure on_response);
+      scoped_refptr<ServiceWorkerContextWrapper> context_wrapper,
+      int frame_tree_node_id);
 
   // Dispatches a fetch event to the |version| given in ctor, and fires
   // |fetch_callback_| (also given in ctor) once a response is received from the
@@ -119,21 +108,12 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
 
   ServiceWorkerMetrics::EventType GetEventType() const;
 
-  std::unique_ptr<network::ResourceRequest> request_;
-
-  // Non-S13nServiceWorker uses these. ///////////////////////////////
-  std::string request_body_blob_uuid_;
-  uint64_t request_body_blob_size_ = 0;
-  blink::mojom::BlobPtr request_body_blob_;
+  blink::mojom::FetchAPIRequestPtr request_;
   std::string client_id_;
-  ///////////////////////////////////////////////////////////////////
-
   scoped_refptr<ServiceWorkerVersion> version_;
-  ResourceType resource_type_;
-  net::NetLogWithSource net_log_;
+  const ResourceType resource_type_;
   base::OnceClosure prepare_callback_;
   FetchCallback fetch_callback_;
-  bool did_complete_;
 
   scoped_refptr<URLLoaderAssets> url_loader_assets_;
 
@@ -142,7 +122,7 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
   // service worker along with the fetch event.
   blink::mojom::FetchEventPreloadHandlePtr preload_handle_;
 
-  base::WeakPtrFactory<ServiceWorkerFetchDispatcher> weak_factory_;
+  base::WeakPtrFactory<ServiceWorkerFetchDispatcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerFetchDispatcher);
 };

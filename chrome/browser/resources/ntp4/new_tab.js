@@ -20,19 +20,6 @@ cr.define('ntp', function() {
   let newTabView;
 
   /**
-   * If non-null, an bubble confirming that the user has signed into sync. It
-   * points at the login status at the top of the page.
-   * @type {!cr.ui.Bubble|undefined}
-   */
-  let loginBubble;
-
-  /**
-   * true if |loginBubble| should be shown.
-   * @type {boolean}
-   */
-  let shouldShowLoginBubble = false;
-
-  /**
    * The time when all sections are ready.
    * @type {number|undefined}
    * @private
@@ -87,8 +74,9 @@ cr.define('ntp', function() {
     if (!loadTimeData.getBoolean('showWebStoreIcon')) {
       const webStoreIcon = $('chrome-web-store-link');
       // Not all versions of the NTP have a footer, so this may not exist.
-      if (webStoreIcon)
+      if (webStoreIcon) {
         webStoreIcon.hidden = true;
+      }
     } else {
       const webStoreLink = loadTimeData.getString('webStoreLink');
       const url =
@@ -104,31 +92,10 @@ cr.define('ntp', function() {
     // we can compute its layout.
     layoutFooter();
 
-    if (loadTimeData.getString('login_status_message')) {
-      loginBubble = new cr.ui.Bubble;
-      loginBubble.anchorNode = $('login-container');
-      loginBubble.arrowLocation = cr.ui.ArrowLocation.TOP_END;
-      loginBubble.bubbleAlignment =
-          cr.ui.BubbleAlignment.BUBBLE_EDGE_TO_ANCHOR_EDGE;
-      loginBubble.deactivateToDismissDelay = 2000;
-      loginBubble.closeButtonVisible = false;
-
-      $('login-status-advanced').onclick = function() {
-        chrome.send('showAdvancedLoginUI');
-      };
-      $('login-status-dismiss').onclick = loginBubble.hide.bind(loginBubble);
-
-      const bubbleContent = $('login-status-bubble-contents');
-      loginBubble.content = bubbleContent;
-
-      // The anchor node won't be updated until updateLogin is called so don't
-      // show the bubble yet.
-      shouldShowLoginBubble = true;
-    }
-
     $('login-container').addEventListener('click', showSyncLoginUI);
-    if (loadTimeData.getBoolean('shouldShowSyncLogin'))
+    if (loadTimeData.getBoolean('shouldShowSyncLogin')) {
       chrome.send('initializeSyncLogin');
+    }
 
     doWhenAllSectionsReady(function() {
       // Tell the slider about the pages.
@@ -137,10 +104,15 @@ cr.define('ntp', function() {
       newTabView.cardSlider.currentCardValue.navigationDot.classList.add(
           'selected');
 
-      cr.dispatchSimpleEvent(document, 'ntpLoaded', true, true);
       document.documentElement.classList.remove('starting-up');
 
       startTime = Date.now();
+
+      cr.addWebUIListener('theme-changed', () => {
+        $('themecss').href =
+            'chrome://theme/css/new_tab_theme.css?' + Date.now();
+      });
+      chrome.send('observeThemeChanges');
     });
   }
 
@@ -150,11 +122,12 @@ cr.define('ntp', function() {
    * @param {Event} e The click/auxclick event.
    */
   function onChromeWebStoreButtonClick(e) {
-    if (e.button > 1)
-      return;  // Ignore buttons other than left and middle.
+    if (e.button > 1) {
+      return;
+    }  // Ignore buttons other than left and middle.
     chrome.send(
         'recordAppLaunchByURL',
-        [encodeURIComponent(this.href), ntp.APP_LAUNCH.NTP_WEBSTORE_FOOTER]);
+        [this.href, ntp.APP_LAUNCH.NTP_WEBSTORE_FOOTER]);
   }
 
   /**
@@ -183,10 +156,11 @@ cr.define('ntp', function() {
    */
   function doWhenAllSectionsReady(callback) {
     assert(typeof callback == 'function');
-    if (sectionsToWaitFor > 0)
+    if (sectionsToWaitFor > 0) {
       readyCallbacks.push(callback);
-    else
-      window.setTimeout(callback, 0);  // Do soon after, but asynchronously.
+    } else {
+      window.setTimeout(callback, 0);
+    }  // Do soon after, but asynchronously.
   }
 
   /**
@@ -230,19 +204,11 @@ cr.define('ntp', function() {
     }
 
     const menu = $('footer-menu-container');
-    if (menu.clientWidth > logoImg.width)
+    if (menu.clientWidth > logoImg.width) {
       logo.style.WebkitFlex = '0 1 ' + menu.clientWidth + 'px';
-    else
+    } else {
       menu.style.WebkitFlex = '0 1 ' + logoImg.width + 'px';
-  }
-
-  /**
-   * Called when the theme has changed.
-   * @param {Object=} opt_themeData Not used; only exists to match equivalent
-   *     function in incognito NTP.
-   */
-  function themeChanged(opt_themeData) {
-    $('themecss').href = 'chrome://theme/css/new_tab_theme.css?' + Date.now();
+    }
   }
 
   function setBookmarkBarAttached(attached) {
@@ -258,8 +224,9 @@ cr.define('ntp', function() {
    */
   function setFaviconDominantColor(id, color) {
     const node = $(id);
-    if (node)
+    if (node) {
       node.stripeColor = color;
+    }
   }
 
   /**
@@ -286,15 +253,7 @@ cr.define('ntp', function() {
       const headerContainer = $('login-status-header-container');
       headerContainer.classList.toggle('login-status-icon', !!iconURL);
       headerContainer.style.backgroundImage =
-          iconURL ? getUrlForCss(iconURL) : 'none';
-    }
-
-    if (shouldShowLoginBubble) {
-      window.setTimeout(loginBubble.show.bind(loginBubble), 0);
-      chrome.send('loginMessageSeen');
-      shouldShowLoginBubble = false;
-    } else if (loginBubble) {
-      loginBubble.reposition();
+          iconURL ? cr.icon.getUrlForCss(iconURL) : 'none';
     }
   }
 
@@ -353,14 +312,6 @@ cr.define('ntp', function() {
    */
   function appsPrefChangeCallback(data) {
     newTabView.appsPrefChangedCallback(data);
-  }
-
-  /**
-   * Callback invoked by chrome whenever the app launcher promo pref changes.
-   * @param {boolean} show Identifies if we should show or hide the promo.
-   */
-  function appLauncherPromoPrefChangeCallback(show) {
-    newTabView.appLauncherPromoPrefChangeCallback(show);
   }
 
   /**
@@ -424,7 +375,6 @@ cr.define('ntp', function() {
     appMoved: appMoved,
     appRemoved: appRemoved,
     appsPrefChangeCallback: appsPrefChangeCallback,
-    appLauncherPromoPrefChangeCallback: appLauncherPromoPrefChangeCallback,
     enterRearrangeMode: enterRearrangeMode,
     getAppsCallback: getAppsCallback,
     getAppsPageIndex: getAppsPageIndex,
@@ -435,7 +385,6 @@ cr.define('ntp', function() {
     setAppToBeHighlighted: setAppToBeHighlighted,
     setBookmarkBarAttached: setBookmarkBarAttached,
     setFaviconDominantColor: setFaviconDominantColor,
-    themeChanged: themeChanged,
     updateLogin: updateLogin
   };
 });

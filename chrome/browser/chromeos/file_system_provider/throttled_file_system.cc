@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "chrome/browser/chromeos/file_system_provider/queue.h"
 
@@ -18,7 +19,7 @@ namespace file_system_provider {
 
 ThrottledFileSystem::ThrottledFileSystem(
     std::unique_ptr<ProvidedFileSystemInterface> file_system)
-    : file_system_(std::move(file_system)), weak_ptr_factory_(this) {
+    : file_system_(std::move(file_system)) {
   const int opened_files_limit =
       file_system_->GetFileSystemInfo().opened_files_limit();
   open_queue_.reset(opened_files_limit

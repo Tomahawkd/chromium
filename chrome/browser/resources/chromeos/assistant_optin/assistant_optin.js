@@ -5,7 +5,6 @@
 // <include src="../login/hd-iron-icon.js">
 // <include src="../login/oobe_types.js">
 // <include src="../login/oobe_buttons.js">
-// <include src="../login/oobe_change_picture.js">
 // <include src="../login/oobe_dialog_host_behavior.js">
 // <include src="../login/oobe_dialog.js">
 // <include src="assistant_optin_flow.js">
@@ -17,7 +16,11 @@ cr.define('login.AssistantOptInFlowScreen', function() {
      * Starts the assistant opt-in flow.
      */
     show: function() {
-      $('assistant-optin-flow-card').onShow();
+      var url = new URL(document.URL);
+      $('assistant-optin-flow-card')
+          .onShow(
+              url.searchParams.get('flow-type'),
+              url.searchParams.get('caption-bar-height'));
     },
 
     /**

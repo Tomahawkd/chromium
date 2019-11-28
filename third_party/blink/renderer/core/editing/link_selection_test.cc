@@ -6,6 +6,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_coalesced_input_event.h"
 #include "third_party/blink/public/web/web_settings.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -62,7 +63,8 @@ void LinkSelectionTestBase::EmulateMouseDrag(const IntPoint& down_point,
     const auto& down_event = frame_test_helpers::CreateMouseEvent(
         WebMouseEvent::kMouseDown, WebMouseEvent::Button::kLeft, down_point,
         modifiers);
-    web_view_->HandleInputEvent(WebCoalescedInputEvent(down_event));
+    web_view_->MainFrameWidget()->HandleInputEvent(
+        WebCoalescedInputEvent(down_event));
   }
 
   const int kMoveEventsNumber = 10;
@@ -74,14 +76,16 @@ void LinkSelectionTestBase::EmulateMouseDrag(const IntPoint& down_point,
     const auto& move_event = frame_test_helpers::CreateMouseEvent(
         WebMouseEvent::kMouseMove, WebMouseEvent::Button::kLeft, move_point,
         modifiers);
-    web_view_->HandleInputEvent(WebCoalescedInputEvent(move_event));
+    web_view_->MainFrameWidget()->HandleInputEvent(
+        WebCoalescedInputEvent(move_event));
   }
 
   if (drag_flags & kSendUpEvent) {
     const auto& up_event = frame_test_helpers::CreateMouseEvent(
         WebMouseEvent::kMouseUp, WebMouseEvent::Button::kLeft, up_point,
         modifiers);
-    web_view_->HandleInputEvent(WebCoalescedInputEvent(up_event));
+    web_view_->MainFrameWidget()->HandleInputEvent(
+        WebCoalescedInputEvent(up_event));
   }
 }
 
@@ -92,9 +96,9 @@ void LinkSelectionTestBase::EmulateMouseClick(const IntPoint& click_point,
   auto event = frame_test_helpers::CreateMouseEvent(
       WebMouseEvent::kMouseDown, button, click_point, modifiers);
   event.click_count = count;
-  web_view_->HandleInputEvent(WebCoalescedInputEvent(event));
+  web_view_->MainFrameWidget()->HandleInputEvent(WebCoalescedInputEvent(event));
   event.SetType(WebMouseEvent::kMouseUp);
-  web_view_->HandleInputEvent(WebCoalescedInputEvent(event));
+  web_view_->MainFrameWidget()->HandleInputEvent(WebCoalescedInputEvent(event));
 }
 
 void LinkSelectionTestBase::EmulateMouseDown(const IntPoint& click_point,
@@ -104,7 +108,7 @@ void LinkSelectionTestBase::EmulateMouseDown(const IntPoint& click_point,
   auto event = frame_test_helpers::CreateMouseEvent(
       WebMouseEvent::kMouseDown, button, click_point, modifiers);
   event.click_count = count;
-  web_view_->HandleInputEvent(WebCoalescedInputEvent(event));
+  web_view_->MainFrameWidget()->HandleInputEvent(WebCoalescedInputEvent(event));
 }
 
 String LinkSelectionTestBase::GetSelectionText() {
@@ -137,7 +141,7 @@ class LinkSelectionTest : public LinkSelectionTestBase {
     frame_test_helpers::LoadHTMLString(
         main_frame_, kHTMLString,
         url_test_helpers::ToKURL("http://foobar.com"));
-    web_view_->Resize(WebSize(800, 600));
+    web_view_->MainFrameWidget()->Resize(WebSize(800, 600));
     web_view_->GetPage()->GetFocusController().SetActive(true);
 
     auto* document = main_frame_->GetFrame()->GetDocument();
@@ -146,8 +150,8 @@ class LinkSelectionTest : public LinkSelectionTestBase {
     ASSERT_NE(nullptr, link_to_select);
     // We get larger range that we actually want to select, because we need a
     // slightly larger rect to include the last character to the selection.
-    auto* const range_to_select =
-        Range::Create(*document, link_to_select, 5, link_to_select, 16);
+    auto* const range_to_select = MakeGarbageCollected<Range>(
+        *document, link_to_select, 5, link_to_select, 16);
 
     const auto& selection_rect = range_to_select->BoundingBox();
     const auto& selection_rect_center_y = selection_rect.Center().Y();
@@ -187,10 +191,10 @@ TEST_F(LinkSelectionTest, HandCursorDuringLinkDrag) {
       ->LocalFrameRoot()
       .GetEventHandler()
       .ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kHand, cursor.GetType());
+  EXPECT_EQ(ui::CursorType::kHand, cursor.GetType());
 }
 
 TEST_F(LinkSelectionTest, DragOnNothingShowsPointer) {
@@ -199,10 +203,10 @@ TEST_F(LinkSelectionTest, DragOnNothingShowsPointer) {
       ->LocalFrameRoot()
       .GetEventHandler()
       .ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kPointer, cursor.GetType());
+  EXPECT_EQ(ui::CursorType::kPointer, cursor.GetType());
 }
 
 TEST_F(LinkSelectionTest, CaretCursorOverLinkDuringSelection) {
@@ -212,10 +216,10 @@ TEST_F(LinkSelectionTest, CaretCursorOverLinkDuringSelection) {
       ->LocalFrameRoot()
       .GetEventHandler()
       .ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kIBeam, cursor.GetType());
+  EXPECT_EQ(ui::CursorType::kIBeam, cursor.GetType());
 }
 
 TEST_F(LinkSelectionTest, HandCursorOverLinkAfterContextMenu) {
@@ -231,10 +235,10 @@ TEST_F(LinkSelectionTest, HandCursorOverLinkAfterContextMenu) {
   frame->GetPage()->GetContextMenuController().ClearContextMenu();
 
   frame->LocalFrameRoot().GetEventHandler().ScheduleCursorUpdate();
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(50));
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(50));
   const auto& cursor =
       main_frame_->GetFrame()->GetChromeClient().LastSetCursorForTesting();
-  EXPECT_EQ(Cursor::kHand, cursor.GetType());
+  EXPECT_EQ(ui::CursorType::kHand, cursor.GetType());
 }
 
 TEST_F(LinkSelectionTest, SingleClickWithAltStartsDownload) {
@@ -250,8 +254,8 @@ TEST_F(LinkSelectionTest, SingleClickWithAltStartsDownloadWhenTextSelected) {
   ASSERT_NE(nullptr, text_to_select);
 
   // Select some page text outside the link element.
-  const Range* range_to_select =
-      Range::Create(*document, text_to_select, 1, text_to_select, 20);
+  const auto* range_to_select = MakeGarbageCollected<Range>(
+      *document, text_to_select, 1, text_to_select, 20);
   const auto& selection_rect = range_to_select->BoundingBox();
   main_frame_->MoveRangeSelection(selection_rect.MinXMinYCorner(),
                                   selection_rect.MaxXMaxYCorner());
@@ -265,18 +269,8 @@ TEST_F(LinkSelectionTest, SingleClickWithAltStartsDownloadWhenTextSelected) {
 
 class LinkSelectionClickEventsTest : public LinkSelectionTestBase {
  protected:
-  class MockEventListener final : public EventListener {
+  class MockEventListener final : public NativeEventListener {
    public:
-    static MockEventListener* Create() {
-      return MakeGarbageCollected<MockEventListener>();
-    }
-
-    MockEventListener() : EventListener(kCPPEventListenerType) {}
-
-    bool operator==(const EventListener& other) const final {
-      return this == &other;
-    }
-
     MOCK_METHOD2(Invoke, void(ExecutionContext* executionContext, Event*));
   };
 
@@ -290,7 +284,7 @@ class LinkSelectionClickEventsTest : public LinkSelectionTestBase {
     frame_test_helpers::LoadHTMLString(
         main_frame_, kHTMLString,
         url_test_helpers::ToKURL("http://foobar.com"));
-    web_view_->Resize(WebSize(800, 600));
+    web_view_->MainFrameWidget()->Resize(WebSize(800, 600));
     web_view_->GetPage()->GetFocusController().SetActive(true);
 
     auto* document = main_frame_->GetFrame()->GetDocument();
@@ -311,7 +305,7 @@ class LinkSelectionClickEventsTest : public LinkSelectionTestBase {
       Persistent<Element> element_;
     } const listeners_cleaner(&element);
 
-    MockEventListener* event_handler = MockEventListener::Create();
+    auto* event_handler = MakeGarbageCollected<MockEventListener>();
     element.addEventListener(double_click_event ? event_type_names::kDblclick
                                                 : event_type_names::kClick,
                              event_handler);

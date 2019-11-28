@@ -11,13 +11,11 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/power_monitor/power_monitor.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "net/base/auth.h"
-#include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/load_states.h"
@@ -29,6 +27,7 @@
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
 #include "net/nqe/network_quality_estimator.h"
+#include "net/url_request/redirect_util.h"
 #include "net/url_request/url_request_context.h"
 
 namespace net {
@@ -36,13 +35,10 @@ namespace net {
 namespace {
 
 // Callback for TYPE_URL_REQUEST_FILTERS_SET net-internals event.
-std::unique_ptr<base::Value> SourceStreamSetCallback(
-    SourceStream* source_stream,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> event_params(
-      new base::DictionaryValue());
-  event_params->SetString("filters", source_stream->Description());
-  return std::move(event_params);
+base::Value SourceStreamSetParams(SourceStream* source_stream) {
+  base::Value event_params(base::Value::Type::DICTIONARY);
+  event_params.SetStringKey("filters", source_stream->Description());
+  return event_params;
 }
 
 }  // namespace
@@ -71,6 +67,8 @@ class URLRequestJob::URLRequestJobSourceStream : public SourceStream {
 
   std::string Description() const override { return std::string(); }
 
+  bool MayHaveMoreBytes() const override { return true; }
+
  private:
   // It is safe to keep a raw pointer because |job_| owns the last stream which
   // indirectly owns |this|. Therefore, |job_| will not be destroyed when |this|
@@ -88,22 +86,9 @@ URLRequestJob::URLRequestJob(URLRequest* request,
       postfilter_bytes_read_(0),
       has_handled_response_(false),
       expected_content_size_(-1),
-      network_delegate_(network_delegate),
-      last_notified_total_received_bytes_(0),
-      last_notified_total_sent_bytes_(0),
-      weak_factory_(this) {
-  // Socket tagging only supported for HTTP/HTTPS.
-  DCHECK(request == nullptr || SocketTag() == request->socket_tag() ||
-         request->url().SchemeIsHTTPOrHTTPS());
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (power_monitor)
-    power_monitor->AddObserver(this);
-}
+      network_delegate_(network_delegate) {}
 
 URLRequestJob::~URLRequestJob() {
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (power_monitor)
-    power_monitor->RemoveObserver(this);
 }
 
 void URLRequestJob::SetUpload(UploadDataStream* upload) {
@@ -134,22 +119,14 @@ int URLRequestJob::Read(IOBuffer* buf, int buf_size) {
 
   pending_read_buffer_ = buf;
   int result = source_stream_->Read(
-      buf, buf_size, base::Bind(&URLRequestJob::SourceStreamReadComplete,
-                                weak_factory_.GetWeakPtr(), false));
+      buf, buf_size,
+      base::BindOnce(&URLRequestJob::SourceStreamReadComplete,
+                     weak_factory_.GetWeakPtr(), false));
   if (result == ERR_IO_PENDING)
     return ERR_IO_PENDING;
 
   SourceStreamReadComplete(true, result);
   return result;
-}
-
-void URLRequestJob::StopCaching() {
-  // Nothing to do here.
-}
-
-bool URLRequestJob::GetFullRequestHeaders(HttpRequestHeaders* headers) const {
-  // Most job types don't send request headers.
-  return false;
 }
 
 int64_t URLRequestJob::GetTotalReceivedBytes() const {
@@ -175,7 +152,7 @@ void URLRequestJob::GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const {
   // Only certain request types return more than just request start times.
 }
 
-bool URLRequestJob::GetRemoteEndpoint(IPEndPoint* endpoint) const {
+bool URLRequestJob::GetTransactionRemoteEndpoint(IPEndPoint* endpoint) const {
   return false;
 }
 
@@ -222,11 +199,11 @@ bool URLRequestJob::NeedsAuth() {
   return false;
 }
 
-void URLRequestJob::GetAuthChallengeInfo(
-    scoped_refptr<AuthChallengeInfo>* auth_info) {
+std::unique_ptr<AuthChallengeInfo> URLRequestJob::GetAuthChallengeInfo() {
   // This will only be called if NeedsAuth() returns true, in which
   // case the derived class should implement this!
   NOTREACHED();
+  return nullptr;
 }
 
 void URLRequestJob::SetAuth(const AuthCredentials& credentials) {
@@ -256,7 +233,8 @@ void URLRequestJob::ContinueDespiteLastError() {
 }
 
 void URLRequestJob::FollowDeferredRedirect(
-    const base::Optional<net::HttpRequestHeaders>& modified_request_headers) {
+    const base::Optional<std::vector<std::string>>& removed_headers,
+    const base::Optional<net::HttpRequestHeaders>& modified_headers) {
   // OnReceivedRedirect must have been called.
   DCHECK(deferred_redirect_info_);
 
@@ -264,7 +242,7 @@ void URLRequestJob::FollowDeferredRedirect(
   // pass along a reference to |deferred_redirect_info_|.
   base::Optional<RedirectInfo> redirect_info =
       std::move(deferred_redirect_info_);
-  FollowRedirect(*redirect_info, modified_request_headers);
+  FollowRedirect(*redirect_info, removed_headers, modified_headers);
 }
 
 int64_t URLRequestJob::prefilter_bytes_read() const {
@@ -282,23 +260,8 @@ int URLRequestJob::GetResponseCode() const {
   return headers->response_code();
 }
 
-HostPortPair URLRequestJob::GetSocketAddress() const {
-  return HostPortPair();
-}
-
-void URLRequestJob::OnSuspend() {
-  // Most errors generated by the Job come as the result of the one current
-  // operation the job is waiting on returning an error. This event is unusual
-  // in that the Job may have another operation ongoing, or the Job may be idle
-  // and waiting on the next call.
-  //
-  // Need to cancel through the request to make sure everything is notified
-  // of the failure (Particularly that the NetworkDelegate, which the Job may be
-  // waiting on, is notified synchronously) and torn down correctly.
-  //
-  // TODO(mmenke): This should probably fail the request with
-  //               NETWORK_IO_SUSPENDED instead.
-  request_->Cancel();
+IPEndPoint URLRequestJob::GetResponseRemoteEndpoint() const {
+  return IPEndPoint();
 }
 
 void URLRequestJob::NotifyURLRequestDestroyed() {
@@ -308,16 +271,24 @@ void URLRequestJob::GetConnectionAttempts(ConnectionAttempts* out) const {
   out->clear();
 }
 
+// When making changes to this method that affect the returned referrer value,
+// also update blink::SecurityPolicy::GenerateReferrer accordingly.
 // static
-GURL URLRequestJob::ComputeReferrerForPolicy(URLRequest::ReferrerPolicy policy,
-                                             const GURL& original_referrer,
-                                             const GURL& destination) {
+GURL URLRequestJob::ComputeReferrerForPolicy(
+    URLRequest::ReferrerPolicy policy,
+    const GURL& original_referrer,
+    const base::Optional<url::Origin>& initiator,
+    const GURL& destination,
+    bool* same_origin_out_for_metrics) {
   bool secure_referrer_but_insecure_destination =
       original_referrer.SchemeIsCryptographic() &&
       !destination.SchemeIsCryptographic();
   url::Origin referrer_origin = url::Origin::Create(original_referrer);
+  url::Origin initiator_origin = initiator.value_or(referrer_origin);
   bool same_origin =
-      referrer_origin.IsSameOriginWith(url::Origin::Create(destination));
+      initiator_origin.IsSameOriginWith(url::Origin::Create(destination));
+  if (same_origin_out_for_metrics)
+    *same_origin_out_for_metrics = same_origin;
   switch (policy) {
     case URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE:
       return secure_referrer_but_insecure_destination ? GURL()
@@ -349,9 +320,6 @@ GURL URLRequestJob::ComputeReferrerForPolicy(URLRequest::ReferrerPolicy policy,
       return referrer_origin.GetURL();
     case URLRequest::NO_REFERRER:
       return GURL();
-    case URLRequest::MAX_REFERRER_POLICY:
-      NOTREACHED();
-      return GURL();
   }
 
   NOTREACHED();
@@ -363,9 +331,10 @@ void URLRequestJob::NotifyCertificateRequested(
   request_->NotifyCertificateRequested(cert_request_info);
 }
 
-void URLRequestJob::NotifySSLCertificateError(const SSLInfo& ssl_info,
+void URLRequestJob::NotifySSLCertificateError(int net_error,
+                                              const SSLInfo& ssl_info,
                                               bool fatal) {
-  request_->NotifySSLCertificateError(ssl_info, fatal);
+  request_->NotifySSLCertificateError(net_error, ssl_info, fatal);
 }
 
 bool URLRequestJob::CanGetCookies(const CookieList& cookie_list) const {
@@ -396,7 +365,6 @@ void URLRequestJob::NotifyHeadersComplete() {
   request_->response_info_.response_time = base::Time::Now();
   GetResponseInfo(&request_->response_info_);
 
-  MaybeNotifyNetworkBytes();
   request_->OnHeadersComplete();
 
   GURL new_location;
@@ -426,11 +394,13 @@ void URLRequestJob::NotifyHeadersComplete() {
     base::WeakPtr<URLRequestJob> weak_this(weak_factory_.GetWeakPtr());
 
     RedirectInfo redirect_info = RedirectInfo::ComputeRedirectInfo(
-        request_->method(), request_->url(), request_->site_for_cookies(),
-        request_->first_party_url_policy(), request_->referrer_policy(),
-        request_->referrer(), request_->response_headers(), http_status_code,
-        new_location, insecure_scheme_was_upgraded,
-        CopyFragmentOnRedirect(new_location));
+        request_->method(), request_->url(), request_->initiator(),
+        request_->site_for_cookies(), request_->first_party_url_policy(),
+        request_->referrer_policy(), request_->referrer(), http_status_code,
+        new_location,
+        net::RedirectUtil::GetReferrerPolicyHeader(
+            request_->response_headers()),
+        insecure_scheme_was_upgraded, CopyFragmentOnRedirect(new_location));
     bool defer_redirect = false;
     request_->NotifyReceivedRedirect(redirect_info, &defer_redirect);
 
@@ -442,24 +412,38 @@ void URLRequestJob::NotifyHeadersComplete() {
     if (defer_redirect) {
       deferred_redirect_info_ = std::move(redirect_info);
     } else {
-      FollowRedirect(redirect_info,
-                     base::nullopt /* modified_request_headers */);
+      FollowRedirect(redirect_info, base::nullopt, /*  removed_headers */
+                     base::nullopt /* modified_headers */);
     }
     return;
   }
 
   if (NeedsAuth()) {
-    scoped_refptr<AuthChallengeInfo> auth_info;
-    GetAuthChallengeInfo(&auth_info);
-
+    std::unique_ptr<AuthChallengeInfo> auth_info = GetAuthChallengeInfo();
     // Need to check for a NULL auth_info because the server may have failed
     // to send a challenge with the 401 response.
-    if (auth_info.get()) {
-      request_->NotifyAuthRequired(auth_info.get());
+    if (auth_info) {
+      request_->NotifyAuthRequired(std::move(auth_info));
       // Wait for SetAuth or CancelAuth to be called.
       return;
     }
   }
+
+  NotifyFinalHeadersReceived();
+  // |this| may be destroyed at this point.
+}
+
+void URLRequestJob::NotifyFinalHeadersReceived() {
+  DCHECK(!NeedsAuth() || !GetAuthChallengeInfo());
+
+  if (has_handled_response_)
+    return;
+
+  // While the request's status is normally updated in NotifyHeadersComplete(),
+  // URLRequestHttpJob::CancelAuth() posts a task to invoke this method
+  // directly, which bypasses that logic.
+  if (request_->status().is_io_pending())
+    request_->set_status(URLRequestStatus());
 
   has_handled_response_ = true;
   if (request_->status().is_success()) {
@@ -485,13 +469,11 @@ void URLRequestJob::NotifyHeadersComplete() {
     } else {
       request_->net_log().AddEvent(
           NetLogEventType::URL_REQUEST_FILTERS_SET,
-          base::Bind(&SourceStreamSetCallback,
-                     base::Unretained(source_stream_.get())));
+          [&] { return SourceStreamSetParams(source_stream_.get()); });
     }
   }
 
   request_->NotifyResponseStarted(URLRequestStatus());
-
   // |this| may be destroyed at this point.
 }
 
@@ -530,8 +512,6 @@ void URLRequestJob::NotifyStartError(const URLRequestStatus &status) {
   // error case.
   GetResponseInfo(&request_->response_info_);
 
-  MaybeNotifyNetworkBytes();
-
   request_->NotifyResponseStarted(status);
   // |this| may have been deleted here.
 }
@@ -560,14 +540,12 @@ void URLRequestJob::OnDone(const URLRequestStatus& status, bool notify_done) {
     request_->set_status(status);
   }
 
-  MaybeNotifyNetworkBytes();
-
   if (notify_done) {
     // Complete this notification later.  This prevents us from re-entering the
     // delegate if we're done because of a synchronous call.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&URLRequestJob::NotifyDone, weak_factory_.GetWeakPtr()));
+        base::BindOnce(&URLRequestJob::NotifyDone, weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -591,12 +569,6 @@ void URLRequestJob::NotifyCanceled() {
   if (!done_) {
     OnDone(URLRequestStatus(URLRequestStatus::CANCELED, ERR_ABORTED), true);
   }
-}
-
-void URLRequestJob::NotifyRestartRequired() {
-  DCHECK(!has_handled_response_);
-  if (GetStatus().status() != URLRequestStatus::CANCELED)
-    request_->Restart();
 }
 
 void URLRequestJob::OnCallToDelegate(NetLogEventType type) {
@@ -702,8 +674,9 @@ int URLRequestJob::CanFollowRedirect(const GURL& new_url) {
 
 void URLRequestJob::FollowRedirect(
     const RedirectInfo& redirect_info,
-    const base::Optional<net::HttpRequestHeaders>& modified_request_headers) {
-  request_->Redirect(redirect_info, modified_request_headers);
+    const base::Optional<std::vector<std::string>>& removed_headers,
+    const base::Optional<net::HttpRequestHeaders>& modified_headers) {
+  request_->Redirect(redirect_info, removed_headers, modified_headers);
 }
 
 void URLRequestJob::GatherRawReadStats(int bytes_read) {
@@ -737,10 +710,10 @@ void URLRequestJob::RecordBytesRead(int bytes_read) {
   if (request_->context()->network_quality_estimator()) {
     if (prefilter_bytes_read() == bytes_read) {
       request_->context()->network_quality_estimator()->NotifyHeadersReceived(
-          *request_);
+          *request_, prefilter_bytes_read());
     } else {
       request_->context()->network_quality_estimator()->NotifyBytesRead(
-          *request_);
+          *request_, prefilter_bytes_read());
     }
   }
 
@@ -749,40 +722,6 @@ void URLRequestJob::RecordBytesRead(int bytes_read) {
            << " pre bytes read = " << bytes_read
            << " pre total = " << prefilter_bytes_read()
            << " post total = " << postfilter_bytes_read();
-  UpdatePacketReadTimes();  // Facilitate stats recording if it is active.
-
-  // Notify observers if any additional network usage has occurred. Note that
-  // the number of received bytes over the network sent by this notification
-  // could be vastly different from |bytes_read|, such as when a large chunk of
-  // network bytes is received before multiple smaller raw reads are performed
-  // on it.
-  MaybeNotifyNetworkBytes();
-}
-
-void URLRequestJob::UpdatePacketReadTimes() {
-}
-
-void URLRequestJob::MaybeNotifyNetworkBytes() {
-  if (!network_delegate_)
-    return;
-
-  // Report any new received bytes.
-  int64_t total_received_bytes = GetTotalReceivedBytes();
-  DCHECK_GE(total_received_bytes, last_notified_total_received_bytes_);
-  if (total_received_bytes > last_notified_total_received_bytes_) {
-    network_delegate_->NotifyNetworkBytesReceived(
-        request_, total_received_bytes - last_notified_total_received_bytes_);
-  }
-  last_notified_total_received_bytes_ = total_received_bytes;
-
-  // Report any new sent bytes.
-  int64_t total_sent_bytes = GetTotalSentBytes();
-  DCHECK_GE(total_sent_bytes, last_notified_total_sent_bytes_);
-  if (total_sent_bytes > last_notified_total_sent_bytes_) {
-    network_delegate_->NotifyNetworkBytesSent(
-        request_, total_sent_bytes - last_notified_total_sent_bytes_);
-  }
-  last_notified_total_sent_bytes_ = total_sent_bytes;
 }
 
 }  // namespace net

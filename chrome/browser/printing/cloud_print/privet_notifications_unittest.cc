@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/notifications/notification_test_util.h"
@@ -16,7 +15,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "services/network/test/test_utils.h"
@@ -61,17 +60,11 @@ class MockPrivetHttpFactory : public PrivetHTTPAsynchronousFactory {
     ~MockResolution() override {}
 
     void Start(const net::HostPortPair& address,
-               const ResultCallback& callback) override {
+               ResultCallback callback) override {
       auto privet_http_client = std::make_unique<PrivetHTTPClientImpl>(
           name_, net::HostPortPair("1.2.3.4", 8080), url_loader_factory_);
-      callback.Run(std::move(privet_http_client));
+      std::move(callback).Run(std::move(privet_http_client));
     }
-
-    void Start(const ResultCallback& callback) override {
-      Start(net::HostPortPair(), callback);
-    }
-
-    const std::string& GetName() override { return name_; }
 
    private:
     std::string name_;
@@ -110,11 +103,11 @@ class PrivetNotificationsListenerTest : public testing::Test {
   bool SuccessfulResponseToInfo(const std::string& response) {
     return test_url_loader_factory_.SimulateResponseForPendingRequest(
         GURL(kDeviceInfoURL), network::URLLoaderCompletionStatus(net::OK),
-        network::CreateResourceResponseHead(net::HTTP_OK), response);
+        network::CreateURLResponseHead(net::HTTP_OK), response);
   }
 
  protected:
-  content::TestBrowserThreadBundle test_thread_bundle;
+  content::BrowserTaskEnvironment task_environment;
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
       test_shared_url_loader_factory_;
@@ -174,7 +167,7 @@ TEST_F(PrivetNotificationsListenerTest, HTTPErrorTest) {
   notification_listener_->DeviceChanged(kExampleDeviceName, description_);
   EXPECT_TRUE(test_url_loader_factory_.SimulateResponseForPendingRequest(
       GURL(kDeviceInfoURL), network::URLLoaderCompletionStatus(net::OK),
-      network::CreateResourceResponseHead(net::HTTP_NOT_FOUND),
+      network::CreateURLResponseHead(net::HTTP_NOT_FOUND),
       /*content=*/""));
 }
 
@@ -272,7 +265,7 @@ class PrivetNotificationsNotificationTest : public testing::Test {
   Profile* profile() { return profile_; }
 
   // The thread bundle must be first so it is destroyed last.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   std::unique_ptr<NotificationDisplayServiceTester> display_service_;
 

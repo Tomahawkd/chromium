@@ -30,7 +30,7 @@ uint32_t LockFlags(gfx::BufferUsage usage) {
     case gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE:
     case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
     case gfx::BufferUsage::SCANOUT_VDA_WRITE:
-    case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT:
+    case gfx::BufferUsage::SCANOUT_VEA_READ_CAMERA_AND_CPU_READ_WRITE:
       return 0;
   }
   NOTREACHED();
@@ -43,10 +43,10 @@ GpuMemoryBufferImplIOSurface::GpuMemoryBufferImplIOSurface(
     gfx::GpuMemoryBufferId id,
     const gfx::Size& size,
     gfx::BufferFormat format,
-    const DestructionCallback& callback,
+    DestructionCallback callback,
     IOSurfaceRef io_surface,
     uint32_t lock_flags)
-    : GpuMemoryBufferImpl(id, size, format, callback),
+    : GpuMemoryBufferImpl(id, size, format, std::move(callback)),
       io_surface_(io_surface),
       lock_flags_(lock_flags) {}
 
@@ -59,7 +59,7 @@ GpuMemoryBufferImplIOSurface::CreateFromHandle(
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    const DestructionCallback& callback) {
+    DestructionCallback callback) {
   if (!handle.mach_port) {
     LOG(ERROR) << "Invalid IOSurface mach port returned to client.";
     return nullptr;
@@ -76,14 +76,20 @@ GpuMemoryBufferImplIOSurface::CreateFromHandle(
     }
     return nullptr;
   }
+  int64_t io_surface_width = IOSurfaceGetWidth(io_surface);
+  int64_t io_surface_height = IOSurfaceGetHeight(io_surface);
+  if (io_surface_width < size.width() || io_surface_height < size.height()) {
+    DLOG(ERROR) << "IOSurface size does not match handle.";
+    return nullptr;
+  }
 
-  return base::WrapUnique(
-      new GpuMemoryBufferImplIOSurface(handle.id, size, format, callback,
-                                       io_surface.release(), LockFlags(usage)));
+  return base::WrapUnique(new GpuMemoryBufferImplIOSurface(
+      handle.id, size, format, std::move(callback), io_surface.release(),
+      LockFlags(usage)));
 }
 
 // static
-base::Closure GpuMemoryBufferImplIOSurface::AllocateForTesting(
+base::OnceClosure GpuMemoryBufferImplIOSurface::AllocateForTesting(
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
@@ -108,7 +114,7 @@ bool GpuMemoryBufferImplIOSurface::Map() {
 
 void* GpuMemoryBufferImplIOSurface::memory(size_t plane) {
   DCHECK(mapped_);
-  DCHECK_LT(plane, gfx::NumberOfPlanesForBufferFormat(format_));
+  DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
   return IOSurfaceGetBaseAddressOfPlane(io_surface_, plane);
 }
 
@@ -119,7 +125,7 @@ void GpuMemoryBufferImplIOSurface::Unmap() {
 }
 
 int GpuMemoryBufferImplIOSurface::stride(size_t plane) const {
-  DCHECK_LT(plane, gfx::NumberOfPlanesForBufferFormat(format_));
+  DCHECK_LT(plane, gfx::NumberOfPlanesForLinearBufferFormat(format_));
   return IOSurfaceGetBytesPerRowOfPlane(io_surface_, plane);
 }
 

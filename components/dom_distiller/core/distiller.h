@@ -10,10 +10,11 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -99,7 +100,7 @@ class DistillerImpl : public Distiller {
     // Relative page number of the page.
     int page_num;
     std::vector<std::unique_ptr<DistillerURLFetcher>> image_fetchers_;
-    scoped_refptr<base::RefCountedData<DistilledPageProto> >
+    scoped_refptr<base::RefCountedData<DistilledPageProto>>
         distilled_page_proto;
 
    private:
@@ -172,7 +173,7 @@ class DistillerImpl : public Distiller {
   // Maps page numbers of pages under distillation to the indices in |pages_|.
   // If a page is |started_pages_| that means it is still waiting for an action
   // (distillation or image fetch) to finish.
-  base::hash_map<int, size_t> started_pages_index_;
+  std::unordered_map<int, size_t> started_pages_index_;
 
   // The list of pages that are still waiting for distillation to start.
   // This is a map, to make distiller prefer distilling lower page numbers
@@ -181,13 +182,13 @@ class DistillerImpl : public Distiller {
 
   // Set to keep track of which urls are already seen by the distiller. Used to
   // prevent distiller from distilling the same url twice.
-  base::hash_set<std::string> seen_urls_;
+  std::unordered_set<std::string> seen_urls_;
 
   size_t max_pages_in_article_;
 
   bool destruction_allowed_;
 
-  base::WeakPtrFactory<DistillerImpl> weak_factory_;
+  base::WeakPtrFactory<DistillerImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DistillerImpl);
 };

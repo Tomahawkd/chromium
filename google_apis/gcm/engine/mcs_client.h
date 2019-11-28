@@ -15,7 +15,6 @@
 #include "base/containers/circular_deque.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "google_apis/gcm/base/gcm_export.h"
 #include "google_apis/gcm/base/mcs_message.h"
@@ -103,6 +102,7 @@ class GCM_EXPORT MCSClient {
             base::Clock* clock,
             ConnectionFactory* connection_factory,
             GCMStore* gcm_store,
+            scoped_refptr<base::SequencedTaskRunner> io_task_runner,
             GCMStatsRecorder* recorder);
   virtual ~MCSClient();
 
@@ -167,12 +167,12 @@ class GCM_EXPORT MCSClient {
   }
 
  private:
-  typedef uint32_t StreamId;
-  typedef std::string PersistentId;
-  typedef std::vector<StreamId> StreamIdList;
-  typedef std::vector<PersistentId> PersistentIdList;
-  typedef std::map<StreamId, PersistentId> StreamIdToPersistentIdMap;
-  typedef linked_ptr<ReliablePacketInfo> MCSPacketInternal;
+  using StreamId = uint32_t;
+  using PersistentId = std::string;
+  using StreamIdList = std::vector<StreamId>;
+  using PersistentIdList = std::vector<PersistentId>;
+  using StreamIdToPersistentIdMap = std::map<StreamId, PersistentId>;
+  using MCSPacketInternal = std::unique_ptr<ReliablePacketInfo>;
 
   // Resets the internal state and builds a new login request, acknowledging
   // any pending server-to-device messages and rebuilding the send queue
@@ -298,6 +298,8 @@ class GCM_EXPORT MCSClient {
   // The GCM persistent store. Not owned.
   GCMStore* gcm_store_;
 
+  const scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
+
   // Manager to handle triggering/detecting heartbeats.
   HeartbeatManager heartbeat_manager_;
 
@@ -307,7 +309,7 @@ class GCM_EXPORT MCSClient {
   // Recorder that records GCM activities for debugging purpose. Not owned.
   GCMStatsRecorder* recorder_;
 
-  base::WeakPtrFactory<MCSClient> weak_ptr_factory_;
+  base::WeakPtrFactory<MCSClient> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MCSClient);
 };

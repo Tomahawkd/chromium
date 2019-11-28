@@ -43,7 +43,7 @@ class BrowserTestDriver(Driver):
         assign it to the stdin of the process that is owned by this driver's
         server process.
         """
-        # FIXME(ivandavid): Need to handle case where the layout test doesn't
+        # FIXME(ivandavid): Need to handle case where the web test doesn't
         # get a file name.
         new_cmd_line = self.cmd_line(per_test_args)
         if not self._server_process or new_cmd_line != self._current_cmd_line:
@@ -52,7 +52,7 @@ class BrowserTestDriver(Driver):
             self._open_stdin_path(deadline)
 
     # Gets the path of the directory that the file for stdin communication is
-    # in. Since the browser test cannot clean it up, the layout test framework
+    # in. Since the browser test cannot clean it up, the web test framework
     # will. Everything the browser test uses is stored in the same directory as
     # the stdin file, so deleting that directory recursively will remove all the
     # other temp data, like the printed pdf. This function assumes the correct
@@ -79,7 +79,7 @@ class BrowserTestDriver(Driver):
         cmd.append(self._port._path_to_driver())
         cmd.append('--gtest_filter=PrintPreviewPdfGeneratedBrowserTest.MANUAL_LayoutTestDriver')
         cmd.append('--run-manual')
-        cmd.append('--single_process')
+        cmd.append('--single-process-tests')
         cmd.extend(per_test_args)
         cmd.extend(self._port.get_option('additional_driver_flag', []))
         return cmd

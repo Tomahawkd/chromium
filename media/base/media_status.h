@@ -5,6 +5,7 @@
 #ifndef MEDIA_BASE_MEDIA_STATUS_H_
 #define MEDIA_BASE_MEDIA_STATUS_H_
 
+#include "base/callback.h"
 #include "base/time/time.h"
 #include "media/base/media_export.h"
 
@@ -16,7 +17,14 @@ namespace media {
 // TODO(https://crbug.com/820277): Deduplicate media_router::MediaStatus.
 struct MEDIA_EXPORT MediaStatus {
  public:
-  enum class State { UNKNOWN, PLAYING, PAUSED, BUFFERING, STOPPED };
+  enum class State {
+    UNKNOWN,
+    PLAYING,
+    PAUSED,
+    BUFFERING,
+    STOPPED,
+    STATE_MAX = STOPPED,
+  };
 
   MediaStatus();
   MediaStatus(const MediaStatus& other);
@@ -60,6 +68,11 @@ struct MEDIA_EXPORT MediaStatus {
   // True if we have reached the end of stream.
   bool reached_end_of_stream = false;
 };
+
+using RemotePlayStateChangeCB =
+    base::RepeatingCallback<void(MediaStatus::State)>;
+using RequestRemotePlayStateChangeCB =
+    base::OnceCallback<void(RemotePlayStateChangeCB)>;
 
 }  // namespace media
 

@@ -25,7 +25,8 @@ std::unique_ptr<RasterBuffer>
 FakeRasterBufferProviderImpl::AcquireBufferForRaster(
     const ResourcePool::InUsePoolResource& resource,
     uint64_t resource_content_id,
-    uint64_t previous_content_id) {
+    uint64_t previous_content_id,
+    bool depends_on_at_raster_decodes) {
   auto backing = std::make_unique<StubGpuBacking>();
   backing->mailbox = gpu::Mailbox::Generate();
   resource.set_gpu_backing(std::move(backing));
@@ -36,10 +37,6 @@ void FakeRasterBufferProviderImpl::Flush() {}
 
 viz::ResourceFormat FakeRasterBufferProviderImpl::GetResourceFormat() const {
   return viz::ResourceFormat::RGBA_8888;
-}
-
-bool FakeRasterBufferProviderImpl::IsResourceSwizzleRequired() const {
-  return false;
 }
 
 bool FakeRasterBufferProviderImpl::IsResourcePremultiplied() const {
@@ -58,7 +55,7 @@ bool FakeRasterBufferProviderImpl::IsResourceReadyToDraw(
 
 uint64_t FakeRasterBufferProviderImpl::SetReadyToDrawCallback(
     const std::vector<const ResourcePool::InUsePoolResource*>& resources,
-    const base::Callback<void()>& callback,
+    base::OnceClosure callback,
     uint64_t pending_callback_id) const {
   return 0;
 }

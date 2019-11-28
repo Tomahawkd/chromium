@@ -10,7 +10,7 @@
 
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
-#include "components/leveldb_proto/proto_database.h"
+#include "components/leveldb_proto/public/proto_database.h"
 #include "media/base/media_export.h"
 #include "media/base/video_codecs.h"
 #include "media/capabilities/video_decode_stats_db.h"
@@ -93,7 +93,7 @@ class MEDIA_EXPORT InMemoryVideoDecodeStatsDBImpl : public VideoDecodeStatsDB {
   // callbacks to this happen on the checked sequence.
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<InMemoryVideoDecodeStatsDBImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<InMemoryVideoDecodeStatsDBImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InMemoryVideoDecodeStatsDBImpl);
 };

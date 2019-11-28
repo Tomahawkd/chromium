@@ -28,7 +28,7 @@
     TestRunner.addResult("Status bar buttons state:");
     for (var i = 0; i < items.length; ++i) {
       var item = items[i];
-      if (item instanceof HTMLContentElement)
+      if (item instanceof HTMLSlotElement)
         continue;
       if (!(item instanceof HTMLButtonElement)) {
         TestRunner.addResult("status bar item " + i + " is not a button: " + item);
@@ -198,7 +198,7 @@
         extension_showPanel("extension");
 
         function performSearch(query) {
-          UI.inspectorView.panel(extensionsOrigin + "TestPanelforsearch").then(panel => {
+          UI.inspectorView.panel(Extensions.extensionsOrigin + "TestPanelforsearch").then(panel => {
             panel.searchableView().showSearchField();
             panel.searchableView()._searchInputElement.value = query;
             panel.searchableView()._performSearch(true, true);

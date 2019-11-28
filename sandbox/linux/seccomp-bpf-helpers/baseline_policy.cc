@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "base/clang_coverage_buildflags.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
@@ -86,7 +87,8 @@ bool IsBaselinePolicyWatched(int sysno) {
          SyscallSets::IsNuma(sysno) ||
          SyscallSets::IsPrctl(sysno) ||
          SyscallSets::IsProcessGroupOrSession(sysno) ||
-#if defined(__i386__) || defined(__mips32__)
+#if defined(__i386__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
          SyscallSets::IsSocketCall(sysno) ||
 #endif
 #if defined(__arm__)
@@ -126,6 +128,16 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
 #endif  // defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) ||
         // defined(MEMORY_SANITIZER)
 
+#if BUILDFLAG(CLANG_COVERAGE)
+  if (SyscallSets::IsPrctl(sysno)) {
+    return Allow();
+  }
+
+  if (sysno == __NR_ftruncate) {
+    return Allow();
+  }
+#endif
+
   if (IsBaselinePolicyAllowed(sysno)) {
     return Allow();
   }
@@ -136,7 +148,7 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
     return Allow();
 #endif
 
-  if (sysno == __NR_clock_gettime) {
+  if (sysno == __NR_clock_gettime || sysno == __NR_clock_nanosleep) {
     return RestrictClockID();
   }
 
@@ -147,7 +159,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
   if (sysno == __NR_fcntl)
     return RestrictFcntlCommands();
 
-#if defined(__i386__) || defined(__arm__) || defined(__mips32__)
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
   if (sysno == __NR_fcntl64)
     return RestrictFcntlCommands();
 #endif
@@ -156,6 +169,15 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
   // fork() is never used as a system call (clone() is used instead), but we
   // have seen it in fallback code on Android.
   if (sysno == __NR_fork) {
+    return Error(EPERM);
+  }
+#endif
+
+#if defined(__NR_vfork)
+  // vfork() is almost never used as a system call, but some libc versions (e.g.
+  // older versions of bionic) might use it in a posix_spawn() implementation,
+  // which is used by system();
+  if (sysno == __NR_vfork) {
     return Error(EPERM);
   }
 #endif
@@ -193,7 +215,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
     return RestrictMmapFlags();
 #endif
 
-#if defined(__i386__) || defined(__arm__) || defined(__mips32__)
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
   if (sysno == __NR_mmap2)
     return RestrictMmapFlags();
 #endif
@@ -244,7 +267,8 @@ ResultExpr EvaluateSyscallImpl(int fs_denied_errno,
     return Error(EPERM);
   }
 
-#if defined(__i386__) || defined(__mips32__)
+#if defined(__i386__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
   if (SyscallSets::IsSocketCall(sysno))
     return RestrictSocketcallCommand();
 #endif

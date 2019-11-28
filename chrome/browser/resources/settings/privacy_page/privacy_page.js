@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+cr.exportPath('settings');
+
 /**
  * @typedef {{
  *   enabled: boolean,
@@ -16,6 +18,40 @@ let BlockAutoplayStatus;
  * security settings.
  */
 (function() {
+
+/**
+ * Must be kept in sync with the C++ enum of the same name.
+ * @enum {number}
+ */
+const NetworkPredictionOptions = {
+  ALWAYS: 0,
+  WIFI_ONLY: 1,
+  NEVER: 2,
+  DEFAULT: 1,
+};
+
+/**
+ * These values are persisted to logs. Entries should not be renumbered and
+ * numeric values should never be reused.
+ *
+ * Must be kept in sync with enum of the same name in
+ * histograms/enums.xml
+ *
+ * Interactions across all settings pages should be added here.
+ */
+settings.SettingsPageInteractions = {
+  PRIVACY_SYNC_AND_GOOGLE_SERVICES: 0,
+  PRIVACY_CHROME_SIGN_IN: 1,
+  PRIVACY_DO_NOT_TRACK: 2,
+  PRIVACY_PAYMENT_METHOD: 3,
+  PRIVACY_NETWORK_PREDICTION: 4,
+  PRIVACY_MANAGE_CERTIFICATES: 5,
+  PRIVACY_SECURITY_KEYS: 6,
+  PRIVACY_SITE_SETTINGS: 7,
+  PRIVACY_CLEAR_BROWSING_DATA: 8,
+  // Leave this at the end.
+  SETTINGS_MAX_VALUE: 8,
+};
 
 Polymer({
   is: 'settings-privacy-page',
@@ -64,19 +100,22 @@ Polymer({
       value: false,
     },
 
+    /**
+     * Used for HTML bindings. This is defined as a property rather than within
+     * the ready callback, because the value needs to be available before
+     * local DOM initialization - otherwise, the toggle has unexpected behavior.
+     * @private
+     */
+    networkPredictionUncheckedValue_: {
+      type: Number,
+      value: NetworkPredictionOptions.NEVER,
+    },
+
     /** @private */
     enableSafeBrowsingSubresourceFilter_: {
       type: Boolean,
       value: function() {
         return loadTimeData.getBoolean('enableSafeBrowsingSubresourceFilter');
-      }
-    },
-
-    /** @private */
-    enableSoundContentSetting_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableSoundContentSetting');
       }
     },
 
@@ -97,14 +136,6 @@ Polymer({
     },
 
     /** @private */
-    enableClipboardContentSetting_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableClipboardContentSetting');
-      }
-    },
-
-    /** @private */
     enablePaymentHandlerContentSetting_: {
       type: Boolean,
       value: function() {
@@ -113,11 +144,36 @@ Polymer({
     },
 
     /** @private */
-    enableSensorsContentSetting_: {
+    enableExperimentalWebPlatformFeatures_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableExperimentalWebPlatformFeatures');
+      },
+    },
+
+    /** @private */
+    enableSecurityKeysSubpage_: {
       type: Boolean,
       readOnly: true,
       value: function() {
-        return loadTimeData.getBoolean('enableSensorsContentSetting');
+        return loadTimeData.getBoolean('enableSecurityKeysSubpage');
+      }
+    },
+
+    /** @private */
+    enableInsecureContentContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableInsecureContentContentSetting');
+      }
+    },
+
+    /** @private */
+    enableNativeFileSystemWriteContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean(
+            'enableNativeFileSystemWriteContentSetting');
       }
     },
 
@@ -128,37 +184,27 @@ Polymer({
         const map = new Map();
         // <if expr="use_nss_certs">
         if (settings.routes.CERTIFICATES) {
-          map.set(
-              settings.routes.CERTIFICATES.path,
-              '#manageCertificates .subpage-arrow button');
+          map.set(settings.routes.CERTIFICATES.path, '#manageCertificates');
         }
         // </if>
         if (settings.routes.SITE_SETTINGS) {
           map.set(
               settings.routes.SITE_SETTINGS.path,
-              '#site-settings-subpage-trigger .subpage-arrow button');
+              '#site-settings-subpage-trigger');
         }
 
         if (settings.routes.SITE_SETTINGS_SITE_DATA) {
           map.set(
               settings.routes.SITE_SETTINGS_SITE_DATA.path,
-              '#site-data-trigger .subpage-arrow button');
+              '#site-data-trigger');
+        }
+
+        if (settings.routes.SECURITY_KEYS) {
+          map.set(
+              settings.routes.SECURITY_KEYS.path,
+              '#security-keys-subpage-trigger');
         }
         return map;
-      },
-    },
-
-    /**
-     * This flag is used to conditionally show a set of sync UIs to the
-     * profiles that have been migrated to have a unified consent flow.
-     * TODO(scottchen): In the future when all profiles are completely migrated,
-     * this should be removed, and UIs hidden behind it should become default.
-     * @private
-     */
-    unifiedConsentEnabled_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('unifiedConsentEnabled');
       },
     },
 
@@ -169,11 +215,15 @@ Polymer({
 
     /** @private */
     showSignoutDialog_: Boolean,
+
+    /** @private */
+    searchFilter_: String,
   },
 
   /** @override */
   ready: function() {
     this.ContentSettingsTypes = settings.ContentSettingsTypes;
+    this.ChooserType = settings.ChooserType;
 
     this.browserProxy_ = settings.PrivacyPageBrowserProxyImpl.getInstance();
 
@@ -212,8 +262,9 @@ Polymer({
    * @private
    */
   onDoNotTrackDomChange_: function(event) {
-    if (this.showDoNotTrackDialog_)
+    if (this.showDoNotTrackDialog_) {
       this.maybeShowDoNotTrackDialog_();
+    }
   },
 
   /**
@@ -236,12 +287,25 @@ Polymer({
   },
 
   /**
+   * Records changes made to the "can a website check if you have saved payment
+   * methods" setting for logging, the logic of actually changing the setting
+   * is taken care of by the webUI pref.
+   * @private
+   */
+  onCanMakePaymentChange_: function() {
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_PAYMENT_METHOD);
+  },
+
+  /**
    * Handles the change event for the do-not-track toggle. Shows a
    * confirmation dialog when enabling the setting.
    * @param {!Event} event
    * @private
    */
   onDoNotTrackChange_: function(event) {
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_DO_NOT_TRACK);
     const target = /** @type {!SettingsToggleButtonElement} */ (event.target);
     if (!target.checked) {
       // Always allow disabling the pref.
@@ -257,8 +321,9 @@ Polymer({
   /** @private */
   maybeShowDoNotTrackDialog_: function() {
     const dialog = this.$$('#confirmDoNotTrackDialog');
-    if (dialog && !dialog.open)
+    if (dialog && !dialog.open) {
       dialog.showModal();
+    }
   },
 
   /** @private */
@@ -301,17 +366,27 @@ Polymer({
     // <if expr="is_win or is_macosx">
     this.browserProxy_.showManageSSLCertificates();
     // </if>
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_MANAGE_CERTIFICATES);
   },
 
   /**
-   * @param {!Event} e
+   * Records changes made to the network prediction setting for logging, the
+   * logic of actually changing the setting is taken care of by the webUI pref.
    * @private
    */
-  onMoreSettingsBoxClicked_: function(e) {
-    if (e.target.tagName === 'A') {
-      e.preventDefault();
-      settings.navigateTo(settings.routes.SYNC);
-    }
+  onNetworkPredictionChange_: function() {
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_NETWORK_PREDICTION);
+  },
+
+  /** @private */
+  onSyncAndGoogleServicesClick_: function() {
+    // Navigate to sync page, and remove (privacy related) search text to
+    // avoid the sync page from being hidden.
+    settings.navigateTo(settings.routes.SYNC, null, true);
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_SYNC_AND_GOOGLE_SERVICES);
   },
 
   /**
@@ -321,8 +396,9 @@ Polymer({
   onRemoveAllCookiesFromSite_: function() {
     const node = /** @type {?SiteDataDetailsSubpageElement} */ (
         this.$$('site-data-details-subpage'));
-    if (node)
+    if (node) {
       node.removeAll();
+    }
   },
 
   /** @private */
@@ -333,28 +409,28 @@ Polymer({
   /** @private */
   onSiteSettingsTap_: function() {
     settings.navigateTo(settings.routes.SITE_SETTINGS);
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_SITE_SETTINGS);
   },
 
   /** @private */
   onClearBrowsingDataTap_: function() {
     settings.navigateTo(settings.routes.CLEAR_BROWSER_DATA);
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_CLEAR_BROWSING_DATA);
   },
 
   /** @private */
   onDialogClosed_: function() {
     settings.navigateTo(settings.routes.CLEAR_BROWSER_DATA.parent);
-    cr.ui.focusWithoutInk(assert(this.$.clearBrowsingDataTrigger));
+    cr.ui.focusWithoutInk(assert(this.$.clearBrowsingData));
   },
 
-  /**
-   * The sub-page title for the site or content settings.
-   * @return {string}
-   * @private
-   */
-  siteSettingsPageTitle_: function() {
-    return loadTimeData.getBoolean('enableSiteSettings') ?
-        loadTimeData.getString('siteSettings') :
-        loadTimeData.getString('contentSettings');
+  /** @private */
+  onSecurityKeysTap_: function() {
+    settings.navigateTo(settings.routes.SECURITY_KEYS);
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_SECURITY_KEYS);
   },
 
   /** @private */
@@ -380,6 +456,8 @@ Polymer({
           .sendPrefChange();
       this.showRestart_ = true;
     }
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_CHROME_SIGN_IN);
   },
 
   /** @private */

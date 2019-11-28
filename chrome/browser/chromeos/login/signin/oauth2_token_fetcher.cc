@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/signin/oauth2_token_fetcher.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
@@ -75,7 +76,7 @@ void OAuth2TokenFetcher::RetryOnError(const GoogleServiceAuthError& error,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (error.IsTransientError() && retry_count_ < kMaxRequestAttemptCount) {
     retry_count_++;
-    base::PostDelayedTaskWithTraits(
+    base::PostDelayedTask(
         FROM_HERE, {BrowserThread::UI}, task,
         base::TimeDelta::FromMilliseconds(kRequestRestartDelay));
     return;

@@ -3,22 +3,23 @@
 <script src="../../../resources/testharnessreport.js"></script>
 <script src="../../assert_selection.js"></script>
 <script>
+
 selection_test(
   '<div contenteditable dir="rtl">|abc</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="rtl">ab|c</div>',
+  '<div contenteditable dir="rtl">a|bc</div>',
   '1-0 rtl left character');
 
 selection_test(
   '<div contenteditable dir="rtl">a|bc</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="rtl">abc|</div>',
+  '<div contenteditable dir="rtl">ab|c</div>',
   '1-1 rtl left character');
 
 selection_test(
   '<div contenteditable dir="rtl">ab|c</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="rtl">a|bc</div>',
+  '<div contenteditable dir="rtl">abc|</div>',
   '1-2 rtl left character');
 
 selection_test(

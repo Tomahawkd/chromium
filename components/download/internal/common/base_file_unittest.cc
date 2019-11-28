@@ -12,7 +12,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/test_file_util.h"
 #include "build/build_config.h"
@@ -29,10 +29,10 @@ const char kTestData1[] = "Let's write some data to the file!\n";
 const char kTestData2[] = "Writing more data.\n";
 const char kTestData3[] = "Final line.";
 const char kTestData4[] = "supercalifragilisticexpialidocious";
-const int kTestDataLength1 = arraysize(kTestData1) - 1;
-const int kTestDataLength2 = arraysize(kTestData2) - 1;
-const int kTestDataLength3 = arraysize(kTestData3) - 1;
-const int kTestDataLength4 = arraysize(kTestData4) - 1;
+const int kTestDataLength1 = base::size(kTestData1) - 1;
+const int kTestDataLength2 = base::size(kTestData2) - 1;
+const int kTestDataLength3 = base::size(kTestData3) - 1;
+const int kTestDataLength4 = base::size(kTestData4) - 1;
 int64_t kTestDataBytesWasted = 0;
 
 // SHA-256 hash of kTestData1 (excluding terminating NUL).
@@ -140,13 +140,17 @@ class BaseFileTest : public testing::Test {
   void CreateFileWithName(const base::FilePath& file_name) {
     EXPECT_NE(base::FilePath::StringType(), file_name.value());
     BaseFile duplicate_file(download::DownloadItem::kInvalidId);
-    EXPECT_EQ(DOWNLOAD_INTERRUPT_REASON_NONE,
-              duplicate_file.Initialize(file_name, temp_dir_.GetPath(),
-                                        base::File(), 0, std::string(),
-                                        std::unique_ptr<crypto::SecureHash>(),
-                                        false, &kTestDataBytesWasted));
+    DownloadInterruptReason reason = duplicate_file.Initialize(
+        file_name, temp_dir_.GetPath(), base::File(), 0, std::string(),
+        std::unique_ptr<crypto::SecureHash>(), false, &kTestDataBytesWasted);
+#if defined(OS_WIN)
+    EXPECT_EQ(reason, DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
+#else
+    EXPECT_EQ(reason, DOWNLOAD_INTERRUPT_REASON_NONE);
     // Write something into it.
     duplicate_file.AppendDataToFile(kTestData4, kTestDataLength4);
+#endif  // defined(OS_WIN)
+
     // Detach the file so it isn't deleted on destruction of |duplicate_file|.
     duplicate_file.Detach();
   }
@@ -730,7 +734,7 @@ TEST_F(BaseFileTest, NoDoubleDeleteAfterCancel) {
   ASSERT_FALSE(base::PathExists(full_path));
 
   const char kData[] = "hello";
-  const int kDataLength = static_cast<int>(arraysize(kData) - 1);
+  const int kDataLength = static_cast<int>(base::size(kData) - 1);
   ASSERT_EQ(kDataLength, base::WriteFile(full_path, kData, kDataLength));
   // The file that we created here should stick around when the BaseFile is
   // destroyed during TearDown.
@@ -755,6 +759,27 @@ TEST_F(BaseFileTest, WriteDataToSparseFile) {
   base_file_->WriteDataToFile(kTestDataLength1, kTestData2, kTestDataLength2);
   set_expected_data(contents + kTestData2 + kTestData3);
   ExpectHashValue(kHashOfTestData1To3, base_file_->Finish());
+}
+
+// Test that validating data in a file works.
+TEST_F(BaseFileTest, ValidateDataInFile) {
+  ASSERT_TRUE(InitializeFile());
+  ASSERT_TRUE(AppendDataToFile(kTestData1));
+
+  ASSERT_TRUE(base_file_->ValidateDataInFile(0, "Let's", 5));
+  ASSERT_TRUE(base_file_->ValidateDataInFile(1, "et's ", 5));
+  ASSERT_TRUE(base_file_->ValidateDataInFile(
+      0, "Let's write some data to the file!\n", kTestDataLength1));
+  ASSERT_TRUE(base_file_->ValidateDataInFile(kTestDataLength1 - 1, "\n", 1));
+  ASSERT_FALSE(base_file_->ValidateDataInFile(kTestDataLength1, "\n", 1));
+  ASSERT_FALSE(base_file_->ValidateDataInFile(kTestDataLength1 - 1, "y\n", 2));
+  ASSERT_FALSE(base_file_->ValidateDataInFile(0, "et's ", 5));
+  ASSERT_FALSE(base_file_->ValidateDataInFile(
+      0, "Let's write some data to the file1\n", kTestDataLength1));
+  ASSERT_FALSE(base_file_->ValidateDataInFile(
+      0, "Let's write some data to the file1!\n", kTestDataLength1 + 1));
+
+  base_file_->Finish();
 }
 
 }  // namespace download

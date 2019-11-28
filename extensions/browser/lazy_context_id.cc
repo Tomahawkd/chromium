@@ -6,6 +6,7 @@
 
 #include "extensions/browser/lazy_background_task_queue.h"
 #include "extensions/browser/service_worker_task_queue.h"
+#include "extensions/browser/task_queue_util.h"
 
 namespace extensions {
 
@@ -21,11 +22,8 @@ LazyContextId::LazyContextId(content::BrowserContext* context,
       extension_id_(extension_id),
       service_worker_scope_(service_worker_scope) {}
 
-LazyContextTaskQueue* LazyContextId::GetTaskQueue() {
-  if (is_for_event_page())
-    return LazyBackgroundTaskQueue::Get(context_);
-  DCHECK(is_for_service_worker());
-  return ServiceWorkerTaskQueue::Get(context_);
+LazyContextTaskQueue* LazyContextId::GetTaskQueue() const {
+  return GetTaskQueueForLazyContextId(*this);
 }
 
 }  // namespace extensions

@@ -9,8 +9,10 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_observer.h"
+#include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/win/object_watcher.h"
 #include "media/base/callback_registry.h"
@@ -27,9 +29,8 @@ namespace {
 // The key exhange capabilities are checked using these.
 // https://msdn.microsoft.com/en-us/library/windows/desktop/hh447640%28v=vs.85%29.aspx?f=255&MSPPError=-2147217396
 // https://msdn.microsoft.com/en-us/library/windows/desktop/hh447782(v=vs.85).aspx
-bool CanDoHardwareProtectedKeyExchange(
-    Microsoft::WRL::ComPtr<ID3D11VideoDevice> video_device,
-    const GUID& crypto_type) {
+bool CanDoHardwareProtectedKeyExchange(ComD3D11VideoDevice video_device,
+                                       const GUID& crypto_type) {
   D3D11_VIDEO_CONTENT_PROTECTION_CAPS caps = {};
   HRESULT hresult = video_device->GetContentProtectionCaps(
       &crypto_type, &D3D11_DECODER_PROFILE_H264_VLD_NOFGT, &caps);
@@ -148,11 +149,11 @@ class D3D11CdmProxy::HardwareEventWatcher
   // Returns an instance if it starts watching for events, otherwise returns
   // nullptr.
   static std::unique_ptr<HardwareEventWatcher> Create(
-      ComPtr<ID3D11Device> device,
+      ComD3D11Device device,
       base::RepeatingClosure teardown_callback);
 
  private:
-  HardwareEventWatcher(ComPtr<ID3D11Device> device,
+  HardwareEventWatcher(ComD3D11Device device,
                        base::RepeatingClosure teardown_callback);
 
   // Start watching for events.
@@ -160,9 +161,9 @@ class D3D11CdmProxy::HardwareEventWatcher
 
   // Registers for hardware content protection teardown events.
   // Return true on success.
-  bool RegisterHardwareContentProtectionTeardown(ComPtr<ID3D11Device> device);
+  bool RegisterHardwareContentProtectionTeardown(ComD3D11Device device);
 
-  // Regiesters for power events, specifically power suspend event.
+  // Regiesters for power events, specifically power resume event.
   // Returns true on success.
   bool RegisterPowerEvents();
 
@@ -171,7 +172,7 @@ class D3D11CdmProxy::HardwareEventWatcher
 
   // base::PowerObserver implementation. Other power events are not relevant to
   // this class.
-  void OnSuspend() override;
+  void OnResume() override;
 
   // Stops watching for events. Good for clean up.
   void StopWatching();
@@ -179,9 +180,9 @@ class D3D11CdmProxy::HardwareEventWatcher
   // IDXGIAdapter3::RegisterHardwareContentProtectionTeardownStatusEvent
   // allows watching for teardown events. It is queried thru the following
   // Devices.
-  ComPtr<ID3D11Device> device_;
-  ComPtr<IDXGIDevice2> dxgi_device_;
-  ComPtr<IDXGIAdapter3> dxgi_adapter_;
+  ComD3D11Device device_;
+  ComDXGIDevice2 dxgi_device_;
+  ComDXGIAdapter3 dxgi_adapter_;
 
   // Cookie, event, and watcher used for watching events from
   // RegisterHardwareContentProtectionTeardownStatusEvent.
@@ -194,7 +195,7 @@ class D3D11CdmProxy::HardwareEventWatcher
 class D3D11CdmContext : public CdmContext {
  public:
   explicit D3D11CdmContext(const GUID& key_info_guid)
-      : cdm_proxy_context_(key_info_guid), weak_factory_(this) {}
+      : cdm_proxy_context_(key_info_guid) {}
   ~D3D11CdmContext() override = default;
 
   // The pointers are owned by the caller.
@@ -203,24 +204,27 @@ class D3D11CdmContext : public CdmContext {
               CdmProxy::KeyType key_type,
               const std::vector<uint8_t>& key_blob) {
     cdm_proxy_context_.SetKey(crypto_session, key_id, key_type, key_blob);
-    new_key_callbacks_.Notify();
+    event_callbacks_.Notify(Event::kHasAdditionalUsableKey);
   }
   void RemoveKey(ID3D11CryptoSession* crypto_session,
                  const std::vector<uint8_t>& key_id) {
     cdm_proxy_context_.RemoveKey(crypto_session, key_id);
   }
 
-  // Removes all keys from the context.
-  void RemoveAllKeys() { cdm_proxy_context_.RemoveAllKeys(); }
+  // Notifies of hardware reset.
+  void OnHardwareReset() {
+    cdm_proxy_context_.RemoveAllKeys();
+    event_callbacks_.Notify(Event::kHardwareContextLost);
+  }
 
   base::WeakPtr<D3D11CdmContext> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
   }
 
   // CdmContext implementation.
-  std::unique_ptr<CallbackRegistration> RegisterNewKeyCB(
-      base::RepeatingClosure new_key_cb) override {
-    return new_key_callbacks_.Register(std::move(new_key_cb));
+  std::unique_ptr<CallbackRegistration> RegisterEventCB(
+      EventCB event_cb) override {
+    return event_callbacks_.Register(std::move(event_cb));
   }
   CdmProxyContext* GetCdmProxyContext() override { return &cdm_proxy_context_; }
 
@@ -236,9 +240,9 @@ class D3D11CdmContext : public CdmContext {
 
   std::unique_ptr<D3D11Decryptor> decryptor_;
 
-  ClosureRegistry new_key_callbacks_;
+  CallbackRegistry<EventCB::RunType> event_callbacks_;
 
-  base::WeakPtrFactory<D3D11CdmContext> weak_factory_;
+  base::WeakPtrFactory<D3D11CdmContext> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(D3D11CdmContext);
 };
@@ -250,8 +254,7 @@ D3D11CdmProxy::D3D11CdmProxy(const GUID& crypto_type,
       protocol_(protocol),
       function_id_map_(function_id_map),
       cdm_context_(std::make_unique<D3D11CdmContext>(crypto_type)),
-      create_device_func_(base::BindRepeating(D3D11CreateDevice)),
-      weak_factory_(this) {}
+      create_device_func_(base::BindRepeating(D3D11CreateDevice)) {}
 
 D3D11CdmProxy::~D3D11CdmProxy() {}
 
@@ -260,11 +263,14 @@ base::WeakPtr<CdmContext> D3D11CdmProxy::GetCdmContext() {
 }
 
 void D3D11CdmProxy::Initialize(Client* client, InitializeCB init_cb) {
+  DCHECK(client);
+
   auto failed = [this, &init_cb]() {
     // The value doesn't matter as it shouldn't be used on a failure.
     const uint32_t kFailedCryptoSessionId = 0xFF;
     std::move(init_cb).Run(Status::kFail, protocol_, kFailedCryptoSessionId);
   };
+
   if (initialized_) {
     failed();
     NOTREACHED() << "CdmProxy should not be initialized more than once.";
@@ -279,7 +285,7 @@ void D3D11CdmProxy::Initialize(Client* client, InitializeCB init_cb) {
       nullptr,                            // No adapter.
       D3D_DRIVER_TYPE_HARDWARE, nullptr,  // No software rasterizer.
       0,                                  // flags, none.
-      feature_levels, arraysize(feature_levels), D3D11_SDK_VERSION,
+      feature_levels, base::size(feature_levels), D3D11_SDK_VERSION,
       device_.GetAddressOf(), nullptr, device_context_.GetAddressOf());
   if (FAILED(hresult)) {
     DLOG(ERROR) << "Failed to create the D3D11Device:" << hresult;
@@ -288,7 +294,7 @@ void D3D11CdmProxy::Initialize(Client* client, InitializeCB init_cb) {
   }
 
   // TODO(rkuroiwa): This should be registered iff
-  // D3D11_CONTENT_PROTECTION_CAPS_HARDWARE_TEARDOWN is set in the capabilties.
+  // D3D11_CONTENT_PROTECTION_CAPS_HARDWARE_TEARDOWN is set in the capabilities.
   hardware_event_watcher_ = HardwareEventWatcher::Create(
       device_, base::BindRepeating(
                    &D3D11CdmProxy::NotifyHardwareContentProtectionTeardown,
@@ -308,7 +314,7 @@ void D3D11CdmProxy::Initialize(Client* client, InitializeCB init_cb) {
   }
 
   if (!CanDoHardwareProtectedKeyExchange(video_device_, crypto_type_)) {
-    DLOG(ERROR) << "Cannot do hardware proteted key exhange.";
+    DLOG(ERROR) << "Cannot do hardware protected key exchange.";
     failed();
     return;
   }
@@ -334,7 +340,7 @@ void D3D11CdmProxy::Initialize(Client* client, InitializeCB init_cb) {
     return;
   }
 
-  ComPtr<ID3D11CryptoSession> csme_crypto_session;
+  ComD3D11CryptoSession csme_crypto_session;
   hresult = video_device_->CreateCryptoSession(
       &crypto_type_, &D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
       &D3D11_KEY_EXCHANGE_HW_PROTECTION, csme_crypto_session.GetAddressOf());
@@ -389,7 +395,7 @@ void D3D11CdmProxy::Process(Function function,
     return;
   }
 
-  ComPtr<ID3D11CryptoSession>& crypto_session = crypto_session_it->second;
+  ComD3D11CryptoSession& crypto_session = crypto_session_it->second;
 
   D3D11_KEY_EXCHANGE_HW_PROTECTION_DATA key_exchange_data = {};
   key_exchange_data.HWProtectionFunctionID = function_id_it->second;
@@ -453,7 +459,7 @@ void D3D11CdmProxy::CreateMediaCryptoSession(
     return;
   }
 
-  ComPtr<ID3D11CryptoSession> media_crypto_session;
+  ComD3D11CryptoSession media_crypto_session;
   HRESULT hresult = video_device_->CreateCryptoSession(
       &crypto_type_, &D3D11_DECODER_PROFILE_H264_VLD_NOFGT, &crypto_type_,
       media_crypto_session.GetAddressOf());
@@ -534,9 +540,28 @@ void D3D11CdmProxy::SetCreateDeviceCallbackForTesting(
 }
 
 void D3D11CdmProxy::NotifyHardwareContentProtectionTeardown() {
-  cdm_context_->RemoveAllKeys();
-  if (client_)
-    client_->NotifyHardwareReset();
+  cdm_context_->OnHardwareReset();
+  client_->NotifyHardwareReset();
+  Reset();
+}
+
+void D3D11CdmProxy::Reset() {
+  client_ = nullptr;
+  initialized_ = false;
+  crypto_session_map_.clear();
+  device_.Reset();
+  device_context_.Reset();
+  video_device_.Reset();
+  video_device1_.Reset();
+  video_context_.Reset();
+  video_context1_.Reset();
+  // Note that this deregisters hardware reset event watcher. It shouldn't
+  // notify the clients until this is reinitialized. Also the client is set to
+  // null in this method.
+  hardware_event_watcher_ = nullptr;
+  crypto_session_map_.clear();
+  private_input_size_ = 0;
+  private_output_size_ = 0;
 }
 
 D3D11CdmProxy::HardwareEventWatcher::~HardwareEventWatcher() {
@@ -545,7 +570,7 @@ D3D11CdmProxy::HardwareEventWatcher::~HardwareEventWatcher() {
 
 std::unique_ptr<D3D11CdmProxy::HardwareEventWatcher>
 D3D11CdmProxy::HardwareEventWatcher::Create(
-    Microsoft::WRL::ComPtr<ID3D11Device> device,
+    ComD3D11Device device,
     base::RepeatingClosure teardown_callback) {
   std::unique_ptr<HardwareEventWatcher> event_watcher = base::WrapUnique(
       new HardwareEventWatcher(device, std::move(teardown_callback)));
@@ -555,7 +580,7 @@ D3D11CdmProxy::HardwareEventWatcher::Create(
 }
 
 D3D11CdmProxy::HardwareEventWatcher::HardwareEventWatcher(
-    Microsoft::WRL::ComPtr<ID3D11Device> device,
+    ComD3D11Device device,
     base::RepeatingClosure teardown_callback)
     : device_(device), teardown_callback_(std::move(teardown_callback)) {}
 
@@ -570,7 +595,7 @@ bool D3D11CdmProxy::HardwareEventWatcher::StartWatching() {
 }
 
 bool D3D11CdmProxy::HardwareEventWatcher::
-    RegisterHardwareContentProtectionTeardown(ComPtr<ID3D11Device> device) {
+    RegisterHardwareContentProtectionTeardown(ComD3D11Device device) {
   device_ = device;
   HRESULT hresult = device_.CopyTo(dxgi_device_.ReleaseAndGetAddressOf());
   if (FAILED(hresult)) {
@@ -606,13 +631,10 @@ bool D3D11CdmProxy::HardwareEventWatcher::
 }
 
 bool D3D11CdmProxy::HardwareEventWatcher::RegisterPowerEvents() {
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (!power_monitor) {
+  if (!base::PowerMonitor::AddObserver(this)) {
     DVLOG(1) << "Power monitor not available.";
     return false;
   }
-
-  power_monitor->AddObserver(this);
   return true;
 }
 
@@ -621,7 +643,7 @@ void D3D11CdmProxy::HardwareEventWatcher::OnObjectSignaled(HANDLE object) {
   teardown_callback_.Run();
 }
 
-void D3D11CdmProxy::HardwareEventWatcher::OnSuspend() {
+void D3D11CdmProxy::HardwareEventWatcher::OnResume() {
   teardown_callback_.Run();
 }
 
@@ -631,9 +653,7 @@ void D3D11CdmProxy::HardwareEventWatcher::StopWatching() {
         teardown_event_cookie_);
   }
   teardown_status_watcher_.StopWatching();
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (power_monitor)
-    power_monitor->RemoveObserver(this);
+  base::PowerMonitor::RemoveObserver(this);
 }
 
 }  // namespace media

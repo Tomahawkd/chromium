@@ -12,52 +12,50 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
-#include "chrome/services/file_util/public/mojom/constants.mojom.h"
 #include "chrome/services/file_util/public/mojom/safe_archive_analyzer.mojom.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 SandboxedRarAnalyzer::SandboxedRarAnalyzer(
     const base::FilePath& rar_file_path,
     const ResultCallback& callback,
-    service_manager::Connector* connector)
-    : file_path_(rar_file_path), callback_(callback), connector_(connector) {
+    mojo::PendingRemote<chrome::mojom::FileUtilService> service)
+    : file_path_(rar_file_path),
+      callback_(callback),
+      service_(std::move(service)) {
   DCHECK(callback);
   DCHECK(!file_path_.value().empty());
+  service_->BindSafeArchiveAnalyzer(
+      remote_analyzer_.BindNewPipeAndPassReceiver());
+  remote_analyzer_.set_disconnect_handler(base::BindOnce(
+      &SandboxedRarAnalyzer::AnalyzeFileDone, base::Unretained(this),
+      safe_browsing::ArchiveAnalyzerResults()));
 }
 
 void SandboxedRarAnalyzer::Start() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&SandboxedRarAnalyzer::PrepareFileToAnalyze, this));
 }
 
 SandboxedRarAnalyzer::~SandboxedRarAnalyzer() = default;
 
-void SandboxedRarAnalyzer::AnalyzeFile(base::File file) {
+void SandboxedRarAnalyzer::AnalyzeFile(base::File file, base::File temp_file) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(!analyzer_ptr_);
   DCHECK(!file_path_.value().empty());
-
-  connector_->BindInterface(chrome::mojom::kFileUtilServiceName,
-                            mojo::MakeRequest(&analyzer_ptr_));
-  analyzer_ptr_.set_connection_error_handler(base::BindOnce(
-      &SandboxedRarAnalyzer::AnalyzeFileDone, base::Unretained(this),
-      safe_browsing::ArchiveAnalyzerResults()));
-  analyzer_ptr_->AnalyzeRarFile(
-      std::move(file),
+  remote_analyzer_->AnalyzeRarFile(
+      std::move(file), std::move(temp_file),
       base::BindOnce(&SandboxedRarAnalyzer::AnalyzeFileDone, this));
 }
 
 void SandboxedRarAnalyzer::AnalyzeFileDone(
     const safe_browsing::ArchiveAnalyzerResults& results) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  analyzer_ptr_.reset();
+  remote_analyzer_.reset();
   callback_.Run(results);
 }
 
@@ -77,21 +75,36 @@ void SandboxedRarAnalyzer::PrepareFileToAnalyze() {
     return;
   }
 
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::BindOnce(&SandboxedRarAnalyzer::AnalyzeFile,
-                                          this, std::move(file)));
+  base::FilePath temp_path;
+  base::File temp_file;
+  if (base::CreateTemporaryFile(&temp_path)) {
+    temp_file.Initialize(
+        temp_path, (base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_READ |
+                    base::File::FLAG_WRITE | base::File::FLAG_TEMPORARY |
+                    base::File::FLAG_DELETE_ON_CLOSE));
+  }
+
+  if (!temp_file.IsValid()) {
+    DLOG(ERROR) << "Could not open temp file: " << temp_path.value();
+    ReportFileFailure();
+    return;
+  }
+
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&SandboxedRarAnalyzer::AnalyzeFile, this,
+                                std::move(file), std::move(temp_file)));
 }
 
 void SandboxedRarAnalyzer::ReportFileFailure() {
-  DCHECK(!analyzer_ptr_);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(callback_, safe_browsing::ArchiveAnalyzerResults()));
 }
 
 std::string SandboxedRarAnalyzer::DebugString() const {
-  return base::StringPrintf("path: %" PRFilePath "; analyzer_ptr_: %p",
-                            file_path_.value().c_str(), analyzer_ptr_.get());
+  return base::StringPrintf("path: %" PRFilePath "; connected_: %d",
+                            file_path_.value().c_str(),
+                            remote_analyzer_.is_connected());
 }
 
 std::ostream& operator<<(std::ostream& os,

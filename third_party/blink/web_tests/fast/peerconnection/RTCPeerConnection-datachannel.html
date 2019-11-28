@@ -90,9 +90,13 @@ function pc_ondatachannel(e) {
     shouldNotThrow("dc.send('xyzzy');");
 }
 
+var pc_has_connected = false;
 function pc_onicechange() {
-    if (pc.iceConnectionState === "completed") {
+    if ((pc.iceConnectionState === "connected" ||
+        pc.iceConnectionState === "completed") &&
+        !pc_has_connected) {
         testPassed("pc is connected");
+        pc_has_connected = true;
     }
 }
 
@@ -137,8 +141,11 @@ shouldBe("dc.reliable", "true");
 shouldBe("dc.ordered", "false");
 shouldNotThrow('dc = pc.createDataChannel("label3", {maxRetransmits:0});');
 shouldBe("dc.reliable", "false");
-shouldNotThrow('dc = pc.createDataChannel("label3", {maxRetransmitTime:0});');
+shouldNotThrow('dc = pc.createDataChannel("label3", {maxPacketLifeTime:0});');
 shouldBe("dc.reliable", "false");
+// Test that older name has stopped affecting the reliability mode.
+shouldNotThrow('dc = pc.createDataChannel("label3", {maxRetransmitTime:0});');
+shouldBe("dc.reliable", "true");
 
 pc = new RTCPeerConnection();
 pc2 = new RTCPeerConnection();

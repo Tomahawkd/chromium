@@ -9,21 +9,12 @@
  */
 (function() {
 
-/**
- * Must be kept in sync with the C++ enum of the same name.
- * @enum {number}
- */
-const NetworkPredictionOptions = {
-  ALWAYS: 0,
-  WIFI_ONLY: 1,
-  NEVER: 2,
-  DEFAULT: 1,
-};
-
 Polymer({
   is: 'settings-personalization-options',
 
   behaviors: [
+    I18nBehavior,
+    PrefsBehavior,
     WebUIListenerBehavior,
   ],
 
@@ -39,18 +30,31 @@ Polymer({
      */
     pageVisibility: Object,
 
-    /**
-     * Used for HTML bindings. This is defined as a property rather than within
-     * the ready callback, because the value needs to be available before
-     * local DOM initialization - otherwise, the toggle has unexpected behavior.
-     * @private
-     */
-    networkPredictionEnum_: {
-      type: Object,
-      value: NetworkPredictionOptions,
+    /** @type {settings.SyncStatus} */
+    syncStatus: Object,
+
+    // <if expr="not chromeos">
+    /** @private {Array<!settings.StoredAccount>} */
+    storedAccounts_: Object,
+    // </if>
+
+    /** @private */
+    userSignedIn_: {
+      type: Boolean,
+      computed: 'computeUserSignedIn_(syncStatus, storedAccounts_)',
     },
 
-    unifiedConsentEnabled: Boolean,
+    /** @private */
+    passwordsLeakDetectionAvailable_: {
+      type: Boolean,
+      computed: 'computePasswordsLeakDetectionAvailable_(prefs.*)',
+    },
+
+    /** @private */
+    passwordsLeakDetectionEnabled_: {
+      type: Boolean,
+      value: loadTimeData.getBoolean('passwordsLeakDetectionEnabled'),
+    },
 
     // <if expr="_google_chrome and not chromeos">
     // TODO(dbeam): make a virtual.* pref namespace and set/get this normally
@@ -79,6 +83,76 @@ Polymer({
     this.addWebUIListener('metrics-reporting-change', setMetricsReportingPref);
     this.browserProxy_.getMetricsReporting().then(setMetricsReportingPref);
     // </if>
+    // <if expr="not chromeos">
+    const storedAccountsChanged = storedAccounts => this.storedAccounts_ =
+        storedAccounts;
+    const syncBrowserProxy = settings.SyncBrowserProxyImpl.getInstance();
+    syncBrowserProxy.getStoredAccounts().then(storedAccountsChanged);
+    this.addWebUIListener('stored-accounts-updated', storedAccountsChanged);
+    // </if>
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeUserSignedIn_: function() {
+    return (!!this.syncStatus && !!this.syncStatus.signedIn) ?
+        !this.syncStatus.hasError :
+        (!!this.storedAccounts_ && this.storedAccounts_.length > 0);
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computePasswordsLeakDetectionAvailable_: function() {
+    return !!this.getPref('profile.password_manager_leak_detection').value &&
+        !!this.getPref('safebrowsing.enabled').value;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  getCheckedLeakDetection_: function() {
+    return this.userSignedIn_ && this.passwordsLeakDetectionAvailable_;
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getPasswordsLeakDetectionSubLabel_: function() {
+    if (!this.userSignedIn_ && this.passwordsLeakDetectionAvailable_) {
+      return this.i18n('passwordsLeakDetectionSignedOutEnabledDescription');
+    }
+    return '';
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  getDisabledLeakDetection_: function() {
+    return !this.userSignedIn_ || !this.getPref('safebrowsing.enabled').value;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  getCheckedExtendedSafeBrowsing_: function() {
+    return !!this.getPref('safebrowsing.enabled').value &&
+        !!this.getPref('safebrowsing.scout_reporting_enabled').value;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  getDisabledExtendedSafeBrowsing_: function() {
+    return !this.getPref('safebrowsing.enabled').value;
   },
 
   // <if expr="_google_chrome and not chromeos">
@@ -109,10 +183,11 @@ Polymer({
 
     // TODO(dbeam): remember whether metrics reporting was enabled when Chrome
     // started.
-    if (metricsReporting.managed)
+    if (metricsReporting.managed) {
       this.showRestart_ = false;
-    else if (hadPreviousPref)
+    } else if (hadPreviousPref) {
       this.showRestart_ = true;
+    }
   },
 
   /**
@@ -125,15 +200,39 @@ Polymer({
   },
   // </if>
 
+  // <if expr="_google_chrome">
+  /**
+   * @param {!Event} event
+   * @private
+   */
+  onUseSpellingServiceToggle_: function(event) {
+    // If turning on using the spelling service, automatically turn on
+    // spellcheck so that the spelling service can run.
+    if (event.target.checked) {
+      this.setPrefValue('browser.enable_spellchecking', true);
+    }
+  },
+  // </if>
+
   /**
    * @return {boolean}
    * @private
    */
   showSpellCheckControl_: function() {
-    return !this.unifiedConsentEnabled ||
-        (!!this.prefs.spellcheck &&
-         /** @type {!Array<string>} */
-         (this.prefs.spellcheck.dictionaries.value).length > 0);
+    return (
+        !!this.prefs.spellcheck &&
+        /** @type {!Array<string>} */
+        (this.prefs.spellcheck.dictionaries.value).length > 0);
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowDriveSuggest_: function() {
+    return loadTimeData.getBoolean('driveSuggestAvailable') &&
+        !!this.syncStatus && !!this.syncStatus.signedIn &&
+        this.syncStatus.statusAction !== settings.StatusAction.REAUTHENTICATE;
   },
 });
 })();

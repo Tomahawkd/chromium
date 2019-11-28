@@ -9,8 +9,10 @@
 #include <utility>
 
 #include "base/bind.h"
-#import "base/mac/mac_util.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "chrome/browser/ssl/ssl_client_auth_metrics.h"
 #include "chrome/browser/ssl/ssl_client_certificate_selector.h"
 #include "chrome/browser/ssl/ssl_client_certificate_selector_test.h"
 #include "chrome/browser/ui/browser.h"
@@ -129,6 +131,7 @@ SSLClientCertificateSelectorMacTest::GetTestCertificateList() {
 }
 
 IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Basic) {
+  base::HistogramTester histograms;
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
@@ -136,10 +139,11 @@ IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Basic) {
   EXPECT_FALSE(web_contents_modal_dialog_manager->IsDialogActive());
 
   TestClientCertificateDelegateResults results;
-  chrome::ShowSSLClientCertificateSelector(
-      web_contents, auth_requestor_->cert_request_info_.get(),
-      GetTestCertificateList(),
-      std::make_unique<TestClientCertificateDelegate>(&results));
+  base::OnceClosure cancellation_callback =
+      chrome::ShowSSLClientCertificateSelector(
+          web_contents, auth_requestor_->cert_request_info_.get(),
+          GetTestCertificateList(),
+          std::make_unique<TestClientCertificateDelegate>(&results));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(web_contents_modal_dialog_manager->IsDialogActive());
 
@@ -149,11 +153,49 @@ IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Basic) {
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(web_contents_modal_dialog_manager->IsDialogActive());
 
+  histograms.ExpectUniqueSample(kClientCertSelectHistogramName,
+                                ClientCertSelectionResult::kUserCloseTab, 1);
+
   EXPECT_TRUE(results.destroyed);
   EXPECT_FALSE(results.continue_with_certificate_called);
 }
 
+IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest,
+                       CancellationCallback) {
+  base::HistogramTester histograms;
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  WebContentsModalDialogManager* web_contents_modal_dialog_manager =
+      WebContentsModalDialogManager::FromWebContents(web_contents);
+  EXPECT_FALSE(web_contents_modal_dialog_manager->IsDialogActive());
+
+  TestClientCertificateDelegateResults results;
+  base::OnceClosure cancellation_callback =
+      chrome::ShowSSLClientCertificateSelector(
+          web_contents, auth_requestor_->cert_request_info_.get(),
+          GetTestCertificateList(),
+          std::make_unique<TestClientCertificateDelegate>(&results));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(web_contents_modal_dialog_manager->IsDialogActive());
+
+  std::move(cancellation_callback).Run();
+
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(web_contents_modal_dialog_manager->IsDialogActive());
+
+  // The user did not close the tab, so there should be zero samples reported
+  // for ClientCertSelectionResult::kUserCloseTab.
+
+  // The TestClientCertificateDelegate will not be freed (yet) because no
+  // SSLClientAuthObserver methods have been invoked. The SSLClientAuthObserver
+  // owns the ClientCertificateDelegate in a unique_ptr, so it will be freed the
+  // SSLClientAuthObserver is destroyed.
+  EXPECT_FALSE(results.destroyed);
+  EXPECT_FALSE(results.continue_with_certificate_called);
+}
+
 IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Cancel) {
+  base::HistogramTester histograms;
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
@@ -174,6 +216,9 @@ IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Cancel) {
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(web_contents_modal_dialog_manager->IsDialogActive());
 
+  histograms.ExpectUniqueSample(kClientCertSelectHistogramName,
+                                ClientCertSelectionResult::kUserCancel, 1);
+
   // ContinueWithCertificate(nullptr, nullptr) should have been called.
   EXPECT_TRUE(results.destroyed);
   EXPECT_TRUE(results.continue_with_certificate_called);
@@ -182,6 +227,7 @@ IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Cancel) {
 }
 
 IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Accept) {
+  base::HistogramTester histograms;
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
@@ -208,9 +254,11 @@ IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, Accept) {
   EXPECT_EQ(client_cert1_, results.cert);
   ASSERT_TRUE(results.key);
 
+  histograms.ExpectUniqueSample(kClientCertSelectHistogramName,
+                                ClientCertSelectionResult::kUserSelect, 1);
+
   // The test keys are RSA keys.
-  EXPECT_EQ(net::SSLPrivateKey::DefaultAlgorithmPreferences(
-                EVP_PKEY_RSA, base::mac::IsAtLeastOS10_13()),
+  EXPECT_EQ(net::SSLPrivateKey::DefaultAlgorithmPreferences(EVP_PKEY_RSA, true),
             results.key->GetAlgorithmPreferences());
   TestSSLPrivateKeyMatches(results.key.get(), pkcs8_key1_);
 }
@@ -230,10 +278,11 @@ IN_PROC_BROWSER_TEST_F(SSLClientCertificateSelectorMacTest, HideShow) {
   NSUInteger num_child_windows = [[window childWindows] count];
 
   TestClientCertificateDelegateResults results;
-  chrome::ShowSSLClientCertificateSelector(
-      web_contents, auth_requestor_->cert_request_info_.get(),
-      GetTestCertificateList(),
-      std::make_unique<TestClientCertificateDelegate>(&results));
+  base::OnceClosure cancellation_callback =
+      chrome::ShowSSLClientCertificateSelector(
+          web_contents, auth_requestor_->cert_request_info_.get(),
+          GetTestCertificateList(),
+          std::make_unique<TestClientCertificateDelegate>(&results));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(web_contents_modal_dialog_manager->IsDialogActive());
 

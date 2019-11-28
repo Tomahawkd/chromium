@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fontconfig/fontconfig.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <utime.h>
@@ -31,7 +32,7 @@ int main() {
   base::PathService::Get(base::DIR_MODULE, &dir_module);
   base::FilePath uuid_file_path =
       dir_module.Append("test_fonts").Append(".uuid");
-  const char uuid[] = "df1acc8c-39d5-4a8b-8507-b1a7396ac3ac";
+  const char uuid[] = "fb5c91b2895aa445d23aebf7f9e2189c";
   WriteFile(uuid_file_path, uuid, strlen(uuid));
 
   // fontconfig writes the mtime of the test_fonts directory into the cache. It
@@ -51,10 +52,11 @@ int main() {
 
   // Delete directory before generating fontconfig caches. This will notify
   // future fontconfig_caches changes.
-  CHECK(base::DeleteFile(fontconfig_caches, /*recursive=*/true));
+  CHECK(base::DeleteFileRecursively(fontconfig_caches));
 
   base::SetUpFontconfig();
-  base::TearDownFontconfig();
+  FcInit();
+  FcFini();
 
   // Check existence of intended fontconfig cache file.
   CHECK(base::PathExists(

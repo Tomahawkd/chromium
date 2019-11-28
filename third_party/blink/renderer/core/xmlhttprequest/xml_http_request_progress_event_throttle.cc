@@ -40,8 +40,8 @@
 
 namespace blink {
 
-static constexpr TimeDelta kMinimumProgressEventDispatchingInterval =
-    TimeDelta::FromMilliseconds(50);  // 50 ms per specification.
+static constexpr base::TimeDelta kMinimumProgressEventDispatchingInterval =
+    base::TimeDelta::FromMilliseconds(50);  // 50 ms per specification.
 
 XMLHttpRequestProgressEventThrottle::DeferredEvent::DeferredEvent() {
   Clear();
@@ -49,8 +49,8 @@ XMLHttpRequestProgressEventThrottle::DeferredEvent::DeferredEvent() {
 
 void XMLHttpRequestProgressEventThrottle::DeferredEvent::Set(
     bool length_computable,
-    unsigned long long loaded,
-    unsigned long long total) {
+    uint64_t loaded,
+    uint64_t total) {
   is_set_ = true;
 
   length_computable_ = length_computable;
@@ -90,8 +90,8 @@ XMLHttpRequestProgressEventThrottle::~XMLHttpRequestProgressEventThrottle() =
 void XMLHttpRequestProgressEventThrottle::DispatchProgressEvent(
     const AtomicString& type,
     bool length_computable,
-    unsigned long long loaded,
-    unsigned long long total) {
+    uint64_t loaded,
+    uint64_t total) {
   // Given that ResourceDispatcher doesn't deliver an event when suspended,
   // we don't have to worry about event dispatching while suspended.
   if (type != event_type_names::kProgress) {
@@ -131,8 +131,9 @@ void XMLHttpRequestProgressEventThrottle::DispatchReadyStateChangeEvent(
     // the previously dispatched event changes the readyState (e.g. when
     // the event handler calls xhr.abort()). In such cases a
     // readystatechange should have been already dispatched if necessary.
-    probe::AsyncTask async_task(target_->GetExecutionContext(), target_,
-                                "progress", target_->IsAsync());
+    probe::AsyncTask async_task(target_->GetExecutionContext(),
+                                target_->async_task_id(), "progress",
+                                target_->IsAsync());
     target_->DispatchEvent(*event);
   }
 }
@@ -145,8 +146,9 @@ void XMLHttpRequestProgressEventThrottle::DispatchProgressProgressEvent(
     TRACE_EVENT1("devtools.timeline", "XHRReadyStateChange", "data",
                  inspector_xhr_ready_state_change_event::Data(
                      target_->GetExecutionContext(), target_));
-    probe::AsyncTask async_task(target_->GetExecutionContext(), target_,
-                                "progress", target_->IsAsync());
+    probe::AsyncTask async_task(target_->GetExecutionContext(),
+                                target_->async_task_id(), "progress",
+                                target_->IsAsync());
     target_->DispatchEvent(*Event::Create(event_type_names::kReadystatechange));
   }
 
@@ -154,8 +156,9 @@ void XMLHttpRequestProgressEventThrottle::DispatchProgressProgressEvent(
     return;
 
   has_dispatched_progress_progress_event_ = true;
-  probe::AsyncTask async_task(target_->GetExecutionContext(), target_,
-                              "progress", target_->IsAsync());
+  probe::AsyncTask async_task(target_->GetExecutionContext(),
+                              target_->async_task_id(), "progress",
+                              target_->IsAsync());
   target_->DispatchEvent(*progress_event);
 }
 
@@ -170,20 +173,6 @@ void XMLHttpRequestProgressEventThrottle::Fired() {
 
   // Watch if another "progress" ProgressEvent arrives in the next 50ms.
   StartOneShot(kMinimumProgressEventDispatchingInterval, FROM_HERE);
-}
-
-void XMLHttpRequestProgressEventThrottle::Pause() {
-  Stop();
-}
-
-void XMLHttpRequestProgressEventThrottle::Unpause() {
-  if (!deferred_.IsSet())
-    return;
-
-  // Do not dispatch events inline here, since ExecutionContext is iterating
-  // over the list of PausableObjects to resume them, and any activated JS
-  // event-handler could insert new PausableObjects to the list.
-  StartOneShot(TimeDelta(), FROM_HERE);
 }
 
 void XMLHttpRequestProgressEventThrottle::Trace(blink::Visitor* visitor) {

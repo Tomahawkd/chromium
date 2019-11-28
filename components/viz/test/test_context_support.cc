@@ -14,8 +14,7 @@
 
 namespace viz {
 
-TestContextSupport::TestContextSupport()
-    : out_of_order_callbacks_(false), weak_ptr_factory_(this) {}
+TestContextSupport::TestContextSupport() : out_of_order_callbacks_(false) {}
 
 TestContextSupport::~TestContextSupport() = default;
 
@@ -105,7 +104,7 @@ bool TestContextSupport::ThreadsafeDiscardableTextureIsDeletedForTracing(
   return false;
 }
 
-void* TestContextSupport::MapTransferCacheEntry(size_t serialized_size) {
+void* TestContextSupport::MapTransferCacheEntry(uint32_t serialized_size) {
   NOTIMPLEMENTED();
   return nullptr;
 }
@@ -131,6 +130,16 @@ void TestContextSupport::DeleteTransferCacheEntry(uint32_t entry_type,
 unsigned int TestContextSupport::GetTransferBufferFreeSize() const {
   NOTIMPLEMENTED();
   return 0;
+}
+bool TestContextSupport::IsJpegDecodeAccelerationSupported() const {
+  return false;
+}
+bool TestContextSupport::IsWebPDecodeAccelerationSupported() const {
+  return false;
+}
+bool TestContextSupport::CanDecodeWithHardwareAcceleration(
+    const cc::ImageHeaderMetadata* image_metadata) const {
+  return false;
 }
 
 bool TestContextSupport::HasGrContextSupport() const {

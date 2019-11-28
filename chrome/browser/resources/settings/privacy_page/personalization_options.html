@@ -1,14 +1,24 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
+<link rel="import" href="chrome://resources/cr_elements/cr_button/cr_button.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_toggle/cr_toggle.html">
+<link rel="import" href="chrome://resources/html/i18n_behavior.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
 <link rel="import" href="../controls/settings_toggle_button.html">
 <link rel="import" href="../lifetime_browser_proxy.html">
+<link rel="import" href="../people_page/sync_browser_proxy.html">
+<link rel="import" href="../prefs/prefs.html">
+<link rel="import" href="../prefs/prefs_behavior.html">
 <link rel="import" href="../route.html">
 <link rel="import" href="../settings_shared_css.html">
 <link rel="import" href="privacy_page_browser_proxy.html">
 
+<!--
+ * Note: If a synced pref is added/removed from this file, the method
+ * |GetSyncedServicePrefNames| in
+ * chrome/browser/unified_consent/unified_consent_service_factory.cc has to be
+ * updated accordingly.
+-->
 <dom-module id="settings-personalization-options">
   <template>
     <style include="settings-shared">
@@ -27,12 +37,6 @@
         label="$i18n{searchSuggestPref}"
         sub-label="$i18n{searchSuggestPrefDesc}">
     </settings-toggle-button>
-    <settings-toggle-button hidden="[[!pageVisibility.networkPrediction]]"
-        pref="{{prefs.net.network_prediction_options}}"
-        label="$i18n{networkPredictionEnabled}"
-        sub-label="$i18n{networkPredictionEnabledDesc}"
-        numeric-unchecked-value="[[networkPredictionEnum_.NEVER]]">
-    </settings-toggle-button>
     <settings-toggle-button pref="{{prefs.alternate_error_pages.enabled}}"
         label="$i18n{linkDoctorPref}"
         sub-label="$i18n{linkDoctorPrefDesc}">
@@ -41,10 +45,23 @@
         label="$i18n{safeBrowsingEnableProtection}"
         sub-label="$i18n{safeBrowsingEnableProtectionDesc}">
     </settings-toggle-button>
+   <settings-toggle-button id="passwordsLeakDetectionCheckbox"
+      pref="{{prefs.profile.password_manager_leak_detection}}"
+      checked="[[getCheckedLeakDetection_(
+          userSignedIn_, passwordsLeakDetectionAvailable_)]]"
+      label="$i18n{passwordsLeakDetectionLabel}"
+      sub-label="[[getPasswordsLeakDetectionSubLabel_(
+          userSignedIn_, passwordsLeakDetectionAvailable_)]]"
+      hidden$="[[!passwordsLeakDetectionEnabled_]]"
+      disabled="[[getDisabledLeakDetection_(
+          userSignedIn_, prefs.*)]]">
+    </settings-toggle-button>
     <settings-toggle-button
         pref="{{prefs.safebrowsing.scout_reporting_enabled}}"
+        checked="[[getCheckedExtendedSafeBrowsing_(prefs.*)]]"
         label="$i18n{safeBrowsingEnableExtendedReporting}"
-        sub-label="$i18n{safeBrowsingEnableExtendedReportingDesc}">
+        sub-label="$i18n{safeBrowsingEnableExtendedReportingDesc}"
+        disabled="[[getDisabledExtendedSafeBrowsing_(prefs.*)]]">
     </settings-toggle-button>
 <if expr="_google_chrome">
 <if expr="chromeos">
@@ -59,29 +76,36 @@
         sub-label="$i18n{enableLoggingDesc}" no-set-pref
         on-settings-boolean-control-change="onMetricsReportingChange_">
       <template is="dom-if" if="[[showRestart_]]" restamp>
-        <paper-button on-click="onRestartTap_" id="restart"
+        <cr-button on-click="onRestartTap_" id="restart"
             slot="more-actions">
           $i18n{restart}
-        </paper-button>
+        </cr-button>
       </template>
     </settings-toggle-button>
 </if><!-- not chromeos -->
 </if><!-- _google_chrome -->
-    <template is="dom-if" if="[[unifiedConsentEnabled]]">
-      <settings-toggle-button
-          pref="{{prefs.url_keyed_anonymized_data_collection.enabled}}"
-          label="$i18n{urlKeyedAnonymizedDataCollection}"
-          sub-label="$i18n{urlKeyedAnonymizedDataCollectionDesc}">
-      </settings-toggle-button>
-    </template>
+    <settings-toggle-button
+        pref="{{prefs.url_keyed_anonymized_data_collection.enabled}}"
+        label="$i18n{urlKeyedAnonymizedDataCollection}"
+        sub-label="$i18n{urlKeyedAnonymizedDataCollectionDesc}">
+    </settings-toggle-button>
 <if expr="_google_chrome">
     <settings-toggle-button id="spellCheckControl"
         pref="{{prefs.spellcheck.use_spelling_service}}"
+        on-settings-boolean-control-change="onUseSpellingServiceToggle_"
         label="$i18n{spellingPref}"
         sub-label="$i18n{spellingDescription}"
         hidden="[[!showSpellCheckControl_(prefs.spellcheck.dictionaries)]]">
     </settings-toggle-button>
 </if><!-- _google_chrome -->
+    <template is="dom-if" if="[[shouldShowDriveSuggest_(
+        syncStatus, syncStatus.signedIn, syncStatus.statusAction)]]" restamp>
+      <settings-toggle-button id="driveSuggestControl"
+          pref="{{prefs.documentsuggest.enabled}}"
+          label="$i18n{driveSuggestPref}"
+          sub-label="$i18n{driveSuggestPrefDesc}">
+      </settings-toggle-button>
+    </template>
   </template>
   <script src="personalization_options.js"></script>
 </dom-module>

@@ -11,10 +11,9 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -40,7 +39,7 @@ bool IsLocaleSupported() {
   // an API. See http://crbug.com/101357
   const std::string& locale = g_browser_process->GetApplicationLocale();
   static const char* const unsupported_locales[] = {"CN", "TR", "IR"};
-  for (size_t i = 0; i < arraysize(unsupported_locales); ++i) {
+  for (size_t i = 0; i < base::size(unsupported_locales); ++i) {
     if (base::EndsWith(locale, unsupported_locales[i],
                        base::CompareCase::INSENSITIVE_ASCII)) {
       return false;
@@ -77,13 +76,9 @@ bool Provider::ShouldInstallInProfile() {
 
   switch (state) {
     case kUnknown: {
-      // Only new installations and profiles get default apps. In theory the
-      // new profile checks should catch new installations, but that is not
-      // always the case (http:/crbug.com/145351).
       bool is_new_profile = profile_->WasCreatedByVersionOrLater(
           version_info::GetVersionNumber());
-      bool is_first_run = first_run::IsChromeFirstRun();
-      if (!is_first_run && !is_new_profile)
+      if (!is_new_profile)
         install_apps = false;
       break;
     }
@@ -127,12 +122,16 @@ bool Provider::ShouldInstallInProfile() {
 
 Provider::Provider(Profile* profile,
                    VisitorInterface* service,
-                   extensions::ExternalLoader* loader,
+                   scoped_refptr<extensions::ExternalLoader> loader,
                    extensions::Manifest::Location crx_location,
                    extensions::Manifest::Location download_location,
                    int creation_flags)
-    : extensions::ExternalProviderImpl(service, loader, profile, crx_location,
-                                       download_location, creation_flags),
+    : extensions::ExternalProviderImpl(service,
+                                       std::move(loader),
+                                       profile,
+                                       crx_location,
+                                       download_location,
+                                       creation_flags),
       profile_(profile),
       is_migration_(false) {
   DCHECK(profile);

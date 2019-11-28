@@ -5,9 +5,10 @@
 (async function() {
   TestRunner.addResult(`Tests hit testing in Layers3DView\n`);
   await TestRunner.loadModule('layers_test_runner');
+
   await TestRunner.loadHTML(`
-      <div id="a" style="transform:translateZ(0px) translateY(60px) rotateZ(45deg);width:300px;height:300px;margin-left:100px; border: 1px solid black;">
-          <div id="b" style="transform:translateX(0px) translateY(0px) translateZ(0px) rotateX(45deg) rotateY(45deg);width:300px;height:300px; border: 1px solid black;"></div>
+      <div id="a" style="will-change: transform; transform:translateY(60px) rotateZ(45deg);width:300px;height:300px;margin-left:100px; border: 1px solid black;">
+          <div id="b" style="will-change: transform; transform:translateX(0px) translateY(0px) rotateX(45deg) rotateY(45deg);width:300px;height:300px; border: 1px solid black;"></div>
       </div>
   `);
 
@@ -17,9 +18,8 @@
   var canvas;
   const ButtonByEventType = {mousemove: -1, mousedown: 0, mouseup: 0};
 
+  TestRunner.showPanel('layers');
   await LayersTestRunner.requestLayers();
-  await TestRunner.showPanel('layers');
-
   initLayers();
   initSizes();
 
@@ -59,8 +59,8 @@
     canvas = UI.panels.layers._layers3DView._canvasElement;
     var canvasWidth = canvas.offsetWidth;
     var canvasHeight = canvas.offsetHeight;
-    var rootWidth = contentRoot.width();
-    var rootHeight = contentRoot.height();
+    var rootWidth = 800;
+    var rootHeight = 600;
     var paddingX = canvasWidth * 0.1;
     var paddingY = canvasHeight * 0.1;
     var scaleX = rootWidth / (canvasWidth - paddingX);

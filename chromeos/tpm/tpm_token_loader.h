@@ -10,15 +10,15 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/optional.h"
 #include "base/threading/thread_checker.h"
-#include "chromeos/chromeos_export.h"
-#include "chromeos/dbus/cryptohome_client.h"
-#include "chromeos/login/login_state.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
+#include "chromeos/login/login_state/login_state.h"
 #include "chromeos/tpm/tpm_token_info_getter.h"
 
 namespace base {
@@ -34,7 +34,8 @@ namespace chromeos {
 // session, the observers are notified using |OnTPMTokenReady|.
 // Note: This currently initializes the token with the hard coded default id 0.
 // See CryptohomeClient::OnPkcs11GetTpmTokenInfo.
-class CHROMEOS_EXPORT TPMTokenLoader : public LoginState::Observer {
+class COMPONENT_EXPORT(CHROMEOS_TPM) TPMTokenLoader
+    : public LoginState::Observer {
  public:
   enum TPMTokenStatus {
     TPM_TOKEN_STATUS_UNDETERMINED,
@@ -42,14 +43,15 @@ class CHROMEOS_EXPORT TPMTokenLoader : public LoginState::Observer {
     TPM_TOKEN_STATUS_DISABLED
   };
 
-  typedef base::Callback<void(bool)> TPMReadyCallback;
-  typedef std::vector<TPMReadyCallback> TPMReadyCallbackList;
+  using TPMReadyCallback = base::OnceCallback<void(bool)>;
+  using TPMReadyCallbackList = std::vector<TPMReadyCallback>;
 
   // Sets the global instance. Must be called before any calls to Get().
   // The global instance will immediately start observing |LoginState|.
   static void Initialize();
 
-  // Sets the global. stubbed out, instance. To be used in tests.
+  // Sets the global, stubbed out with the already initialized token, instance.
+  // To be used in tests.
   static void InitializeForTest();
 
   // Destroys the global instance.
@@ -76,12 +78,17 @@ class CHROMEOS_EXPORT TPMTokenLoader : public LoginState::Observer {
 
   // Checks if the TPM token is enabled. If the state is unknown, |callback|
   // will be called back once the TPM state is known.
-  TPMTokenStatus IsTPMTokenEnabled(const TPMReadyCallback& callback);
+  TPMTokenStatus IsTPMTokenEnabled(TPMReadyCallback callback);
 
   std::string tpm_user_pin() const { return tpm_user_pin_; }
 
+  // Allows tests to enable the TPM token loading logic in this class.
+  void enable_tpm_loading_for_testing(bool enable) {
+    enable_tpm_loading_for_testing_ = enable;
+  }
+
  private:
-  explicit TPMTokenLoader(bool for_test);
+  explicit TPMTokenLoader(bool initialized_for_test);
   ~TPMTokenLoader() override;
 
   bool IsTPMLoadingEnabled() const;
@@ -102,6 +109,8 @@ class CHROMEOS_EXPORT TPMTokenLoader : public LoginState::Observer {
 
   // LoginState::Observer
   void LoggedInStateChanged() override;
+
+  bool enable_tpm_loading_for_testing_ = false;
 
   bool initialized_for_test_;
 
@@ -134,7 +143,7 @@ class CHROMEOS_EXPORT TPMTokenLoader : public LoginState::Observer {
   // TaskRunner for crypto calls.
   scoped_refptr<base::SequencedTaskRunner> crypto_task_runner_;
 
-  base::WeakPtrFactory<TPMTokenLoader> weak_factory_;
+  base::WeakPtrFactory<TPMTokenLoader> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TPMTokenLoader);
 };

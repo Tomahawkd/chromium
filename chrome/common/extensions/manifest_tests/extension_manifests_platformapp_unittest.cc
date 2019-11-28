@@ -6,7 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/features/simple_feature.h"
@@ -20,6 +20,7 @@
 namespace extensions {
 
 namespace errors = manifest_errors;
+namespace keys = manifest_keys;
 
 class PlatformAppsManifestTest : public ChromeManifestTest {
 };
@@ -44,7 +45,7 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
              ErrorUtils::FormatErrorMessage(
                  errors::kInvalidManifestVersionOld, "2", "apps")),
   };
-  RunTestcases(error_testcases, arraysize(error_testcases), EXPECT_TYPE_ERROR);
+  RunTestcases(error_testcases, base::size(error_testcases), EXPECT_TYPE_ERROR);
 
   Testcase warning_testcases[] = {
       Testcase(
@@ -53,19 +54,19 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
           "apps, but this is a packaged app."),
       Testcase("init_invalid_platform_app_4.json",
                "'background' is only allowed for extensions, legacy packaged "
-               "apps, and"
-               " hosted apps, but this is a packaged app."),
+               "apps, hosted apps, and login screen extensions, but this is a "
+               "packaged app."),
       Testcase("init_invalid_platform_app_5.json",
                "'background' is only allowed for extensions, legacy packaged "
-               "apps, and"
-               " hosted apps, but this is a packaged app."),
+               "apps, hosted apps, and login screen extensions, but this is a "
+               "packaged app."),
       Testcase("incognito_invalid_platform_app.json",
                "'incognito' is only allowed for extensions and legacy packaged "
                "apps, "
                "but this is a packaged app."),
   };
-  RunTestcases(
-      warning_testcases, arraysize(warning_testcases), EXPECT_TYPE_WARNING);
+  RunTestcases(warning_testcases, base::size(warning_testcases),
+               EXPECT_TYPE_WARNING);
 }
 
 TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
@@ -80,8 +81,8 @@ TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
         "'app.content_security_policy' is not allowed for specified extension "
             "ID.")
   };
-  RunTestcases(
-      warning_testcases, arraysize(warning_testcases), EXPECT_TYPE_WARNING);
+  RunTestcases(warning_testcases, base::size(warning_testcases),
+               EXPECT_TYPE_WARNING);
 
   // Allowlisted ones can (this is the ID corresponding to the base 64 encoded
   // key in the init_platform_app_csp.json manifest.)
@@ -99,7 +100,8 @@ TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
   // But even allowlisted ones must specify a secure policy.
   LoadAndExpectWarning(
       "init_platform_app_csp_insecure.json",
-      ErrorUtils::FormatErrorMessage(errors::kInvalidCSPInsecureValue,
+      ErrorUtils::FormatErrorMessage(errors::kInvalidCSPInsecureValueIgnored,
+                                     keys::kPlatformAppContentSecurityPolicy,
                                      "http://www.google.com", "default-src"));
 }
 
@@ -123,8 +125,8 @@ TEST_F(PlatformAppsManifestTest, CertainApisRequirePlatformApps) {
   // Create each manifest.
   for (const char* api_name : kPlatformAppExperimentalApis) {
     base::Value permissions(base::Value::Type::LIST);
-    permissions.GetList().push_back(base::Value("experimental"));
-    permissions.GetList().push_back(base::Value(api_name));
+    permissions.Append(base::Value("experimental"));
+    permissions.Append(base::Value(api_name));
     manifest.SetKey("permissions", std::move(permissions));
     manifests.push_back(
         std::make_unique<ManifestData>(manifest.CreateDeepCopy(), ""));

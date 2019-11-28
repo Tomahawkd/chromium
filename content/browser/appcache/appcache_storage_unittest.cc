@@ -4,11 +4,11 @@
 
 #include "content/browser/appcache/appcache_storage.h"
 
-#include "base/test/scoped_task_environment.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_response.h"
 #include "content/browser/appcache/mock_appcache_service.h"
+#include "content/public/test/browser_task_environment.h"
 #include "storage/browser/test/mock_quota_manager_proxy.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,7 +24,7 @@ class AppCacheStorageTest : public testing::Test {
   };
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  BrowserTaskEnvironment task_environment_;
 };
 
 TEST_F(AppCacheStorageTest, AddRemoveCache) {
@@ -67,19 +67,36 @@ TEST_F(AppCacheStorageTest, AddRemoveResponseInfo) {
   const GURL kManifestUrl("http://origin/");
   scoped_refptr<AppCacheResponseInfo> info =
       base::MakeRefCounted<AppCacheResponseInfo>(
-          service.storage(), kManifestUrl, 111,
-          std::make_unique<net::HttpResponseInfo>(), kUnkownResponseDataSize);
+          service.storage()->GetWeakPtr(), kManifestUrl, 111,
+          std::make_unique<net::HttpResponseInfo>(), kUnknownResponseDataSize);
 
   EXPECT_EQ(info.get(),
             service.storage()->working_set()->GetResponseInfo(111));
 
   service.storage()->working_set()->RemoveResponseInfo(info.get());
 
-  EXPECT_TRUE(!service.storage()->working_set()->GetResponseInfo(111));
+  EXPECT_FALSE(service.storage()->working_set()->GetResponseInfo(111));
 
   // Removing non-existing info from service should not fail.
   MockAppCacheService dummy;
   dummy.storage()->working_set()->RemoveResponseInfo(info.get());
+}
+
+TEST_F(AppCacheStorageTest, ResponseInfoLifetime) {
+  scoped_refptr<AppCacheResponseInfo> info;
+  {
+    MockAppCacheService service;
+    const GURL kManifestUrl("http://origin/");
+    info = base::MakeRefCounted<AppCacheResponseInfo>(
+        service.storage()->GetWeakPtr(), kManifestUrl, 111,
+        std::make_unique<net::HttpResponseInfo>(), kUnknownResponseDataSize);
+
+    EXPECT_EQ(info.get(),
+              service.storage()->working_set()->GetResponseInfo(111));
+  }
+
+  // Outliving the AppCacheService should not be fatal.
+  info.reset();
 }
 
 TEST_F(AppCacheStorageTest, DelegateReferences) {

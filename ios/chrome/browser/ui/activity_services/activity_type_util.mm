@@ -88,10 +88,10 @@ const PrefixTypeAssociation prefixTypeAssociations[] = {
     {GOOGLE_GOOGLEPLUS, @"com.google.GooglePlus.", false},
     {GOOGLE_HANGOUTS, @"com.google.hangouts.", false},
     {GOOGLE_INBOX, @"com.google.inbox.", false},
-    {GOOGLE_UNKNOWN, @"com.google.", false},
     {READ_LATER, @"com.google.chrome.readingListActivity", true},
     {REQUEST_DESKTOP_MOBILE_SITE,
      @"com.google.chrome.requestDesktopOrMobileSiteActivity", true},
+    {SEND_TAB_TO_SELF, @"com.google.com.sendTabToSelfActivity", true},
     {THIRD_PARTY_MAILBOX, @"com.orchestra.v2.", false},
     {THIRD_PARTY_FACEBOOK_MESSENGER, @"com.facebook.Messenger.", false},
     {THIRD_PARTY_WHATS_APP, @"net.whatsapp.WhatsApp.", false},
@@ -104,7 +104,11 @@ const PrefixTypeAssociation prefixTypeAssociations[] = {
     {THIRD_PARTY_PINTEREST, @"pinterest.", false},
     {THIRD_PARTY_POCKET, @"com.ideashower.ReadItLaterPro.", false},
     {THIRD_PARTY_READABILITY, @"com.readability.ReadabilityMobile.", false},
-    {THIRD_PARTY_INSTAPAPER, @"com.marcoarment.instapaperpro.", false}};
+    {THIRD_PARTY_INSTAPAPER, @"com.marcoarment.instapaperpro.", false},
+    // Put Google Unknown at the end to make sure it doesn't prevent anything
+    // else from being recorded.
+    {GOOGLE_UNKNOWN, @"com.google.", false},
+};
 
 ActivityType TypeFromString(NSString* activityString) {
   DCHECK(activityString);
@@ -220,6 +224,10 @@ void RecordMetricForActivity(ActivityType type) {
     case APPEX_PASSWORD_MANAGEMENT:
       base::RecordAction(
           base::UserMetricsAction("MobileAppExFormFilledByPasswordManager"));
+      break;
+    case SEND_TAB_TO_SELF:
+      base::RecordAction(
+          base::UserMetricsAction("MobileShareMenuSendTabToSelf"));
       break;
   }
 }

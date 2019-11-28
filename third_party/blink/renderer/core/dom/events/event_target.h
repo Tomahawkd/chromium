@@ -44,7 +44,7 @@
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -60,6 +60,8 @@ class MessagePort;
 class Node;
 class ScriptState;
 class ServiceWorker;
+class V8EventListener;
+class PortalHost;
 
 struct FiringEventIterator {
   DISALLOW_NEW();
@@ -75,12 +77,12 @@ struct FiringEventIterator {
 using FiringEventIteratorVector = Vector<FiringEventIterator, 1>;
 
 class CORE_EXPORT EventTargetData final
-    : public GarbageCollectedFinalized<EventTargetData> {
+    : public GarbageCollected<EventTargetData> {
  public:
   EventTargetData();
   ~EventTargetData();
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   EventListenerMap event_listener_map;
   std::unique_ptr<FiringEventIteratorVector> firing_event_iterators;
@@ -107,13 +109,11 @@ class CORE_EXPORT EventTargetData final
 //   file.
 // - Override EventTarget::interfaceName() and getExecutionContext(). The former
 //   will typically return EventTargetNames::YourClassName. The latter will
-//   return PausableObject::executionContext (if you are an
-//   PausableObject)
+//   return ContextLifecycleObserver::executionContext (if you are an
+//   ContextLifecycleObserver)
 //   or the document you're in.
 // - Your trace() method will need to call EventTargetWithInlineData::trace
 //   depending on the base class of your class.
-// - EventTargets do not support EAGERLY_FINALIZE. You need to use
-//   a pre-finalizer instead.
 class CORE_EXPORT EventTarget : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
@@ -129,25 +129,28 @@ class CORE_EXPORT EventTarget : public ScriptWrappable {
   virtual LocalDOMWindow* ToLocalDOMWindow();
   virtual MessagePort* ToMessagePort();
   virtual ServiceWorker* ToServiceWorker();
+  virtual PortalHost* ToPortalHost();
 
   static EventTarget* Create(ScriptState*);
 
+  bool addEventListener(const AtomicString& event_type, V8EventListener*);
+  bool addEventListener(const AtomicString& event_type,
+                        V8EventListener*,
+                        const AddEventListenerOptionsOrBoolean&);
   bool addEventListener(const AtomicString& event_type,
                         EventListener*,
                         bool use_capture = false);
   bool addEventListener(const AtomicString& event_type,
                         EventListener*,
-                        const AddEventListenerOptionsOrBoolean&);
-  bool addEventListener(const AtomicString& event_type,
-                        EventListener*,
                         AddEventListenerOptionsResolved*);
 
+  bool removeEventListener(const AtomicString& event_type, V8EventListener*);
+  bool removeEventListener(const AtomicString& event_type,
+                           V8EventListener*,
+                           const EventListenerOptionsOrBoolean&);
   bool removeEventListener(const AtomicString& event_type,
                            const EventListener*,
                            bool use_capture = false);
-  bool removeEventListener(const AtomicString& event_type,
-                           const EventListener*,
-                           const EventListenerOptionsOrBoolean&);
   bool removeEventListener(const AtomicString& event_type,
                            const EventListener*,
                            EventListenerOptions*);
@@ -167,9 +170,10 @@ class CORE_EXPORT EventTarget : public ScriptWrappable {
                                  EventListener*);
   EventListener* GetAttributeEventListener(const AtomicString& event_type);
 
-  bool HasEventListeners() const;
+  bool HasEventListeners() const override;
   bool HasEventListeners(const AtomicString& event_type) const;
   bool HasCapturingEventListeners(const AtomicString& event_type);
+  bool HasJSBasedEventListeners(const AtomicString& event_type) const;
   EventListenerVector* GetEventListeners(const AtomicString& event_type);
   Vector<AtomicString> EventTypes();
 
@@ -191,9 +195,9 @@ class CORE_EXPORT EventTarget : public ScriptWrappable {
   virtual bool AddEventListenerInternal(const AtomicString& event_type,
                                         EventListener*,
                                         const AddEventListenerOptionsResolved*);
-  virtual bool RemoveEventListenerInternal(const AtomicString& event_type,
-                                           const EventListener*,
-                                           const EventListenerOptions*);
+  bool RemoveEventListenerInternal(const AtomicString& event_type,
+                                   const EventListener*,
+                                   const EventListenerOptions*);
 
   // Called when an event listener has been successfully added.
   virtual void AddedEventListener(const AtomicString& event_type,
@@ -234,7 +238,7 @@ class CORE_EXPORT EventTargetWithInlineData : public EventTarget {
  public:
   ~EventTargetWithInlineData() override = default;
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(event_target_data_);
     EventTarget::Trace(visitor);
   }
@@ -333,6 +337,15 @@ inline bool EventTarget::HasCapturingEventListeners(
   if (!d)
     return false;
   return d->event_listener_map.ContainsCapturing(event_type);
+}
+
+inline bool EventTarget::HasJSBasedEventListeners(
+    const AtomicString& event_type) const {
+  // TODO(rogerj): We should have const version of eventTargetData.
+  if (const EventTargetData* d =
+          const_cast<EventTarget*>(this)->GetEventTargetData())
+    return d->event_listener_map.ContainsJSBasedEventListeners(event_type);
+  return false;
 }
 
 }  // namespace blink

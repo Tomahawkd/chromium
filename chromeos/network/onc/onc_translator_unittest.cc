@@ -40,7 +40,7 @@ TEST_P(ONCTranslatorOncToShillTest, Translate) {
 
 // Test different network types, such that each ONC object type is tested at
 // least once.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ONCTranslatorOncToShillTest,
     ONCTranslatorOncToShillTest,
     ::testing::Values(
@@ -70,6 +70,8 @@ INSTANTIATE_TEST_CASE_P(
         std::make_pair("vpn_ipsec_clientcert_pkcs11.onc",
                        "shill_vpn_ipsec_clientcert_pkcs11.json"),
         std::make_pair("cellular.onc", "shill_cellular.json"),
+        // WiMAX is deprecated, but we need to ensure older ONC configurations
+        // are handled gracefully.
         std::make_pair("wimax.onc", "shill_wimax.json"),
         std::make_pair("third_party_vpn.onc", "shill_third_party_vpn.json"),
         std::make_pair("arc_vpn.onc", "shill_arc_vpn.json"),
@@ -104,7 +106,7 @@ TEST_P(ONCTranslatorShillToOncTest, Translate) {
                                  translation.get()));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ONCTranslatorShillToOncTest,
     ONCTranslatorShillToOncTest,
     ::testing::Values(
@@ -143,8 +145,6 @@ INSTANTIATE_TEST_CASE_P(
                        "translation_of_shill_wifi_proxy_pac.onc"),
         std::make_pair("shill_cellular_with_state.json",
                        "translation_of_shill_cellular_with_state.onc"),
-        std::make_pair("shill_wimax_with_state.json",
-                       "translation_of_shill_wimax_with_state.onc"),
         std::make_pair("shill_output_third_party_vpn.json",
                        "third_party_vpn.onc"),
         std::make_pair(

@@ -18,14 +18,20 @@
 #include "base/command_line.h"
 #include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/values.h"
+#include "chrome/common/extensions/api/accessibility_private.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/views/chrome_views_test_base.h"
-#include "chromeos/chromeos_switches.h"
-#include "components/arc/arc_bridge_service.h"
-#include "components/arc/common/accessibility_helper.mojom.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "components/arc/mojom/accessibility_helper.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/exo/shell_surface.h"
 #include "components/exo/shell_surface_util.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
+#include "extensions/browser/test_event_router.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/window.h"
 #include "ui/display/display.h"
@@ -56,7 +62,9 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
     TestArcAccessibilityHelperBridge(content::BrowserContext* browser_context,
                                      ArcBridgeService* arc_bridge_service)
         : ArcAccessibilityHelperBridge(browser_context, arc_bridge_service),
-          window_(new aura::Window(nullptr)) {
+          window_(new aura::Window(nullptr)),
+          event_router_(
+              extensions::CreateAndUseTestEventRouter(browser_context)) {
       window_->Init(ui::LAYER_NOT_DRAWN);
     }
 
@@ -66,11 +74,18 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
       exo::SetShellApplicationId(window_.get(), id);
     }
 
-   protected:
-    aura::Window* GetActiveWindow() override { return window_.get(); }
+    int GetEventCount(const std::string& event_name) const {
+      return event_router_->GetEventCount(event_name);
+    }
 
    private:
+    aura::Window* GetActiveWindow() override { return window_.get(); }
+    extensions::EventRouter* GetEventRouter() const override {
+      return event_router_;
+    }
+
     std::unique_ptr<aura::Window> window_;
+    extensions::TestEventRouter* const event_router_;
 
     DISALLOW_COPY_AND_ASSIGN(TestArcAccessibilityHelperBridge);
   };
@@ -80,11 +95,11 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
    public:
     void AddObserver(Observer* observer) override {
       observers_.AddObserver(observer);
-    };
+    }
 
     void RemoveObserver(Observer* observer) override {
       observers_.RemoveObserver(observer);
-    };
+    }
 
     ArcNotificationSurface* GetArcSurface(
         const std::string& notification_key) const override {
@@ -146,7 +161,8 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
 
   views::Widget* CreateTestWidget() {
     views::Widget* widget = new views::Widget();
-    widget->Init(CreateParams(views::Widget::InitParams::TYPE_POPUP));
+    widget->Init(
+        CreateParams(views::Widget::InitParams::TYPE_WINDOW_FRAMELESS));
     return widget;
   }
 
@@ -177,7 +193,6 @@ class ArcAccessibilityHelperBridgeTest : public ChromeViewsTestBase {
       arc_notification_surface_manager_;
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
   std::unique_ptr<TestingProfile> testing_profile_;
   std::unique_ptr<ArcBridgeService> bridge_service_;
   std::unique_ptr<TestArcAccessibilityHelperBridge>
@@ -205,6 +220,14 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TaskAndAXTreeLifecycle) {
   event1->node_data[0]->string_properties.value().insert(
       std::make_pair(arc::mojom::AccessibilityStringProperty::PACKAGE_NAME,
                      "com.android.vending"));
+  event1->window_data =
+      std::vector<arc::mojom::AccessibilityWindowInfoDataPtr>();
+  event1->window_data->push_back(
+      arc::mojom::AccessibilityWindowInfoData::New());
+  arc::mojom::AccessibilityWindowInfoData* root_window1 =
+      event1->window_data->back().get();
+  root_window1->window_id = 100;
+  root_window1->root_node_id = 1;
 
   // There's no active window.
   helper_bridge->OnAccessibilityEvent(event1.Clone());
@@ -227,6 +250,14 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TaskAndAXTreeLifecycle) {
   event2->node_data[0]->string_properties.value().insert(
       std::make_pair(arc::mojom::AccessibilityStringProperty::PACKAGE_NAME,
                      "com.android.vending"));
+  event2->window_data =
+      std::vector<arc::mojom::AccessibilityWindowInfoDataPtr>();
+  event2->window_data->push_back(
+      arc::mojom::AccessibilityWindowInfoData::New());
+  arc::mojom::AccessibilityWindowInfoData* root_window2 =
+      event2->window_data->back().get();
+  root_window2->window_id = 200;
+  root_window2->root_node_id = 2;
 
   // Active window is still task 1.
   helper_bridge->OnAccessibilityEvent(event2.Clone());
@@ -247,6 +278,7 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TaskAndAXTreeLifecycle) {
   event2->node_data[0]->string_properties.value().insert(
       std::make_pair(arc::mojom::AccessibilityStringProperty::PACKAGE_NAME,
                      "com.google.music"));
+  root_window2->root_node_id = 3;
 
   // No new tasks tree mappings should have occurred.
   helper_bridge->OnAccessibilityEvent(event2.Clone());
@@ -257,6 +289,24 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TaskAndAXTreeLifecycle) {
 
   helper_bridge->OnTaskDestroyed(2);
   ASSERT_EQ(0U, task_id_to_tree.size());
+}
+
+TEST_F(ArcAccessibilityHelperBridgeTest, EventAnnouncement) {
+  TestArcAccessibilityHelperBridge* helper_bridge =
+      accessibility_helper_bridge();
+  helper_bridge->set_filter_type_all_for_test();
+
+  std::vector<std::string> text({"Str"});
+  auto event = arc::mojom::AccessibilityEventData::New();
+  event->event_type = arc::mojom::AccessibilityEventType::ANNOUNCEMENT;
+  event->eventText =
+      base::make_optional<std::vector<std::string>>(std::move(text));
+
+  helper_bridge->OnAccessibilityEvent(event.Clone());
+
+  ASSERT_EQ(1, helper_bridge->GetEventCount(
+                   extensions::api::accessibility_private::
+                       OnAnnounceForAccessibility::kEventName));
 }
 
 // Accessibility event and surface creation/removal are sent in different
@@ -420,7 +470,7 @@ TEST_F(ArcAccessibilityHelperBridgeTest,
 
   // Prepare widget to hold it.
   views::Widget* widget = CreateTestWidget();
-  widget->widget_delegate()->set_can_activate(false);
+  widget->widget_delegate()->SetCanActivate(false);
   widget->Deactivate();
   widget->SetContentsView(notification_view.get());
   widget->Show();
@@ -439,6 +489,9 @@ TEST_F(ArcAccessibilityHelperBridgeTest,
       arc::mojom::AccessibilityEventType::VIEW_TEXT_SELECTION_CHANGED;
   event->notification_key = base::make_optional<std::string>(kNotificationKey);
   event->node_data.push_back(arc::mojom::AccessibilityNodeInfoData::New());
+  event->window_data =
+      std::vector<arc::mojom::AccessibilityWindowInfoDataPtr>();
+  event->window_data->push_back(arc::mojom::AccessibilityWindowInfoData::New());
   accessibility_helper_bridge()->OnAccessibilityEvent(event.Clone());
 
   // Widget is activated.
@@ -501,6 +554,9 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TextSelectionChangedFocusContentView) {
       arc::mojom::AccessibilityEventType::VIEW_TEXT_SELECTION_CHANGED;
   event->notification_key = base::make_optional<std::string>(kNotificationKey);
   event->node_data.push_back(arc::mojom::AccessibilityNodeInfoData::New());
+  event->window_data =
+      std::vector<arc::mojom::AccessibilityWindowInfoDataPtr>();
+  event->window_data->push_back(arc::mojom::AccessibilityWindowInfoData::New());
   accessibility_helper_bridge()->OnAccessibilityEvent(event.Clone());
 
   // Focus moves to contents view with text selection change.
@@ -516,6 +572,67 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TextSelectionChangedFocusContentView) {
 
   // Remove surface cleanly before it's destructed.
   arc_notification_surface_manager_->RemoveSurface(surface.get());
+}
+
+class GetCaptionStyleFromPrefsTests : public ::testing::Test {
+ public:
+  void SetUp() override {
+    prefs_.registry()->RegisterStringPref(prefs::kAccessibilityCaptionsTextSize,
+                                          "");
+    prefs_.registry()->RegisterStringPref(
+        prefs::kAccessibilityCaptionsTextColor, "");
+    prefs_.registry()->RegisterIntegerPref(
+        prefs::kAccessibilityCaptionsTextOpacity, 100);
+    prefs_.registry()->RegisterStringPref(
+        prefs::kAccessibilityCaptionsBackgroundColor, "");
+    prefs_.registry()->RegisterIntegerPref(
+        prefs::kAccessibilityCaptionsBackgroundOpacity, 100);
+    prefs_.registry()->RegisterStringPref(
+        prefs::kAccessibilityCaptionsTextShadow, "");
+    prefs_.registry()->RegisterStringPref(language::prefs::kApplicationLocale,
+                                          "");
+  }
+
+ protected:
+  TestingPrefServiceSimple prefs_;
+};
+
+TEST_F(GetCaptionStyleFromPrefsTests, ValidValues) {
+  prefs_.SetUserPref(prefs::kAccessibilityCaptionsTextSize,
+                     std::make_unique<base::Value>("200%"));
+  prefs_.SetUserPref(prefs::kAccessibilityCaptionsTextColor,
+                     std::make_unique<base::Value>("10,20,30"));
+  prefs_.SetUserPref(prefs::kAccessibilityCaptionsTextOpacity,
+                     std::make_unique<base::Value>(90));
+  prefs_.SetUserPref(prefs::kAccessibilityCaptionsBackgroundColor,
+                     std::make_unique<base::Value>("40,50,60"));
+  prefs_.SetUserPref(prefs::kAccessibilityCaptionsBackgroundOpacity,
+                     std::make_unique<base::Value>(80));
+  prefs_.SetUserPref(
+      prefs::kAccessibilityCaptionsTextShadow,
+      std::make_unique<base::Value>("-2px -2px 4px rgba(0, 0, 0, 0.5)"));
+  prefs_.SetUserPref(language::prefs::kApplicationLocale,
+                     std::make_unique<base::Value>("my_locale"));
+
+  auto style = GetCaptionStyleFromPrefs(&prefs_);
+
+  ASSERT_TRUE(style);
+  EXPECT_EQ("200%", style->text_size);
+  EXPECT_EQ("rgba(10,20,30,0.9)", style->text_color);
+  EXPECT_EQ("rgba(40,50,60,0.8)", style->background_color);
+  EXPECT_EQ("my_locale", style->user_locale);
+  EXPECT_EQ(arc::mojom::CaptionTextShadowType::RAISED, style->text_shadow_type);
+}
+
+TEST_F(GetCaptionStyleFromPrefsTests, EmptyValues) {
+  auto style = GetCaptionStyleFromPrefs(&prefs_);
+
+  ASSERT_TRUE(style);
+  EXPECT_EQ("", style->text_size);
+  EXPECT_EQ("", style->text_color);
+  EXPECT_EQ("", style->background_color);
+  EXPECT_EQ("", style->user_locale);
+  EXPECT_EQ(arc::mojom::CaptionTextShadowType::NONE, style->text_shadow_type);
 }
 
 }  // namespace arc

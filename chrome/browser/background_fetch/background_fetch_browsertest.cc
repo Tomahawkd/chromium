@@ -4,8 +4,8 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/callback.h"
-#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
@@ -18,6 +18,7 @@
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -34,18 +35,26 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "url/origin.h"
 
 using offline_items_collection::ContentId;
 using offline_items_collection::OfflineContentProvider;
+using GetVisualsOptions =
+    offline_items_collection::OfflineContentProvider::GetVisualsOptions;
 using offline_items_collection::OfflineItem;
 using offline_items_collection::OfflineItemFilter;
 using offline_items_collection::OfflineItemProgressUnit;
 using offline_items_collection::OfflineItemVisuals;
 
 namespace {
+
+using net::test_server::BasicHttpResponse;
+using net::test_server::HttpRequest;
+using net::test_server::HttpResponse;
 
 // Scripts run by this test are defined in
 // chrome/test/data/background_fetch/background_fetch.js.
@@ -167,7 +176,10 @@ class OfflineContentProviderObserver : public OfflineContentProvider::Observer {
   }
 
   void OnItemRemoved(const ContentId& id) override {}
-  void OnItemUpdated(const OfflineItem& item) override {
+  void OnItemUpdated(
+      const OfflineItem& item,
+      const base::Optional<offline_items_collection::UpdateDelta>& update_delta)
+      override {
     if (item.state != offline_items_collection::OfflineItemState::IN_PROGRESS &&
         item.state != offline_items_collection::OfflineItemState::PENDING &&
         item.state != offline_items_collection::OfflineItemState::PAUSED &&
@@ -190,6 +202,8 @@ class OfflineContentProviderObserver : public OfflineContentProvider::Observer {
       resume_ = false;
     }
 
+    // Check that the progress is always increasing and never resets.
+    DCHECK_GE(item.progress.value, latest_item_.progress.value);
     latest_item_ = item;
   }
 
@@ -220,29 +234,25 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
             std::make_unique<OfflineContentProviderObserver>()) {}
   ~BackgroundFetchBrowserTest() override = default;
 
-  // InProcessBrowserTest overrides:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Background Fetch is available as an experimental Web Platform feature.
-    command_line->AppendSwitch(
-        switches::kEnableExperimentalWebPlatformFeatures);
-  }
-
   void SetUpOnMainThread() override {
     https_server_ = std::make_unique<net::EmbeddedTestServer>(
         net::EmbeddedTestServer::TYPE_HTTPS);
-    https_server_->ServeFilesFromSourceDirectory("chrome/test/data");
+    https_server_->RegisterRequestHandler(base::BindRepeating(
+        &BackgroundFetchBrowserTest::HandleRequest, base::Unretained(this)));
+    https_server_->AddDefaultHandlers(GetChromeTestDataDir());
     ASSERT_TRUE(https_server_->Start());
 
     Profile* profile = browser()->profile();
 
     download_observer_ = std::make_unique<WaitableDownloadLoggerObserver>();
 
-    download_service_ = DownloadServiceFactory::GetForBrowserContext(profile);
+    download_service_ =
+        DownloadServiceFactory::GetForKey(profile->GetProfileKey());
     download_service_->GetLogger()->AddObserver(download_observer_.get());
 
     // Register our observer for the offline items collection.
     OfflineContentAggregatorFactory::GetInstance()
-        ->GetForBrowserContext(profile)
+        ->GetForKey(profile->GetProfileKey())
         ->AddObserver(offline_content_provider_observer_.get());
 
     SetUpBrowser(browser());
@@ -272,7 +282,7 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
 
   void TearDownOnMainThread() override {
     OfflineContentAggregatorFactory::GetInstance()
-        ->GetForBrowserContext(active_browser_->profile())
+        ->GetForKey(active_browser_->profile()->GetProfileKey())
         ->RemoveObserver(offline_content_provider_observer_.get());
 
     download_service_->GetLogger()->RemoveObserver(download_observer_.get());
@@ -315,9 +325,10 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
     base::RunLoop run_loop;
 
     delegate_->GetVisualsForItem(
-        offline_item_id, base::Bind(&BackgroundFetchBrowserTest::DidGetVisuals,
-                                    base::Unretained(this),
-                                    run_loop.QuitClosure(), out_visuals));
+        offline_item_id, GetVisualsOptions::IconOnly(),
+        base::BindOnce(&BackgroundFetchBrowserTest::DidGetVisuals,
+                       base::Unretained(this), run_loop.QuitClosure(),
+                       out_visuals));
     run_loop.Run();
   }
 
@@ -339,6 +350,25 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
     std::string result;
     ASSERT_TRUE(RunScript(function, &result));
     ASSERT_EQ("ok", result);
+  }
+
+  // Intercepts all requests.
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+    if (request.GetURL().path() == "/background_fetch/upload") {
+      DCHECK(!request.content.empty());
+      DCHECK(request_body_.empty());
+      request_body_ = request.content;
+
+      auto response = std::make_unique<BasicHttpResponse>();
+      response->set_code(net::HTTP_OK);
+      return response;
+    }
+
+    if (request.GetURL().query() == "clickevent")
+      std::move(click_event_closure_).Run();
+
+    // The default handlers will take care of this request.
+    return nullptr;
   }
 
   // Gets the ideal display size.
@@ -387,9 +417,10 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
         browser()->tab_strip_model()->GetActiveWebContents();
     DownloadRequestLimiter::TabDownloadState* tab_download_state =
         g_browser_process->download_request_limiter()->GetDownloadState(
-            web_contents, web_contents, true /* create */);
+            web_contents, true /* create */);
     tab_download_state->set_download_seen();
     tab_download_state->SetDownloadStatusAndNotify(
+        url::Origin::Create(web_contents->GetVisibleURL()),
         DownloadRequestLimiter::DOWNLOADS_NOT_ALLOWED);
   }
 
@@ -416,11 +447,13 @@ class BackgroundFetchBrowserTest : public InProcessBrowserTest {
  protected:
   BackgroundFetchDelegateImpl* delegate_ = nullptr;
   download::DownloadService* download_service_ = nullptr;
+  base::OnceClosure click_event_closure_;
 
   std::unique_ptr<WaitableDownloadLoggerObserver> download_observer_;
   std::unique_ptr<OfflineContentProviderObserver>
       offline_content_provider_observer_;
   std::unique_ptr<ukm::TestUkmRecorder> test_ukm_recorder_;
+  std::string request_body_;
 
  private:
   // Callback for RunScriptAndWaitForOfflineItems(), called when the |items|
@@ -468,7 +501,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, DownloadService_Acceptance) {
 IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
                        RecordBackgroundFetchUkmEvent) {
   // Start a Background Fetch for a single to-be-downloaded file and  test that
-  // the expected UKM data has been recorded.
+  // the expected UKM data for the BackgroundFetch UKM event has been recorded.
 
   ASSERT_NO_FATAL_FAILURE(
       RunScriptFunction("StartSingleFileDownloadWithCorrectDownloadTotal()"));
@@ -669,23 +702,82 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
                        FetchesRunToCompletionAndUpdateTitle_Fetched) {
   ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
       "RunFetchTillCompletion()", "backgroundfetchsuccess"));
+  EXPECT_EQ(offline_content_provider_observer_->latest_item().state,
+            offline_items_collection::OfflineItemState::COMPLETE);
+
   base::RunLoop().RunUntilIdle();  // Give `updateUI` a chance to propagate.
   EXPECT_TRUE(
       base::StartsWith(offline_content_provider_observer_->latest_item().title,
                        "New Fetched Title!", base::CompareCase::SENSITIVE));
-
-  // Make sure the delegate cleans up after the fetch is complete.
-  EXPECT_TRUE(delegate_->job_details_map_.empty());
 }
 
 IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
                        FetchesRunToCompletionAndUpdateTitle_Failed) {
   ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
       "RunFetchTillCompletionWithMissingResource()", "backgroundfetchfail"));
+  EXPECT_EQ(offline_content_provider_observer_->latest_item().state,
+            offline_items_collection::OfflineItemState::COMPLETE);
+
   base::RunLoop().RunUntilIdle();  // Give `updateUI` a chance to propagate.
   EXPECT_TRUE(
       base::StartsWith(offline_content_provider_observer_->latest_item().title,
                        "New Failed Title!", base::CompareCase::SENSITIVE));
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
+                       FetchesRunToCompletion_Upload) {
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "RunFetchTillCompletionWithUpload()", "backgroundfetchsuccess"));
+
+  EXPECT_EQ(request_body_, "upload!");
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, ClickEventIsDispatched) {
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "RunFetchTillCompletion()", "backgroundfetchsuccess"));
+  EXPECT_EQ(offline_content_provider_observer_->latest_item().state,
+            offline_items_collection::OfflineItemState::COMPLETE);
+
+  base::RunLoop().RunUntilIdle();  // Give updates a chance to propagate.
+
+  ASSERT_EQ(delegate_->job_details_map_.size(), 1u);
+  auto& job_details = delegate_->job_details_map_.begin()->second;
+  EXPECT_EQ(job_details.job_state,
+            BackgroundFetchDelegateImpl::JobDetails::State::kJobComplete);
+
+  // Simulate notification click.
+  delegate_->OpenItem(offline_items_collection::LaunchLocation::NOTIFICATION,
+                      job_details.offline_item.id);
+
+  // Job Details should be deleted at this point.
+  EXPECT_TRUE(delegate_->job_details_map_.empty());
+
+  // Wait for click event.
+  {
+    base::RunLoop run_loop;
+    click_event_closure_ = run_loop.QuitClosure();
+    run_loop.Run();
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, AbortFromUI) {
+  std::vector<OfflineItem> items;
+  // Creates a registration with more than one request.
+  ASSERT_NO_FATAL_FAILURE(
+      RunScriptAndWaitForOfflineItems("StartFetchWithMultipleFiles()", &items));
+  ASSERT_EQ(items.size(), 1u);
+
+  // Simulate an abort from the UI.
+  delegate_->CancelDownload(items[0].id);
+
+  // Wait for an abort event to be dispatched. This is safe because there are
+  // more requests to process than the scheduler will handle, and every request
+  // needs to contact the delegate. Since the abort originates from the
+  // delegate, this fetch will be aborted before the fetch completes.
+  // Pass in a no-op function since we only want to wait for a message at this
+  // point.
+  ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
+      "(() => {})()", "backgroundfetchabort"));
 }
 
 IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, FetchCanBePausedAndResumed) {
@@ -708,7 +800,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, FetchFromServiceWorker) {
   DCHECK(settings_map);
 
   // Give the needed permissions.
-  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+  SetPermission(ContentSettingsType::AUTOMATIC_DOWNLOADS,
                 CONTENT_SETTING_ALLOW);
 
   // The fetch should succeed.
@@ -717,7 +809,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, FetchFromServiceWorker) {
       "StartFetchFromServiceWorker()", "backgroundfetchsuccess"));
 
   // Revoke Automatic Downloads permission.
-  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+  SetPermission(ContentSettingsType::AUTOMATIC_DOWNLOADS,
                 CONTENT_SETTING_BLOCK);
 
   // This should fail without the Automatic Downloads permission.
@@ -731,7 +823,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
       HostContentSettingsMapFactory::GetForProfile(browser()->profile());
   DCHECK(settings_map);
 
-  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, CONTENT_SETTING_ASK);
+  SetPermission(ContentSettingsType::AUTOMATIC_DOWNLOADS, CONTENT_SETTING_ASK);
 
   // The fetch starts in a paused state.
   std::vector<OfflineItem> items;
@@ -746,7 +838,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
                        FetchFromChildFrameWithPermissions) {
   // Give the needed permissions. The fetch should still start in a paused
   // state.
-  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+  SetPermission(ContentSettingsType::AUTOMATIC_DOWNLOADS,
                 CONTENT_SETTING_ALLOW);
 
   // The fetch starts in a paused state.
@@ -759,7 +851,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, FetchFromChildFrameWithAsk) {
-  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, CONTENT_SETTING_ASK);
+  SetPermission(ContentSettingsType::AUTOMATIC_DOWNLOADS, CONTENT_SETTING_ASK);
 
   // The fetch starts in a paused state.
   std::vector<OfflineItem> items;
@@ -772,7 +864,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest, FetchFromChildFrameWithAsk) {
 
 IN_PROC_BROWSER_TEST_F(BackgroundFetchBrowserTest,
                        FetchFromChildFrameWithMissingPermissions) {
-  SetPermission(CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
+  SetPermission(ContentSettingsType::AUTOMATIC_DOWNLOADS,
                 CONTENT_SETTING_BLOCK);
   ASSERT_NO_FATAL_FAILURE(RunScriptAndCheckResultingMessage(
       "StartFetchFromIframe()", "permissionerror"));

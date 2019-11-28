@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
@@ -17,7 +18,7 @@
 #include "components/safe_browsing/db/safebrowsing.pb.h"
 #include "components/safe_browsing/db/util.h"
 #include "components/safe_browsing/db/v4_test_util.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -38,7 +39,7 @@ struct KeyValue {
   std::string value;
 
   explicit KeyValue(const std::string key, const std::string value)
-      : key(key), value(value){};
+      : key(key), value(value) {}
   explicit KeyValue(const KeyValue& other) = default;
 
  private:
@@ -51,11 +52,11 @@ struct ResponseInfo {
   std::vector<KeyValue> key_values;
 
   explicit ResponseInfo(FullHash full_hash, ListIdentifier list_id)
-      : full_hash(full_hash), list_id(list_id){};
+      : full_hash(full_hash), list_id(list_id) {}
   explicit ResponseInfo(const ResponseInfo& other)
       : full_hash(other.full_hash),
         list_id(other.list_id),
-        key_values(other.key_values){};
+        key_values(other.key_values) {}
 
  private:
   ResponseInfo();
@@ -187,7 +188,7 @@ class V4GetHashProtocolManagerTest : public PlatformTest {
   base::SimpleTestClock clock_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 TEST_F(V4GetHashProtocolManagerTest, TestGetHashErrorHandlingNetwork) {
@@ -594,23 +595,16 @@ TEST_F(V4GetHashProtocolManagerTest, TestParseSubresourceFilterMetadata) {
   } test_cases[] = {
       {"warn",
        "enforce",
-       {{{Type::ABUSIVE, Level::WARN}, {Type::BETTER_ADS, Level::ENFORCE}},
-        base::KEEP_FIRST_OF_DUPES}},
-      {nullptr,
-       "warn",
-       {{{Type::BETTER_ADS, Level::WARN}}, base::KEEP_FIRST_OF_DUPES}},
+       {{Type::ABUSIVE, Level::WARN}, {Type::BETTER_ADS, Level::ENFORCE}}},
+      {nullptr, "warn", {{Type::BETTER_ADS, Level::WARN}}},
       {"asdf",
        "",
-       {{{Type::ABUSIVE, Level::ENFORCE}, {Type::BETTER_ADS, Level::ENFORCE}},
-        base::KEEP_FIRST_OF_DUPES}},
-      {"warn",
-       nullptr,
-       {{{Type::ABUSIVE, Level::WARN}}, base::KEEP_FIRST_OF_DUPES}},
+       {{Type::ABUSIVE, Level::ENFORCE}, {Type::BETTER_ADS, Level::ENFORCE}}},
+      {"warn", nullptr, {{Type::ABUSIVE, Level::WARN}}},
       {nullptr, nullptr, {}},
       {"",
        "",
-       {{{Type::ABUSIVE, Level::ENFORCE}, {Type::BETTER_ADS, Level::ENFORCE}},
-        base::KEEP_FIRST_OF_DUPES}},
+       {{Type::ABUSIVE, Level::ENFORCE}, {Type::BETTER_ADS, Level::ENFORCE}}},
   };
 
   for (const auto& test_case : test_cases) {

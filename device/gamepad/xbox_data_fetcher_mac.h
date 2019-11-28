@@ -12,6 +12,7 @@
 
 #include <IOKit/IOMessage.h>
 
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/mac/scoped_ionotificationportref.h"
 #include "base/mac/scoped_ioobject.h"
 #include "base/macros.h"
@@ -34,14 +35,15 @@ class XboxDataFetcher : public GamepadDataFetcher,
 
   // GamepadDataFetcher overrides
   void GetGamepadData(bool devices_changed_hint) override;
-  void PlayEffect(
-      int source_id,
-      mojom::GamepadHapticEffectType,
-      mojom::GamepadEffectParametersPtr,
-      mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback) override;
+  void PlayEffect(int source_id,
+                  mojom::GamepadHapticEffectType,
+                  mojom::GamepadEffectParametersPtr,
+                  mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback,
+                  scoped_refptr<base::SequencedTaskRunner>) override;
   void ResetVibration(
       int source_id,
-      mojom::GamepadHapticsManager::ResetVibrationActuatorCallback) override;
+      mojom::GamepadHapticsManager::ResetVibrationActuatorCallback,
+      scoped_refptr<base::SequencedTaskRunner>) override;
 
   XboxControllerMac* ControllerForLocation(UInt32 location_id);
 
@@ -94,7 +96,8 @@ class XboxDataFetcher : public GamepadDataFetcher,
   // The set of enumerated controllers that received an exclusive access error
   // on opening the device. The data fetcher is notified when these devices
   // become available so we can try opening them again.
-  std::set<std::unique_ptr<PendingController>> pending_controllers_;
+  std::set<std::unique_ptr<PendingController>, base::UniquePtrComparator>
+      pending_controllers_;
 
   bool listening_ = false;
 
@@ -112,6 +115,8 @@ class XboxDataFetcher : public GamepadDataFetcher,
   base::mac::ScopedIOObject<io_iterator_t> xbox_one_elite_device_removed_iter_;
   base::mac::ScopedIOObject<io_iterator_t> xbox_one_s_device_added_iter_;
   base::mac::ScopedIOObject<io_iterator_t> xbox_one_s_device_removed_iter_;
+  base::mac::ScopedIOObject<io_iterator_t> xbox_adaptive_device_added_iter_;
+  base::mac::ScopedIOObject<io_iterator_t> xbox_adaptive_device_removed_iter_;
 
   DISALLOW_COPY_AND_ASSIGN(XboxDataFetcher);
 };

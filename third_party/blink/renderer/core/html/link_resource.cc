@@ -59,13 +59,13 @@ const Document& LinkResource::GetDocument() const {
 }
 
 WTF::TextEncoding LinkResource::GetCharset() const {
-  AtomicString charset = owner_->getAttribute(html_names::kCharsetAttr);
+  AtomicString charset = owner_->FastGetAttribute(html_names::kCharsetAttr);
   if (charset.IsEmpty() && GetDocument().GetFrame())
     return GetDocument().Encoding();
   return WTF::TextEncoding(charset);
 }
 
-void LinkResource::Trace(blink::Visitor* visitor) {
+void LinkResource::Trace(Visitor* visitor) {
   visitor->Trace(owner_);
 }
 

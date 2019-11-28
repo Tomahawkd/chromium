@@ -10,13 +10,13 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "base/atomic_sequence_num.h"
 #include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
@@ -123,18 +123,6 @@ class GPU_EXPORT GpuChannelHost
   // Remove the message route associated with |route_id|.
   void RemoveRoute(int route_id);
 
-  // Returns a handle to the shared memory that can be sent via IPC to the
-  // GPU process. The caller is responsible for ensuring it is closed. Returns
-  // an invalid handle on failure.
-  base::SharedMemoryHandle ShareToGpuProcess(
-      const base::SharedMemoryHandle& source_handle);
-
-  base::UnsafeSharedMemoryRegion ShareToGpuProcess(
-      const base::UnsafeSharedMemoryRegion& source_region);
-
-  // Reserve one unused transfer buffer ID.
-  int32_t ReserveTransferBufferId();
-
   // Reserve one unused image ID.
   int32_t ReserveImageId();
 
@@ -208,7 +196,7 @@ class GPU_EXPORT GpuChannelHost
 
     // Threading notes: most fields are only accessed on the IO thread, except
     // for lost_ which is protected by |lock_|.
-    base::hash_map<int32_t, RouteInfo> routes_;
+    std::unordered_map<int32_t, RouteInfo> routes_;
     std::unique_ptr<IPC::ChannelMojo> channel_;
     base::flat_map<int, IPC::PendingSyncMsg*> pending_syncs_;
 

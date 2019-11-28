@@ -57,24 +57,20 @@ void AutofillPrivateEventRouter::OnPersonalDataChanged() {
 
   autofill_util::AddressEntryList addressList =
       extensions::autofill_util::GenerateAddressList(*personal_data_);
-  std::unique_ptr<base::ListValue> args(
-      api::autofill_private::OnAddressListChanged::Create(addressList)
-          .release());
-  std::unique_ptr<Event> extension_event(
-      new Event(events::AUTOFILL_PRIVATE_ON_ADDRESS_LIST_CHANGED,
-                api::autofill_private::OnAddressListChanged::kEventName,
-                std::move(args)));
-  event_router_->BroadcastEvent(std::move(extension_event));
 
   autofill_util::CreditCardEntryList creditCardList =
       extensions::autofill_util::GenerateCreditCardList(*personal_data_);
-  args.reset(
-      api::autofill_private::OnCreditCardListChanged::Create(creditCardList)
+
+  std::unique_ptr<base::ListValue> args(
+      api::autofill_private::OnPersonalDataChanged::Create(addressList,
+                                                           creditCardList)
           .release());
-  extension_event.reset(
-      new Event(events::AUTOFILL_PRIVATE_ON_CREDIT_CARD_LIST_CHANGED,
-                api::autofill_private::OnCreditCardListChanged::kEventName,
+
+  std::unique_ptr<Event> extension_event(
+      new Event(events::AUTOFILL_PRIVATE_ON_PERSONAL_DATA_CHANGED,
+                api::autofill_private::OnPersonalDataChanged::kEventName,
                 std::move(args)));
+
   event_router_->BroadcastEvent(std::move(extension_event));
 }
 

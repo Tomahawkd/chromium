@@ -7,14 +7,15 @@
 #include <list>
 #include <string>
 
+#include "base/bind.h"
 #include "base/containers/adapters.h"
 #include "base/task/post_task.h"
 #include "base/values.h"
 #include "content/browser/media/media_internals.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/system_connector.h"
 #include "content/public/browser/web_ui.h"
-#include "content/public/common/service_manager_connection.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "services/media_session/public/mojom/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -28,10 +29,12 @@ const char kAudioFocusIdKey[] = "id";
 const char kAudioFocusSessionsKey[] = "sessions";
 
 const char kAudioFocusForceDuck[] = "ForceDuck";
+const char kAudioFocusPreferStop[] = "PreferStop";
 
 const char kAudioFocusTypeGain[] = "Gain";
 const char kAudioFocusTypeGainTransient[] = "GainTransient";
 const char kAudioFocusTypeGainTransientMayDuck[] = "GainTransientMayDuck";
+const char kAudioFocusTypeAmbient[] = "Ambient";
 
 const char kMediaSessionStateActive[] = "Active";
 const char kMediaSessionStateDucking[] = "Ducking";
@@ -42,6 +45,7 @@ const char kMediaSessionPlaybackStatePaused[] = "Paused";
 const char kMediaSessionPlaybackStatePlaying[] = "Playing";
 
 const char kMediaSessionIsControllable[] = "Controllable";
+const char kMediaSessionIsSensitive[] = "Sensitive";
 
 }  // namespace
 
@@ -52,31 +56,30 @@ MediaInternalsAudioFocusHelper::~MediaInternalsAudioFocusHelper() = default;
 void MediaInternalsAudioFocusHelper::SendAudioFocusState() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!CanUpdate())
+  if (!EnsureServiceConnection())
     return;
 
   // Get the audio focus state from the media session service.
-  audio_focus_ptr_->GetFocusRequests(base::BindOnce(
+  audio_focus_->GetFocusRequests(base::BindOnce(
       &MediaInternalsAudioFocusHelper::DidGetAudioFocusRequestList,
       base::Unretained(this)));
 }
 
 void MediaInternalsAudioFocusHelper::OnFocusGained(
-    media_session::mojom::MediaSessionInfoPtr media_session,
-    media_session::mojom::AudioFocusType type) {
+    media_session::mojom::AudioFocusRequestStatePtr session) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&MediaInternalsAudioFocusHelper::SendAudioFocusState,
                      base::Unretained(this)));
 }
 
 void MediaInternalsAudioFocusHelper::OnFocusLost(
-    media_session::mojom::MediaSessionInfoPtr media_session) {
+    media_session::mojom::AudioFocusRequestStatePtr session) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&MediaInternalsAudioFocusHelper::SendAudioFocusState,
                      base::Unretained(this)));
@@ -85,69 +88,70 @@ void MediaInternalsAudioFocusHelper::OnFocusLost(
 void MediaInternalsAudioFocusHelper::SetEnabled(bool enabled) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (enabled_ == enabled)
-    return;
-
   enabled_ = enabled;
 
   EnsureServiceConnection();
 
-  if (enabled) {
-    // Add the observer to receive audio focus events.
-    media_session::mojom::AudioFocusObserverPtr observer;
-    binding_.Bind(mojo::MakeRequest(&observer));
-    audio_focus_ptr_->AddObserver(std::move(observer));
-
-    binding_.set_connection_error_handler(base::BindRepeating(
-        &MediaInternalsAudioFocusHelper::OnMojoError, base::Unretained(this)));
-  } else {
-    audio_focus_ptr_.reset();
-    audio_focus_debug_ptr_.reset();
-    binding_.Close();
+  if (!enabled) {
+    audio_focus_.reset();
+    audio_focus_debug_.reset();
+    receiver_.reset();
   }
 }
 
-void MediaInternalsAudioFocusHelper::EnsureServiceConnection() {
+bool MediaInternalsAudioFocusHelper::EnsureServiceConnection() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // |connection| and |connector| may be nullptr in some tests.
-  ServiceManagerConnection* connection =
-      ServiceManagerConnection::GetForProcess();
-  if (!connection)
-    return;
+  if (!enabled_)
+    return false;
 
-  service_manager::Connector* connector = connection->GetConnector();
+  // |connector| may be nullptr in some tests.
+  service_manager::Connector* connector = GetSystemConnector();
   if (!connector)
-    return;
+    return false;
 
   // Connect to the media session service.
-  if (!audio_focus_ptr_.is_bound()) {
-    connector->BindInterface(media_session::mojom::kServiceName,
-                             mojo::MakeRequest(&audio_focus_ptr_));
-    audio_focus_ptr_.set_connection_error_handler(base::BindRepeating(
+  if (!audio_focus_.is_bound()) {
+    connector->Connect(media_session::mojom::kServiceName,
+                       audio_focus_.BindNewPipeAndPassReceiver());
+    audio_focus_.set_disconnect_handler(base::BindRepeating(
         &MediaInternalsAudioFocusHelper::OnMojoError, base::Unretained(this)));
   }
 
   // Connect to the media session service debug interface.
-  if (!audio_focus_debug_ptr_.is_bound()) {
-    connector->BindInterface(media_session::mojom::kServiceName,
-                             mojo::MakeRequest(&audio_focus_debug_ptr_));
-    audio_focus_debug_ptr_.set_connection_error_handler(base::BindRepeating(
+  if (!audio_focus_debug_.is_bound()) {
+    connector->Connect(media_session::mojom::kServiceName,
+                       audio_focus_debug_.BindNewPipeAndPassReceiver());
+    audio_focus_debug_.set_disconnect_handler(
+        base::BindRepeating(&MediaInternalsAudioFocusHelper::OnDebugMojoError,
+                            base::Unretained(this)));
+  }
+
+  // Add the observer to receive audio focus events.
+  if (!receiver_.is_bound()) {
+    audio_focus_->AddObserver(receiver_.BindNewPipeAndPassRemote());
+
+    receiver_.set_disconnect_handler(base::BindRepeating(
         &MediaInternalsAudioFocusHelper::OnMojoError, base::Unretained(this)));
   }
+
+  return true;
 }
 
 void MediaInternalsAudioFocusHelper::OnMojoError() {
-  audio_focus_ptr_.reset();
-  audio_focus_debug_ptr_.reset();
-  binding_.Close();
+  audio_focus_.reset();
+  receiver_.reset();
+}
+
+void MediaInternalsAudioFocusHelper::OnDebugMojoError() {
+  audio_focus_debug_.reset();
 }
 
 void MediaInternalsAudioFocusHelper::DidGetAudioFocusRequestList(
     std::vector<media_session::mojom::AudioFocusRequestStatePtr> stack) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!CanUpdate())
+  if (!EnsureServiceConnection())
     return;
 
   audio_focus_data_.Clear();
@@ -163,11 +167,11 @@ void MediaInternalsAudioFocusHelper::DidGetAudioFocusRequestList(
     std::string id_string = session->request_id.value().ToString();
     base::DictionaryValue media_session_data;
     media_session_data.SetKey(kAudioFocusIdKey, base::Value(id_string));
-    stack_data.GetList().push_back(std::move(media_session_data));
+    stack_data.Append(std::move(media_session_data));
 
     request_state_.emplace(id_string, session.Clone());
 
-    audio_focus_debug_ptr_->GetDebugInfoForRequest(
+    audio_focus_debug_->GetDebugInfoForRequest(
         session->request_id.value(),
         base::BindOnce(
             &MediaInternalsAudioFocusHelper::DidGetAudioFocusDebugInfo,
@@ -187,7 +191,7 @@ void MediaInternalsAudioFocusHelper::DidGetAudioFocusDebugInfo(
     media_session::mojom::MediaSessionDebugInfoPtr info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!CanUpdate())
+  if (!EnsureServiceConnection())
     return;
 
   base::Value* sessions_list =
@@ -214,11 +218,6 @@ void MediaInternalsAudioFocusHelper::DidGetAudioFocusDebugInfo(
     return;
 
   SerializeAndSendUpdate(kAudioFocusFunction, &audio_focus_data_);
-}
-
-bool MediaInternalsAudioFocusHelper::CanUpdate() const {
-  return enabled_ && audio_focus_ptr_.is_bound() &&
-         audio_focus_debug_ptr_.is_bound();
 }
 
 void MediaInternalsAudioFocusHelper::SerializeAndSendUpdate(
@@ -264,6 +263,9 @@ std::string MediaInternalsAudioFocusHelper::BuildStateString(
     case media_session::mojom::AudioFocusType::kGainTransientMayDuck:
       stream << " " << kAudioFocusTypeGainTransientMayDuck;
       break;
+    case media_session::mojom::AudioFocusType::kAmbient:
+      stream << " " << kAudioFocusTypeAmbient;
+      break;
   }
 
   // Convert the MediaSessionInfo::SessionState mojo enum to a string.
@@ -296,9 +298,17 @@ std::string MediaInternalsAudioFocusHelper::BuildStateString(
   if (state->session_info->force_duck)
     stream << " " << kAudioFocusForceDuck;
 
+  // Convert the |prefer_stop_for_gain_focus_loss| boolean into a string.
+  if (state->session_info->prefer_stop_for_gain_focus_loss)
+    stream << " " << kAudioFocusPreferStop;
+
   // Convert the |is_controllable| boolean into a string.
   if (state->session_info->is_controllable)
     stream << " " << kMediaSessionIsControllable;
+
+  // Convert the |is_sensitive| boolean into a string.
+  if (state->session_info->is_sensitive)
+    stream << " " << kMediaSessionIsSensitive;
 
   if (!provided_state.empty())
     stream << " " << provided_state;

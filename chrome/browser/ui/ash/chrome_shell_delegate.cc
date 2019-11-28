@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "ash/screenshot_delegate.h"
+#include "base/bind.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_chromeos.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,7 +23,7 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
-#include "services/ws/public/cpp/input_devices/input_device_controller_client.h"
+#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "ui/aura/window.h"
 #include "url/gurl.h"
 
@@ -37,7 +38,8 @@ ChromeShellDelegate::ChromeShellDelegate() = default;
 
 ChromeShellDelegate::~ChromeShellDelegate() = default;
 
-bool ChromeShellDelegate::CanShowWindowForUser(aura::Window* window) const {
+bool ChromeShellDelegate::CanShowWindowForUser(
+    const aura::Window* window) const {
   return ::CanShowWindowForUser(window,
                                 base::BindRepeating(&GetActiveBrowserContext));
 }
@@ -52,9 +54,16 @@ void ChromeShellDelegate::OpenKeyboardShortcutHelpPage() const {
   Navigate(&params);
 }
 
-std::unique_ptr<keyboard::KeyboardUI> ChromeShellDelegate::CreateKeyboardUI() {
-  return std::make_unique<ChromeKeyboardUI>(
-      ProfileManager::GetActiveUserProfile());
+bool ChromeShellDelegate::CanGoBack(gfx::NativeWindow window) const {
+  BrowserView* browser_view =
+      BrowserView::GetBrowserViewForNativeWindow(window);
+  if (!browser_view)
+    return false;
+  content::WebContents* contents =
+      browser_view->browser()->tab_strip_model()->GetActiveWebContents();
+  if (!contents)
+    return false;
+  return contents->GetController().CanGoBack();
 }
 
 ash::AccessibilityDelegate* ChromeShellDelegate::CreateAccessibilityDelegate() {
@@ -66,7 +75,3 @@ ChromeShellDelegate::CreateScreenshotDelegate() {
   return std::make_unique<ChromeScreenshotGrabber>();
 }
 
-ws::InputDeviceControllerClient*
-ChromeShellDelegate::GetInputDeviceControllerClient() {
-  return g_browser_process->platform_part()->GetInputDeviceControllerClient();
-}

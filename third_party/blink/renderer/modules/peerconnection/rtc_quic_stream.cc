@@ -10,8 +10,10 @@
 
 namespace blink {
 
-const uint32_t RTCQuicStream::kWriteBufferSize = 4 * 1024;
-const uint32_t RTCQuicStream::kReadBufferSize = 4 * 1024;
+// 6 MB allows a reasonable amount to buffer on the read and write side.
+// TODO(https://crbug.com/874296): Consider exposing these configurations.
+const uint32_t RTCQuicStream::kWriteBufferSize = 6 * 1024 * 1024;
+const uint32_t RTCQuicStream::kReadBufferSize = 6 * 1024 * 1024;
 
 class RTCQuicStream::PendingReadBufferedAmountPromise
     : public GarbageCollected<PendingReadBufferedAmountPromise> {
@@ -101,7 +103,7 @@ RTCQuicStreamReadResult* RTCQuicStream::readInto(
     return 0;
   }
   uint32_t read_amount = static_cast<uint32_t>(receive_buffer_.ReadInto(
-      base::make_span(data.View()->Data(), data.View()->length())));
+      base::make_span(data.View()->Data(), data.View()->lengthAsSizeT())));
   if (!received_fin_ && read_amount > 0) {
     proxy_->MarkReceivedDataConsumed(read_amount);
   }
@@ -121,46 +123,50 @@ RTCQuicStreamReadResult* RTCQuicStream::readInto(
   return result;
 }
 
-void RTCQuicStream::write(NotShared<DOMUint8Array> data,
+void RTCQuicStream::write(const RTCQuicStreamWriteParameters* data,
                           ExceptionState& exception_state) {
+  bool finish = data->finish();
+  bool has_write_data =
+      data->hasData() && data->data().View()->lengthAsSizeT() > 0;
+  if (!has_write_data && !finish) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kNotSupportedError,
+        "Cannot write empty data, unless data.finish is set to true.");
+    return;
+  }
   if (RaiseIfNotWritable(exception_state)) {
     return;
   }
-  if (data.View()->length() == 0) {
-    return;
+  Vector<uint8_t> data_vector;
+  if (has_write_data) {
+    DOMUint8Array* write_data = data->data().View();
+    size_t remaining_write_buffer_size =
+        kWriteBufferSize - writeBufferedAmount();
+    if (write_data->lengthAsSizeT() > remaining_write_buffer_size) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kOperationError,
+          "The write data size of " +
+              String::Number(write_data->lengthAsSizeT()) +
+              " bytes would exceed the remaining write buffer size of " +
+              String::Number(remaining_write_buffer_size) + " bytes.");
+      return;
+    }
+    data_vector.resize(static_cast<wtf_size_t>(write_data->lengthAsSizeT()));
+    memcpy(data_vector.data(), write_data->Data(), write_data->lengthAsSizeT());
+    write_buffered_amount_ +=
+        static_cast<uint32_t>(write_data->lengthAsSizeT());
   }
-  uint32_t remaining_write_buffer_size =
-      kWriteBufferSize - writeBufferedAmount();
-  if (data.View()->length() > remaining_write_buffer_size) {
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kOperationError,
-        "The write data size of " + String::Number(data.View()->length()) +
-            " bytes would exceed the remaining write buffer size of " +
-            String::Number(remaining_write_buffer_size) + " bytes.");
-    return;
-  }
-  Vector<uint8_t> data_vector(data.View()->length());
-  memcpy(data_vector.data(), data.View()->Data(), data.View()->length());
-  proxy_->WriteData(std::move(data_vector), /*fin=*/false);
-  write_buffered_amount_ += data.View()->length();
-}
-
-void RTCQuicStream::finish() {
-  if (IsClosed()) {
-    return;
-  }
-  if (wrote_fin_) {
-    return;
-  }
-  proxy_->WriteData({}, /*fin=*/true);
-  wrote_fin_ = true;
-  if (!read_fin_) {
-    DCHECK_EQ(state_, RTCQuicStreamState::kOpen);
-    state_ = RTCQuicStreamState::kClosing;
-    RejectPendingWaitForWriteBufferedAmountBelowPromises();
-  } else {
-    DCHECK_EQ(state_, RTCQuicStreamState::kClosing);
-    Close(CloseReason::kReadWriteFinished);
+  proxy_->WriteData(std::move(data_vector), finish);
+  if (finish) {
+    wrote_fin_ = true;
+    if (!read_fin_) {
+      DCHECK_EQ(state_, RTCQuicStreamState::kOpen);
+      state_ = RTCQuicStreamState::kClosing;
+      RejectPendingWaitForWriteBufferedAmountBelowPromises();
+    } else {
+      DCHECK_EQ(state_, RTCQuicStreamState::kClosing);
+      Close(CloseReason::kReadWriteFinished);
+    }
   }
 }
 
@@ -184,8 +190,8 @@ ScriptPromise RTCQuicStream::waitForReadable(ScriptState* script_state,
         String::Number(kReadBufferSize) + ".");
     return ScriptPromise();
   }
-  ScriptPromiseResolver* promise_resolver =
-      ScriptPromiseResolver::Create(script_state);
+  auto* promise_resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = promise_resolver->Promise();
   if (received_fin_ || receive_buffer_.size() >= amount) {
     promise_resolver->Resolve();
@@ -204,8 +210,8 @@ ScriptPromise RTCQuicStream::waitForWriteBufferedAmountBelow(
   if (RaiseIfNotWritable(exception_state)) {
     return ScriptPromise();
   }
-  ScriptPromiseResolver* promise_resolver =
-      ScriptPromiseResolver::Create(script_state);
+  auto* promise_resolver =
+      MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = promise_resolver->Promise();
   if (write_buffered_amount_ <= threshold) {
     promise_resolver->Resolve();

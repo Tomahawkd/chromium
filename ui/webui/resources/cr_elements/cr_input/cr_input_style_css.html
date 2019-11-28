@@ -8,17 +8,23 @@
   <template>
     <style>
       :host {
+        --cr-input-background-color: var(--google-grey-refresh-100);
+        --cr-input-color: var(--cr-primary-text-color);
         --cr-input-error-color: var(--google-red-600);
         --cr-input-focus-color: var(--google-blue-600);
+        --cr-input-placeholder-color: var(--cr-secondary-text-color);
         display: block;
         /* Avoid showing outline when focus() programmatically called multiple
            times in a row. */
         outline: none;
       }
 
-      /* Label styling below. */
-      #label {
-        @apply --cr-form-field-label;
+      @media (prefers-color-scheme: dark) {
+        :host {
+          --cr-input-background-color: rgba(0, 0, 0, .3);
+          --cr-input-error-color: var(--google-red-refresh-300);
+          --cr-input-focus-color: var(--google-blue-refresh-300);
+        }
       }
 
       :host([focused_]:not([readonly]):not([invalid])) #label {
@@ -27,34 +33,30 @@
 
       /* Input styling below. */
       #input-container {
-        border-radius: 4px;
+        border-radius: var(--cr-input-border-radius, 4px);
         overflow: hidden;
         position: relative;
         width: var(--cr-input-width, 100%);
-
-        @apply --cr-input-container;
       }
 
       #inner-input-container {
-        background-color: var(--cr-input-background-color,
-            var(--google-grey-refresh-100));
+        background-color: var(--cr-input-background-color);
         box-sizing: border-box;
         padding: 0;
-
-        @apply --cr-input-inner-container;
       }
 
       #input {
         -webkit-appearance: none;
-        background-color: var(--cr-input-background-color,
-            var(--google-grey-refresh-100));
+        /* Transparent, #inner-input-container will apply background. */
+        background-color: transparent;
         border: none;
         box-sizing: border-box;
         caret-color: var(--cr-input-focus-color);
-        color: var(--cr-input-color, var(--google-grey-900));
+        color: var(--cr-input-color);
         font-family: inherit;
         font-size: inherit;
         line-height: inherit;
+        min-height: var(--cr-input-min-height, auto);
         outline: none;
 
         /**
@@ -74,7 +76,10 @@
         text-overflow: ellipsis;
         width: 100%;
 
-        @apply --cr-input-input;
+        /* Avoid using the mixin. Use ::part(input) instead.
+         * Necessary for backward compatibility with Polymer1/SDv0 (only used by
+         * OOBE). TODO(crbug.com/955194): Remove this once fixed.*/
+         @apply --cr-input-input;
       }
 
       /* Underline styling below. */

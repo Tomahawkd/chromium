@@ -49,8 +49,8 @@
 #endif  // OS_FUCHSIA
 
 extern "C" {
-__attribute__((visibility("default"))) void
-ElfImageReaderTestExportedSymbol(){};
+__attribute__((visibility("default"))) void ElfImageReaderTestExportedSymbol() {
+}
 }  // extern "C"
 
 namespace crashpad {
@@ -100,10 +100,9 @@ void LocateExecutable(PtraceConnection* connection,
   ASSERT_TRUE(memory_map.Initialize(connection));
   const MemoryMap::Mapping* phdr_mapping = memory_map.FindMapping(phdrs);
   ASSERT_TRUE(phdr_mapping);
-  std::vector<const MemoryMap::Mapping*> possible_mappings =
-      memory_map.FindFilePossibleMmapStarts(*phdr_mapping);
-  ASSERT_EQ(possible_mappings.size(), 1u);
-  *elf_address = possible_mappings[0]->range.Base();
+  auto possible_mappings = memory_map.FindFilePossibleMmapStarts(*phdr_mapping);
+  ASSERT_EQ(possible_mappings->Count(), 1u);
+  *elf_address = possible_mappings->Next()->range.Base();
 }
 
 #endif  // OS_FUCHSIA
@@ -156,7 +155,7 @@ void ReadThisExecutableInTarget(ProcessType process,
   ElfImageReader::NoteReader::NoteType note_type;
   VMAddress desc_addr;
 
-  std::unique_ptr<ElfImageReader::NoteReader> notes = reader.Notes(-1);
+  std::unique_ptr<ElfImageReader::NoteReader> notes = reader.Notes(10000);
   while ((result = notes->NextNote(
               &note_name, &note_type, &note_desc, &desc_addr)) ==
          ElfImageReader::NoteReader::Result::kSuccess) {
@@ -170,7 +169,7 @@ void ReadThisExecutableInTarget(ProcessType process,
   // Find the note defined in elf_image_reader_test_note.S.
   constexpr uint32_t kCrashpadNoteDesc = 42;
   notes = reader.NotesWithNameAndType(
-      CRASHPAD_ELF_NOTE_NAME, CRASHPAD_ELF_NOTE_TYPE_SNAPSHOT_TEST, -1);
+      CRASHPAD_ELF_NOTE_NAME, CRASHPAD_ELF_NOTE_TYPE_SNAPSHOT_TEST, 10000);
   ASSERT_EQ(notes->NextNote(&note_name, &note_type, &note_desc, &desc_addr),
             ElfImageReader::NoteReader::Result::kSuccess);
   EXPECT_EQ(note_name, CRASHPAD_ELF_NOTE_NAME);

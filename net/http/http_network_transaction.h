@@ -20,6 +20,7 @@
 #include "net/base/completion_repeating_callback.h"
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_request_headers.h"
@@ -31,7 +32,6 @@
 #include "net/net_buildflags.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/socket/connection_attempts.h"
-#include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_config_service.h"
 #include "net/websockets/websocket_handshake_stream_base.h"
 
@@ -71,7 +71,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
            int buf_len,
            CompletionOnceCallback callback) override;
   void StopCaching() override;
-  bool GetFullRequestHeaders(HttpRequestHeaders* headers) const override;
   int64_t GetTotalReceivedBytes() const override;
   int64_t GetTotalSentBytes() const override;
   void DoneReading() override;
@@ -107,7 +106,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       std::unique_ptr<WebSocketHandshakeStreamBase> stream) override;
   void OnStreamFailed(int status,
                       const NetErrorDetails& net_error_details,
-                      const SSLConfig& used_ssl_config) override;
+                      const SSLConfig& used_ssl_config,
+                      const ProxyInfo& used_proxy_info) override;
   void OnCertificateError(int status,
                           const SSLConfig& used_ssl_config,
                           const SSLInfo& ssl_info) override;
@@ -117,10 +117,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
                         HttpAuthController* auth_controller) override;
   void OnNeedsClientAuth(const SSLConfig& used_ssl_config,
                          SSLCertRequestInfo* cert_info) override;
-  void OnHttpsProxyTunnelResponse(const HttpResponseInfo& response_info,
-                                  const SSLConfig& used_ssl_config,
-                                  const ProxyInfo& used_proxy_info,
-                                  std::unique_ptr<HttpStream> stream) override;
 
   void OnQuicBroken() override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
@@ -129,7 +125,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, ResetStateForRestart);
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest,
                            CreateWebSocketHandshakeStream);
-  FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionSSLTest, ChannelID);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateReceived);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateSent);
   FRIEND_TEST_ALL_PREFIXES(SpdyNetworkTransactionTest, WindowUpdateOverflow);
@@ -214,6 +209,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Reporting API.
   void ProcessNetworkErrorLoggingHeader();
 
+  // Calls GenerateNetworkErrorLoggingReport() if |rv| represents a NET_ERROR
+  // other than ERR_IO_PENDING.
+  void GenerateNetworkErrorLoggingReportIfError(int rv);
+
   // Generates a NEL report about this request.  The NetworkErrorLoggingService
   // will discard the report if there is no NEL policy registered for this
   // origin.
@@ -223,9 +222,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Writes a log message to help debugging in the field when we block a proxy
   // response to a CONNECT request.
   void LogBlockedTunnelResponse(int response_code) const;
-
-  // Called to handle a client certificate request.
-  int HandleCertificateRequest(int error);
 
   // Called wherever ERR_HTTP_1_1_REQUIRED or
   // ERR_PROXY_HTTP_1_1_REQUIRED has to be handled.
@@ -328,6 +324,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   RequestPriority priority_;
   HttpResponseInfo response_;
 
+  // Copied from |request_|, as it's needed after the response body has been
+  // read.
+  NetworkIsolationKey network_isolation_key_;
+
   // |proxy_info_| is the ProxyInfo used by the HttpStreamRequest.
   ProxyInfo proxy_info_;
 
@@ -340,9 +340,9 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // True if we can send the request over early data.
   bool can_send_early_data_;
 
-  // True if |server_ssl_config_.client_cert| was looked up from the
-  // SSLClientAuthCache, rather than provided externally by the caller.
-  bool server_ssl_client_cert_was_cached_;
+  // True if the client certificate for the server (rather than the proxy) was
+  // configured in this transaction.
+  bool configured_client_cert_for_server_;
 
   // SSL configuration used for the server and proxy, respectively. Note
   // |server_ssl_config_| may be updated from the HttpStreamFactory, which will
@@ -356,6 +356,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   HttpRequestHeaders request_headers_;
 #if BUILDFLAG(ENABLE_REPORTING)
+  // Whether a NEL report has already been generated. Reset when restarting.
+  bool network_error_logging_report_generated_;
   // Cache some fields from |request_| that we'll need to construct a NEL
   // report about the request.  (NEL report construction happens after we've
   // cleared the |request_| pointer.)
@@ -363,6 +365,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   std::string request_referrer_;
   std::string request_user_agent_;
   int request_reporting_upload_depth_;
+  base::TimeTicks start_timeticks_;
 #endif
 
   // The size in bytes of the buffer we use to drain the response body that
@@ -420,8 +423,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // Network error details for this transaction.
   NetErrorDetails net_error_details_;
 
-  // Number of retries made for network errors like ERR_SPDY_PING_FAILED,
-  // ERR_SPDY_SERVER_REFUSED_STREAM, ERR_QUIC_HANDSHAKE_FAILED and
+  // Number of retries made for network errors like ERR_HTTP2_PING_FAILED,
+  // ERR_HTTP2_SERVER_REFUSED_STREAM, ERR_QUIC_HANDSHAKE_FAILED and
   // ERR_QUIC_PROTOCOL_ERROR. Currently we stop after 3 tries
   // (including the initial request) and fail the request.
   // This count excludes retries on reused sockets since a well
@@ -431,10 +434,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   // Number of times the transaction was restarted via a RestartWith* call.
   size_t num_restarts_;
-
-  // The net::Error which triggered a TLS 1.3 version interference probe, or OK
-  // if none was triggered.
-  int ssl_version_interference_error_;
 
   DISALLOW_COPY_AND_ASSIGN(HttpNetworkTransaction);
 };

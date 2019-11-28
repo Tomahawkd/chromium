@@ -7,11 +7,16 @@
 namespace blink {
 
 FramePolicy::FramePolicy()
-    : sandbox_flags(WebSandboxFlags::kNone), container_policy({}) {}
+    : sandbox_flags(WebSandboxFlags::kNone),
+      container_policy({}),
+      allowed_to_download(true) {}
 
 FramePolicy::FramePolicy(WebSandboxFlags sandbox_flags,
-                         const ParsedFeaturePolicy& container_policy)
-    : sandbox_flags(sandbox_flags), container_policy(container_policy) {}
+                         const ParsedFeaturePolicy& container_policy,
+                         bool allowed_to_download)
+    : sandbox_flags(sandbox_flags),
+      container_policy(container_policy),
+      allowed_to_download(allowed_to_download) {}
 
 FramePolicy::FramePolicy(const FramePolicy& lhs) = default;
 

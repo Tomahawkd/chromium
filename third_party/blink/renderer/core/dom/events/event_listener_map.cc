@@ -79,6 +79,21 @@ bool EventListenerMap::ContainsCapturing(const AtomicString& event_type) const {
   return false;
 }
 
+bool EventListenerMap::ContainsJSBasedEventListeners(
+    const AtomicString& event_type) const {
+  for (const auto& entry : entries_) {
+    if (entry.first == event_type) {
+      for (const auto& event_listener : *entry.second) {
+        const EventListener* callback = event_listener.Callback();
+        if (callback && callback->IsJSBasedEventListener())
+          return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
 void EventListenerMap::Clear() {
   CheckNoActiveIterators();
 
@@ -207,7 +222,7 @@ void EventListenerMap::CopyEventListenersNotCreatedFromMarkupToTarget(
   }
 }
 
-void EventListenerMap::Trace(blink::Visitor* visitor) {
+void EventListenerMap::Trace(Visitor* visitor) {
   visitor->Trace(entries_);
 }
 

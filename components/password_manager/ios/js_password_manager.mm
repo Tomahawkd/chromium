@@ -75,7 +75,7 @@ NSString* JSONEscape(NSString* JSONString) {
 
 @implementation JsPasswordManager {
   // The injection receiver used to evaluate JavaScript.
-  CRWJSInjectionReceiver* _receiver;
+  __weak CRWJSInjectionReceiver* _receiver;
 }
 
 - (instancetype)initWithReceiver:(CRWJSInjectionReceiver*)receiver {
@@ -122,5 +122,21 @@ NSString* JSONEscape(NSString* JSONString) {
              }];
 }
 
+- (void)fillPasswordForm:(NSString*)formName
+        newPasswordIdentifier:(NSString*)newPasswordIdentifier
+    confirmPasswordIdentifier:(NSString*)confirmPasswordIdentifier
+            generatedPassword:(NSString*)generatedPassword
+            completionHandler:(void (^)(BOOL))completionHandler {
+  NSString* script = [NSString
+      stringWithFormat:@"__gCrWeb.passwords."
+                       @"fillPasswordFormWithGeneratedPassword(%@, %@, %@, %@)",
+                       JSONEscape(formName), JSONEscape(newPasswordIdentifier),
+                       JSONEscape(confirmPasswordIdentifier),
+                       JSONEscape(generatedPassword)];
+  [_receiver executeJavaScript:script
+             completionHandler:^(id result, NSError*) {
+               completionHandler([result isEqual:@YES]);
+             }];
+}
 
 @end

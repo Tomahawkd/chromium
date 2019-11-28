@@ -69,7 +69,7 @@
 // Then you simply #include this file as well as gtest.h and add the
 // following statement to my_sync_notifier_unittest.cc:
 //
-//   INSTANTIATE_TYPED_TEST_CASE_P(
+//   INSTANTIATE_TYPED_TEST_SUITE_P(
 //       MyInvalidator, InvalidatorTest, MyInvalidatorTestDelegate);
 //
 // Easy!
@@ -106,7 +106,7 @@ class InvalidatorTest : public testing::Test {
     Invalidator* const invalidator = this->delegate_.GetInvalidator();
 
     this->delegate_.WaitForInvalidator();
-    invalidator->UpdateCredentials("foo@bar.com", "fake_token");
+    invalidator->UpdateCredentials(CoreAccountId("foo@bar.com"), "fake_token");
     this->delegate_.WaitForInvalidator();
 
     return invalidator;
@@ -121,7 +121,7 @@ class InvalidatorTest : public testing::Test {
   const invalidation::ObjectId id4;
 };
 
-TYPED_TEST_CASE_P(InvalidatorTest);
+TYPED_TEST_SUITE_P(InvalidatorTest);
 
 // Initialize the invalidator, register a handler, register some IDs for that
 // handler, and then unregister the handler, dispatching invalidations in
@@ -390,12 +390,12 @@ TYPED_TEST_P(InvalidatorTest, GetInvalidatorStateAlwaysCurrent) {
   invalidator->UnregisterHandler(&handler);
 }
 
-REGISTER_TYPED_TEST_CASE_P(InvalidatorTest,
-                           Basic,
-                           MultipleHandlers,
-                           MultipleRegistrations,
-                           EmptySetUnregisters,
-                           GetInvalidatorStateAlwaysCurrent);
+REGISTER_TYPED_TEST_SUITE_P(InvalidatorTest,
+                            Basic,
+                            MultipleHandlers,
+                            MultipleRegistrations,
+                            EmptySetUnregisters,
+                            GetInvalidatorStateAlwaysCurrent);
 
 }  // namespace syncer
 

@@ -2,134 +2,56 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/crostini/crostini_installer_types.mojom.h"
 #include "chrome/browser/ui/views/crostini/crostini_installer_view.h"
 
-#include "base/metrics/histogram_base.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/metrics/histogram_tester.h"
+#include "chrome/browser/chromeos/crostini/crostini_manager.h"
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
+#include "chrome/browser/chromeos/crostini/fake_crostini_installer_ui_delegate.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/app_list/app_list_client_impl.h"
-#include "chrome/browser/ui/app_list/crostini/crostini_app_model_builder.h"
 #include "chrome/browser/ui/app_list/test/chrome_app_list_test_support.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/views/crostini/crostini_browser_test_util.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/dbus/cros_disks_client.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_concierge_client.h"
-#include "chromeos/dbus/fake_cros_disks_client.h"
-#include "chromeos/disks/disk_mount_manager.h"
 #include "components/crx_file/id_util.h"
-#include "net/base/mock_network_change_notifier.h"
-#include "net/base/network_change_notifier_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/views/window/dialog_client_view.h"
+#include "ui/base/ui_base_types.h"
+
+using crostini::mojom::InstallerError;
+using crostini::mojom::InstallerState;
 
 class CrostiniInstallerViewBrowserTest : public CrostiniDialogBrowserTest {
  public:
-  class WaitingFakeConciergeClient : public chromeos::FakeConciergeClient {
-   public:
-    void StartTerminaVm(
-        const vm_tools::concierge::StartVmRequest& request,
-        chromeos::DBusMethodCallback<vm_tools::concierge::StartVmResponse>
-            callback) override {
-      chromeos::FakeConciergeClient::StartTerminaVm(request,
-                                                    std::move(callback));
-      if (closure_) {
-        base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                      std::move(closure_));
-      }
-    }
-
-    void WaitForStartTerminaVmCalled() {
-      base::RunLoop loop;
-      closure_ = loop.QuitClosure();
-      loop.Run();
-      EXPECT_TRUE(start_termina_vm_called());
-    }
-
-   private:
-    base::OnceClosure closure_;
-  };
-
-  class WaitingDiskMountManagerObserver
-      : public chromeos::disks::DiskMountManager::Observer {
-   public:
-    void OnMountEvent(chromeos::disks::DiskMountManager::MountEvent event,
-                      chromeos::MountError error_code,
-                      const chromeos::disks::DiskMountManager::MountPointInfo&
-                          mount_info) override {
-      run_loop_->Quit();
-    }
-
-    void WaitForMountEvent() {
-      chromeos::disks::DiskMountManager::GetInstance()->AddObserver(this);
-      run_loop_ = std::make_unique<base::RunLoop>();
-      run_loop_->Run();
-    }
-
-   private:
-    std::unique_ptr<base::RunLoop> run_loop_;
-  };
-
   CrostiniInstallerViewBrowserTest()
-      : CrostiniDialogBrowserTest(true /*register_termina*/),
-        waiting_fake_concierge_client_(new WaitingFakeConciergeClient()),
-        waiting_disk_mount_manager_observer_(
-            new WaitingDiskMountManagerObserver) {
-    chromeos::DBusThreadManager::GetSetterForTesting()->SetConciergeClient(
-        base::WrapUnique(waiting_fake_concierge_client_));
-    static_cast<chromeos::FakeCrosDisksClient*>(
-        chromeos::DBusThreadManager::Get()->GetCrosDisksClient())
-        ->AddCustomMountPointCallback(base::BindRepeating(
-            &CrostiniInstallerViewBrowserTest::MaybeMountCrostini,
-            base::Unretained(this)));
-  }
+      : CrostiniDialogBrowserTest(false /*register_termina*/) {}
 
   // CrostiniDialogBrowserTest:
   void ShowUi(const std::string& name) override {
-    ShowCrostiniInstallerView(browser()->profile(),
-                              crostini::CrostiniUISurface::kSettings);
-  }
-
-  void SetUpOnMainThread() override {
-    CrostiniDialogBrowserTest::SetUpOnMainThread();
+    CrostiniInstallerView::Show(browser()->profile(), &fake_delegate_);
   }
 
   CrostiniInstallerView* ActiveView() {
     return CrostiniInstallerView::GetActiveViewForTesting();
   }
 
-  bool HasAcceptButton() {
-    return ActiveView()->GetDialogClientView()->ok_button() != nullptr;
+  bool HasEnabledAcceptButton() {
+    return ActiveView()->GetOkButton() != nullptr &&
+           ActiveView()->IsDialogButtonEnabled(ui::DIALOG_BUTTON_OK);
   }
 
-  bool HasCancelButton() {
-    return ActiveView()->GetDialogClientView()->cancel_button() != nullptr;
+  bool HasEnabledCancelButton() {
+    return ActiveView()->GetCancelButton() != nullptr &&
+           ActiveView()->IsDialogButtonEnabled(ui::DIALOG_BUTTON_CANCEL);
   }
 
  protected:
-  // Owned by chromeos::DBusThreadManager
-  WaitingFakeConciergeClient* waiting_fake_concierge_client_ = nullptr;
-  WaitingDiskMountManagerObserver* waiting_disk_mount_manager_observer_ =
-      nullptr;
+  crostini::FakeCrostiniInstallerUIDelegate fake_delegate_;
 
  private:
-  base::FilePath MaybeMountCrostini(
-      const std::string& source_path,
-      const std::vector<std::string>& mount_options) {
-    GURL source_url(source_path);
-    DCHECK(source_url.is_valid());
-    if (source_url.scheme() != "sshfs") {
-      return {};
-    }
-    EXPECT_EQ("sshfs://stub-user@hostname:", source_path);
-    return base::FilePath(
-        browser()->profile()->GetPath().Append("crostini_test"));
-  }
   DISALLOW_COPY_AND_ASSIGN(CrostiniInstallerViewBrowserTest);
 };
 
@@ -139,101 +61,133 @@ IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, InvokeUi_default) {
 }
 
 IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, InstallFlow) {
-  base::HistogramTester histogram_tester;
-
   ShowUi("default");
   EXPECT_NE(nullptr, ActiveView());
   EXPECT_EQ(ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL,
             ActiveView()->GetDialogButtons());
+  EXPECT_TRUE(HasEnabledAcceptButton());
+  EXPECT_TRUE(HasEnabledCancelButton());
+  EXPECT_TRUE(crostini::CrostiniManager::GetForProfile(browser()->profile())
+                  ->GetInstallerViewStatus());
+  EXPECT_FALSE(fake_delegate_.progress_callback_)
+      << "Install() should not be called";
 
-  EXPECT_TRUE(HasAcceptButton());
-  EXPECT_TRUE(HasCancelButton());
-
-  ActiveView()->GetDialogClientView()->AcceptWindow();
+  ActiveView()->AcceptDialog();
   EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed());
-  EXPECT_FALSE(HasAcceptButton());
-  EXPECT_TRUE(HasCancelButton());
+  EXPECT_FALSE(HasEnabledAcceptButton());
+  EXPECT_TRUE(HasEnabledCancelButton());
+  EXPECT_TRUE(fake_delegate_.progress_callback_)
+      << "Install() should be called";
+  EXPECT_TRUE(fake_delegate_.result_callback_);
 
-  waiting_disk_mount_manager_observer_->WaitForMountEvent();
+  fake_delegate_.progress_callback_.Run(InstallerState::kCreateContainer, 0.4);
+  fake_delegate_.progress_callback_.Run(InstallerState::kMountContainer, 0.8);
+  std::move(fake_delegate_.result_callback_).Run(InstallerError::kNone);
 
-  // RunUntilIdle in this case will run the rest of the install steps including
-  // launching the terminal, on the UI thread.
+  // This allow the dialog to be destructed.
   base::RunLoop().RunUntilIdle();
+
   EXPECT_EQ(nullptr, ActiveView());
-
-  histogram_tester.ExpectUniqueSample(
-      "Crostini.SetupResult",
-      static_cast<base::HistogramBase::Sample>(
-          CrostiniInstallerView::SetupResult::kSuccess),
-      1);
-}
-
-IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, InstallFlow_Offline) {
-  base::HistogramTester histogram_tester;
-  SetConnectionType(net::NetworkChangeNotifier::CONNECTION_NONE);
-
-  ShowUi("default");
-  EXPECT_NE(nullptr, ActiveView());
-  EXPECT_EQ(ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL,
-            ActiveView()->GetDialogButtons());
-
-  EXPECT_TRUE(HasAcceptButton());
-  EXPECT_TRUE(HasCancelButton());
-
-  ActiveView()->GetDialogClientView()->AcceptWindow();
-  EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed());
-  EXPECT_TRUE(HasAcceptButton());
-  EXPECT_EQ(ActiveView()->GetDialogButtonLabel(ui::DIALOG_BUTTON_OK),
-            l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_RETRY_BUTTON));
-  EXPECT_TRUE(HasCancelButton());
-
-  ActiveView()->GetDialogClientView()->CancelWindow();
-  EXPECT_TRUE(ActiveView()->GetWidget()->IsClosed());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(nullptr, ActiveView());
-
-  histogram_tester.ExpectUniqueSample(
-      "Crostini.SetupResult",
-      static_cast<base::HistogramBase::Sample>(
-          CrostiniInstallerView::SetupResult::kErrorOffline),
-      1);
-}
-
-IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, Cancel) {
-  base::HistogramTester histogram_tester;
-
-  ShowUi("default");
-  EXPECT_NE(nullptr, ActiveView());
-  ActiveView()->GetDialogClientView()->CancelWindow();
-  EXPECT_TRUE(ActiveView()->GetWidget()->IsClosed());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(nullptr, ActiveView());
-
-  histogram_tester.ExpectUniqueSample(
-      "Crostini.SetupResult",
-      static_cast<base::HistogramBase::Sample>(
-          CrostiniInstallerView::SetupResult::kNotStarted),
-      1);
+  EXPECT_FALSE(crostini::CrostiniManager::GetForProfile(browser()->profile())
+                   ->GetInstallerViewStatus());
 }
 
 IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, ErrorThenCancel) {
-  base::HistogramTester histogram_tester;
   ShowUi("default");
-  EXPECT_NE(nullptr, ActiveView());
-  vm_tools::concierge::StartVmResponse response;
-  response.set_status(vm_tools::concierge::VM_STATUS_FAILURE);
-  waiting_fake_concierge_client_->set_start_vm_response(std::move(response));
+  ASSERT_NE(nullptr, ActiveView());
 
-  ActiveView()->GetDialogClientView()->AcceptWindow();
+  ActiveView()->AcceptDialog();
+
+  ASSERT_TRUE(fake_delegate_.result_callback_);
+  std::move(fake_delegate_.result_callback_)
+      .Run(InstallerError::kErrorCreatingDiskImage);
+
   EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed());
-  waiting_fake_concierge_client_->WaitForStartTerminaVmCalled();
-  ActiveView()->GetDialogClientView()->CancelWindow();
+  EXPECT_TRUE(HasEnabledAcceptButton());
+  EXPECT_EQ(ActiveView()->GetDialogButtonLabel(ui::DIALOG_BUTTON_OK),
+            l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_RETRY_BUTTON));
+  EXPECT_TRUE(HasEnabledCancelButton());
+
+  ActiveView()->CancelDialog();
+  EXPECT_TRUE(ActiveView()->GetWidget()->IsClosed());
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(nullptr, ActiveView());
 
-  histogram_tester.ExpectUniqueSample(
-      "Crostini.SetupResult",
-      static_cast<base::HistogramBase::Sample>(
-          CrostiniInstallerView::SetupResult::kErrorStartingTermina),
-      1);
+  EXPECT_FALSE(crostini::CrostiniManager::GetForProfile(browser()->profile())
+                   ->GetInstallerViewStatus());
+}
+
+IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, ErrorThenRetry) {
+  ShowUi("default");
+  ASSERT_NE(nullptr, ActiveView());
+
+  ActiveView()->AcceptDialog();
+
+  ASSERT_TRUE(fake_delegate_.result_callback_);
+  std::move(fake_delegate_.result_callback_)
+      .Run(InstallerError::kErrorCreatingDiskImage);
+
+  EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed());
+  EXPECT_TRUE(HasEnabledAcceptButton());
+  EXPECT_EQ(ActiveView()->GetDialogButtonLabel(ui::DIALOG_BUTTON_OK),
+            l10n_util::GetStringUTF16(IDS_CROSTINI_INSTALLER_RETRY_BUTTON));
+
+  ActiveView()->AcceptDialog();
+  EXPECT_TRUE(fake_delegate_.result_callback_)
+      << "Install() should be called again";
+
+  std::move(fake_delegate_.result_callback_).Run(InstallerError::kNone);
+
+  // This allow the dialog to be destructed.
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(nullptr, ActiveView());
+  EXPECT_FALSE(crostini::CrostiniManager::GetForProfile(browser()->profile())
+                   ->GetInstallerViewStatus());
+}
+
+IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, CancelBeforeStart) {
+  ShowUi("default");
+  ASSERT_NE(nullptr, ActiveView());
+  EXPECT_TRUE(HasEnabledCancelButton());
+  EXPECT_FALSE(fake_delegate_.cancel_before_start_called_);
+
+  ActiveView()->CancelDialog();
+
+  EXPECT_TRUE(ActiveView()->GetWidget()->IsClosed());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(nullptr, ActiveView());
+  EXPECT_FALSE(crostini::CrostiniManager::GetForProfile(browser()->profile())
+                   ->GetInstallerViewStatus());
+  EXPECT_TRUE(fake_delegate_.cancel_before_start_called_);
+}
+
+IN_PROC_BROWSER_TEST_F(CrostiniInstallerViewBrowserTest, CancelAfterStart) {
+  ShowUi("default");
+  ASSERT_NE(nullptr, ActiveView());
+  EXPECT_TRUE(HasEnabledAcceptButton());
+
+  ActiveView()->AcceptDialog();
+  EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed());
+  EXPECT_TRUE(HasEnabledCancelButton());
+  EXPECT_TRUE(fake_delegate_.progress_callback_)
+      << "Install() should be called";
+
+  EXPECT_FALSE(fake_delegate_.cancel_callback_)
+      << "Cancel() should not be called";
+  ActiveView()->CancelDialog();
+  EXPECT_TRUE(fake_delegate_.cancel_callback_) << "Cancel() should be called";
+  EXPECT_FALSE(ActiveView()->GetWidget()->IsClosed())
+      << "Dialog should not close before cancel callback";
+  EXPECT_FALSE(HasEnabledAcceptButton());
+  EXPECT_FALSE(HasEnabledCancelButton());
+
+  std::move(fake_delegate_.cancel_callback_).Run();
+  EXPECT_TRUE(ActiveView()->GetWidget()->IsClosed());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(nullptr, ActiveView());
+  EXPECT_FALSE(crostini::CrostiniManager::GetForProfile(browser()->profile())
+                   ->GetInstallerViewStatus());
+
+  EXPECT_FALSE(fake_delegate_.cancel_before_start_called_);
 }

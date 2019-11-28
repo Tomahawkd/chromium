@@ -10,12 +10,16 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.annotation.Nullable;
+
 import com.android.webview.chromium.WebViewDelegateFactory.WebViewDelegate;
 
 import org.chromium.android_webview.AwContentsClient;
-import org.chromium.android_webview.AwSafeBrowsingResponse;
+import org.chromium.android_webview.AwHistogramRecorder;
+import org.chromium.android_webview.AwRenderProcess;
 import org.chromium.android_webview.AwWebResourceResponse;
 import org.chromium.android_webview.SafeBrowsingAction;
+import org.chromium.android_webview.safe_browsing.AwSafeBrowsingResponse;
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
@@ -42,6 +46,9 @@ abstract class SharedWebViewContentsClientAdapter extends AwContentsClient {
     protected WebViewClient mWebViewClient = SharedWebViewChromium.sNullWebViewClient;
     // Some callbacks will be forwarded to this client for apps using the support library.
     private final SupportLibWebViewContentsClientAdapter mSupportLibClient;
+
+    private @Nullable SharedWebViewRendererClientAdapter mWebViewRendererClientAdapter;
+
     /**
      * Adapter constructor.
      *
@@ -97,6 +104,11 @@ abstract class SharedWebViewContentsClientAdapter extends AwContentsClient {
                 result = mWebViewClient.shouldOverrideUrlLoading(mWebView, request.url);
             }
             if (TRACE) Log.i(TAG, "shouldOverrideUrlLoading result=" + result);
+
+            // Record UMA for shouldOverrideUrlLoading.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.SHOULD_OVERRIDE_URL_LOADING);
+
             return result;
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.shouldOverrideUrlLoading");
@@ -116,6 +128,11 @@ abstract class SharedWebViewContentsClientAdapter extends AwContentsClient {
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 ApiHelperForM.onPageCommitVisible(mWebViewClient, mWebView, url);
             }
+
+            // Record UMA for onPageCommitVisible.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_PAGE_COMMIT_VISIBLE);
+
             // Otherwise, the API does not exist, so do nothing.
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onPageCommitVisible");
@@ -201,12 +218,22 @@ abstract class SharedWebViewContentsClientAdapter extends AwContentsClient {
             TraceEvent.begin("WebViewContentsClientAdapter.onReceivedHttpError");
             if (TRACE) Log.i(TAG, "onReceivedHttpError=" + request.url);
             if (mSupportLibClient.isFeatureAvailable(Features.RECEIVE_HTTP_ERROR)) {
+                String reasonPhrase = response.getReasonPhrase();
+                if (reasonPhrase == null || reasonPhrase.isEmpty()) {
+                    // We cannot pass a null or empty reasonPhrase, because this version of the
+                    // WebResourceResponse constructor will throw. But we may legitimately not
+                    // receive a reasonPhrase in the HTTP response, since HTTP/2 removed
+                    // Reason-Phrase from the spec (and discourages it). Instead, assign some dummy
+                    // value to avoid the crash. See http://crbug.com/925887.
+                    reasonPhrase = "UNKNOWN";
+                }
+
                 // Note: we do not create an immutable instance here, because that constructor is
                 // not available on L.
                 mSupportLibClient.onReceivedHttpError(mWebView,
                         new WebResourceRequestAdapter(request),
                         new WebResourceResponse(response.getMimeType(), response.getCharset(),
-                                response.getStatusCode(), response.getReasonPhrase(),
+                                response.getStatusCode(), reasonPhrase,
                                 response.getResponseHeaders(), response.getData()));
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 GlueApiHelperForM.onReceivedHttpError(mWebViewClient, mWebView, request, response);
@@ -214,6 +241,29 @@ abstract class SharedWebViewContentsClientAdapter extends AwContentsClient {
             // Otherwise, the API does not exist, so do nothing.
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onReceivedHttpError");
+        }
+    }
+
+    void setWebViewRendererClientAdapter(
+            SharedWebViewRendererClientAdapter webViewRendererClientAdapter) {
+        mWebViewRendererClientAdapter = webViewRendererClientAdapter;
+    }
+
+    SharedWebViewRendererClientAdapter getWebViewRendererClientAdapter() {
+        return mWebViewRendererClientAdapter;
+    }
+
+    @Override
+    public void onRendererUnresponsive(final AwRenderProcess renderProcess) {
+        if (mWebViewRendererClientAdapter != null) {
+            mWebViewRendererClientAdapter.onRendererUnresponsive(mWebView, renderProcess);
+        }
+    }
+
+    @Override
+    public void onRendererResponsive(final AwRenderProcess renderProcess) {
+        if (mWebViewRendererClientAdapter != null) {
+            mWebViewRendererClientAdapter.onRendererResponsive(mWebView, renderProcess);
         }
     }
 }

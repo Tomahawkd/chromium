@@ -5,7 +5,6 @@
 #include "chrome/browser/ssl/insecure_sensitive_input_driver_factory.h"
 
 #include <utility>
-#include <vector>
 
 #include "base/stl_util.h"
 #include "chrome/browser/ssl/insecure_sensitive_input_driver.h"
@@ -57,8 +56,8 @@ InsecureSensitiveInputDriverFactory::GetOrCreateForWebContents(
 
 // static
 void InsecureSensitiveInputDriverFactory::BindDriver(
-    blink::mojom::InsecureInputServiceRequest request,
-    content::RenderFrameHost* render_frame_host) {
+    content::RenderFrameHost* render_frame_host,
+    mojo::PendingReceiver<blink::mojom::InsecureInputService> receiver) {
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(render_frame_host);
   if (!web_contents)
@@ -70,7 +69,7 @@ void InsecureSensitiveInputDriverFactory::BindDriver(
   InsecureSensitiveInputDriver* driver =
       factory->GetOrCreateDriverForFrame(render_frame_host);
 
-  driver->BindInsecureInputServiceRequest(std::move(request));
+  driver->BindInsecureInputServiceReceiver(std::move(receiver));
 }
 
 InsecureSensitiveInputDriver*
@@ -83,59 +82,6 @@ InsecureSensitiveInputDriverFactory::GetOrCreateDriverForFrame(
         std::make_unique<InsecureSensitiveInputDriver>(render_frame_host);
   }
   return insertion_result.first->second.get();
-}
-
-void InsecureSensitiveInputDriverFactory::
-    DidInteractWithNonsecureCreditCardInput() {
-  security_state::SSLStatusInputEventData* input_events =
-      GetOrCreateSSLStatusInputEventData(web_contents());
-  if (!input_events)
-    return;
-
-  // If the first credit card field edit for the web contents was just
-  // performed, update the SSLStatusInputEventData.
-  if (!input_events->input_events()->credit_card_field_edited) {
-    input_events->input_events()->credit_card_field_edited = true;
-    web_contents()->DidChangeVisibleSecurityState();
-  }
-}
-
-void InsecureSensitiveInputDriverFactory::RenderFrameHasVisiblePasswordField(
-    content::RenderFrameHost* render_frame_host) {
-  frames_with_visible_password_fields_.insert(render_frame_host);
-
-  security_state::SSLStatusInputEventData* input_events =
-      GetOrCreateSSLStatusInputEventData(web_contents());
-  if (!input_events)
-    return;
-
-  // If the first password field was just added to the web contents,
-  // update the SSLStatusInputEventData.
-  if (!input_events->input_events()->password_field_shown) {
-    input_events->input_events()->password_field_shown = true;
-    web_contents()->DidChangeVisibleSecurityState();
-  }
-}
-
-void InsecureSensitiveInputDriverFactory::RenderFrameHasNoVisiblePasswordFields(
-    content::RenderFrameHost* render_frame_host) {
-  // If the frame was not recorded as having a password field, there's no
-  // need to do any further work.
-  if (!frames_with_visible_password_fields_.erase(render_frame_host))
-    return;
-
-  security_state::SSLStatusInputEventData* input_events =
-      GetOrCreateSSLStatusInputEventData(web_contents());
-  if (!input_events)
-    return;
-
-  // If the last password field was just removed from the web contents,
-  // update the SSLStatusInputEventData.
-  if (input_events->input_events()->password_field_shown &&
-      frames_with_visible_password_fields_.empty()) {
-    input_events->input_events()->password_field_shown = false;
-    web_contents()->DidChangeVisibleSecurityState();
-  }
 }
 
 void InsecureSensitiveInputDriverFactory::DidEditFieldInInsecureContext() {
@@ -154,8 +100,6 @@ void InsecureSensitiveInputDriverFactory::DidEditFieldInInsecureContext() {
 
 void InsecureSensitiveInputDriverFactory::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
-  // Password fields are deleted when their containing frame is deleted.
-  RenderFrameHasNoVisiblePasswordFields(render_frame_host);
   frame_driver_map_.erase(render_frame_host);
 }
 

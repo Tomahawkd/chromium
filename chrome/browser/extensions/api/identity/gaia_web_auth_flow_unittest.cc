@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "base/run_loop.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -34,10 +34,11 @@ class TestGaiaWebAuthFlow : public GaiaWebAuthFlow {
         ubertoken_error_(ubertoken_error_state) {}
 
   void Start() override {
-    if (ubertoken_error_.state() == GoogleServiceAuthError::NONE)
-      OnUbertokenSuccess("fake_ubertoken");
-    else
-      OnUbertokenFailure(ubertoken_error_);
+    OnUbertokenFetchComplete(
+        ubertoken_error_,
+        ubertoken_error_.state() == GoogleServiceAuthError::NONE
+            ? "fake_ubertoken"
+            : std::string());
   }
 
  private:
@@ -71,8 +72,8 @@ class IdentityGaiaWebAuthFlowTest : public testing::Test {
   }
 
   std::unique_ptr<TestGaiaWebAuthFlow> CreateTestFlow() {
-    ExtensionTokenKey token_key(
-        "extension_id", "account_id", std::set<std::string>());
+    ExtensionTokenKey token_key("extension_id", CoreAccountId("account_id"),
+                                std::set<std::string>());
     return std::unique_ptr<TestGaiaWebAuthFlow>(new TestGaiaWebAuthFlow(
         &delegate_, &token_key, "fake.client.id", ubertoken_error_state_));
   }
@@ -93,7 +94,7 @@ class IdentityGaiaWebAuthFlowTest : public testing::Test {
  protected:
   testing::StrictMock<MockGaiaWebAuthFlowDelegate> delegate_;
   GoogleServiceAuthError::State ubertoken_error_state_;
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 TEST_F(IdentityGaiaWebAuthFlowTest, OAuthError) {

@@ -8,14 +8,11 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/input_device_event_observer.h"
 
 namespace base {
 class ListValue;
-}
-
-namespace ui {
-class InputDeviceManager;
 }
 
 namespace chromeos {
@@ -52,7 +49,7 @@ class KeyboardHandler
   void OnJavascriptDisallowed() override;
 
   // ui::InputDeviceEventObserver implementation.
-  void OnKeyboardDeviceConfigurationChanged() override;
+  void OnInputDeviceConfigurationChanged(uint8_t input_device_types) override;
 
  private:
   // Initializes the page with the current keyboard information.
@@ -71,7 +68,8 @@ class KeyboardHandler
   // Sends the UI a message about whether hardware keyboard are attached.
   void UpdateKeyboards();
 
-  ScopedObserver<ui::InputDeviceManager, KeyboardHandler> observer_;
+  ScopedObserver<ui::DeviceDataManager, ui::InputDeviceEventObserver> observer_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(KeyboardHandler);
 };

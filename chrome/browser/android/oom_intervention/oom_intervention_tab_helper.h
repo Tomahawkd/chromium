@@ -5,19 +5,23 @@
 #ifndef CHROME_BROWSER_ANDROID_OOM_INTERVENTION_OOM_INTERVENTION_TAB_HELPER_H_
 #define CHROME_BROWSER_ANDROID_OOM_INTERVENTION_OOM_INTERVENTION_TAB_HELPER_H_
 
+#include <memory>
+
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/android/oom_intervention/near_oom_monitor.h"
 #include "chrome/browser/ui/interventions/intervention_delegate.h"
 #include "components/crash/content/browser/crash_metrics_reporter_android.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/blink/public/platform/oom_intervention.mojom.h"
+#include "third_party/blink/public/mojom/oom_intervention/oom_intervention.mojom.h"
 
 namespace content {
 class WebContents;
@@ -56,8 +60,8 @@ class OomInterventionTabHelper
   void RenderProcessGone(base::TerminationStatus status) override;
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override;
-  void DocumentAvailableInMainFrame() override;
   void OnVisibilityChanged(content::Visibility visibility) override;
+  void DocumentOnLoadCompletedInMainFrame() override;
 
   // CrashDumpManager::Observer:
   void OnCrashDumpProcessed(
@@ -84,6 +88,7 @@ class OomInterventionTabHelper
   void ResetInterfaces();
 
   bool navigation_started_ = false;
+  bool load_finished_ = false;
   base::Optional<base::TimeTicks> near_oom_detected_time_;
   std::unique_ptr<NearOomMonitor::Subscription> subscription_;
   base::OneShotTimer renderer_detection_timer_;
@@ -91,7 +96,7 @@ class OomInterventionTabHelper
   // Not owned. This will be nullptr in incognito mode.
   OomInterventionDecider* decider_;
 
-  blink::mojom::OomInterventionPtr intervention_;
+  mojo::Remote<blink::mojom::OomIntervention> intervention_;
 
   enum class InterventionState {
     // Intervention isn't triggered yet.
@@ -106,7 +111,7 @@ class OomInterventionTabHelper
 
   InterventionState intervention_state_ = InterventionState::NOT_TRIGGERED;
 
-  mojo::Binding<blink::mojom::OomInterventionHost> binding_;
+  mojo::Receiver<blink::mojom::OomInterventionHost> receiver_{this};
 
   // The shared memory region that stores metrics written by the renderer
   // process. The memory is updated frequently and the browser should touch the
@@ -115,12 +120,13 @@ class OomInterventionTabHelper
   base::WritableSharedMemoryMapping metrics_mapping_;
 
   base::TimeTicks last_navigation_timestamp_;
+  base::TimeTicks start_monitor_timestamp_;
 
   ScopedObserver<crash_reporter::CrashMetricsReporter,
                  crash_reporter::CrashMetricsReporter::Observer>
       scoped_observer_;
 
-  base::WeakPtrFactory<OomInterventionTabHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<OomInterventionTabHelper> weak_ptr_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 

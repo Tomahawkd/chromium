@@ -13,8 +13,8 @@
 #include <vector>
 
 #include "base/containers/flat_map.h"
-#include "cc/paint/color_space_transfer_cache_entry.h"
 #include "cc/paint/display_item_list.h"
+#include "cc/paint/image_provider.h"
 #include "components/viz/common/resources/resource_format_utils.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
@@ -29,8 +29,10 @@
 #include "ui/gfx/color_space.h"
 
 using testing::_;
+using testing::Eq;
 using testing::Gt;
 using testing::Le;
+using testing::Pointee;
 using testing::Return;
 using testing::SetArgPointee;
 using testing::StrEq;
@@ -59,13 +61,19 @@ class RasterMockGLES2Interface : public gles2::GLES2InterfaceStub {
   MOCK_METHOD2(GetIntegerv, void(GLenum pname, GLint* params));
   MOCK_METHOD2(LoseContextCHROMIUM, void(GLenum current, GLenum other));
 
-  // Queries: GL_COMMANDS_ISSUED_CHROMIUM / GL_COMMANDS_COMPLETED_CHROMIUM.
+  // Queries:
+  // - GL_COMMANDS_ISSUED_CHROMIUM
+  // - GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM
+  // - GL_COMMANDS_COMPLETED_CHROMIUM
   MOCK_METHOD2(GenQueriesEXT, void(GLsizei n, GLuint* queries));
   MOCK_METHOD2(DeleteQueriesEXT, void(GLsizei n, const GLuint* queries));
   MOCK_METHOD2(BeginQueryEXT, void(GLenum target, GLuint id));
   MOCK_METHOD1(EndQueryEXT, void(GLenum target));
+  MOCK_METHOD2(QueryCounterEXT, void(GLuint id, GLenum target));
   MOCK_METHOD3(GetQueryObjectuivEXT,
                void(GLuint id, GLenum pname, GLuint* params));
+  MOCK_METHOD3(GetQueryObjectui64vEXT,
+               void(GLuint id, GLenum pname, GLuint64* params));
 
   // Texture objects.
   MOCK_METHOD2(GenTextures, void(GLsizei n, GLuint* textures));
@@ -78,9 +86,11 @@ class RasterMockGLES2Interface : public gles2::GLES2InterfaceStub {
   MOCK_METHOD3(TexParameteri, void(GLenum target, GLenum pname, GLint param));
 
   // Mailboxes.
-  MOCK_METHOD2(ProduceTextureDirectCHROMIUM,
-               void(GLuint texture, GLbyte* mailbox));
-  MOCK_METHOD1(CreateAndConsumeTextureCHROMIUM, GLuint(const GLbyte* mailbox));
+  MOCK_METHOD1(CreateAndTexStorage2DSharedImageCHROMIUM,
+               GLuint(const GLbyte* mailbox));
+  MOCK_METHOD2(BeginSharedImageAccessDirectCHROMIUM,
+               void(GLuint texture, GLenum mode));
+  MOCK_METHOD1(EndSharedImageAccessDirectCHROMIUM, void(GLuint texture));
 
   // Image objects.
   MOCK_METHOD4(CreateImageCHROMIUM,
@@ -206,7 +216,7 @@ class ContextSupportStub : public ContextSupport {
       uint32_t texture_id) override {
     return false;
   }
-  void* MapTransferCacheEntry(size_t serialized_size) override {
+  void* MapTransferCacheEntry(uint32_t serialized_size) override {
     mapped_transfer_cache_entry_.reset(new char[serialized_size]);
     return mapped_transfer_cache_entry_.get();
   }
@@ -220,10 +230,17 @@ class ContextSupportStub : public ContextSupport {
       const std::vector<std::pair<uint32_t, uint32_t>>& entries) override {}
   void DeleteTransferCacheEntry(uint32_t type, uint32_t id) override {}
   unsigned int GetTransferBufferFreeSize() const override { return 0; }
+  bool IsJpegDecodeAccelerationSupported() const override { return false; }
+  bool IsWebPDecodeAccelerationSupported() const override { return false; }
+  bool CanDecodeWithHardwareAcceleration(
+      const cc::ImageHeaderMetadata* image_metadata) const override {
+    return false;
+  }
   bool HasGrContextSupport() const override { return false; }
   void SetGrContext(GrContext* gr) override {}
   void WillCallGLFromSkia() override {}
   void DidCallGLFromSkia() override {}
+  void SetDisplayTransform(gfx::OverlayTransform transform) override {}
 
  private:
   std::unique_ptr<char[]> mapped_transfer_cache_entry_;
@@ -232,9 +249,8 @@ class ContextSupportStub : public ContextSupport {
 class ImageProviderStub : public cc::ImageProvider {
  public:
   ~ImageProviderStub() override {}
-  ScopedDecodedDrawImage GetDecodedDrawImage(
-      const cc::DrawImage& draw_image) override {
-    return ScopedDecodedDrawImage();
+  ScopedResult GetRasterContent(const cc::DrawImage& draw_image) override {
+    return ScopedResult();
   }
 };
 
@@ -244,15 +260,10 @@ class RasterImplementationGLESTest : public testing::Test {
 
   void SetUp() override {
     gl_ = std::make_unique<RasterMockGLES2Interface>();
-    ri_ = std::make_unique<RasterImplementationGLES>(gl_.get(),
-                                                     gpu::Capabilities());
+    ri_ = std::make_unique<RasterImplementationGLES>(gl_.get());
   }
 
   void TearDown() override {}
-
-  void SetUpWithCapabilities(const gpu::Capabilities& capabilities) {
-    ri_.reset(new RasterImplementationGLES(gl_.get(), capabilities));
-  }
 
   void ExpectBindTexture(GLenum target, GLuint texture_id) {
     if (bound_texture_ != texture_id) {
@@ -286,13 +297,6 @@ TEST_F(RasterImplementationGLESTest, ShallowFlushCHROMIUM) {
 TEST_F(RasterImplementationGLESTest, OrderingBarrierCHROMIUM) {
   EXPECT_CALL(*gl_, OrderingBarrierCHROMIUM()).Times(1);
   ri_->OrderingBarrierCHROMIUM();
-}
-
-TEST_F(RasterImplementationGLESTest, GenSyncTokenCHROMIUM) {
-  GLbyte sync_token_data[GL_SYNC_TOKEN_SIZE_CHROMIUM] = {};
-
-  EXPECT_CALL(*gl_, GenSyncTokenCHROMIUM(sync_token_data)).Times(1);
-  ri_->GenSyncTokenCHROMIUM(sync_token_data);
 }
 
 TEST_F(RasterImplementationGLESTest, GenUnverifiedSyncTokenCHROMIUM) {
@@ -361,7 +365,7 @@ TEST_F(RasterImplementationGLESTest, DeleteQueriesEXT) {
 }
 
 TEST_F(RasterImplementationGLESTest, BeginQueryEXT) {
-  const GLsizei kQueryTarget = GL_COMMANDS_ISSUED_CHROMIUM;
+  const GLenum kQueryTarget = GL_COMMANDS_ISSUED_CHROMIUM;
   const GLuint kQueryId = 23;
 
   EXPECT_CALL(*gl_, BeginQueryEXT(kQueryTarget, kQueryId)).Times(1);
@@ -369,10 +373,18 @@ TEST_F(RasterImplementationGLESTest, BeginQueryEXT) {
 }
 
 TEST_F(RasterImplementationGLESTest, EndQueryEXT) {
-  const GLsizei kQueryTarget = GL_COMMANDS_ISSUED_CHROMIUM;
+  const GLenum kQueryTarget = GL_COMMANDS_ISSUED_CHROMIUM;
 
   EXPECT_CALL(*gl_, EndQueryEXT(kQueryTarget)).Times(1);
   ri_->EndQueryEXT(kQueryTarget);
+}
+
+TEST_F(RasterImplementationGLESTest, QueryCounterEXT) {
+  const GLenum kQueryTarget = GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM;
+  const GLuint kQueryId = 23;
+
+  EXPECT_CALL(*gl_, QueryCounterEXT(kQueryId, kQueryTarget)).Times(1);
+  ri_->QueryCounterEXT(kQueryId, kQueryTarget);
 }
 
 TEST_F(RasterImplementationGLESTest, GetQueryObjectuivEXT) {
@@ -385,37 +397,45 @@ TEST_F(RasterImplementationGLESTest, GetQueryObjectuivEXT) {
   ri_->GetQueryObjectuivEXT(kQueryId, kQueryParam, &result);
 }
 
-TEST_F(RasterImplementationGLESTest, DeleteTextures) {
-  const GLsizei kNumTextures = 2;
-  GLuint texture_ids[kNumTextures] = {2, 3};
-  gpu::Mailbox mailbox;
+TEST_F(RasterImplementationGLESTest, GetQueryObjectui64vEXT) {
+  const GLuint kQueryId = 23;
+  const GLsizei kQueryParam = GL_QUERY_RESULT_AVAILABLE_EXT;
+  GLuint64 result = 0;
 
-  EXPECT_CALL(*gl_, CreateAndConsumeTextureCHROMIUM(mailbox.name))
-      .WillOnce(Return(texture_ids[0]))
-      .RetiresOnSaturation();
-  EXPECT_CALL(*gl_, CreateAndConsumeTextureCHROMIUM(mailbox.name))
-      .WillOnce(Return(texture_ids[1]))
-      .RetiresOnSaturation();
-
-  ri_->CreateAndConsumeTexture(false, gfx::BufferUsage::GPU_READ,
-                               viz::RGBA_8888, mailbox.name);
-  ri_->CreateAndConsumeTexture(false, gfx::BufferUsage::GPU_READ,
-                               viz::RGBA_8888, mailbox.name);
-
-  EXPECT_CALL(*gl_, DeleteTextures(kNumTextures, texture_ids)).Times(1);
-  ri_->DeleteTextures(kNumTextures, texture_ids);
+  EXPECT_CALL(*gl_, GetQueryObjectui64vEXT(kQueryId, kQueryParam, &result))
+      .Times(1);
+  ri_->GetQueryObjectui64vEXT(kQueryId, kQueryParam, &result);
 }
 
-TEST_F(RasterImplementationGLESTest, CreateAndConsumeTexture) {
+TEST_F(RasterImplementationGLESTest, CreateAndConsumeForGpuRaster) {
   const GLuint kTextureId = 23;
-  GLuint texture_id = 0;
-  gpu::Mailbox mailbox;
-
-  EXPECT_CALL(*gl_, CreateAndConsumeTextureCHROMIUM(mailbox.name))
+  const auto mailbox = gpu::Mailbox::GenerateForSharedImage();
+  EXPECT_CALL(*gl_, CreateAndTexStorage2DSharedImageCHROMIUM(mailbox.name))
       .WillOnce(Return(kTextureId));
-  texture_id = ri_->CreateAndConsumeTexture(false, gfx::BufferUsage::GPU_READ,
-                                            viz::RGBA_8888, mailbox.name);
+  GLuint texture_id = ri_->CreateAndConsumeForGpuRaster(mailbox);
   EXPECT_EQ(kTextureId, texture_id);
+}
+
+TEST_F(RasterImplementationGLESTest, DeleteGpuRasterTexture) {
+  const GLuint kTextureId = 23;
+  EXPECT_CALL(*gl_, DeleteTextures(1, Pointee(Eq(kTextureId)))).Times(1);
+  ri_->DeleteGpuRasterTexture(kTextureId);
+}
+
+TEST_F(RasterImplementationGLESTest, BeginSharedImageAccess) {
+  const GLuint kTextureId = 23;
+  EXPECT_CALL(*gl_,
+              BeginSharedImageAccessDirectCHROMIUM(
+                  kTextureId, GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM))
+      .Times(1);
+  ri_->BeginSharedImageAccessDirectCHROMIUM(
+      kTextureId, GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM);
+}
+
+TEST_F(RasterImplementationGLESTest, EndSharedImageAccess) {
+  const GLuint kTextureId = 23;
+  EXPECT_CALL(*gl_, EndSharedImageAccessDirectCHROMIUM(kTextureId)).Times(1);
+  ri_->EndSharedImageAccessDirectCHROMIUM(kTextureId);
 }
 
 TEST_F(RasterImplementationGLESTest, BeginGpuRaster) {

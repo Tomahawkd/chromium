@@ -10,7 +10,7 @@
 #include <string>
 
 #include "base/macros.h"
-#include "components/arc/common/screen_capture.mojom.h"
+#include "components/arc/mojom/screen_capture.mojom.h"
 #include "components/viz/common/gl_helper.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "ui/compositor/compositor_animation_observer.h"
@@ -26,7 +26,6 @@ struct DesktopMediaID;
 }  // namespace content
 
 namespace gfx {
-class GpuMemoryBuffer;
 class ClientNativePixmapFactory;
 class Size;
 }  // namespace gfx
@@ -82,18 +81,17 @@ class ArcScreenCaptureSession : public mojom::ScreenCaptureSession,
   // Callback for when we perform CopyOutputRequests.
   void OnDesktopCaptured(std::unique_ptr<viz::CopyOutputResult> result);
   // Callback for completion of GL commands.
-  void QueryCompleted(std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer,
-                      GLuint query_id,
-                      GLuint texture,
-                      GLuint id,
-                      SetOutputBufferCallback callback);
+  void QueryCompleted(GLuint query_id,
+                      std::unique_ptr<PendingBuffer> pending_buffer);
   // Callback for a user clicking Stop on the notification for screen capture.
   void NotificationStop();
 
   mojo::Binding<mojom::ScreenCaptureSession> binding_;
   mojom::ScreenCaptureSessionNotifierPtr notifier_;
   gfx::Size size_;
-  aura::Window* desktop_window_;
+  // aura::Window of the display being captured. This corresponds to one of
+  // Ash's root windows.
+  aura::Window* display_root_window_ = nullptr;
 
   // We have 2 separate queues for handling incoming GPU buffers from Android
   // and also textures for the desktop we have captured already. Due to the
@@ -108,7 +106,7 @@ class ArcScreenCaptureSession : public mojom::ScreenCaptureSession,
   std::unique_ptr<ScreenCaptureNotificationUI> notification_ui_;
   std::unique_ptr<gfx::ClientNativePixmapFactory> client_native_pixmap_factory_;
 
-  base::WeakPtrFactory<ArcScreenCaptureSession> weak_ptr_factory_;
+  base::WeakPtrFactory<ArcScreenCaptureSession> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ArcScreenCaptureSession);
 };

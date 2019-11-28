@@ -11,11 +11,13 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "media/base/android/media_codec_bridge.h"
 #include "media/base/android/mock_media_codec_bridge.h"
+#include "media/base/waiting.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
+using ::testing::DoAll;
 using ::testing::Eq;
 using ::testing::Field;
 using ::testing::InSequence;
@@ -35,6 +37,7 @@ class MockMediaCodecLoopClient : public StrictMock<MediaCodecLoop::Client> {
   MOCK_METHOD1(OnInputDataQueued, void(bool));
   MOCK_METHOD1(OnDecodedEos, bool(const MediaCodecLoop::OutputBuffer&));
   MOCK_METHOD1(OnDecodedFrame, bool(const MediaCodecLoop::OutputBuffer&));
+  MOCK_METHOD1(OnWaiting, void(WaitingReason reason));
   MOCK_METHOD0(OnOutputFormatChanged, bool());
   MOCK_METHOD0(OnCodecLoopError, void());
 };
@@ -408,28 +411,6 @@ TEST_F(MediaCodecLoopTest, TestSeveralPendingIOBuffers) {
   codec_loop_->ExpectWork();
 }
 
-TEST_F(MediaCodecLoopTest, TestTryFlushOnJellyBeanMR2) {
-  // On JB MR2+ MCL should be willing to use MediaCodecBridge::Flush.
-  ConstructCodecLoop(base::android::SDK_VERSION_JELLY_BEAN_MR2);
-  EXPECT_CALL(Codec(), Flush()).Times(1).WillOnce(Return(MEDIA_CODEC_OK));
-  ASSERT_TRUE(codec_loop_->TryFlush());
-}
-
-TEST_F(MediaCodecLoopTest, TestTryFlushAfterJellyBeanMR2Fails) {
-  // On JB MR2+, MCL should be willing to use MediaCodecBridge::Flush.  Try
-  // that, but make Flush fail.
-  ConstructCodecLoop(base::android::SDK_VERSION_JELLY_BEAN_MR2);
-  EXPECT_CALL(Codec(), Flush()).Times(1).WillOnce(Return(MEDIA_CODEC_ERROR));
-  EXPECT_CALL(*client_, OnCodecLoopError()).Times(1);
-  ASSERT_FALSE(codec_loop_->TryFlush());
-}
-
-TEST_F(MediaCodecLoopTest, TestTryFlushOnJellyBeanMR1) {
-  // In JB MR1, MCL should not be willing to use MediaCodecBridge::Flush.
-  ConstructCodecLoop(base::android::SDK_VERSION_JELLY_BEAN_MR1);
-  ASSERT_FALSE(codec_loop_->TryFlush());
-}
-
 TEST_F(MediaCodecLoopTest, TestOnKeyAdded) {
   ConstructCodecLoop();
 
@@ -448,6 +429,8 @@ TEST_F(MediaCodecLoopTest, TestOnKeyAdded) {
 
     // Notify MCL that it's missing the key.
     ExpectQueueInputBuffer(input_buffer_index, data, MEDIA_CODEC_NO_KEY);
+
+    EXPECT_CALL(*client_, OnWaiting(WaitingReason::kNoDecryptionKey)).Times(1);
 
     // MCL should now try for output buffers.
     ExpectDequeueOutputBuffer(MEDIA_CODEC_TRY_AGAIN_LATER);

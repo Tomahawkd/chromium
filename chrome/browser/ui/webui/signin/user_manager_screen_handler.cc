@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
@@ -20,7 +21,6 @@
 #include "base/value_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -50,9 +50,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_consistency_method.h"
 #include "components/strings/grit/components_strings.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -106,8 +104,8 @@ std::string GetAvatarImage(const ProfileAttributesEntry* entry) {
   // it will be pixelated when displayed in the User Manager, so we should
   // return the placeholder avatar instead.
   gfx::Image avatar_image = entry->GetAvatarIcon();
-  if (avatar_image.Width() <= profiles::kAvatarIconWidth ||
-      avatar_image.Height() <= profiles::kAvatarIconHeight ) {
+  if (avatar_image.Width() <= profiles::kAvatarIconSize ||
+      avatar_image.Height() <= profiles::kAvatarIconSize) {
     avatar_image = ui::ResourceBundle::GetSharedInstance().GetImageNamed(
         profiles::GetPlaceholderAvatarIconResourceID());
   }
@@ -273,7 +271,7 @@ class UserManagerScreenHandler::ProfileUpdateObserver
 
 // UserManagerScreenHandler ---------------------------------------------------
 
-UserManagerScreenHandler::UserManagerScreenHandler() : weak_ptr_factory_(this) {
+UserManagerScreenHandler::UserManagerScreenHandler() {
   profile_attributes_storage_observer_.reset(
       new UserManagerScreenHandler::ProfileUpdateObserver(
           g_browser_process->profile_manager(), this));
@@ -296,7 +294,9 @@ UserManagerScreenHandler::UserManagerScreenHandler() : weak_ptr_factory_(this) {
   }
 }
 
-UserManagerScreenHandler::~UserManagerScreenHandler() {}
+UserManagerScreenHandler::~UserManagerScreenHandler() {
+  BrowserList::RemoveObserver(this);
+}
 
 void UserManagerScreenHandler::HandleInitialize(const base::ListValue* args) {
   // If the URL has a hash parameter, store it for later.
@@ -349,10 +349,10 @@ void UserManagerScreenHandler::HandleAuthenticatedLaunchUser(
     // still have a hash of the old one.  The new way of checking a password
     // change makes use of a token so we do that... if it's available.
     if (!oauth_client_) {
-      oauth_client_.reset(new gaia::GaiaOAuthClient(
+      oauth_client_ = std::make_unique<gaia::GaiaOAuthClient>(
           content::BrowserContext::GetDefaultStoragePartition(
               web_ui()->GetWebContents()->GetBrowserContext())
-              ->GetURLLoaderFactoryForBrowserProcess()));
+              ->GetURLLoaderFactoryForBrowserProcess());
     }
 
     const std::string token = entry->GetPasswordChangeDetectionToken();
@@ -370,9 +370,8 @@ void UserManagerScreenHandler::HandleAuthenticatedLaunchUser(
     // password token, the user must perform a full online reauth.
     RecordAuthenticatedLaunchUserEvent(
         AuthenticatedLaunchUserEvent::GAIA_REAUTH_DIALOG);
-    UserManagerProfileDialog::ShowReauthDialogWithProfilePath(
-        browser_context, email_address_, profile_path,
-        signin_metrics::Reason::REASON_UNLOCK);
+    UserManagerProfileDialog::ShowUnlockDialogWithProfilePath(
+        browser_context, email_address_, profile_path);
   } else if (entry->IsSigninRequired() && entry->IsSupervised()) {
     // Supervised profile will only be locked when force-sign-in is enabled
     // and it shouldn't be unlocked. Display the error message directly via
@@ -398,13 +397,11 @@ void UserManagerScreenHandler::HandleAuthenticatedLaunchUser(
         web_ui()->GetWebContents()->GetBrowserContext());
   } else {
     // Fresh sign in via user manager without existing email address.
+    DCHECK(signin_util::IsForceSigninEnabled());
     RecordAuthenticatedLaunchUserEvent(
         AuthenticatedLaunchUserEvent::FORCED_PRIMARY_SIGNIN_DIALOG);
-    UserManagerProfileDialog::ShowSigninDialog(
-        browser_context, profile_path,
-        signin_util::IsForceSigninEnabled()
-            ? signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT
-            : signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT);
+    UserManagerProfileDialog::ShowForceSigninDialog(browser_context,
+                                                    profile_path);
   }
 }
 
@@ -564,9 +561,8 @@ void UserManagerScreenHandler::OnOAuthError() {
   // Password has changed.  Go through online signin flow.
   DCHECK(!email_address_.empty());
   oauth_client_.reset();
-  UserManagerProfileDialog::ShowReauthDialog(
-      web_ui()->GetWebContents()->GetBrowserContext(), email_address_,
-      signin_metrics::Reason::REASON_UNLOCK);
+  UserManagerProfileDialog::ShowUnlockDialog(
+      web_ui()->GetWebContents()->GetBrowserContext(), email_address_);
 }
 
 void UserManagerScreenHandler::OnNetworkError(int response_code) {
@@ -624,6 +620,37 @@ void UserManagerScreenHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback("noPodFocused", base::DoNothing());
 }
 
+void UserManagerScreenHandler::OnBrowserAdded(Browser* browser) {
+  // Only respond to one Browser Opened event.
+  BrowserList::RemoveObserver(this);
+
+  // Unlock the profile after browser opens so startup can read the lock bit.
+  // Any necessary authentication must have been successful to reach this point.
+  ProfileAttributesEntry* entry = nullptr;
+  if (!browser->profile()->IsGuestSession()) {
+    bool has_entry = g_browser_process->profile_manager()
+                         ->GetProfileAttributesStorage()
+                         .GetProfileAttributesWithPath(
+                             browser->profile()->GetPath(), &entry);
+    DCHECK(has_entry);
+    // If force sign in is enabled and profile is not signed in, do not close
+    // UserManager and unlock profile.
+    if (signin_util::IsForceSigninEnabled() && !entry->IsAuthenticated())
+      return;
+    entry->SetIsSigninRequired(false);
+  }
+
+  if (!url_hash_.empty()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&UrlHashHelper::ExecuteUrlHash,
+                       base::Owned(new UrlHashHelper(browser, url_hash_))));
+  }
+
+  // This call is last as it deletes this object.
+  UserManager::Hide();
+}
+
 void UserManagerScreenHandler::GetLocalizedValues(
     base::DictionaryValue* localized_strings) {
   // For Control Bar.
@@ -634,8 +661,6 @@ void UserManagerScreenHandler::GetLocalizedValues(
   localized_strings->SetString("cancel", l10n_util::GetStringUTF16(IDS_CANCEL));
   localized_strings->SetString(
       "browseAsGuest", l10n_util::GetStringUTF16(IDS_BROWSE_AS_GUEST_BUTTON));
-  localized_strings->SetString("signOutUser",
-      l10n_util::GetStringUTF16(IDS_SCREEN_LOCK_SIGN_OUT));
   localized_strings->SetString("addSupervisedUser",
       l10n_util::GetStringUTF16(IDS_CREATE_LEGACY_SUPERVISED_USER_MENU_LABEL));
 
@@ -736,7 +761,6 @@ void UserManagerScreenHandler::GetLocalizedValues(
   localized_strings->SetString("publicSessionSelectLanguage", "");
   localized_strings->SetString("publicSessionSelectKeyboard", "");
   localized_strings->SetString("signinBannerText", "");
-  localized_strings->SetString("launchAppButton", "");
   localized_strings->SetString("multiProfilesRestrictedPolicyTitle", "");
   localized_strings->SetString("multiProfilesNotAllowedPolicyMsg", "");
   localized_strings->SetString("multiProfilesPrimaryOnlyPolicyMsg", "");
@@ -834,48 +858,6 @@ void UserManagerScreenHandler::ReportAuthenticationResult(
   }
 }
 
-void UserManagerScreenHandler::OnBrowserOpened(Browser* browser) {
-  DCHECK(browser);
-  DCHECK(browser->window());
-
-  // Unlock the profile after browser opens so startup can read the lock bit.
-  // Any necessary authentication must have been successful to reach this point.
-  ProfileAttributesEntry* entry = nullptr;
-  if (!browser->profile()->IsGuestSession()) {
-    bool has_entry = g_browser_process->profile_manager()->
-        GetProfileAttributesStorage().
-        GetProfileAttributesWithPath(browser->profile()->GetPath(), &entry);
-    DCHECK(has_entry);
-    // If force sign in is enabled and profile is not signed in, do not close
-    // UserManager and unlock profile.
-    if (signin_util::IsForceSigninEnabled() && !entry->IsAuthenticated())
-      return;
-    entry->SetIsSigninRequired(false);
-  }
-
-  if (!url_hash_.empty()) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&UrlHashHelper::ExecuteUrlHash,
-                       base::Owned(new UrlHashHelper(browser, url_hash_))));
-  }
-
-  // This call is last as it deletes this object.
-  UserManager::Hide();
-}
-
-void UserManagerScreenHandler::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_OPENED, type);
-
-  // Only respond to one Browser Opened event.
-  registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_OPENED,
-                    content::NotificationService::AllSources());
-  OnBrowserOpened(content::Source<Browser>(source).ptr());
-}
-
 // This callback is run after switching to a new profile has finished. This
 // means either a new browser has been created (but not the window), or an
 // existing one has been found. The HideUserManager task needs to be posted
@@ -884,10 +866,8 @@ void UserManagerScreenHandler::Observe(
 void UserManagerScreenHandler::OnSwitchToProfileComplete(
     Profile* profile, Profile::CreateStatus profile_create_status) {
   Browser* browser = chrome::FindAnyBrowser(profile, false);
-  if (browser && browser->window()) {
-    OnBrowserOpened(browser);
-  } else {
-    registrar_.Add(this, chrome::NOTIFICATION_BROWSER_OPENED,
-                   content::NotificationService::AllSources());
-  }
+  if (browser && browser->window())
+    OnBrowserAdded(browser);
+  else
+    BrowserList::AddObserver(this);
 }

@@ -6,10 +6,10 @@ package org.chromium.chrome.browser.notifications;
 
 import android.app.Notification;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.support.test.uiautomator.By;
@@ -26,6 +26,7 @@ import org.junit.runner.RunWith;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
@@ -56,8 +57,9 @@ public class NotificationIntentInterceptorTest {
     // Builds a simple notification used in tests.
     private Notification buildSimpleNotification(String title) {
         ChromeNotificationBuilder builder =
-                NotificationBuilderFactory.createChromeNotificationBuilder(
-                        true /* preferCompat */, ChannelDefinitions.ChannelId.DOWNLOADS);
+                NotificationBuilderFactory.createChromeNotificationBuilder(true /* preferCompat */,
+                        ChannelDefinitions.ChannelId.DOWNLOADS, null /* remoteAppPackageName */,
+                        NotificationTestUtil.getTestNotificationMetadata());
 
         // Set content intent. UI automator may tap the notification and expand the action buttons,
         // in order to reduce flakiness, don't add action button.
@@ -66,11 +68,10 @@ public class NotificationIntentInterceptorTest {
         Uri uri = Uri.parse("www.example.com");
         contentIntent.setData(uri);
         contentIntent.setAction(Intent.ACTION_VIEW);
-        PendingIntent contentPendingIntent =
-                PendingIntent.getActivity(context, 0, contentIntent, 0);
+        PendingIntentProvider contentPendingIntent =
+                PendingIntentProvider.getActivity(context, 0, contentIntent, 0);
         assert contentPendingIntent != null;
-        builder.setContentIntent(NotificationIntentInterceptor.createInterceptPendingIntent(
-                NotificationIntentInterceptor.IntentType.CONTENT_INTENT, contentPendingIntent));
+        builder.setContentIntent(contentPendingIntent);
         builder.setContentTitle(title);
         builder.setSmallIcon(R.drawable.offline_pin);
         return builder.build();
@@ -98,9 +99,10 @@ public class NotificationIntentInterceptorTest {
      * different.
      */
     @Test
+    @DisabledTest(message = "https://crbug.com/910870")
     @MediumTest
     @RetryOnFailure
-    @DisabledTest
+    @MinAndroidSdkLevel(Build.VERSION_CODES.LOLLIPOP)
     public void testContentIntentInterception() {
         // Send notification.
         NotificationManager notificationManager =

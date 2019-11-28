@@ -13,8 +13,10 @@
 
 (function() {
 /**
- * Namespace for this file.  Depends on __gCrWeb having already been injected.
- */
+   * Namespace for this file.
+   * This overrides the ios/web find in page implementation to ensure there are
+   * no unintended collisions.
+   */
 __gCrWeb.findInPage = {};
 
 /**
@@ -278,7 +280,7 @@ function processPartialMatchesInCurrentSection() {
 
 /**
  * The list of frame documents.
- * TODO(justincohen): x-domain frames won't work.
+ * TODO(crbug.com/895529): x-domain frames won't work.
  * @type {Array<Document>}
  */
 let frameDocs_ = [];
@@ -318,12 +320,8 @@ let searchInProgress_ = false;
  * Node names that are not going to be processed.
  * @type {Object}
  */
-const IGNORE_NODE_NAMES = {
-  'SCRIPT': 1,
-  'STYLE': 1,
-  'EMBED': 1,
-  'OBJECT': 1
-};
+const IGNORE_NODE_NAMES =
+    new Set(['SCRIPT', 'STYLE', 'EMBED', 'OBJECT', 'SELECT', 'TEXTAREA']);
 
 /**
  * Class name of CSS element.
@@ -453,7 +451,7 @@ __gCrWeb.findInPage.highlightWord = function(findText, timeout) {
                     whether the text was found and int idicates text position.
  */
 __gCrWeb.findInPage.pumpSearch = function(timeout) {
-  // TODO(justincohen): It would be better if this DCHECKed.
+  // TODO(crbug.com/895531): It would be better if this DCHECKed.
   if (searchInProgress_ == false)
     return NO_RESULTS;
 
@@ -468,7 +466,7 @@ __gCrWeb.findInPage.pumpSearch = function(timeout) {
       for (let i = children.length - 1; i >= 0; --i) {
         let child = children[i];
         if ((child.nodeType == 1 || child.nodeType == 3) &&
-            !IGNORE_NODE_NAMES[child.nodeName]) {
+            !IGNORE_NODE_NAMES.has(child.nodeName)) {
           __gCrWeb.findInPage.stack.push(children[i]);
         }
       }
@@ -716,7 +714,7 @@ function scaleCoordinates_(coordinates) {
 };
 
 /**
- * Finds the position of the result and scrolls to it.
+ * Finds the position of the result.
  * @return {string} JSON encoded array of the scroll coordinates "[x, y]".
  */
 function findScrollDimensions_() {
@@ -728,19 +726,7 @@ function findScrollDimensions_() {
   let xPos = normalized[0];
   let yPos = normalized[1];
 
-  // Perform the scroll.
-  // window.scrollTo(xPos, yPos);
-
-  if (xPos < window.pageXOffset ||
-      xPos >= (window.pageXOffset + window.innerWidth) ||
-      yPos < window.pageYOffset ||
-      yPos >= (window.pageYOffset + window.innerHeight)) {
-    // If it's off the screen.  Wait a bit to start the highlight animation so
-    // that scrolling can get there first.
-    window.setTimeout(() => match.addSelectHighlight(), 250);
-  } else {
-    match.addSelectHighlight();
-  }
+  match.addSelectHighlight();
   let scaled = scaleCoordinates_(normalized);
   let index = match.visibleIndex;
   scaled.unshift(index);
@@ -897,18 +883,19 @@ function isElementVisible_(elem) {
 
   let originalElement = elem;
   let nextOffsetParent = originalElement.offsetParent;
-  let computedStyle =
-      elem.ownerDocument.defaultView.getComputedStyle(elem, null);
 
   // We are currently handling all scrolling through the app, which means we can
   // only scroll the window, not any scrollable containers in the DOM itself. So
   // for now this function returns false if the element is scrolled outside the
   // viewable area of its ancestors.
-  // TODO(justincohen): handle scrolling within the DOM.
+  // TODO(crbug.com/915357): handle scrolling within the DOM.
   let bodyHeight = getBodyHeight_();
   let bodyWidth = getBodyWidth_();
 
   while (elem && elem.nodeName.toUpperCase() != 'BODY') {
+    let computedStyle =
+        elem.ownerDocument.defaultView.getComputedStyle(elem, null);
+
     if (elem.style.display === 'none' || elem.style.visibility === 'hidden' ||
         elem.style.opacity === 0 || computedStyle.display === 'none' ||
         computedStyle.visibility === 'hidden' || computedStyle.opacity === 0) {
@@ -943,7 +930,6 @@ function isElementVisible_(elem) {
     }
 
     elem = elem.parentNode;
-    computedStyle = elem.ownerDocument.defaultView.getComputedStyle(elem, null);
   }
   return true;
 };

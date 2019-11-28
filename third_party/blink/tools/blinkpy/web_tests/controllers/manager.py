@@ -27,7 +27,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""The Manager orchestrates the overall process of running layout tests.
+"""The Manager orchestrates the overall process of running web tests.
 
 This includes finding tests to run, reading the test expectations,
 starting the required helper servers, deciding the order and way to
@@ -47,10 +47,8 @@ from blinkpy.common import exit_codes
 from blinkpy.common.net.file_uploader import FileUploader
 from blinkpy.common.path_finder import PathFinder
 from blinkpy.tool import grammar
-from blinkpy.w3c.wpt_manifest import WPTManifest
-from blinkpy.web_tests.controllers.layout_test_finder import LayoutTestFinder
-from blinkpy.web_tests.controllers.layout_test_runner import LayoutTestRunner
-from blinkpy.web_tests.controllers.test_result_writer import TestResultWriter
+from blinkpy.web_tests.controllers.web_test_finder import WebTestFinder
+from blinkpy.web_tests.controllers.web_test_runner import WebTestRunner
 from blinkpy.web_tests.layout_package import json_results_generator
 from blinkpy.web_tests.models import test_expectations
 from blinkpy.web_tests.models import test_failures
@@ -63,7 +61,7 @@ TestExpectations = test_expectations.TestExpectations
 
 
 class Manager(object):
-    """A class for managing running a series of layout tests."""
+    """A class for managing running a series of web tests."""
 
     HTTP_SUBDIR = 'http'
     PERF_SUBDIR = 'perf'
@@ -89,9 +87,9 @@ class Manager(object):
         self._websockets_server_started = False
 
         self._results_directory = self._port.results_directory()
-        self._finder = LayoutTestFinder(self._port, self._options)
+        self._finder = WebTestFinder(self._port, self._options)
         self._path_finder = PathFinder(port.host.filesystem)
-        self._runner = LayoutTestRunner(self._options, self._port, self._printer, self._results_directory, self._test_is_slow)
+        self._runner = WebTestRunner(self._options, self._port, self._printer, self._results_directory, self._test_is_slow)
 
     def run(self, args):
         """Runs the tests and return a RunDetails object with the results."""
@@ -99,19 +97,13 @@ class Manager(object):
         self._printer.write_update('Collecting tests ...')
         running_all_tests = False
 
-        if not args or any('external' in path for path in args):
-            self._printer.write_update('Generating MANIFEST.json for web-platform-tests ...')
-            WPTManifest.ensure_manifest(self._port.host)
-            self._printer.write_update('Completed generating manifest.')
-
-        self._printer.write_update('Collecting tests ...')
         try:
             paths, all_test_names, running_all_tests = self._collect_tests(args)
         except IOError:
             # This is raised if --test-list doesn't exist
             return test_run_results.RunDetails(exit_code=exit_codes.NO_TESTS_EXIT_STATUS)
 
-        test_names, tests_in_other_chunks = self._finder.split_into_chunks(all_test_names)
+        test_names = self._finder.split_into_chunks(all_test_names)
 
         if self._options.order == 'natural':
             test_names.sort(key=self._port.test_key)
@@ -123,8 +115,6 @@ class Manager(object):
         self._expectations = test_expectations.TestExpectations(self._port, test_names)
 
         tests_to_run, tests_to_skip = self._prepare_lists(paths, test_names)
-
-        self._expectations.remove_tests_from_expectations(tests_in_other_chunks)
 
         self._printer.print_found(
             len(all_test_names), len(test_names), len(tests_to_run),
@@ -267,7 +257,8 @@ class Manager(object):
 
     def _collect_tests(self, args):
         return self._finder.find_tests(args, test_list=self._options.test_list,
-                                       fastest_percentile=self._options.fastest)
+                                       fastest_percentile=self._options.fastest,
+                                       filters=self._options.isolated_script_test_filter)
 
     def _is_http_test(self, test):
         return (
@@ -294,10 +285,11 @@ class Manager(object):
 
         return tests_to_run, tests_to_skip
 
-    def _test_input_for_file(self, test_file):
+    def _test_input_for_file(self, test_file, retry_attempt):
         return TestInput(test_file,
                          self._options.slow_time_out_ms if self._test_is_slow(test_file) else self._options.time_out_ms,
-                         self._test_requires_lock(test_file))
+                         self._test_requires_lock(test_file),
+                         retry_attempt=retry_attempt)
 
     def _test_requires_lock(self, test_file):
         """Returns True if the test needs to be locked when running multiple
@@ -388,7 +380,8 @@ class Manager(object):
         for _ in xrange(iterations):
             for test in tests_to_run:
                 for _ in xrange(repeat_each):
-                    test_inputs.append(self._test_input_for_file(test))
+                    test_inputs.append(
+                        self._test_input_for_file(test, retry_attempt))
         return self._runner.run_tests(self._expectations, test_inputs,
                                       tests_to_skip, num_workers, retry_attempt)
 
@@ -442,28 +435,50 @@ class Manager(object):
                 logs after that time.
         """
         crashed_processes = []
+        test_to_crash_failure = {}
+
+        # reset static variables for Failure type classes
+        test_failures.AbstractTestResultType.port = self._port
+        test_failures.AbstractTestResultType.result_directory = self._results_directory
+        test_failures.AbstractTestResultType.filesystem = self._filesystem
+
         for test, result in run_results.unexpected_results_by_name.iteritems():
             if result.type != test_expectations.CRASH:
                 continue
             for failure in result.failures:
-                if not isinstance(failure, test_failures.FailureCrash):
-                    continue
-                if failure.has_log:
+                if (not isinstance(failure, test_failures.FailureCrash) or
+                        failure.has_log):
                     continue
                 crashed_processes.append([test, failure.process_name, failure.pid])
+                test_to_crash_failure[test] = failure
 
-        sample_files = self._port.look_for_new_samples(crashed_processes, start_time)
-        if sample_files:
-            for test, sample_file in sample_files.iteritems():
-                writer = TestResultWriter(self._filesystem, self._port, self._port.results_directory(), test)
-                writer.copy_sample_file(sample_file)
+        sample_files = self._port.look_for_new_samples(
+            crashed_processes, start_time) or {}
+        for test, sample_file in sample_files.iteritems():
+            test_failures.AbstractTestResultType.test_name = test
+            test_result = run_results.unexpected_results_by_name[test]
+            artifact_relative_path = self._port.output_filename(
+                test, test_failures.FILENAME_SUFFIX_SAMPLE, '.txt')
+            artifacts_sub_dir = test_result.artifacts.ArtifactsSubDirectory()
+            artifact_abspath = self._filesystem.join(
+                self._results_directory, artifacts_sub_dir, artifact_relative_path)
+            self._filesystem.maybe_make_directory(
+                self._filesystem.dirname(artifact_abspath))
+            self._filesystem.copyfile(sample_file, artifact_abspath)
+            test_result.artifacts.AddArtifact('sample_file',
+                self._filesystem.join(artifacts_sub_dir, artifact_relative_path))
 
-        crash_logs = self._port.look_for_new_crash_logs(crashed_processes, start_time)
-        if crash_logs:
-            for test, (crash_log, crash_site) in crash_logs.iteritems():
-                writer = TestResultWriter(self._filesystem, self._port, self._port.results_directory(), test)
-                writer.write_crash_log(crash_log)
-                run_results.unexpected_results_by_name[test].crash_site = crash_site
+        new_crash_logs = self._port.look_for_new_crash_logs(
+            crashed_processes, start_time) or {}
+        for test, (crash_log, crash_site) in new_crash_logs.iteritems():
+            test_failures.AbstractTestResultType.test_name = test
+            failure.crash_log = crash_log
+            failure.has_log = self._port.output_contains_sanitizer_messages(
+                failure.crash_log)
+            test_result = run_results.unexpected_results_by_name[test]
+            test_result.crash_site = crash_site
+            test_to_crash_failure[test].create_artifacts(
+                test_result.artifacts, force_overwrite=True)
 
     def _clobber_old_results(self):
         dir_above_results_path = self._filesystem.dirname(self._results_directory)
@@ -565,7 +580,7 @@ class Manager(object):
 
     def _copy_results_html_file(self, destination_dir, filename):
         """Copies a file from the template directory to the results directory."""
-        template_dir = self._path_finder.path_from_layout_tests('fast', 'harness')
+        template_dir = self._path_finder.path_from_web_tests('fast', 'harness')
         source_path = self._filesystem.join(template_dir, filename)
         destination_path = self._filesystem.join(destination_dir, filename)
         # Note that the results.html template file won't exist when

@@ -29,18 +29,12 @@ Tests that the provided WebXR device has the expected capabilities
         let expected = expectations[device];
         var supportsNonImmersive;
         var supportsImmersive;
-        var ctx = webglCanvas.getContext("xrpresent");
-        xrDevice.supportsSession(
-            {immersive: false, outputContext: ctx}).then( () => {
-          supportsNonImmersive = true;
-        }, () => {
-          supportsNonImmersive = false;
+        navigator.xr.isSessionSupported('inline').then((supported) => {
+          supportsNonImmersive = supported;
         }).then( () => {
-          xrDevice.supportsSession({immersive: true}).then( () => {
-            supportsImmersive = true;
-          }, () => {
-            supportsImmersive = false;
-          }).then( () => {
+          navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+            supportsImmersive = supported;
+          }).then(() => {
             assert_equals(supportsNonImmersive, expected["non-immersive"],
                 'Device supports non-immersive sessions');
             assert_equals(supportsImmersive, expected["immersive"],

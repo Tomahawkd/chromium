@@ -15,6 +15,8 @@
 #include <sddl.h>
 #include <wrl/module.h>
 
+#include <type_traits>
+
 #include "base/command_line.h"
 #include "base/stl_util.h"
 #include "base/win/scoped_com_initializer.h"
@@ -57,12 +59,15 @@ int ServiceMain::Start() {
   return (this->*run_routine_)();
 }
 
+void ServiceMain::CreateWRLModule() {
+  Microsoft::WRL::Module<Microsoft::WRL::OutOfProc>::Create(
+      this, &ServiceMain::SignalExit);
+}
+
 // When _ServiceMain gets called, it initializes COM, and then calls Run().
 // Run() initializes security, then calls RegisterClassObject().
 HRESULT ServiceMain::RegisterClassObject() {
-  // Create an out-of-proc COM module with caching disabled.
-  auto& module = Microsoft::WRL::Module<Microsoft::WRL::OutOfProc>::Create(
-      this, &ServiceMain::SignalExit);
+  auto& module = Microsoft::WRL::Module<Microsoft::WRL::OutOfProc>::GetModule();
 
   // We hand-register a unique CLSID for each Chrome channel.
   Microsoft::WRL::ComPtr<IUnknown> factory;
@@ -85,13 +90,13 @@ HRESULT ServiceMain::RegisterClassObject() {
 
   // The pointer in this array is unowned. Do not release it.
   IClassFactory* class_factories[] = {class_factory.Get()};
-  static_assert(base::size(decltype(cookies_){}) ==
-                base::size(class_factories),
-                "Arrays cookies_ and class_factories must be the same size.");
+  static_assert(
+      std::extent<decltype(cookies_)>() == base::size(class_factories),
+      "Arrays cookies_ and class_factories must be the same size.");
 
   IID class_ids[] = {install_static::GetElevatorClsid()};
   DCHECK_EQ(base::size(cookies_), base::size(class_ids));
-  static_assert(base::size(decltype(cookies_){}) == base::size(class_ids),
+  static_assert(std::extent<decltype(cookies_)>() == base::size(class_ids),
                 "Arrays cookies_ and class_ids must be the same size.");
 
   hr = module.RegisterCOMObject(nullptr, class_ids, class_factories, cookies_,
@@ -114,6 +119,10 @@ void ServiceMain::UnregisterClassObject() {
 
 bool ServiceMain::IsExitSignaled() {
   return exit_signal_.IsSignaled();
+}
+
+void ServiceMain::ResetExitSignaled() {
+  exit_signal_.Reset();
 }
 
 ServiceMain::ServiceMain()
@@ -210,6 +219,7 @@ HRESULT ServiceMain::Run() {
   if (FAILED(hr))
     return hr;
 
+  CreateWRLModule();
   hr = RegisterClassObject();
   if (SUCCEEDED(hr)) {
     WaitForExitSignal();

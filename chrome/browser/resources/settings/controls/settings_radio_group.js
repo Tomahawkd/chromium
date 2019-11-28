@@ -18,6 +18,8 @@ Polymer({
   behaviors: [PrefControlBehavior],
 
   properties: {
+    groupAriaLabel: String,
+
     selected: String,
   },
 
@@ -37,8 +39,9 @@ Polymer({
 
   /** @private */
   onSelectedChanged_: function() {
-    if (!this.pref)
+    if (!this.pref) {
       return;
+    }
     this.selected = this.$$('cr-radio-group').selected;
     this.set(
         'pref.value',

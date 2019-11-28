@@ -91,7 +91,80 @@ cr.define('settings_privacy_page', function() {
     };
   }
 
+  function registerUMALoggingTests() {
+    suite('PrivacyPageUMACheck', function() {
+      /** @type {settings.TestPrivacyPageBrowserProxy} */
+      let testBrowserProxy;
+
+      /** @type {SettingsPrivacyPageElement} */
+      let page;
+
+      setup(function() {
+        testBrowserProxy = new TestPrivacyPageBrowserProxy();
+        settings.PrivacyPageBrowserProxyImpl.instance_ = testBrowserProxy;
+        PolymerTest.clearBody();
+        page = document.createElement('settings-privacy-page');
+        document.body.appendChild(page);
+      });
+
+      teardown(function() {
+        page.remove();
+      });
+
+      test('LogMangeCerfificatesClick', function() {
+        page.$$('#manageCertificates').click();
+        return testBrowserProxy.whenCalled('recordSettingsPageHistogram')
+            .then(result => {
+              assertEquals(
+                  settings.SettingsPageInteractions.PRIVACY_MANAGE_CERTIFICATES,
+                  result);
+            });
+      });
+
+      test('LogClearBrowsingClick', function() {
+        page.$$('#clearBrowsingData').click();
+        return testBrowserProxy.whenCalled('recordSettingsPageHistogram')
+            .then(result => {
+              assertEquals(
+                  settings.SettingsPageInteractions.PRIVACY_CLEAR_BROWSING_DATA,
+                  result);
+            });
+      });
+
+      test('LogDoNotTrackClick', function() {
+        page.$$('#doNotTrack').click();
+        return testBrowserProxy.whenCalled('recordSettingsPageHistogram')
+            .then(result => {
+              assertEquals(
+                  settings.SettingsPageInteractions.PRIVACY_DO_NOT_TRACK,
+                  result);
+            });
+      });
+
+      test('LogCanMakePaymentToggleClick', function() {
+        page.$$('#canMakePaymentToggle').click();
+        return testBrowserProxy.whenCalled('recordSettingsPageHistogram')
+            .then(result => {
+              assertEquals(
+                  settings.SettingsPageInteractions.PRIVACY_PAYMENT_METHOD,
+                  result);
+            });
+      });
+
+      test('LogSiteSettingsSubpageClick', function() {
+        page.$$('#site-settings-subpage-trigger').click();
+        return testBrowserProxy.whenCalled('recordSettingsPageHistogram')
+            .then(result => {
+              assertEquals(
+                  settings.SettingsPageInteractions.PRIVACY_SITE_SETTINGS,
+                  result);
+            });
+      });
+    });
+  }
+
   function registerNativeCertificateManagerTests() {
+    assert(cr.isMac || cr.isWindows);
     suite('NativeCertificateManager', function() {
       /** @type {settings.TestPrivacyPageBrowserProxy} */
       let testBrowserProxy;
@@ -124,6 +197,12 @@ cr.define('settings_privacy_page', function() {
       let page;
 
       setup(function() {
+        const testBrowserProxy = new TestPrivacyPageBrowserProxy();
+        settings.PrivacyPageBrowserProxyImpl.instance_ = testBrowserProxy;
+        const testSyncBrowserProxy = new TestSyncBrowserProxy();
+        settings.SyncBrowserProxyImpl.instance_ = testSyncBrowserProxy;
+        PolymerTest.clearBody();
+
         page = document.createElement('settings-privacy-page');
         page.prefs = {
           signin: {
@@ -132,6 +211,7 @@ cr.define('settings_privacy_page', function() {
           },
         };
         document.body.appendChild(page);
+        return testSyncBrowserProxy.whenCalled('getSyncStatus');
       });
 
       teardown(function() {
@@ -244,6 +324,7 @@ cr.define('settings_privacy_page', function() {
   }
 
   function registerClearBrowsingDataTestsDice() {
+    assert(!cr.isChromeOS);
     suite('ClearBrowsingDataDice', function() {
       /** @type {settings.TestClearBrowsingDataBrowserProxy} */
       let testBrowserProxy;
@@ -477,10 +558,6 @@ cr.define('settings_privacy_page', function() {
         assertTrue(!!actionButton);
         const cookieCheckboxBasic = element.$$('#cookiesCheckboxBasic');
         assertTrue(!!cookieCheckboxBasic);
-        const basicTab = element.$$('#basicTabTitle');
-        assertTrue(!!basicTab);
-        const advancedTab = element.$$('#advancedTabTitle');
-        assertTrue(!!advancedTab);
         // Initially the button is disabled because all checkboxes are off.
         assertTrue(actionButton.disabled);
         // The button gets enabled if any checkbox is selected.
@@ -488,10 +565,10 @@ cr.define('settings_privacy_page', function() {
         assertTrue(cookieCheckboxBasic.checked);
         assertFalse(actionButton.disabled);
         // Switching to advanced disables the button.
-        advancedTab.click();
+        element.$$('cr-tabs').selected = 1;
         assertTrue(actionButton.disabled);
         // Switching back enables it again.
-        basicTab.click();
+        element.$$('cr-tabs').selected = 0;
         assertFalse(actionButton.disabled);
       });
 
@@ -645,7 +722,6 @@ cr.define('settings_privacy_page', function() {
 
       setup(() => {
         loadTimeData.overrideValues({
-          enableSoundContentSetting: true,
           enableBlockAutoplayContentSetting: true
         });
 
@@ -742,13 +818,12 @@ cr.define('settings_privacy_page', function() {
     });
   }
 
-  if (cr.isMac || cr.isWindows)
-    registerNativeCertificateManagerTests();
-
-  if (!cr.isChromeOS)
-    registerClearBrowsingDataTestsDice();
-
-  registerClearBrowsingDataTests();
-  registerPrivacyPageTests();
-  registerPrivacyPageSoundTests();
+  return {
+    registerNativeCertificateManagerTests,
+    registerClearBrowsingDataTestsDice,
+    registerClearBrowsingDataTests,
+    registerPrivacyPageTests,
+    registerPrivacyPageSoundTests,
+    registerUMALoggingTests,
+  };
 });

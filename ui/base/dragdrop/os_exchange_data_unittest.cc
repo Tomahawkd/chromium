@@ -7,11 +7,12 @@
 #include "base/files/file_util.h"
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "net/base/filename_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+#include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/dragdrop/file_info.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -22,12 +23,11 @@ namespace ui {
 class OSExchangeDataTest : public PlatformTest {
  public:
   OSExchangeDataTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+      : task_environment_(base::test::TaskEnvironment::MainThreadType::UI),
         event_source_(PlatformEventSource::CreateDefault()) {}
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   std::unique_ptr<PlatformEventSource> event_source_;
 };
 
@@ -142,8 +142,8 @@ TEST_F(OSExchangeDataTest, TestFileToURLConversion) {
 }
 
 TEST_F(OSExchangeDataTest, TestPickledData) {
-  const Clipboard::FormatType kTestFormat =
-      Clipboard::GetFormatType("application/vnd.chromium.test");
+  const ui::ClipboardFormatType kTestFormat =
+      ui::ClipboardFormatType::GetType("application/vnd.chromium.test");
 
   base::Pickle saved_pickle;
   saved_pickle.WriteInt(1);
@@ -202,6 +202,7 @@ TEST_F(OSExchangeDataTest, TestHTML) {
   OSExchangeData copy(
       std::unique_ptr<OSExchangeData::Provider>(data.provider().Clone()));
   base::string16 read_html;
+  EXPECT_TRUE(copy.HasHtml());
   EXPECT_TRUE(copy.GetHtml(&read_html, &url));
   EXPECT_EQ(html, read_html);
 }

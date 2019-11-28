@@ -64,6 +64,43 @@
     Applications that can cause this error include antivirus, firewall, and web-filtering or proxy software.
   </message>
 
+  <message name="IDS_BLOCKED_INTERCEPTION_HEADING" desc="Large heading of the known interception interstitial.">
+    Your activity on <ph name="HOSTNAME">$1<ex>example.com</ex></ph> is being monitored
+  </message>
+
+  <message name="IDS_BLOCKED_INTERCEPTION_PRIMARY_PARAGRAPH" desc="Main paragraph of the known interception interstitial. A user visits a website, a known interception certificate intercepts their connection, and they are shown this error. Page title and additional description of the error are shown above.">
+    Anything you type, any pages you view, or any other activity on the web is being watched, and content on sites may be changed without your knowledge.
+    <ph name="BEGIN_LEARN_MORE_LINK">&lt;a href="#" id="learn-more-link"&gt;</ph>Learn more<ph name="END_LEARN_MORE_LINK">&lt;/a&gt;</ph>
+  </message>
+
+  <if expr="_google_chrome">
+  <message name="IDS_BLOCKED_INTERCEPTION_EXPLANATION" desc="Part of an extended description hidden behind an 'Advanced' button on an error page. A user visits a website, a known interception certificate intercepts their connection, and they are shown this error. Page title and additional description of the error are shown above.">
+    The certificate for this connection is not trusted by Google Chrome, because it is known to be used for network interception and monitoring.
+  </message>
+  </if>
+  <if expr="not _google_chrome">
+  <message name="IDS_BLOCKED_INTERCEPTION_EXPLANATION" desc="Part of an extended description hidden behind an 'Advanced' button on an error page. A user visits a website, a known interception certificate intercepts their connection, and they are shown this error. Page title and additional description of the error are shown above.">
+    The certificate for this connection is not trusted by Chromium, because it is known to be used for network interception and monitoring.
+  </message>
+  </if>
+
+  <!-- Lookalike URL warning -->
+  <message name="IDS_LOOKALIKE_URL_TITLE" desc="Tab title. Context: the requested URL might be trying to trick the user since it looks like a more popular URL. This interstitial points the user to the safe site instead.">
+    Safety warning
+  </message>
+  <message name="IDS_LOOKALIKE_URL_HEADING" desc="Large heading. Context: the error page that's shown when the requested URL might be trying to trick the user since it looks like a more popular URL. This interstitial points the user to the safe site instead.">
+    Did you mean &lt;a href="#" id="dont-proceed-link"&gt;<ph name="DOMAIN">$1<ex>example.com</ex></ph>&lt;/a&gt;?
+  </message>
+  <message name="IDS_LOOKALIKE_URL_IGNORE" desc="Button text. Context: the error page that's shown when the requested URL might be trying to trick the user since it looks like a more popular URL. This button dismisses the interstitial and navigates to the originally-requested URL.">
+    Ignore
+  </message>
+  <message name="IDS_LOOKALIKE_URL_CONTINUE" desc="Button text. Context: the error page that's shown when the requested URL might be trying to trick the user since it looks like a more popular URL. This button dismisses the interstitial and navigates to the suggested (safe) URL.">
+    Go to <ph name="DOMAIN">$1<ex>example.com</ex></ph>
+  </message>
+  <message name="IDS_LOOKALIKE_URL_PRIMARY_PARAGRAPH" desc="Main paragraph of an error message. Context: the error page that's shown when the requested URL might be trying to trick the user since it looks like a more popular URL.">
+    The site you just tried to visit looks fake. Attackers sometimes mimic sites by making small, hard-to-see changes to the URL.
+  </message>
+
   <!-- Clock errors -->
   <message name="IDS_CLOCK_ERROR_TITLE" desc="Tab title. Context: the browser can't load a page because the device's clock is wrong.">
     Clock error
@@ -211,7 +248,7 @@
     Privacy policy
   </message>
   <message name="IDS_SAFE_BROWSING_SCOUT_REPORTING_AGREE" desc="SafeBrowsing Scout label next to checkbox">
-    Help improve Safe Browsing by sending some <ph name="BEGIN_WHITEPAPER_LINK">&lt;a href="#" id="whitepaper-link"&gt;</ph>system information and page content<ph name="END_WHITEPAPER_LINK">&lt;/a&gt;</ph> to Google. <ph name="PRIVACY_PAGE_LINK">$1</ph>
+    Help improve Chrome security by sending <ph name="BEGIN_WHITEPAPER_LINK">&lt;a href="#" id="whitepaper-link"&gt;</ph>URLs of some pages you visit, limited system information, and some page content<ph name="END_WHITEPAPER_LINK">&lt;/a&gt;</ph> to Google. <ph name="PRIVACY_PAGE_LINK">$1</ph>
   </message>
 
   <!-- Harmful download interstitial -->
@@ -368,6 +405,9 @@
   </if>
 
   <!-- Billing interstitial -->
+  <message name="IDS_BILLING_TITLE" desc="The tab title for the Safe Browsing Billing interstitial.">
+    Page may charge money
+  </message>
   <message name="IDS_BILLING_HEADING" desc="The large heading at the top of the billing interstitial.">
     The page ahead may try to charge you money
   </message>
@@ -379,5 +419,143 @@
   </message>
   <message name="IDS_BILLING_PROCEED_BUTTON" desc="The text for the billing interstitial proceed button.">
     Proceed
+  </message>
+
+  <!-- Origin Policy Error Interstial -->
+  <message name="IDS_ORIGIN_POLICY_TITLE"
+    desc="Title of the Origin Policy Error interstitial.">
+    Origin Policy Error
+  </message>
+  <message name="IDS_ORIGIN_POLICY_HEADING"
+    desc="The large heading at the top of the Origin Policy Error Interstitial">
+    Blocked according to <ph name="ORIGIN">$2</ph>'s origin policy.
+  </message>
+  <message name="IDS_ORIGIN_POLICY_INFO"
+    desc="The primary explanatory paragraph for the Origin Policy Error interstitial.">
+    The site <ph name="ORIGIN">$2</ph> has requested that an origin policy
+    will apply to all its request, but this policy cannot presently be applied.
+  </message>
+  <message name="IDS_ORIGIN_POLICY_INFO2" desc="The second paragrpah of the text of the Origin Policy Error Interstitial. (Presently intentionally left blank.)" />
+  <message name="IDS_ORIGIN_POLICY_BUTTON"
+    desc="The text for the Origin Policy Error Interstitial button that takes the user back to the previous page">
+    Back to safety.
+  </message>
+  <message name="IDS_ORIGIN_POLICY_DETAILS"
+    desc="The text for the Origin Policy Error Interstitial button that contains additional information.">
+    Advanced
+  </message>
+  <message name="IDS_ORIGIN_POLICY_EXPLANATION_CANNOT_LOAD" desc="The text of the Origin Policy Error Interstitial that will be displayed when the user presses the 'Advanced' button for additional information, for the case where the policy could not be loaded.">
+    The server you are going to, <ph name="ORIGIN">$2</ph>, has requested that
+    an origin policy will be applied to all requests to it. But it has now
+    failed to deliver a policy, which prevents the browser from fulfilling
+    your request for <ph name="SITE">$1</ph>. Origin policies can be used by
+    site operators to configure security and other properties for a site.
+  </message>
+  <message name="IDS_ORIGIN_POLICY_EXPLANATION_SHOULD_NOT_REDIRECT" desc="The text of the Origin Policy Error Interstitial that will be displayed when the user presses the 'Advanced' button for additional information, for the case where the policy request was met with a 'redirect' response.">
+    The server you are going to, <ph name="ORIGIN">$2</ph>, has requested that
+    an origin policy will be applied to all requests to it. But instead of
+    delivering a policy it has redirected the browser elsewhere, which prevents
+    the browser from fulfilling your request for <ph name="SITE">$1</ph>. Origin
+    policies can be used by site operators to configure security and other
+    properties for a site.
+  </message>
+  <message name="IDS_ORIGIN_POLICY_EXPLANATION_OTHER" desc="The text of the Origin Policy Error Interstitial that will be displayed when the user presses the 'Advanced' button for additional information, for cases other than redirect or load error.">
+    The server you are going to, <ph name="ORIGIN">$2</ph>, has requested that
+    an origin policy will be applied to all requests to it. But it has now
+    delivered an invalid policy, which means the browser cannot fullfil your
+    request for <ph name="SITE">$1</ph>. Origin policies can be used by
+    site operators to configure security and other properties for a site.
+  </message>
+  <message name="IDS_ORIGIN_POLICY_FINAL_PARAGRAPH"
+    desc="The text of the Origin Policy Error Interstitial that a user can click to proceed to the site, despite the error.">
+    <ph name="BEGIN_LINK">&lt;a href="#" id="proceed-link"&gt;</ph>Proceed to <ph name="SITE">$1<ex>example.com</ex></ph><ph name="END_LINK">&lt;/a&gt;</ph>
+  </message>
+  <message name="IDS_ORIGIN_POLICY_CLOSE" desc="The text of the Origin Policy Error Interstitial that will hide the 'advanced' section again.">
+    Hide advanced
+  </message>
+
+  <!-- Safety Tip summary strings for Android (Desktop is in page_info_strings.grdp) -->
+  <message name="IDS_SAFETY_TIP_ANDROID_IGNORE_BUTTON" desc="Text of button to leave a suspicious page. Shown on the safety tip infobar.">
+    Ignore
+  </message>
+  <message name="IDS_SAFETY_TIP_ANDROID_LEAVE_BUTTON" desc="Text of button to ignore the warning on a suspicious page. Shown on the safety tip infobar.">
+    Leave site
+  </message>
+  <message name="IDS_SAFETY_TIP_ANDROID_LOOKALIKE_TITLE" desc="Title of Safety Tip infobar on a domain that looks like another domain.">
+    Is this the right site?
+  </message>
+  <message name="IDS_SAFETY_TIP_ANDROID_LOOKALIKE_DESCRIPTION" desc="Body of an infobar warning when the user visits a page that triggered a Safety Tip because the domain looked like another domain.">
+    <ph name='LOOKALIKE_DOMAIN'>$1<ex>fake-google.com</ex></ph> looks similar to <ph name='SUGGESTED_DOMAIN'>$2<ex>google.com</ex></ph>. Attackers sometimes mimic sites by using similar URLs.
+  </message>
+
+  <!-- Known interception disclosure WebUI strings -->
+  <if expr="not is_ios">
+    <!-- Title of the page -->
+    <message name="IDS_KNOWN_INTERCEPTION_TITLE" desc="Title of network interception disclosure page.">
+      Monitoring Detected
+    </message>
+
+    <!-- Main message title and description -->
+    <if expr="_google_chrome">
+      <message name="IDS_KNOWN_INTERCEPTION_SUBTITLE" desc="Title of chrome://connection-monitoring-detected/ page, shows when Chrome has detected known network monitoring activity">
+        Chrome has detected that your connection is being monitored
+      </message>
+    </if>
+    <if expr="not _google_chrome">
+      <message name="IDS_KNOWN_INTERCEPTION_SUBTITLE" desc="Title of chrome://connection-monitoring-detected/ page, shows when Chromium has detected known network monitoring activity">
+        Chromium has detected that your connection is being monitored
+      </message>
+    </if>
+    <message name="IDS_KNOWN_INTERCEPTION_DESCRIPTION" desc="Summary text for chrome://connection-monitoring-detected/ page">
+      Your activity on the web and any information you enter is being watched, and content may be changed without your knowledge.
+    </message>
+
+    <!-- Subsection on what this warning means -->
+    <message name="IDS_KNOWN_INTERCEPTION_MEANING_SUBHEADING" desc="Title for the subsection explaining the risks">
+      What this means
+    </message>
+    <message name="IDS_KNOWN_INTERCEPTION_MEANING_DESCRIPTION" desc="Description for the subsection explaining the risks">
+      The network monitor can pretend to be the sites you visit, and can see your activity and any information you enter (for example, passwords, messages, or credit cards). You should take care when doing anything sensitive online, as it will be visible to the network monitor, and the network monitor can change the content on the pages you visit. This includes activity in other browsers and programs that access the Internet.
+    </message>
+
+    <!-- Subsection on why we're showing the UI -->
+    <message name="IDS_KNOWN_INTERCEPTION_CAUSE_SUBHEADING" desc="Title for the subsection explaining why the warning is shown">
+      Why this is happening
+    </message>
+    <if expr="_google_chrome">
+      <message name="IDS_KNOWN_INTERCEPTION_CAUSE_DESCRIPTION" desc="Description for the subsection explaining why the warning is shown">
+        The certificate for this connection is not trusted by Chrome, because it is known to be used for network interception and monitoring. You may be seeing this error because of a certificate you installed on your device. When making secure connections, Chrome trusts certificates that have been locally installed on a user's computer or mobile device. This allows users to run tools to inspect and debug their connections during website development, or for corporate environments to intercept and monitor internal traffic. For cases where this is being abused to intercept traffic on the public Internet, Chrome shows a warning.
+      </message>
+    </if>
+    <if expr="not _google_chrome">
+      <message name="IDS_KNOWN_INTERCEPTION_CAUSE_DESCRIPTION" desc="Description for the subsection explaining why the warning is shown">
+        The certificate for this connection is not trusted by Chromium, because it is known to be used for network interception and monitoring. You may be seeing this error because of a certificate you installed on your device. When making secure connections, Chromium trusts certificates that have been locally installed on a user's computer or mobile device. This allows users to run tools to inspect and debug their connections during website development, or for corporate environments to intercept and monitor internal traffic. For cases where this is being abused to intercept traffic on the public Internet, Chromium shows a warning.
+      </message>
+    </if>
+  </if>
+
+  <!-- Known interception disclosure infobar strings -->
+  <if expr="_google_chrome">
+    <message name="IDS_KNOWN_INTERCEPTION_INFOBAR_HEADING" desc="Text of the heading used to alert the user that Chrome has detected that their network connnection is being intercepted.">
+      Chrome has detected that your connection is being monitored.
+    </message>
+    <if expr="is_android">
+      <message name="IDS_KNOWN_INTERCEPTION_INFOBAR_DESCRIPTION" desc="Short description used to explain why the warning is shown, for the Android infobar.">
+        The certificate presented for this connection is not trusted by Chrome, because it is known to be used for network interception and monitoring.
+      </message>
+    </if>
+  </if>
+  <if expr="not _google_chrome">
+    <message name="IDS_KNOWN_INTERCEPTION_INFOBAR_HEADING" desc="Text of the heading used to alert the user that Chromium has detected that their network connnection is being intercepted.">
+      Chromium has detected that your connection is being monitored.
+    </message>
+    <if expr="is_android">
+      <message name="IDS_KNOWN_INTERCEPTION_INFOBAR_DESCRIPTION" desc="Short description used to explain why the warning is shown, for the Android infobar.">
+        The certificate for this connection is not trusted by Chromium, because it is known to be used for network interception and monitoring.
+      </message>
+    </if>
+  </if>
+  <message name="IDS_KNOWN_INTERCEPTION_INFOBAR_BUTTON_TEXT" desc="Text of the button to close the disclosure infobar and continue using Chrome.">
+    Continue
   </message>
 </grit-part>

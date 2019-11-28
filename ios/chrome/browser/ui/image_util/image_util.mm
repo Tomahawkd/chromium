@@ -6,7 +6,6 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/chrome/browser/ui/image_util/image_util.h"
-
 #include "ui/gfx/color_analysis.h"
 #include "ui/gfx/image/image.h"
 
@@ -22,6 +21,7 @@ NSString* kImageExtensionBMP = @"bmp";
 NSString* kImageExtensionGIF = @"gif";
 NSString* kImageExtensionICO = @"ico";
 NSString* kImageExtensionWebP = @"webp";
+
 }
 
 UIColor* DominantColorForImage(const gfx::Image& image, CGFloat opacity) {

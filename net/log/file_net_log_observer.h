@@ -23,8 +23,6 @@ class SequencedTaskRunner;
 
 namespace net {
 
-class NetLogCaptureMode;
-
 // FileNetLogObserver watches the NetLog event stream and sends all entries to
 // a file.
 //
@@ -150,6 +148,10 @@ class NET_EXPORT FileNetLogObserver : public NetLog::ThreadSafeObserver {
 
   DISALLOW_COPY_AND_ASSIGN(FileNetLogObserver);
 };
+
+// Serializes |value| to a JSON string used when writing to a file.
+NET_EXPORT_PRIVATE std::string SerializeNetLogValueToJson(
+    const base::Value& value);
 
 }  // namespace net
 

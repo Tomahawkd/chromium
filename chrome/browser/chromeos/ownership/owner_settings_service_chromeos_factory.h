@@ -25,6 +25,7 @@ namespace chromeos {
 
 class DeviceSettingsService;
 class OwnerSettingsServiceChromeOS;
+class StubCrosSettingsProvider;
 
 class OwnerSettingsServiceChromeOSFactory
     : public BrowserContextKeyedServiceFactory {
@@ -36,6 +37,9 @@ class OwnerSettingsServiceChromeOSFactory
 
   static void SetDeviceSettingsServiceForTesting(
       DeviceSettingsService* device_settings_service);
+
+  static void SetStubCrosSettingsProviderForTesting(
+      StubCrosSettingsProvider* stub_cros_settings_provider);
 
   scoped_refptr<ownership::OwnerKeyUtil> GetOwnerKeyUtil();
 
@@ -49,12 +53,10 @@ class OwnerSettingsServiceChromeOSFactory
   OwnerSettingsServiceChromeOSFactory();
   ~OwnerSettingsServiceChromeOSFactory() override;
 
-  static KeyedService* BuildInstanceFor(content::BrowserContext* context);
-
-  // BrowserContextKeyedBaseFactory overrides:
+  // BrowserContextKeyedServiceFactory overrides:
+  content::BrowserContext* GetBrowserContextToUse(
+      content::BrowserContext* context) const override;
   bool ServiceIsCreatedWithBrowserContext() const override;
-
-  // BrowserContextKeyedServiceFactory implementation:
   KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* browser_context) const override;
 

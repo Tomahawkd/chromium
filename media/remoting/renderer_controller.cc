@@ -100,29 +100,23 @@ MediaObserverClient::ReasonToSwitchToLocal GetSwitchReason(
 }  // namespace
 
 RendererController::RendererController(
-    mojom::RemotingSourceRequest source_request,
-    mojom::RemoterPtr remoter)
+    mojo::PendingReceiver<mojom::RemotingSource> source_receiver,
+    mojo::PendingRemote<mojom::Remoter> remoter)
 #if BUILDFLAG(ENABLE_MEDIA_REMOTING_RPC)
     : rpc_broker_(base::BindRepeating(&RendererController::SendMessageToSink,
                                       base::Unretained(this))),
 #else
     :
 #endif
-      binding_(this, std::move(source_request)),
+      receiver_(this, std::move(source_receiver)),
       remoter_(std::move(remoter)),
-      clock_(base::DefaultTickClock::GetInstance()),
-      weak_factory_(this) {
+      clock_(base::DefaultTickClock::GetInstance()) {
   DCHECK(remoter_);
 }
 
 RendererController::~RendererController() {
   DCHECK(thread_checker_.CalledOnValidThread());
-
-  CancelDelayedStart();
-  if (remote_rendering_started_) {
-    metrics_recorder_.WillStopSession(MEDIA_ELEMENT_DESTROYED);
-    remoter_->Stop(mojom::RemotingStopReason::UNEXPECTED_FAILURE);
-  }
+  SetClient(nullptr);
 }
 
 void RendererController::OnSinkAvailable(
@@ -150,9 +144,8 @@ void RendererController::OnStarted() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   VLOG(1) << "Remoting started successively.";
-  if (remote_rendering_started_) {
+  if (remote_rendering_started_ && client_) {
     metrics_recorder_.DidStartSession();
-    DCHECK(client_);
     client_->SwitchToRemoteRenderer(sink_metadata_.friendly_name);
   }
 }
@@ -233,25 +226,24 @@ void RendererController::StartDataPipe(
   if (!audio && !video) {
     LOG(ERROR) << "No audio nor video to establish data pipe";
     std::move(done_callback)
-        .Run(mojom::RemotingDataStreamSenderPtrInfo(),
-             mojom::RemotingDataStreamSenderPtrInfo(),
+        .Run(mojo::NullRemote(), mojo::NullRemote(),
              mojo::ScopedDataPipeProducerHandle(),
              mojo::ScopedDataPipeProducerHandle());
     return;
   }
-  mojom::RemotingDataStreamSenderPtr audio_stream_sender;
-  mojom::RemotingDataStreamSenderPtr video_stream_sender;
-  remoter_->StartDataStreams(audio ? std::move(audio_data_pipe->consumer_handle)
-                                   : mojo::ScopedDataPipeConsumerHandle(),
-                             video ? std::move(video_data_pipe->consumer_handle)
-                                   : mojo::ScopedDataPipeConsumerHandle(),
-                             audio ? mojo::MakeRequest(&audio_stream_sender)
-                                   : mojom::RemotingDataStreamSenderRequest(),
-                             video ? mojo::MakeRequest(&video_stream_sender)
-                                   : mojom::RemotingDataStreamSenderRequest());
+  mojo::PendingRemote<mojom::RemotingDataStreamSender> audio_stream_sender;
+  mojo::PendingRemote<mojom::RemotingDataStreamSender> video_stream_sender;
+  remoter_->StartDataStreams(
+      audio ? std::move(audio_data_pipe->consumer_handle)
+            : mojo::ScopedDataPipeConsumerHandle(),
+      video ? std::move(video_data_pipe->consumer_handle)
+            : mojo::ScopedDataPipeConsumerHandle(),
+      audio ? audio_stream_sender.InitWithNewPipeAndPassReceiver()
+            : mojo::NullReceiver(),
+      video ? video_stream_sender.InitWithNewPipeAndPassReceiver()
+            : mojo::NullReceiver());
   std::move(done_callback)
-      .Run(audio_stream_sender.PassInterface(),
-           video_stream_sender.PassInterface(),
+      .Run(std::move(audio_stream_sender), std::move(video_stream_sender),
            audio ? std::move(audio_data_pipe->producer_handle)
                  : mojo::ScopedDataPipeProducerHandle(),
            video ? std::move(video_data_pipe->producer_handle)
@@ -305,9 +297,6 @@ void RendererController::OnDataSourceInitialized(
 }
 
 void RendererController::UpdateRemotePlaybackAvailabilityMonitoringState() {
-  if (!client_)
-    return;
-
 // Currently RemotePlayback-initated media remoting only supports URL flinging
 // thus the source is supported when the URL is either http or https, video and
 // audio codecs are supported by the remote playback device; HLS is playable by
@@ -327,7 +316,8 @@ void RendererController::UpdateRemotePlaybackAvailabilityMonitoringState() {
                               url_after_redirects_.SchemeIs("https")) &&
                              is_media_supported;
 
-  client_->UpdateRemotePlaybackCompatibility(is_source_supported);
+  if (client_)
+    client_->UpdateRemotePlaybackCompatibility(is_source_supported);
 }
 
 bool RendererController::IsVideoCodecSupported() const {
@@ -408,10 +398,8 @@ void RendererController::OnPaused() {
 bool RendererController::CanBeRemoting() const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  if (!client_) {
-    DCHECK(!remote_rendering_started_);
+  if (!client_)
     return false;  // No way to switch to the remoting renderer.
-  }
 
   if (permanently_disable_remoting_)
     return false;
@@ -448,10 +436,9 @@ void RendererController::UpdateAndMaybeSwitch(StartTrigger start_trigger,
       (is_dominant_content_ && !encountered_renderer_fatal_error_);
 
   if ((remote_rendering_started_ ||
-       delayed_start_stability_timer_.IsRunning()) == should_be_remoting)
+       delayed_start_stability_timer_.IsRunning()) == should_be_remoting) {
     return;
-
-  DCHECK(client_);
+  }
 
   // Only switch to remoting when media is playing. Since the renderer is
   // created when video starts loading/playing, receiver will display a black
@@ -470,7 +457,8 @@ void RendererController::UpdateAndMaybeSwitch(StartTrigger start_trigger,
     remote_rendering_started_ = false;
     DCHECK_NE(UNKNOWN_STOP_TRIGGER, stop_trigger);
     metrics_recorder_.WillStopSession(stop_trigger);
-    client_->SwitchToLocalRenderer(GetSwitchReason(stop_trigger));
+    if (client_)
+      client_->SwitchToLocalRenderer(GetSwitchReason(stop_trigger));
     VLOG(2) << "Request to stop remoting: stop_trigger=" << stop_trigger;
     remoter_->Stop(mojom::RemotingStopReason::LOCAL_PLAYBACK);
   }
@@ -480,6 +468,8 @@ void RendererController::WaitForStabilityBeforeStart(
     StartTrigger start_trigger) {
   DCHECK(!delayed_start_stability_timer_.IsRunning());
   DCHECK(!remote_rendering_started_);
+  DCHECK(client_);
+
   delayed_start_stability_timer_.Start(
       FROM_HERE, kDelayedStart,
       base::BindRepeating(&RendererController::OnDelayedStartTimerFired,
@@ -497,6 +487,7 @@ void RendererController::OnDelayedStartTimerFired(
     base::TimeTicks delayed_start_time) {
   DCHECK(is_dominant_content_);
   DCHECK(!remote_rendering_started_);
+  DCHECK(client_);  // This task is canceled otherwise.
 
   base::TimeDelta elapsed = clock_->NowTicks() - delayed_start_time;
   DCHECK(!elapsed.is_zero());
@@ -516,7 +507,6 @@ void RendererController::OnDelayedStartTimerFired(
     }
   }
 
-  DCHECK(client_);
   remote_rendering_started_ = true;
   DCHECK_NE(UNKNOWN_START_TRIGGER, start_trigger);
   metrics_recorder_.WillStartSession(start_trigger);
@@ -539,10 +529,18 @@ void RendererController::OnRendererFatalError(StopTrigger stop_trigger) {
 
 void RendererController::SetClient(MediaObserverClient* client) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(client);
-  DCHECK(!client_);
 
   client_ = client;
+  if (!client_) {
+    CancelDelayedStart();
+    if (remote_rendering_started_) {
+      metrics_recorder_.WillStopSession(MEDIA_ELEMENT_DESTROYED);
+      remoter_->Stop(mojom::RemotingStopReason::UNEXPECTED_FAILURE);
+      remote_rendering_started_ = false;
+    }
+    return;
+  }
+
   client_->ActivateViewportIntersectionMonitoring(CanBeRemoting());
 }
 

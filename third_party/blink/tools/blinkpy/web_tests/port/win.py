@@ -84,7 +84,6 @@ class WinPort(base.Port):
 
     def additional_driver_flags(self):
         flags = super(WinPort, self).additional_driver_flags()
-        flags += ['--enable-direct-write']
         if not self.get_option('disable_breakpad'):
             flags += ['--enable-crash-reporter', '--crash-dumps-dir=%s' % self._dump_reader.crash_dumps_directory()]
         return flags
@@ -160,7 +159,7 @@ class WinPort(base.Port):
         return 'win'
 
     def relative_test_filename(self, filename):
-        path = filename[len(self.layout_tests_dir()) + 1:]
+        path = filename[len(self.web_tests_dir()) + 1:]
         return path.replace('\\', '/')
 
     def uses_apache(self):

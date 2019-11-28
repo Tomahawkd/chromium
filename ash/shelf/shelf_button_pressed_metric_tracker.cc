@@ -62,6 +62,8 @@ void ShelfButtonPressedMetricTracker::RecordButtonPressedAction(
   switch (performed_action) {
     case SHELF_ACTION_NONE:
     case SHELF_ACTION_APP_LIST_SHOWN:
+    case SHELF_ACTION_APP_LIST_DISMISSED:
+    case SHELF_ACTION_APP_LIST_BACK:
       break;
     case SHELF_ACTION_NEW_WINDOW_CREATED:
       Shell::Get()->metrics()->RecordUserMetricsAction(

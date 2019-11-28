@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "chrome/browser/profiles/profile.h"
@@ -84,6 +85,14 @@ class ConditionalCacheCountingHelperBrowserTest : public InProcessBrowserTest {
           std::make_unique<network::ResourceRequest>();
       request->url =
           embedded_test_server()->GetURL(base::StrCat({"/cachetime/", key}));
+
+      // Populate the Network Isolation Key so that it is cacheable.
+      url::Origin origin =
+          url::Origin::Create(embedded_test_server()->base_url());
+      request->trusted_params = network::ResourceRequest::TrustedParams();
+      request->trusted_params->network_isolation_key =
+          net::NetworkIsolationKey(origin, origin);
+
       content::SimpleURLLoaderTestHelper simple_loader_helper;
       std::unique_ptr<network::SimpleURLLoader> simple_loader =
           network::SimpleURLLoader::Create(std::move(request),

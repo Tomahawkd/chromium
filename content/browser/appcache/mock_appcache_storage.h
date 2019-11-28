@@ -9,11 +9,11 @@
 
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/containers/circular_deque.h"
-#include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -22,6 +22,7 @@
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_response.h"
 #include "content/browser/appcache/appcache_storage.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 
 namespace content {
 FORWARD_DECLARE_TEST(AppCacheServiceImplTest, DeleteAppCachesForOrigin);
@@ -49,7 +50,7 @@ class AppCacheUpdateJobTest;
 
 // For use in unit tests.
 // Note: This class is also being used to bootstrap our development efforts.
-// We can get layout tests up and running, and back fill with real storage
+// We can get web tests up and running, and back fill with real storage
 // somewhat in parallel.
 class MockAppCacheStorage : public AppCacheStorage {
  public:
@@ -94,7 +95,7 @@ class MockAppCacheStorage : public AppCacheStorage {
   friend class appcache_update_job_unittest::AppCacheUpdateJobTest;
   friend class MockAppCacheStorageTest;
 
-  using StoredCacheMap = base::hash_map<int64_t, scoped_refptr<AppCache>>;
+  using StoredCacheMap = std::unordered_map<int64_t, scoped_refptr<AppCache>>;
   using StoredGroupMap = std::map<GURL, scoped_refptr<AppCacheGroup>>;
   using DoomedResponseIds = std::set<int64_t>;
   using StoredEvictionTimesMap =
@@ -119,7 +120,7 @@ class MockAppCacheStorage : public AppCacheStorage {
 
   void AddStoredCache(AppCache* cache);
   void RemoveStoredCache(AppCache* cache);
-  void RemoveStoredCaches(const AppCacheGroup::Caches& caches);
+  void RemoveStoredCaches(const std::vector<AppCache*>& caches);
   bool IsCacheStored(const AppCache* cache) {
     return stored_caches_.find(cache->cache_id()) != stored_caches_.end();
   }
@@ -144,7 +145,7 @@ class MockAppCacheStorage : public AppCacheStorage {
   AppCacheDiskCache* disk_cache() {
     if (!disk_cache_) {
       const int kMaxCacheSize = 10 * 1024 * 1024;
-      disk_cache_.reset(new AppCacheDiskCache);
+      disk_cache_ = std::make_unique<AppCacheDiskCache>();
       disk_cache_->InitWithMemBackend(kMaxCacheSize,
                                       net::CompletionOnceCallback());
     }
@@ -188,18 +189,19 @@ class MockAppCacheStorage : public AppCacheStorage {
     simulate_find_sub_resource_ = true;
     simulated_found_entry_ = entry;
     simulated_found_fallback_entry_ = fallback_entry;
-    simulated_found_cache_id_ = kAppCacheNoCacheId; // N/A to sub resource loads
+    simulated_found_cache_id_ =
+        blink::mojom::kAppCacheNoCacheId;    // N/A to sub resource loads
     simulated_found_manifest_url_ = GURL();  // N/A to sub resource loads
     simulated_found_group_id_ = 0;  // N/A to sub resource loads
     simulated_found_network_namespace_ = network_namespace;
   }
 
-  void SimulateGetAllInfo(AppCacheInfoCollection* info) {
-    simulated_appcache_info_ = info;
+  void SimulateGetAllInfo(scoped_refptr<AppCacheInfoCollection> info) {
+    simulated_appcache_info_ = std::move(info);
   }
 
-  void SimulateResponseReader(AppCacheResponseReader* reader) {
-    simulated_reader_.reset(reader);
+  void SimulateResponseReader(std::unique_ptr<AppCacheResponseReader> reader) {
+    simulated_reader_ = std::move(reader);
   }
 
   StoredCacheMap stored_caches_;
@@ -224,7 +226,7 @@ class MockAppCacheStorage : public AppCacheStorage {
   scoped_refptr<AppCacheInfoCollection> simulated_appcache_info_;
   std::unique_ptr<AppCacheResponseReader> simulated_reader_;
 
-  base::WeakPtrFactory<MockAppCacheStorage> weak_factory_;
+  base::WeakPtrFactory<MockAppCacheStorage> weak_factory_{this};
 
   FRIEND_TEST_ALL_PREFIXES(MockAppCacheStorageTest,
                            BasicFindMainResponse);

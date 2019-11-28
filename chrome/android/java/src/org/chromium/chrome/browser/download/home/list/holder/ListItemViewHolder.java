@@ -10,7 +10,7 @@ import android.view.ViewGroup;
 
 import org.chromium.chrome.browser.download.home.list.ListItem;
 import org.chromium.chrome.browser.download.home.list.ListUtils;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
+import org.chromium.ui.modelutil.PropertyModel;
 
 /**
  * A {@link ViewHolder} responsible for building and setting properties on the underlying Android
@@ -25,7 +25,7 @@ public abstract class ListItemViewHolder extends ViewHolder {
     /**
      * Used as a method reference for ViewHolderFactory.
      * @see
-     * org.chromium.chrome.browser.modelutil.RecyclerViewAdapter.ViewHolderFactory#createViewHolder
+     * RecyclerViewAdapter.ViewHolderFactory#createViewHolder
      */
     public static ListItemViewHolder create(ViewGroup parent, @ListUtils.ViewType int viewType) {
         switch (viewType) {
@@ -48,6 +48,8 @@ public abstract class ListItemViewHolder extends ViewHolder {
                 return InProgressVideoViewHolder.create(parent);
             case ListUtils.ViewType.IN_PROGRESS_IMAGE:
                 return InProgressImageViewHolder.create(parent);
+            case ListUtils.ViewType.PAGINATION_HEADER:
+                return PaginationViewHolder.create(parent);
         }
 
         assert false;

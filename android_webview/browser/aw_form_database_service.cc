@@ -4,6 +4,7 @@
 
 #include "android_webview/browser/aw_form_database_service.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -37,8 +38,8 @@ AwFormDatabaseService::AwFormDatabaseService(const base::FilePath path)
   // TODO(pkasting): http://crbug.com/740773 This should likely be sequenced,
   // not single-threaded; it's also possible these objects can each use their
   // own sequences instead of sharing this one.
-  auto db_task_runner = base::CreateSingleThreadTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+  auto db_task_runner = base::CreateSingleThreadTaskRunner(
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
   web_database_ = new WebDatabaseService(path.Append(kWebDataFilename),
                                          ui_task_runner, db_task_runner);
@@ -84,7 +85,7 @@ bool AwFormDatabaseService::HasFormData() {
           base::IgnoreResult(&awds::GetCountOfValuesContainedBetween),
           autofill_data_, base::Time(), base::Time::Max(), this));
   {
-    base::ThreadRestrictions::ScopedAllowWait wait;
+    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
     has_form_data_completion_.Wait();
   }
   return has_form_data_result_;

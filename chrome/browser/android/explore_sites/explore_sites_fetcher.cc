@@ -21,9 +21,7 @@
 #include "chrome/browser/android/explore_sites/explore_sites_feature.h"
 #include "chrome/browser/android/explore_sites/explore_sites_types.h"
 #include "chrome/browser/android/explore_sites/url_util.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/common/channel_info.h"
-#include "components/variations/service/variations_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
@@ -44,32 +42,10 @@ namespace explore_sites {
 
 namespace {
 
-std::string GetCountry() {
-  std::string manually_set_variation_country =
-      base::GetFieldTrialParamValueByFeature(chrome::android::kExploreSites,
-                                             "country_override");
-  if (!manually_set_variation_country.empty())
-    return manually_set_variation_country;
-
-  variations::VariationsService* variations_service =
-      g_browser_process->variations_service();
-  if (variations_service) {
-    std::string country = variations_service->GetStoredPermanentCountry();
-    if (!country.empty())
-      return country;
-    country = variations_service->GetLatestCountry();
-    if (!country.empty())
-      return country;
-  }
-
-  return "DEFAULT";
-}
-
 // Content type needed in order to communicate with the server in binary
 // proto format.
 const char kRequestContentType[] = "application/x-protobuf";
 const char kRequestMethod[] = "GET";
-const char kExperiment[] = "exp";
 
 constexpr net::NetworkTrafficAnnotationTag traffic_annotation =
     net::DefineNetworkTrafficAnnotation("explore_sites", R"(
@@ -116,15 +92,17 @@ const net::BackoffEntry::Policy
 };
 const int ExploreSitesFetcher::kMaxFailureCountForBackgroundFetch = 7;
 
+// static
 std::unique_ptr<ExploreSitesFetcher> ExploreSitesFetcher::CreateForGetCatalog(
     bool is_immediate_fetch,
     const std::string& catalog_version,
     const std::string& accept_languages,
+    const std::string& country_code,
     scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
     Callback callback) {
   GURL url = GetCatalogURL();
   return base::WrapUnique(new ExploreSitesFetcher(
-      is_immediate_fetch, url, catalog_version, accept_languages,
+      is_immediate_fetch, url, catalog_version, accept_languages, country_code,
       loader_factory, std::move(callback)));
 }
 
@@ -133,14 +111,17 @@ ExploreSitesFetcher::ExploreSitesFetcher(
     const GURL& url,
     const std::string& catalog_version,
     const std::string& accept_languages,
+    const std::string& country_code,
     scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
     Callback callback)
     : is_immediate_fetch_(is_immediate_fetch),
       accept_languages_(accept_languages),
+      country_code_(country_code),
+      catalog_version_(catalog_version),
+      url_(url),
       device_delegate_(std::make_unique<DeviceDelegate>()),
       callback_(std::move(callback)),
-      url_loader_factory_(loader_factory),
-      weak_factory_(this) {
+      url_loader_factory_(loader_factory) {
   base::Version version = version_info::GetVersion();
   std::string channel_name = chrome::GetChannelName();
   client_version_ = base::StringPrintf("%d.%d.%d.%s.chrome",
@@ -148,11 +129,6 @@ ExploreSitesFetcher::ExploreSitesFetcher(
                                        version.components()[2],  // Build
                                        version.components()[3],  // Patch
                                        channel_name.c_str());
-  request_url_ =
-      net::AppendOrReplaceQueryParameter(url, "country_code", GetCountry());
-  request_url_ = net::AppendOrReplaceQueryParameter(
-      request_url_, "version_token", catalog_version);
-
   UpdateBackoffEntry();
 }
 
@@ -160,7 +136,11 @@ ExploreSitesFetcher::~ExploreSitesFetcher() {}
 
 void ExploreSitesFetcher::Start() {
   auto resource_request = std::make_unique<network::ResourceRequest>();
-  resource_request->url = request_url_;
+  GURL request_url =
+      net::AppendOrReplaceQueryParameter(url_, "country_code", country_code_);
+  request_url = net::AppendOrReplaceQueryParameter(request_url, "version_token",
+                                                   catalog_version_);
+  resource_request->url = request_url;
   resource_request->method = kRequestMethod;
   bool is_stable_channel =
       chrome::GetChannel() == version_info::Channel::STABLE;
@@ -181,9 +161,12 @@ void ExploreSitesFetcher::Start() {
 
   // Get field trial value, if any.
   std::string tag = base::GetFieldTrialParamValueByFeature(
-      chrome::android::kExploreSites, kExperiment);
+      chrome::android::kExploreSites,
+      chrome::android::explore_sites::
+          kExploreSitesHeadersExperimentParameterName);
+
   if (!tag.empty()) {
-    resource_request->headers.SetHeader("X-Google-Chrome-Experiment-Tag", tag);
+    resource_request->headers.SetHeader("X-Goog-Chrome-Experiment-Tag", tag);
   }
 
   url_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),

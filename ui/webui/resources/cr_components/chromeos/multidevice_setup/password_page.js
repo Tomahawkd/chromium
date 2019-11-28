@@ -41,12 +41,6 @@ Polymer({
       value: 'back',
     },
 
-    /** Overridden from UiPageContainerBehavior. */
-    headerId: {
-      type: String,
-      value: 'passwordPageHeader',
-    },
-
     /**
      * Authentication token; retrieved using the quickUnlockPrivate API.
      * @type {string}
@@ -102,6 +96,10 @@ Polymer({
     this.$.passwordInput.value = '';
   },
 
+  focusPasswordTextInput: function() {
+    this.$.passwordInput.focus();
+  },
+
   /** @override */
   created: function() {
     this.browserProxy_ = multidevice_setup.BrowserProxyImpl.getInstance();
@@ -150,8 +148,9 @@ Polymer({
    */
   onInputKeypress_: function(e) {
     // We are only listening for the user trying to enter their password.
-    if (e.key != 'Enter')
+    if (e.key != 'Enter') {
       return;
+    }
 
     this.fire('user-submitted-password');
   },

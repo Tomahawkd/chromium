@@ -17,20 +17,22 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.os.UserManager;
-import android.support.annotation.AnyThread;
-import android.support.annotation.MainThread;
-import android.support.annotation.Nullable;
+
+import androidx.annotation.AnyThread;
+import androidx.annotation.MainThread;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
+import androidx.annotation.WorkerThread;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VisibleForTesting;
+import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.metrics.CachedMetrics;
 import org.chromium.base.task.AsyncTask;
 import org.chromium.components.signin.util.PatternMatcher;
-import org.chromium.net.NetworkChangeNotifier;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,9 +40,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -91,33 +90,13 @@ public class AccountManagerFacade {
             new AtomicReference<>();
     private final CountDownLatch mPopulateAccountCacheLatch = new CountDownLatch(1);
     private final CachedMetrics.TimesHistogramSample mPopulateAccountCacheWaitingTimeHistogram =
-            new CachedMetrics.TimesHistogramSample(
-                    "Signin.AndroidPopulateAccountCacheWaitingTime", TimeUnit.MILLISECONDS);
+            new CachedMetrics.TimesHistogramSample("Signin.AndroidPopulateAccountCacheWaitingTime");
 
     private final ArrayList<Runnable> mCallbacksWaitingForCachePopulation = new ArrayList<>();
 
     private int mUpdateTasksCounter;
     private final ArrayList<Runnable> mCallbacksWaitingForPendingUpdates = new ArrayList<>();
-
-    /**
-     * A simple callback for getAuthToken.
-     */
-    public interface GetAuthTokenCallback {
-        /**
-         * Invoked on the UI thread if a token is provided by the AccountManager.
-         *
-         * @param token Auth token, guaranteed not to be null.
-         */
-        void tokenAvailable(String token);
-
-        /**
-         * Invoked on the UI thread if no token is available.
-         *
-         * @param isTransientError Indicates if the error is transient (network timeout or
-         * unavailable, etc) or persistent (bad credentials, permission denied, etc).
-         */
-        void tokenUnavailable(boolean isTransientError);
-    }
+    private ObservableValue<Boolean> mUpdatePendingState = new MutableObservableValue<>(true);
 
     /**
      * @param delegate the AccountManagerDelegate to use as a backend
@@ -187,6 +166,7 @@ public class AccountManagerFacade {
      * @return a singleton instance
      */
     @AnyThread
+    @CalledByNative
     public static AccountManagerFacade get() {
         AccountManagerFacade instance = sAtomicInstance.get();
         assert instance != null : "AccountManagerFacade is not initialized!";
@@ -451,64 +431,30 @@ public class AccountManagerFacade {
     }
 
     /**
-     * Gets the auth token and returns the response asynchronously.
-     * This should be called when we have a foreground activity that needs an auth token.
-     * If encountered an IO error, it will attempt to retry when the network is back.
-     *
-     * - Assumes that the account is a valid account.
+     * Synchronously gets an OAuth2 access token. May return a cached version, use
+     * {@link #invalidateAccessToken} to invalidate a token in the cache.
+     * @param account The {@link Account} for which the token is requested.
+     * @param scope OAuth2 scope for which the requested token should be valid.
+     * @return The OAuth2 access token as a string.
      */
-    @MainThread
-    public void getAuthToken(final Account account, final String authTokenType,
-            final GetAuthTokenCallback callback) {
-        ConnectionRetry.runAuthTask(new AuthTask<String>() {
-            @Override
-            public String run() throws AuthException {
-                return mDelegate.getAuthToken(account, authTokenType);
-            }
-            @Override
-            public void onSuccess(String token) {
-                callback.tokenAvailable(token);
-            }
-            @Override
-            public void onFailure(boolean isTransientError) {
-                callback.tokenUnavailable(isTransientError);
-            }
-        });
+    @WorkerThread
+    public String getAccessToken(Account account, String scope) throws AuthException {
+        assert account != null;
+        assert scope != null;
+        // TODO(bsazonov): Rename delegate's getAuthToken to getAccessToken.
+        return mDelegate.getAuthToken(account, scope);
     }
 
     /**
-     * Invalidates the old token (if non-null/non-empty) and asynchronously generates a new one.
-     *
-     * - Assumes that the account is a valid account.
+     * Synchronously clears an OAuth2 access token from the cache. Use {@link #getAccessToken}
+     * to issue a new token after invalidating the old one.
+     * @param accessToken The access token to invalidate.
      */
-    @MainThread
-    public void getNewAuthToken(Account account, String authToken, String authTokenType,
-            GetAuthTokenCallback callback) {
-        invalidateAuthToken(authToken);
-        getAuthToken(account, authTokenType, callback);
-    }
-
-    /**
-     * Clear an auth token from the local cache with respect to the ApplicationContext.
-     */
-    @MainThread
-    public void invalidateAuthToken(final String authToken) {
-        if (authToken == null || authToken.isEmpty()) {
-            return;
-        }
-        ConnectionRetry.runAuthTask(new AuthTask<Boolean>() {
-            @Override
-            public Boolean run() throws AuthException {
-                mDelegate.invalidateAuthToken(authToken);
-                return true;
-            }
-            @Override
-            public void onSuccess(Boolean result) {}
-            @Override
-            public void onFailure(boolean isTransientError) {
-                Log.e(TAG, "Failed to invalidate auth token: " + authToken);
-            }
-        });
+    @WorkerThread
+    public void invalidateAccessToken(String accessToken) throws AuthException {
+        assert accessToken != null;
+        // TODO(bsazonov): Rename delegate's invalidateAuthToken to invalidateAccessToken.
+        mDelegate.invalidateAuthToken(accessToken);
     }
 
     // Incorrectly infers that this is called on a worker thread because of AsyncTask doInBackground
@@ -576,7 +522,7 @@ public class AccountManagerFacade {
     @MainThread
     public void waitForPendingUpdates(Runnable callback) {
         ThreadUtils.assertOnUiThread();
-        if (!isUpdatePending()) {
+        if (!isUpdatePending().get()) {
             callback.run();
             return;
         }
@@ -588,9 +534,9 @@ public class AccountManagerFacade {
      * @return true if there are no pending updates, false otherwise
      */
     @MainThread
-    public boolean isUpdatePending() {
+    public ObservableValue<Boolean> isUpdatePending() {
         ThreadUtils.assertOnUiThread();
-        return mUpdateTasksCounter > 0;
+        return mUpdatePendingState;
     }
 
     private boolean hasFeature(Account account, String feature) {
@@ -690,19 +636,28 @@ public class AccountManagerFacade {
         }
     }
 
+    private void incrementUpdateCounter() {
+        assert mUpdateTasksCounter >= 0;
+        if (mUpdateTasksCounter++ > 0) return;
+
+        mUpdatePendingState.set(true);
+    }
+
     private void decrementUpdateCounter() {
+        assert mUpdateTasksCounter > 0;
         if (--mUpdateTasksCounter > 0) return;
 
         for (Runnable callback : mCallbacksWaitingForPendingUpdates) {
             callback.run();
         }
         mCallbacksWaitingForPendingUpdates.clear();
+        mUpdatePendingState.set(false);
     }
 
     private class InitializeTask extends AsyncTask<Void> {
         @Override
         protected void onPreExecute() {
-            ++mUpdateTasksCounter;
+            incrementUpdateCounter();
         }
 
         @Override
@@ -731,7 +686,7 @@ public class AccountManagerFacade {
     private class UpdateAccountRestrictionPatternsTask extends AsyncTask<PatternMatcher[]> {
         @Override
         protected void onPreExecute() {
-            ++mUpdateTasksCounter;
+            incrementUpdateCounter();
         }
 
         @Override
@@ -749,7 +704,7 @@ public class AccountManagerFacade {
     private class UpdateAccountsTask extends AsyncTask<AccountManagerResult<List<Account>>> {
         @Override
         protected void onPreExecute() {
-            ++mUpdateTasksCounter;
+            incrementUpdateCounter();
         }
 
         @Override
@@ -761,85 +716,6 @@ public class AccountManagerFacade {
         protected void onPostExecute(AccountManagerResult<List<Account>> allAccounts) {
             setAllAccounts(allAccounts);
             decrementUpdateCounter();
-        }
-    }
-
-    private interface AuthTask<T> {
-        T run() throws AuthException;
-        void onSuccess(T result);
-        void onFailure(boolean isTransientError);
-    }
-
-    /**
-     * A helper class to encapsulate network connection retry logic for AuthTasks.
-     *
-     * The task will be run on the background thread. If it encounters a transient error, it will
-     * wait for a network change and retry up to MAX_TRIES times.
-     */
-    private static class ConnectionRetry<T>
-            implements NetworkChangeNotifier.ConnectionTypeObserver {
-        private static final int MAX_TRIES = 3;
-
-        private final AuthTask<T> mAuthTask;
-        private final AtomicInteger mNumTries;
-        private final AtomicBoolean mIsTransientError;
-
-        public static <T> void runAuthTask(AuthTask<T> authTask) {
-            new ConnectionRetry<>(authTask).attempt();
-        }
-
-        private ConnectionRetry(AuthTask<T> authTask) {
-            mAuthTask = authTask;
-            mNumTries = new AtomicInteger(0);
-            mIsTransientError = new AtomicBoolean(false);
-        }
-
-        /**
-         * Tries running the {@link AuthTask} in the background. This object is never registered
-         * as a {@link NetworkChangeNotifier.ConnectionTypeObserver} when this method is called.
-         */
-        private void attempt() {
-            ThreadUtils.assertOnUiThread();
-            // Clear any transient error.
-            mIsTransientError.set(false);
-            new AsyncTask<T>() {
-                @Override
-                public T doInBackground() {
-                    try {
-                        return mAuthTask.run();
-                    } catch (AuthException ex) {
-                        Log.w(TAG, "Failed to perform auth task: %s", ex.stringifyCausalChain());
-                        Log.d(TAG, "Exception details:", ex);
-                        mIsTransientError.set(ex.isTransientError());
-                    }
-                    return null;
-                }
-                @Override
-                public void onPostExecute(T result) {
-                    if (result != null) {
-                        mAuthTask.onSuccess(result);
-                    } else if (!mIsTransientError.get() || mNumTries.incrementAndGet() >= MAX_TRIES
-                            || !NetworkChangeNotifier.isInitialized()) {
-                        // Permanent error, ran out of tries, or we can't listen for network
-                        // change events; give up.
-                        mAuthTask.onFailure(mIsTransientError.get());
-                    } else {
-                        // Transient error with tries left; register for another attempt.
-                        NetworkChangeNotifier.addConnectionTypeObserver(ConnectionRetry.this);
-                    }
-                }
-            }
-                    .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-        }
-
-        @Override
-        public void onConnectionTypeChanged(int connectionType) {
-            assert mNumTries.get() < MAX_TRIES;
-            if (NetworkChangeNotifier.isOnline()) {
-                // The network is back; stop listening and try again.
-                NetworkChangeNotifier.removeConnectionTypeObserver(this);
-                attempt();
-            }
         }
     }
 }

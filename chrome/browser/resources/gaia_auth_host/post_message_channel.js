@@ -16,7 +16,8 @@ const PostMessageChannel = (function() {
    * Allowed origins of the hosting page.
    * @type {Array<string>}
    */
-  const ALLOWED_ORIGINS = ['chrome://oobe', 'chrome://chrome-signin'];
+  const ALLOWED_ORIGINS =
+      ['chrome://oobe', 'chrome://chrome-signin', 'chrome://password-change'];
 
   /** @const */
   const PORT_MESSAGE = 'post-message-port-message';
@@ -135,8 +136,9 @@ const PostMessageChannel = (function() {
     createPort: function(
         channelId, channelName, opt_targetWindow, opt_targetOrigin) {
       const port = new PostMessagePort(channelId, channelName);
-      if (opt_targetWindow)
+      if (opt_targetWindow) {
         port.setTarget(opt_targetWindow, opt_targetOrigin);
+      }
       this.channels_[channelId] = port;
       return port;
     },
@@ -239,8 +241,9 @@ const PostMessageChannel = (function() {
           this.postToUpperWindow(e.data);
         }
       } else if (e.data.type === CHANNEL_INIT_MESSAGE) {
-        if (ALLOWED_ORIGINS.indexOf(e.origin) == -1)
+        if (ALLOWED_ORIGINS.indexOf(e.origin) == -1) {
           return;
+        }
 
         this.upperWindow = e.source;
         this.upperOrigin = e.origin;

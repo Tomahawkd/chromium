@@ -9,7 +9,6 @@
 #include "base/process/process_handle.h"
 #include "base/system/sys_info.h"
 #include "base/trace_event/memory_allocator_dump.h"
-#include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "ui/gfx/buffer_format_util.h"
 
@@ -29,7 +28,7 @@ bool GLImageSharedMemory::Initialize(
   if (!region.IsValid())
     return false;
 
-  if (NumberOfPlanesForBufferFormat(format) != 1)
+  if (NumberOfPlanesForLinearBufferFormat(format) != 1)
     return false;
 
   base::CheckedNumeric<size_t> checked_size = stride;
@@ -70,9 +69,7 @@ void GLImageSharedMemory::OnMemoryDump(
     base::trace_event::ProcessMemoryDump* pmd,
     uint64_t process_tracing_id,
     const std::string& dump_name) {
-  size_t size_in_bytes = 0;
-
-  size_in_bytes = stride() * GetSize().height();
+  const size_t size_in_bytes = stride() * GetSize().height();
 
   // Dump under "/shared_memory", as the base class may also dump to
   // "/texture_memory".

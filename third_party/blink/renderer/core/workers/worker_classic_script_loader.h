@@ -30,30 +30,30 @@
 
 #include <memory>
 #include "base/memory/scoped_refptr.h"
-#include "services/network/public/mojom/fetch_api.mojom-blink.h"
-#include "third_party/blink/public/mojom/net/ip_address_space.mojom-blink.h"
+#include "services/network/public/mojom/fetch_api.mojom-blink-forward.h"
+#include "services/network/public/mojom/ip_address_space.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader_client.h"
 #include "third_party/blink/renderer/platform/loader/allowed_by_nosniff.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
+class ContentSecurityPolicy;
 class ResourceRequest;
 class ResourceResponse;
 class ExecutionContext;
 class TextResourceDecoder;
 
 class CORE_EXPORT WorkerClassicScriptLoader final
-    : public GarbageCollectedFinalized<WorkerClassicScriptLoader>,
+    : public GarbageCollected<WorkerClassicScriptLoader>,
       public ThreadableLoaderClient {
   USING_GARBAGE_COLLECTED_MIXIN(WorkerClassicScriptLoader);
 
@@ -64,8 +64,7 @@ class CORE_EXPORT WorkerClassicScriptLoader final
   void LoadSynchronously(ExecutionContext&,
                          ResourceFetcher* fetch_client_settings_object_fetcher,
                          const KURL&,
-                         mojom::RequestContextType,
-                         mojom::IPAddressSpace);
+                         mojom::RequestContextType);
 
   // Note that callbacks could be invoked before
   // LoadTopLevelScriptAsynchronously() returns.
@@ -77,10 +76,8 @@ class CORE_EXPORT WorkerClassicScriptLoader final
       ResourceFetcher* fetch_client_settings_object_fetcher,
       const KURL&,
       mojom::RequestContextType,
-      network::mojom::FetchRequestMode,
-      network::mojom::FetchCredentialsMode,
-      mojom::IPAddressSpace,
-      bool is_nested_worker,
+      network::mojom::RequestMode,
+      network::mojom::CredentialsMode,
       base::OnceClosure response_callback,
       base::OnceClosure finished_callback);
 
@@ -93,10 +90,10 @@ class CORE_EXPORT WorkerClassicScriptLoader final
   const KURL& ResponseURL() const;
   bool Failed() const { return failed_; }
   bool Canceled() const { return canceled_; }
-  unsigned long Identifier() const { return identifier_; }
-  long long AppCacheID() const { return app_cache_id_; }
+  uint64_t Identifier() const { return identifier_; }
+  int64_t AppCacheID() const { return app_cache_id_; }
 
-  std::unique_ptr<Vector<char>> ReleaseCachedMetadata() {
+  std::unique_ptr<Vector<uint8_t>> ReleaseCachedMetadata() {
     return std::move(cached_metadata_);
   }
 
@@ -106,7 +103,7 @@ class CORE_EXPORT WorkerClassicScriptLoader final
 
   const String& GetReferrerPolicy() const { return referrer_policy_; }
 
-  mojom::IPAddressSpace ResponseAddressSpace() const {
+  network::mojom::IPAddressSpace ResponseAddressSpace() const {
     return response_address_space_;
   }
 
@@ -115,12 +112,11 @@ class CORE_EXPORT WorkerClassicScriptLoader final
   }
 
   // ThreadableLoaderClient
-  void DidReceiveResponse(unsigned long /*identifier*/,
-                          const ResourceResponse&,
-                          std::unique_ptr<WebDataConsumerHandle>) override;
+  void DidReceiveResponse(uint64_t /*identifier*/,
+                          const ResourceResponse&) override;
   void DidReceiveData(const char* data, unsigned data_length) override;
   void DidReceiveCachedMetadata(const char*, int /*dataLength*/) override;
-  void DidFinishLoading(unsigned long identifier) override;
+  void DidFinishLoading(uint64_t identifier) override;
   void DidFail(const ResourceError&) override;
   void DidFailRedirectCheck() override;
 
@@ -148,21 +144,19 @@ class CORE_EXPORT WorkerClassicScriptLoader final
   bool canceled_ = false;
   bool need_to_cancel_ = false;
 
-  bool forbid_cross_origin_redirects_ = false;
+  // true when LoadTopLevelScriptAsynchronously() is called,
+  // false when LoadSynchronously() is called i.e. for importScripts().
+  bool is_top_level_script_ = false;
 
-  unsigned long identifier_ = 0;
-  long long app_cache_id_ = 0;
-  std::unique_ptr<Vector<char>> cached_metadata_;
+  uint64_t identifier_ = 0;
+  int64_t app_cache_id_ = 0;
+  std::unique_ptr<Vector<uint8_t>> cached_metadata_;
   Member<ContentSecurityPolicy> content_security_policy_;
-  mojom::IPAddressSpace response_address_space_;
+  network::mojom::IPAddressSpace response_address_space_;
   std::unique_ptr<Vector<String>> origin_trial_tokens_;
   String referrer_policy_;
 
-  bool is_worker_global_scope_ = false;
   Member<ResourceFetcher> fetch_client_settings_object_fetcher_;
-
-  // TODO(nhiroki): Move this to FetchClientSettingsObject.
-  AllowedByNosniff::MimeTypeCheck mime_type_check_mode_;
 };
 
 }  // namespace blink

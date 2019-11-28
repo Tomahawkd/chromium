@@ -49,6 +49,10 @@
 #include "services/service_manager/sandbox/chromecast_sandbox_whitelist_buildflags.h"
 #endif  // !defined(OS_NACL_NONSFI)
 
+#if defined(OS_CHROMEOS)
+#include "services/service_manager/sandbox/linux/bpf_ime_policy_linux.h"
+#endif  // defined(OS_CHROMEOS)
+
 using sandbox::BaselinePolicy;
 using sandbox::SandboxBPF;
 using sandbox::SyscallSets;
@@ -169,6 +173,10 @@ std::unique_ptr<BPFBasePolicy> SandboxSeccompBPF::PolicyForSandboxType(
       return std::make_unique<NetworkProcessPolicy>();
     case SANDBOX_TYPE_AUDIO:
       return std::make_unique<AudioProcessPolicy>();
+#if defined(OS_CHROMEOS)
+    case SANDBOX_TYPE_IME:
+      return std::make_unique<ImeProcessPolicy>();
+#endif  // defined(OS_CHROMEOS)
     case SANDBOX_TYPE_NO_SANDBOX:
     default:
       NOTREACHED();
@@ -217,7 +225,8 @@ void SandboxSeccompBPF::RunSandboxSanityChecks(
 
 bool SandboxSeccompBPF::StartSandboxWithExternalPolicy(
     std::unique_ptr<sandbox::bpf_dsl::Policy> policy,
-    base::ScopedFD proc_fd) {
+    base::ScopedFD proc_fd,
+    sandbox::SandboxBPF::SeccompLevel seccomp_level) {
 #if BUILDFLAG(USE_SECCOMP_BPF)
   if (IsSeccompBPFDesired() && SupportsSandbox()) {
     CHECK(policy);
@@ -228,7 +237,7 @@ bool SandboxSeccompBPF::StartSandboxWithExternalPolicy(
     // doing so does not stop the sandbox.
     SandboxBPF sandbox(std::move(policy));
     sandbox.SetProcFd(std::move(proc_fd));
-    CHECK(sandbox.StartSandbox(SandboxBPF::SeccompLevel::SINGLE_THREADED));
+    CHECK(sandbox.StartSandbox(seccomp_level));
     return true;
   }
 #endif  // BUILDFLAG(USE_SECCOMP_BPF)

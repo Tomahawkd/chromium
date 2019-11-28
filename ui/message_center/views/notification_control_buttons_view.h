@@ -42,16 +42,15 @@ class MESSAGE_CENTER_EXPORT NotificationControlButtonsView
   // Change the visibility of the settings button. True to show, false to hide.
   // Default: hidden.
   void ShowSnoozeButton(bool show);
+  // Change the visibility of all buttons. True to show, false to hide.
+  void ShowButtons(bool show);
 
-  // Request the focus on the close button.
-  void RequestFocusOnCloseButton();
+  // Return the focus status of any button. True if the focus is on any button,
+  // false otherwise.
+  bool IsAnyButtonFocused() const;
 
-  // Return the focus status of the close button. True if the focus is on the
-  // close button, false otherwise.
-  bool IsCloseButtonFocused() const;
-  // Return the focus status of the settings button. True if the focus is on the
-  // close button, false otherwise.
-  bool IsSettingsButtonFocused() const;
+  // Sets the icon color for the close, settings, and snooze buttons.
+  void SetButtonIconColors(SkColor color);
 
   // Methods for retrieving the control buttons directly.
   views::Button* close_button() const;
@@ -60,7 +59,6 @@ class MESSAGE_CENTER_EXPORT NotificationControlButtonsView
 
   // views::View
   const char* GetClassName() const override;
-  void SetVisible(bool visible) override;
 
   // views::ButtonListener
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -71,6 +69,9 @@ class MESSAGE_CENTER_EXPORT NotificationControlButtonsView
   std::unique_ptr<PaddedButton> close_button_;
   std::unique_ptr<PaddedButton> settings_button_;
   std::unique_ptr<PaddedButton> snooze_button_;
+
+  // The color used for the close, settings, and snooze icons.
+  SkColor icon_color_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationControlButtonsView);
 };

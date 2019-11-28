@@ -27,7 +27,7 @@ source_set("chromeos") {
     "//ppapi/host",
     "//remoting/protocol",
     "//skia",
-    "//third_party/webrtc/modules/desktop_capture",
+    "//third_party/webrtc_overrides:webrtc_component",
     "//ui/aura",
     "//ui/compositor",
     "//ui/events",
@@ -47,7 +47,7 @@ source_set("unit_tests") {
   configs += [ "//remoting/build/config:version" ]
 
   deps = [
-    "//remoting/host",
+    "//remoting/host:common",
     "//remoting/host:test_support",
     "//remoting/proto",
     "//remoting/resources",

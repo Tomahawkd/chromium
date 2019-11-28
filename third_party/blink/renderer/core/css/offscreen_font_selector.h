@@ -21,16 +21,18 @@ class FontDescription;
 
 class CORE_EXPORT OffscreenFontSelector : public FontSelector {
  public:
-  static OffscreenFontSelector* Create(ExecutionContext* context) {
-    return MakeGarbageCollected<OffscreenFontSelector>(context);
-  }
-
   explicit OffscreenFontSelector(ExecutionContext*);
   ~OffscreenFontSelector() override;
 
   unsigned Version() const override { return 1; }
 
   void ReportNotDefGlyph() const override;
+
+  void ReportSuccessfulFontFamilyMatch(
+      const AtomicString& font_family_name) override;
+
+  void ReportFailedFontFamilyMatch(
+      const AtomicString& font_family_name) override;
 
   scoped_refptr<FontData> GetFontData(const FontDescription&,
                                       const AtomicString&) override;

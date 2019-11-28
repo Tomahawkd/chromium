@@ -9,9 +9,9 @@
 #include "base/optional.h"
 #include "chrome/browser/ui/autofill/autofill_popup_view.h"
 #include "chrome/browser/ui/views/autofill/autofill_popup_base_view.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/font_list.h"
-#include "ui/gfx/path.h"
 
 #include <memory>
 #include <vector>
@@ -34,6 +34,8 @@ class AutofillPopupRowView : public views::View {
   void SetSelected(bool is_selected);
 
   // views::View:
+  bool HandleAccessibleAction(const ui::AXActionData& action_data) override;
+  void OnThemeChanged() override;
   // Drags and presses on any row should be a no-op; subclasses instead rely on
   // entry/release events. Returns true to indicate that those events have been
   // processed (i.e., intentionally ignored).
@@ -49,22 +51,24 @@ class AutofillPopupRowView : public views::View {
   // method which calls Init before returning.
   void Init();
 
+  AutofillPopupViewNativeViews* popup_view() { return popup_view_; }
+  int line_number() const { return line_number_; }
+  bool is_selected() const { return is_selected_; }
+
   virtual void CreateContent() = 0;
   virtual void RefreshStyle() = 0;
   virtual std::unique_ptr<views::Background> CreateBackground() = 0;
 
+ private:
   AutofillPopupViewNativeViews* popup_view_;
   const int line_number_;
   bool is_selected_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(AutofillPopupRowView);
 };
 
 // Views implementation for the autofill and password suggestion.
-// TODO(https://crbug.com/768881): Once this implementation is complete, this
-// class should be renamed to AutofillPopupViewViews and old
-// AutofillPopupViewViews should be removed. The main difference of
-// AutofillPopupViewNativeViews from AutofillPopupViewViews is that child views
-// are drawn using toolkit-views framework, in contrast to
-// AutofillPopupViewViews, where individuals rows are drawn directly on canvas.
+// TODO(https://crbug.com/831603): Rename to AutofillPopupViewViews.
 class AutofillPopupViewNativeViews : public AutofillPopupBaseView,
                                      public AutofillPopupView {
  public:
@@ -76,14 +80,19 @@ class AutofillPopupViewNativeViews : public AutofillPopupBaseView,
     return rows_;
   }
 
+  // views::View:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  void OnThemeChanged() override;
+  void VisibilityChanged(View* starting_from, bool is_visible) override;
+
   // AutofillPopupView:
   void Show() override;
   void Hide() override;
+  base::Optional<int32_t> GetAxUniqueId() override;
 
   // AutofillPopupBaseView:
   // TODO(crbug.com/831603): Remove these overrides and the corresponding
-  // methods in AutofillPopupBaseView once deprecation of
-  // AutofillPopupViewViews is complete.
+  // methods in AutofillPopupBaseView.
   void OnMouseMoved(const ui::MouseEvent& event) override {}
 
   AutofillPopupController* controller() { return controller_; }
@@ -104,10 +113,14 @@ class AutofillPopupViewNativeViews : public AutofillPopupBaseView,
   void DoUpdateBoundsAndRedrawPopup() override;
 
   // Controller for this view.
-  AutofillPopupController* controller_;
+  AutofillPopupController* controller_ = nullptr;
   std::vector<AutofillPopupRowView*> rows_;
-  views::BoxLayout* layout_;
-  views::ScrollView* scroll_view_;
+  views::BoxLayout* layout_ = nullptr;
+  views::ScrollView* scroll_view_ = nullptr;
+  views::View* body_container_ = nullptr;
+  views::View* footer_container_ = nullptr;
+
+  bool is_ax_menu_start_event_fired_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillPopupViewNativeViews);
 };

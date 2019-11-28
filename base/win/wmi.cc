@@ -10,6 +10,10 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/location.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/threading/scoped_thread_priority.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_variant.h"
 
@@ -20,6 +24,10 @@ namespace win {
 
 bool CreateLocalWmiConnection(bool set_blanket,
                               ComPtr<IWbemServices>* wmi_services) {
+  // Mitigate the issues caused by loading DLLs on a background thread
+  // (http://crbug/973868).
+  base::ScopedThreadMayLoadLibraryOnBackgroundThread priority_boost(FROM_HERE);
+
   ComPtr<IWbemLocator> wmi_locator;
   HRESULT hr =
       ::CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER,
@@ -47,8 +55,8 @@ bool CreateLocalWmiConnection(bool set_blanket,
 }
 
 bool CreateWmiClassMethodObject(IWbemServices* wmi_services,
-                                const StringPiece16& class_name,
-                                const StringPiece16& method_name,
+                                WStringPiece class_name,
+                                WStringPiece method_name,
                                 ComPtr<IWbemClassObject>* class_instance) {
   // We attempt to instantiate a COM object that represents a WMI object plus
   // a method rolled into one entity.
@@ -76,20 +84,13 @@ bool CreateWmiClassMethodObject(IWbemServices* wmi_services,
   return SUCCEEDED(hr);
 }
 
-bool SetWmiClassMethodParameter(IWbemClassObject* class_method,
-                                const StringPiece16& parameter_name,
-                                VARIANT* parameter) {
-  HRESULT hr = class_method->Put(parameter_name.data(), 0, parameter, 0);
-  return SUCCEEDED(hr);
-}
-
 // The code in Launch() basically calls the Create Method of the Win32_Process
 // CIM class is documented here:
 // http://msdn2.microsoft.com/en-us/library/aa389388(VS.85).aspx
 // NOTE: The documentation for the Create method suggests that the ProcessId
 // parameter and return value are of type uint32_t, but when we call the method
 // the values in the returned out_params, are VT_I4, which is int32_t.
-bool WmiLaunchProcess(const string16& command_line, int* process_id) {
+bool WmiLaunchProcess(const std::wstring& command_line, int* process_id) {
   ComPtr<IWbemServices> wmi_local;
   if (!CreateLocalWmiConnection(true, &wmi_local))
     return false;
@@ -104,8 +105,8 @@ bool WmiLaunchProcess(const string16& command_line, int* process_id) {
 
   ScopedVariant b_command_line(command_line.c_str());
 
-  if (!SetWmiClassMethodParameter(process_create.Get(), L"CommandLine",
-                                  b_command_line.AsInput())) {
+  if (FAILED(process_create->Put(L"CommandLine", 0, b_command_line.AsInput(),
+                                 0))) {
     return false;
   }
 
@@ -150,8 +151,8 @@ WmiComputerSystemInfo WmiComputerSystemInfo::Get() {
 
 void WmiComputerSystemInfo::PopulateModelAndManufacturer(
     const ComPtr<IWbemServices>& services) {
-  static constexpr base::StringPiece16 query_computer_system(
-      L"SELECT Manufacturer,Model FROM Win32_ComputerSystem");
+  static constexpr WStringPiece query_computer_system =
+      L"SELECT Manufacturer,Model FROM Win32_ComputerSystem";
 
   ComPtr<IEnumWbemClassObject> enumerator_computer_system;
   HRESULT hr =
@@ -176,14 +177,15 @@ void WmiComputerSystemInfo::PopulateModelAndManufacturer(
   }
   ScopedVariant model;
   hr = class_object->Get(L"Model", 0, model.Receive(), 0, 0);
-  if (SUCCEEDED(hr) && model.type() == VT_BSTR)
+  if (SUCCEEDED(hr) && model.type() == VT_BSTR) {
     model_.assign(V_BSTR(model.ptr()), ::SysStringLen(V_BSTR(model.ptr())));
+  }
 }
 
 void WmiComputerSystemInfo::PopulateSerialNumber(
     const ComPtr<IWbemServices>& services) {
-  static constexpr base::StringPiece16 query_bios(
-      L"SELECT SerialNumber FROM Win32_Bios");
+  static constexpr WStringPiece query_bios =
+      L"SELECT SerialNumber FROM Win32_Bios";
 
   ComPtr<IEnumWbemClassObject> enumerator_bios;
   HRESULT hr =

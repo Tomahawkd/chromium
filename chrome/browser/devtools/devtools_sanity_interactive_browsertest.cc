@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 #include "chrome/browser/devtools/protocol/browser_handler.h"
@@ -42,7 +45,7 @@ class CheckWaiter {
   bool Check() {
     if (callback_.Run() != expected_ &&
         base::Time::NowFromSystemTime() < timeout_) {
-      base::MessageLoopCurrent::Get()->task_runner()->PostTask(
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE, base::BindOnce(base::IgnoreResult(&CheckWaiter::Check),
                                     base::Unretained(this)));
       return false;
@@ -50,7 +53,7 @@ class CheckWaiter {
 
     // Quit the run_loop to end the wait.
     if (!quit_.is_null())
-      base::ResetAndReturn(&quit_).Run();
+      std::move(quit_).Run();
     return true;
   }
 
@@ -147,14 +150,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest, NormalToMinimizedWindow) {
   CheckIsMinimized(true);
 }
 
-#if defined(OS_MACOSX)
-// https://crbug.com/828031
-#define MAYBE_NormalToFullscreenWindow DISABLED_NormalToFullscreenWindow
-#else
-#define MAYBE_NormalToFullscreenWindow NormalToFullscreenWindow
-#endif
-IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest,
-                       MAYBE_NormalToFullscreenWindow) {
+IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest, NormalToFullscreenWindow) {
 #if defined(OS_MACOSX)
   ui::test::ScopedFakeNSWindowFullscreen faker;
 #endif
@@ -183,7 +179,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest,
 }
 
 #if defined(OS_MACOSX)
-// https://crbug.com/828031
+// MacViews does not yet implement maximized windows: https://crbug.com/836327
 #define MAYBE_MaximizedToFullscreenWindow DISABLED_MaximizedToFullscreenWindow
 #else
 #define MAYBE_MaximizedToFullscreenWindow MaximizedToFullscreenWindow
@@ -193,14 +189,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest,
   browser()->window()->Maximize();
   CheckIsMaximized(true);
 
-#if defined(OS_MACOSX)
-  ui::test::ScopedFakeNSWindowFullscreen faker;
-#endif
   CheckIsFullscreen(false);
   SendCommand("fullscreen");
-#if defined(OS_MACOSX)
-  faker.FinishTransition();
-#endif
   CheckIsFullscreen(true);
 }
 
@@ -225,14 +215,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest,
   CheckIsMaximized(false);
 }
 
-#if defined(OS_MACOSX)
-// https://crbug.com/828031
-#define MAYBE_ExitFullscreenWindow DISABLED_ExitFullscreenWindow
-#else
-#define MAYBE_ExitFullscreenWindow ExitFullscreenWindow
-#endif
-IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest,
-                       MAYBE_ExitFullscreenWindow) {
+IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest, ExitFullscreenWindow) {
 #if defined(OS_MACOSX)
   ui::test::ScopedFakeNSWindowFullscreen faker;
 #endif

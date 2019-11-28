@@ -11,7 +11,6 @@
 #include "base/containers/circular_deque.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
@@ -100,6 +99,14 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
   // Sets the color on the delegate. May cause an implicit animation.
   virtual void SetColor(SkColor color);
   SkColor GetTargetColor() const;
+
+  // Sets the clip rect on the delegate. May cause an implicit animation.
+  virtual void SetClipRect(const gfx::Rect& clip_rect);
+  gfx::Rect GetTargetClipRect() const;
+
+  // Sets the rounded corners on the delegate. May cause an implicit animation.
+  virtual void SetRoundedCorners(const gfx::RoundedCornersF& rounded_corners);
+  gfx::RoundedCornersF GetTargetRoundedCorners() const;
 
   // Returns the default length of animations, including adjustment for slow
   // animation mode if set.
@@ -273,7 +280,7 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
 
   using RunningAnimations = std::vector<RunningAnimation>;
   using AnimationQueue =
-      base::circular_deque<linked_ptr<LayerAnimationSequence>>;
+      base::circular_deque<std::unique_ptr<LayerAnimationSequence>>;
 
   // Finishes all animations by either advancing them to their final state or by
   // aborting them.
@@ -369,6 +376,8 @@ class COMPOSITOR_EXPORT LayerAnimator : public base::RefCounted<LayerAnimator>,
       int target_property,
       base::TimeTicks animation_start_time,
       std::unique_ptr<cc::AnimationCurve> curve) override {}
+  void NotifyLocalTimeUpdated(
+      base::Optional<base::TimeDelta> local_time) override {}
 
   // Implementation of LayerThreadedAnimationDelegate.
   void AddThreadedAnimation(

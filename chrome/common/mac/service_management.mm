@@ -17,6 +17,11 @@
 #include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 
+// This entire file is written in terms of the launch_data_t API, which is
+// deprecated with no replacement, so just ignore the warnings for now.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 namespace {
 
 class ScopedLaunchData {
@@ -66,6 +71,26 @@ int ErrnoFromLaunchData(launch_data_t data) {
   return launch_data_get_errno(data);
 }
 
+bool StringFromLaunchDataDictEntry(launch_data_t dict,
+                                   const char* key,
+                                   std::string* value) {
+  launch_data_t entry = launch_data_dict_lookup(dict, key);
+  if (!entry || launch_data_get_type(entry) != LAUNCH_DATA_STRING)
+    return false;
+  *value = std::string(launch_data_get_string(entry));
+  return true;
+}
+
+bool IntFromLaunchDataDictEntry(launch_data_t dict,
+                                const char* key,
+                                int* value) {
+  launch_data_t entry = launch_data_dict_lookup(dict, key);
+  if (!entry || launch_data_get_type(entry) != LAUNCH_DATA_INTEGER)
+    return false;
+  *value = launch_data_get_integer(entry);
+  return true;
+}
+
 ScopedLaunchData DoServiceOp(const char* verb,
                              const std::string& label,
                              int* error) {
@@ -104,15 +129,10 @@ base::scoped_nsobject<NSDictionary> DictionaryForJobOptions(
              forKey:@LAUNCH_JOBKEY_PROGRAMARGUMENTS];
   }
 
-  DCHECK_EQ(options.socket_name.empty(), options.socket_key.empty());
-  if (!options.socket_name.empty() && !options.socket_key.empty()) {
-    NSDictionary* inner_dict = [NSDictionary
-        dictionaryWithObject:base::SysUTF8ToNSString(options.socket_name)
-                      forKey:@LAUNCH_JOBSOCKETKEY_PATHNAME];
-    NSDictionary* outer_dict = [NSDictionary
-        dictionaryWithObject:inner_dict
-                      forKey:base::SysUTF8ToNSString(options.socket_key)];
-    [opts setObject:outer_dict forKey:@LAUNCH_JOBKEY_SOCKETS];
+  if (!options.mach_service_name.empty()) {
+    NSDictionary* service_entry =
+        @{base::SysUTF8ToNSString(options.mach_service_name) : @YES};
+    [opts setObject:service_entry forKey:@LAUNCH_JOBKEY_MACHSERVICES];
   }
 
   if (options.run_at_load || options.auto_launch) {
@@ -135,9 +155,37 @@ base::scoped_nsobject<NSDictionary> DictionaryForJobOptions(
 namespace mac {
 namespace services {
 
+JobInfo::JobInfo() = default;
+JobInfo::JobInfo(const JobInfo& other) = default;
+JobInfo::~JobInfo() = default;
+
+JobCheckinInfo::JobCheckinInfo() = default;
+JobCheckinInfo::JobCheckinInfo(const JobCheckinInfo& other) = default;
+JobCheckinInfo::~JobCheckinInfo() = default;
+
 JobOptions::JobOptions() = default;
 JobOptions::JobOptions(const JobOptions& other) = default;
 JobOptions::~JobOptions() = default;
+
+bool GetJobInfo(const std::string& label, JobInfo* info) {
+  int error = 0;
+  ScopedLaunchData resp = DoServiceOp(LAUNCH_KEY_GETJOB, label, &error);
+
+  if (error)
+    return false;
+
+  std::string program;
+  if (!StringFromLaunchDataDictEntry(resp.get(), LAUNCH_JOBKEY_PROGRAM,
+                                     &program))
+    return false;
+
+  info->program = program;
+  int pid;
+  if (IntFromLaunchDataDictEntry(resp.get(), LAUNCH_JOBKEY_PID, &pid))
+    info->pid = pid;
+
+  return true;
+}
 
 bool SubmitJob(const JobOptions& options) {
   base::scoped_nsobject<NSDictionary> options_dict =
@@ -165,3 +213,5 @@ bool RemoveJob(const std::string& label) {
 
 }  // namespace services
 }  // namespace mac
+
+#pragma clang diagnostic pop

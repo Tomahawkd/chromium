@@ -10,9 +10,9 @@
 
 #include "base/macros.h"
 #include "chrome/browser/ui/sync/bubble_sync_promo_delegate.h"
-#include "chrome/browser/ui/views/profiles/dice_accounts_menu.h"
-#include "components/signin/core/browser/signin_metrics.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/style/typography.h"
 #include "ui/views/view.h"
 
 class Profile;
@@ -68,12 +68,7 @@ class DiceBubbleSyncPromoView : public views::View,
   BubbleSyncPromoDelegate* delegate_;
   DiceSigninButtonView* signin_button_view_ = nullptr;
 
-  // Accounts submenu that is shown when |signin_button_->drop_down_arrow()| is
-  // pressed.
-  std::unique_ptr<DiceAccountsMenu> dice_accounts_menu_;
-
   std::vector<AccountInfo> accounts_for_submenu_;
-  std::vector<gfx::Image> images_for_submenu_;
 
   DISALLOW_COPY_AND_ASSIGN(DiceBubbleSyncPromoView);
 };

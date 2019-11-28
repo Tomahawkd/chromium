@@ -33,10 +33,6 @@ bool ContentMainDelegate::ProcessRegistersWithSystemProcess(
   return false;
 }
 
-bool ContentMainDelegate::ShouldSendMachPort(const std::string& process_type) {
-  return true;
-}
-
 bool ContentMainDelegate::DelaySandboxInitialization(
     const std::string& process_type) {
   return false;
@@ -55,6 +51,10 @@ int ContentMainDelegate::TerminateForFatalInitializationError() {
   return 0;
 }
 
+bool ContentMainDelegate::ShouldLockSchemeRegistry() {
+  return true;
+}
+
 service_manager::ProcessType ContentMainDelegate::OverrideProcessType() {
   return service_manager::ProcessType::kDefault;
 }
@@ -64,7 +64,7 @@ void ContentMainDelegate::AdjustServiceProcessCommandLine(
     base::CommandLine* command_line) {}
 
 void ContentMainDelegate::OnServiceManagerInitialized(
-    const base::Closure& quit_closure,
+    base::OnceClosure quit_closure,
     service_manager::BackgroundServiceManager* service_manager) {}
 
 bool ContentMainDelegate::ShouldCreateFeatureList() {

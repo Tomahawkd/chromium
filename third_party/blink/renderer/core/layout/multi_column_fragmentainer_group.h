@@ -7,7 +7,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_flow_thread.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -193,8 +193,6 @@ class CORE_EXPORT MultiColumnFragmentainerGroup {
 
   // Maximum logical height allowed.
   LayoutUnit max_logical_height_;
-
-  unsigned actual_column_count_allowance_ = 0;
 
   bool is_logical_height_known_ = false;
 };

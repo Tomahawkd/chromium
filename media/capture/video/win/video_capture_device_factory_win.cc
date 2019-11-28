@@ -13,9 +13,9 @@
 #include <wrl.h>
 #include <wrl/client.h>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -75,13 +75,30 @@ const char* const kBlacklistedCameraNames[] = {
     // The following software WebCams cause crashes.
     "IP Camera [JPEG/MJPEG]", "CyberLink Webcam Splitter", "EpocCam",
 };
-static_assert(arraysize(kBlacklistedCameraNames) == BLACKLISTED_CAMERA_MAX + 1,
+static_assert(base::size(kBlacklistedCameraNames) == BLACKLISTED_CAMERA_MAX + 1,
               "kBlacklistedCameraNames should be same size as "
               "BlacklistedCameraNames enum");
 
 const char* const kModelIdsBlacklistedForMediaFoundation[] = {
     // Devices using Empia 2860 or 2820 chips, see https://crbug.com/849636.
-    "eb1a:2860", "eb1a:2820", "1ce6:2820"};
+    "eb1a:2860", "eb1a:2820", "1ce6:2820",
+    // Elgato HD60 Pro
+    "12ab:0380",
+    // Sensoray 2253
+    "1943:2253",
+    // Dell E5440
+    "0c45:64d0", "0c45:64d2",
+    // Dell E7440
+    "1bcf:2985",
+    // Lenovo Thinkpad Model 20CG0006FMZ front and rear cameras, see
+    // also https://crbug.com/924528
+    "04ca:7047", "04ca:7048",
+    // HP Elitebook 840 G1
+    "04f2:b3ed", "04f2:b3ca", "05c8:035d", "05c8:0369",
+    // HP HD Camera. See https://crbug.com/1011888.
+    "04ca:7095",
+    // RBG/IR camera for Windows Hello Face Auth. See https://crbug.com/984864.
+    "13d3:5257"};
 
 const std::pair<VideoCaptureApi, std::vector<std::pair<GUID, GUID>>>
     kMfAttributes[] = {{VideoCaptureApi::WIN_MEDIA_FOUNDATION,
@@ -102,7 +119,7 @@ bool IsDeviceBlacklistedForQueryingDetailedFrameRates(
 
 bool IsDeviceBlacklistedForMediaFoundationByModelId(
     const std::string& model_id) {
-  return base::ContainsValue(kModelIdsBlacklistedForMediaFoundation, model_id);
+  return base::Contains(kModelIdsBlacklistedForMediaFoundation, model_id);
 }
 
 bool LoadMediaFoundationDlls() {
@@ -113,7 +130,7 @@ bool LoadMediaFoundationDlls() {
 
   for (const wchar_t* kMfDLL : kMfDLLs) {
     wchar_t path[MAX_PATH] = {0};
-    ExpandEnvironmentStringsW(kMfDLL, path, arraysize(path));
+    ExpandEnvironmentStringsW(kMfDLL, path, base::size(path));
     if (!LoadLibraryExW(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH))
       return false;
   }
@@ -146,7 +163,7 @@ bool CreateVideoCaptureDeviceMediaFoundation(const Descriptor& descriptor,
                                              IMFMediaSource** source) {
   ComPtr<IMFAttributes> attributes;
   static_assert(
-      arraysize(kMfAttributes) == 2,
+      base::size(kMfAttributes) == 2,
       "Implementation here asumes that kMfAttributes has size of two.");
   DCHECK_EQ(kMfAttributes[0].first, VideoCaptureApi::WIN_MEDIA_FOUNDATION);
   const auto& attributes_data =
@@ -168,8 +185,8 @@ bool CreateVideoCaptureDeviceMediaFoundation(const Descriptor& descriptor,
 
 bool IsDeviceBlackListed(const std::string& name) {
   DCHECK_EQ(BLACKLISTED_CAMERA_MAX + 1,
-            static_cast<int>(arraysize(kBlacklistedCameraNames)));
-  for (size_t i = 0; i < arraysize(kBlacklistedCameraNames); ++i) {
+            static_cast<int>(base::size(kBlacklistedCameraNames)));
+  for (size_t i = 0; i < base::size(kBlacklistedCameraNames); ++i) {
     if (base::StartsWith(name, kBlacklistedCameraNames[i],
                          base::CompareCase::INSENSITIVE_ASCII)) {
       DVLOG(1) << "Enumerated blacklisted device: " << name;
@@ -317,7 +334,7 @@ void GetDeviceSupportedFormatsMediaFoundation(const Descriptor& descriptor,
 
 bool IsEnclosureLocationSupported() {
   // DeviceInformation class is only available in Win10 onwards (v10.0.10240.0).
-  if (base::win::GetVersion() < base::win::VERSION_WIN10) {
+  if (base::win::GetVersion() < base::win::Version::WIN10) {
     DVLOG(1) << "DeviceInformation not supported before Windows 10";
     return false;
   }
@@ -347,8 +364,7 @@ bool VideoCaptureDeviceFactoryWin::PlatformSupportsMediaFoundation() {
 VideoCaptureDeviceFactoryWin::VideoCaptureDeviceFactoryWin()
     : use_media_foundation_(
           base::FeatureList::IsEnabled(media::kMediaFoundationVideoCapture)),
-      com_thread_("Windows Video Capture COM Thread"),
-      weak_ptr_factory_(this) {
+      com_thread_("Windows Video Capture COM Thread") {
   mf_enum_device_sources_func_ =
       PlatformSupportsMediaFoundation() ? MFEnumDeviceSources : nullptr;
   direct_show_enum_devices_func_ =

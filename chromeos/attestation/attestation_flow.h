@@ -9,12 +9,12 @@
 #include <string>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "chromeos/chromeos_export.h"
-#include "chromeos/dbus/attestation_constants.h"
+#include "chromeos/dbus/constants/attestation_constants.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -33,10 +33,10 @@ class CryptohomeClient;
 namespace attestation {
 
 // Interface for access to the Privacy CA server.
-class CHROMEOS_EXPORT ServerProxy {
+class COMPONENT_EXPORT(CHROMEOS_ATTESTATION) ServerProxy {
  public:
-  typedef base::Callback<void(bool success,
-                              const std::string& data)> DataCallback;
+  typedef base::Callback<void(bool success, const std::string& data)>
+      DataCallback;
   virtual ~ServerProxy();
   virtual void SendEnrollRequest(const std::string& request,
                                  const DataCallback& on_response) = 0;
@@ -50,13 +50,13 @@ class CHROMEOS_EXPORT ServerProxy {
 // and the Chrome OS Privacy CA server.  Sample usage:
 //
 //    AttestationFlow flow(AsyncMethodCaller::GetInstance(),
-//                         DBusThreadManager::Get().GetCryptohomeClient(),
+//                         CryptohomeClient::Get(),
 //                         std::move(my_server_proxy));
 //    AttestationFlow::CertificateCallback callback = base::Bind(&MyCallback);
 //    flow.GetCertificate(ENTERPRISE_USER_CERTIFICATE, false, callback);
 //
 // This class is not thread safe.
-class CHROMEOS_EXPORT AttestationFlow {
+class COMPONENT_EXPORT(CHROMEOS_ATTESTATION) AttestationFlow {
  public:
   typedef base::RepeatingCallback<
       void(AttestationStatus status, const std::string& pem_certificate_chain)>
@@ -119,6 +119,8 @@ class CHROMEOS_EXPORT AttestationFlow {
   //   force_new_key - If set to true, a new key will be generated even if a key
   //                   already exists for the profile.  The new key will replace
   //                   the existing key on success.
+  //   key_name - The name of the key. If left empty, a default name derived
+  //              from the |certiifcate_profile| and |account_id| will be used.
   //   callback - A callback which will be called when the operation completes.
   //              On success |result| will be true and |data| will contain the
   //              PCA-issued certificate chain in PEM format.
@@ -126,6 +128,7 @@ class CHROMEOS_EXPORT AttestationFlow {
                               const AccountId& account_id,
                               const std::string& request_origin,
                               bool force_new_key,
+                              const std::string& key_name,
                               const CertificateCallback& callback);
 
  private:
@@ -199,12 +202,15 @@ class CHROMEOS_EXPORT AttestationFlow {
   //   account_id - Identifies the active user.
   //   request_origin - An identifier for the origin of this request.
   //   generate_new_key - If set to true a new key is generated.
+  //   key_name - The name of the key. If left empty, a default name derived
+  //              from the |certiifcate_profile| and |account_id| will be used.
   //   callback - Called when the operation completes.
   void StartCertificateRequest(
       const AttestationCertificateProfile certificate_profile,
       const AccountId& account_id,
       const std::string& request_origin,
       bool generate_new_key,
+      const std::string& key_name,
       const CertificateCallback& callback);
 
   // Called when the attestation daemon has finished creating a certificate
@@ -284,7 +290,7 @@ class CHROMEOS_EXPORT AttestationFlow {
   base::TimeDelta ready_timeout_;
   base::TimeDelta retry_delay_;
 
-  base::WeakPtrFactory<AttestationFlow> weak_factory_;
+  base::WeakPtrFactory<AttestationFlow> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AttestationFlow);
 };

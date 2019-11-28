@@ -7,6 +7,7 @@
 #include "chrome/browser/permissions/permission_request_manager_test_api.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands_mac.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
@@ -28,7 +29,7 @@ void ShowBubble(Browser* browser) {
       std::make_unique<test::PermissionRequestManagerTestApi>(browser);
   EXPECT_TRUE(test_api->manager());
 
-  test_api->AddSimpleRequest(CONTENT_SETTINGS_TYPE_GEOLOCATION);
+  test_api->AddSimpleRequest(ContentSettingsType::GEOLOCATION);
 
   // The PermissionRequestManager displays prompts asynchronously.
   EXPECT_FALSE(test_api->GetPromptWindow());
@@ -48,35 +49,47 @@ IN_PROC_BROWSER_TEST_F(PermissionBubbleBrowserTest, HasLocationBarByDefault) {
 }
 
 IN_PROC_BROWSER_TEST_F(PermissionBubbleBrowserTest,
-                       TabFullscreenHasLocationBar) {
-  FullscreenNotificationObserver fullscreen_observer;
+                       TabFullscreenHasNoLocationBar) {
   ShowBubble(browser());
   EXPECT_TRUE(HasVisibleLocationBarForBrowser(browser()));
 
   FullscreenController* controller =
       browser()->exclusive_access_manager()->fullscreen_controller();
-  controller->EnterFullscreenModeForTab(
-      browser()->tab_strip_model()->GetActiveWebContents(), GURL());
-  fullscreen_observer.Wait();
+  {
+    FullscreenNotificationObserver fullscreen_observer(browser());
+    controller->EnterFullscreenModeForTab(
+        browser()->tab_strip_model()->GetActiveWebContents(), GURL());
+    fullscreen_observer.Wait();
+  }
+  EXPECT_TRUE(controller->IsTabFullscreen());
   EXPECT_FALSE(HasVisibleLocationBarForBrowser(browser()));
 
-  controller->ExitFullscreenModeForTab(
-      browser()->tab_strip_model()->GetActiveWebContents());
-  fullscreen_observer.Wait();
+  {
+    FullscreenNotificationObserver fullscreen_observer(browser());
+    controller->ExitFullscreenModeForTab(
+        browser()->tab_strip_model()->GetActiveWebContents());
+    fullscreen_observer.Wait();
+  }
+  EXPECT_FALSE(controller->IsTabFullscreen());
   EXPECT_TRUE(HasVisibleLocationBarForBrowser(browser()));
 }
 
 IN_PROC_BROWSER_TEST_F(PermissionBubbleBrowserTest, AppHasNoLocationBar) {
-  Browser* app_browser = OpenExtensionAppWindow();
+  content::WebContents* app_contents = OpenExtensionAppWindow();
+
+  Browser* app_browser = chrome::FindBrowserWithWebContents(app_contents);
+  ASSERT_TRUE(app_browser->is_type_app());
+
   // ShowBubble(app_browser) doesn't actually show a bubble for extension app
   // windows, so create one directly.
-  auto prompt =
-      std::make_unique<PermissionPromptImpl>(app_browser, test_delegate());
+  auto prompt = std::make_unique<PermissionPromptImpl>(
+      app_browser, app_contents, test_delegate());
   EXPECT_FALSE(HasVisibleLocationBarForBrowser(app_browser));
 }
 
+// Crashes. http://crbug.com/920582
 IN_PROC_BROWSER_TEST_F(PermissionBubbleKioskBrowserTest,
-                       KioskHasNoLocationBar) {
+                       DISABLED_KioskHasNoLocationBar) {
   ShowBubble(browser());
   // Kiosk mode on Mac has no location bar.
   EXPECT_FALSE(HasVisibleLocationBarForBrowser(browser()));

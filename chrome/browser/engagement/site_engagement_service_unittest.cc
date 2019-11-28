@@ -5,9 +5,12 @@
 #include "chrome/browser/engagement/site_engagement_service.h"
 
 #include <algorithm>
+#include <map>
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -21,8 +24,8 @@
 #include "chrome/browser/engagement/site_engagement_metrics.h"
 #include "chrome/browser/engagement/site_engagement_observer.h"
 #include "chrome/browser/engagement/site_engagement_score.h"
+#include "chrome/browser/engagement/site_engagement_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
@@ -73,7 +76,7 @@ class SiteEngagementChangeWaiter : public content_settings::Observer {
       const ContentSettingsPattern& secondary_pattern,
       ContentSettingsType content_type,
       const std::string& resource_identifier) override {
-    if (content_type == CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT)
+    if (content_type == ContentSettingsType::SITE_ENGAGEMENT)
       Proceed();
   }
 
@@ -169,6 +172,12 @@ class SiteEngagementServiceTest : public ChromeRenderViewHostTestHarness {
     HistoryServiceFactory::GetInstance()->SetTestingFactory(
         profile(), base::BindRepeating(&BuildTestHistoryService));
     SiteEngagementScore::SetParamValuesForTesting();
+
+    // Ensure that we have just one SiteEngagementService: no service created
+    // with TestingProfile.
+    // (See KeyedServiceBaseFactory::ServiceIsCreatedWithContext).
+    DCHECK(!SiteEngagementServiceFactory::GetForProfileIfExists(profile()));
+
     service_ = base::WrapUnique(new SiteEngagementService(profile(), &clock_));
   }
 
@@ -216,7 +225,7 @@ class SiteEngagementServiceTest : public ChromeRenderViewHostTestHarness {
       const GURL& url) {
     double score = 0;
     base::RunLoop run_loop;
-    base::CreateSingleThreadTaskRunnerWithTraits({thread_id})
+    base::CreateSingleThreadTaskRunner({thread_id})
         ->PostTaskAndReply(
             FROM_HERE,
             base::BindOnce(&SiteEngagementServiceTest::CheckScoreFromSettings,
@@ -256,7 +265,7 @@ class SiteEngagementServiceTest : public ChromeRenderViewHostTestHarness {
  protected:
   void CheckScoreFromSettings(HostContentSettingsMap* settings_map,
                               const GURL& url,
-                              double *score) {
+                              double* score) {
     *score = SiteEngagementService::GetScoreFromSettings(settings_map, url);
   }
 
@@ -1073,10 +1082,10 @@ TEST_F(SiteEngagementServiceTest, NavigationAccumulation) {
                                              ui::PAGE_TRANSITION_AUTO_BOOKMARK);
   NavigateWithTransitionAndExpectHigherScore(
       service, url, ui::PAGE_TRANSITION_KEYWORD_GENERATED);
+  NavigateWithTransitionAndExpectHigherScore(service, url,
+                                             ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
 
   // Other transition types should not accumulate engagement.
-  NavigateWithTransitionAndExpectEqualScore(service, url,
-                                            ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
   NavigateWithTransitionAndExpectEqualScore(service, url,
                                             ui::PAGE_TRANSITION_LINK);
   NavigateWithTransitionAndExpectEqualScore(service, url,
@@ -1157,7 +1166,8 @@ TEST_F(SiteEngagementServiceTest, CleanupOriginsOnHistoryDeletion) {
     base::CancelableTaskTracker task_tracker;
     // Expire origin1, origin2, origin2a, and origin4's most recent visit.
     history->ExpireHistoryBetween(std::set<GURL>(), yesterday, today,
-                                  base::DoNothing(), &task_tracker);
+                                  /*user_initiated*/ true, base::DoNothing(),
+                                  &task_tracker);
     waiter.Wait();
 
     // origin2 is cleaned up because all its urls are deleted. origin1a and
@@ -1712,6 +1722,9 @@ TEST_F(SiteEngagementServiceTest, CleanupMovesScoreBackToRebase) {
 }
 
 TEST_F(SiteEngagementServiceTest, IncognitoEngagementService) {
+  base::Time current_day = GetReferenceTime();
+  clock_.SetNow(current_day);
+
   SiteEngagementService* service = SiteEngagementService::Get(profile());
   ASSERT_TRUE(service);
 
@@ -1723,8 +1736,8 @@ TEST_F(SiteEngagementServiceTest, IncognitoEngagementService) {
   service->AddPoints(url1, 1);
   service->AddPoints(url2, 2);
 
-  SiteEngagementService* incognito_service =
-      SiteEngagementService::Get(profile()->GetOffTheRecordProfile());
+  auto incognito_service = base::WrapUnique(
+      new SiteEngagementService(profile()->GetOffTheRecordProfile(), &clock_));
   EXPECT_EQ(1, incognito_service->GetScore(url1));
   EXPECT_EQ(2, incognito_service->GetScore(url2));
   EXPECT_EQ(0, incognito_service->GetScore(url3));
@@ -1745,6 +1758,16 @@ TEST_F(SiteEngagementServiceTest, IncognitoEngagementService) {
   service->AddPoints(url4, 2);
   EXPECT_EQ(2, incognito_service->GetScore(url4));
   EXPECT_EQ(2, service->GetScore(url4));
+
+  // Engagement should never become stale in incognito.
+  current_day += incognito_service->GetStalePeriod();
+  clock_.SetNow(current_day);
+  EXPECT_FALSE(incognito_service->IsLastEngagementStale());
+  current_day += incognito_service->GetStalePeriod();
+  clock_.SetNow(current_day);
+  EXPECT_FALSE(incognito_service->IsLastEngagementStale());
+
+  incognito_service->Shutdown();
 }
 
 TEST_F(SiteEngagementServiceTest, GetScoreFromSettings) {

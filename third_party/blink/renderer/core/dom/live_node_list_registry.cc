@@ -30,9 +30,9 @@ void LiveNodeListRegistry::Remove(const LiveNodeListBase* list,
   RecomputeMask();
 }
 
-void LiveNodeListRegistry::Trace(blink::Visitor* visitor) {
-  visitor->RegisterWeakMembers<LiveNodeListRegistry,
-                               &LiveNodeListRegistry::ClearWeakMembers>(this);
+void LiveNodeListRegistry::Trace(Visitor* visitor) {
+  visitor->RegisterWeakCallbackMethod<
+      LiveNodeListRegistry, &LiveNodeListRegistry::ProcessCustomWeakness>(this);
 }
 
 void LiveNodeListRegistry::RecomputeMask() {
@@ -42,9 +42,9 @@ void LiveNodeListRegistry::RecomputeMask() {
   mask_ = mask;
 }
 
-void LiveNodeListRegistry::ClearWeakMembers(Visitor*) {
-  auto* it = std::remove_if(data_.begin(), data_.end(), [](Entry entry) {
-    return !ObjectAliveTrait<LiveNodeListBase>::IsHeapObjectAlive(entry.first);
+void LiveNodeListRegistry::ProcessCustomWeakness(const WeakCallbackInfo& info) {
+  auto* it = std::remove_if(data_.begin(), data_.end(), [info](Entry entry) {
+    return !info.IsHeapObjectAlive(entry.first);
   });
   if (it == data_.end())
     return;

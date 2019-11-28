@@ -5,8 +5,9 @@
 #include <errno.h>
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/gtest_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
@@ -114,7 +115,7 @@ TEST(URLCanonTest, DoAppendUTF8) {
     {0x10FFFF, "\xF4\x8F\xBF\xBF"},
   };
   std::string out_str;
-  for (size_t i = 0; i < arraysize(utf_cases); i++) {
+  for (size_t i = 0; i < base::size(utf_cases); i++) {
     out_str.clear();
     StdStringCanonOutput output(&out_str);
     AppendUTF8Value(utf_cases[i].input, &output);
@@ -123,26 +124,15 @@ TEST(URLCanonTest, DoAppendUTF8) {
   }
 }
 
-#if defined(GTEST_HAS_DEATH_TEST)
-// TODO(mattm): Can't run this in debug mode for now, since the DCHECK will
-// cause the Chromium stack trace dialog to appear and hang the test.
-// See http://crbug.com/49580.
-#if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
-#define MAYBE_DoAppendUTF8Invalid DoAppendUTF8Invalid
-#else
-#define MAYBE_DoAppendUTF8Invalid DISABLED_DoAppendUTF8Invalid
-#endif
-TEST(URLCanonTest, MAYBE_DoAppendUTF8Invalid) {
+TEST(URLCanonTest, DoAppendUTF8Invalid) {
   std::string out_str;
   StdStringCanonOutput output(&out_str);
   // Invalid code point (too large).
-  ASSERT_DEBUG_DEATH({
+  EXPECT_DCHECK_DEATH({
     AppendUTF8Value(0x110000, &output);
     output.Complete();
-    EXPECT_EQ("", out_str);
-  }, "");
+  });
 }
-#endif  // defined(GTEST_HAS_DEATH_TEST)
 
 TEST(URLCanonTest, UTF) {
   // Low-level test that we handle reading, canonicalization, and writing
@@ -177,7 +167,7 @@ TEST(URLCanonTest, UTF) {
   };
 
   std::string out_str;
-  for (size_t i = 0; i < arraysize(utf_cases); i++) {
+  for (size_t i = 0; i < base::size(utf_cases); i++) {
     if (utf_cases[i].input8) {
       out_str.clear();
       StdStringCanonOutput output(&out_str);
@@ -248,7 +238,7 @@ TEST(URLCanonTest, Scheme) {
 
   std::string out_str;
 
-  for (size_t i = 0; i < arraysize(scheme_cases); i++) {
+  for (size_t i = 0; i < base::size(scheme_cases); i++) {
     int url_len = static_cast<int>(strlen(scheme_cases[i].input));
     Component in_comp(0, url_len);
     Component out_comp;
@@ -513,7 +503,7 @@ TEST(URLCanonTest, Host) {
 
   // CanonicalizeHost() non-verbose.
   std::string out_str;
-  for (size_t i = 0; i < arraysize(host_cases); i++) {
+  for (size_t i = 0; i < base::size(host_cases); i++) {
     // Narrow version.
     if (host_cases[i].input8) {
       int host_len = static_cast<int>(strlen(host_cases[i].input8));
@@ -561,7 +551,7 @@ TEST(URLCanonTest, Host) {
   }
 
   // CanonicalizeHostVerbose()
-  for (size_t i = 0; i < arraysize(host_cases); i++) {
+  for (size_t i = 0; i < base::size(host_cases); i++) {
     // Narrow version.
     if (host_cases[i].input8) {
       int host_len = static_cast<int>(strlen(host_cases[i].input8));
@@ -691,7 +681,7 @@ TEST(URLCanonTest, IPv4) {
     {"0.00.0x.0x0", L"0.00.0x.0x0", "0.0.0.0", Component(0, 7), CanonHostInfo::IPV4, 4, "00000000"},
   };
 
-  for (size_t i = 0; i < arraysize(cases); i++) {
+  for (size_t i = 0; i < base::size(cases); i++) {
     // 8-bit version.
     Component component(0, static_cast<int>(strlen(cases[i].input8)));
 
@@ -845,7 +835,7 @@ TEST(URLCanonTest, IPv6) {
     {"[::1 hello]", L"[::1 hello]", "", Component(), CanonHostInfo::BROKEN, -1, ""},
   };
 
-  for (size_t i = 0; i < arraysize(cases); i++) {
+  for (size_t i = 0; i < base::size(cases); i++) {
     // 8-bit version.
     Component component(0, static_cast<int>(strlen(cases[i].input8)));
 
@@ -971,7 +961,7 @@ TEST(URLCanonTest, UserInfo) {
     {"ftp://me\\mydomain:pass@foo.com/", "", Component(0, -1), Component(0, -1), true},
   };
 
-  for (size_t i = 0; i < arraysize(user_info_cases); i++) {
+  for (size_t i = 0; i < base::size(user_info_cases); i++) {
     int url_len = static_cast<int>(strlen(user_info_cases[i].input));
     Parsed parsed;
     ParseStandardURL(user_info_cases[i].input, url_len, &parsed);
@@ -1040,7 +1030,7 @@ TEST(URLCanonTest, Port) {
     {"80", PORT_UNSPECIFIED, ":80", Component(1, 2), true},
   };
 
-  for (size_t i = 0; i < arraysize(port_cases); i++) {
+  for (size_t i = 0; i < base::size(port_cases); i++) {
     int url_len = static_cast<int>(strlen(port_cases[i].input));
     Component in_comp(0, url_len);
     Component out_comp;
@@ -1163,7 +1153,7 @@ TEST(URLCanonTest, Path) {
     {NULL, L"/\xfdd0zyx", "/%EF%BF%BDzyx", Component(0, 13), false},
   };
 
-  for (size_t i = 0; i < arraysize(path_cases); i++) {
+  for (size_t i = 0; i < base::size(path_cases); i++) {
     if (path_cases[i].input8) {
       int len = static_cast<int>(strlen(path_cases[i].input8));
       Component in_comp(0, len);
@@ -1240,7 +1230,7 @@ TEST(URLCanonTest, Query) {
     {"q=\"asdf\"", L"q=\"asdf\"", "?q=%22asdf%22"},
   };
 
-  for (size_t i = 0; i < arraysize(query_cases); i++) {
+  for (size_t i = 0; i < base::size(query_cases); i++) {
     Component out_comp;
 
     if (query_cases[i].input8) {
@@ -1312,7 +1302,7 @@ TEST(URLCanonTest, Ref) {
       {"#asdf", L"#asdf", "##asdf", Component(1, 5), true},
   };
 
-  for (size_t i = 0; i < arraysize(ref_cases); i++) {
+  for (size_t i = 0; i < base::size(ref_cases); i++) {
     // 8-bit input
     if (ref_cases[i].input8) {
       int len = static_cast<int>(strlen(ref_cases[i].input8));
@@ -1403,7 +1393,7 @@ TEST(URLCanonTest, CanonicalizeStandardURL) {
       {"https://foo:80/", "https://foo:80/", true},
       {"ftp://foo:21/", "ftp://foo/", true},
       {"ftp://foo:80/", "ftp://foo:80/", true},
-      {"gopher://foo:70/", "gopher://foo/", true},
+      {"gopher://foo:70/", "gopher://foo:70/", true},
       {"gopher://foo:443/", "gopher://foo:443/", true},
       {"ws://foo:80/", "ws://foo/", true},
       {"ws://foo:81/", "ws://foo:81/", true},
@@ -1424,7 +1414,7 @@ TEST(URLCanonTest, CanonicalizeStandardURL) {
        "ws://%29w%1ew%81/", false},
   };
 
-  for (size_t i = 0; i < arraysize(cases); i++) {
+  for (size_t i = 0; i < base::size(cases); i++) {
     int url_len = static_cast<int>(strlen(cases[i].input));
     Parsed parsed;
     ParseStandardURL(cases[i].input, url_len, &parsed);
@@ -1457,7 +1447,7 @@ TEST(URLCanonTest, ReplaceStandardURL) {
     {"http://a:b@google.com:22/foo?baz@cat", "filesystem", NULL, NULL, NULL, NULL, NULL, NULL, NULL, "filesystem://a:b@google.com:22/foo?baz@cat"},
   };
 
-  for (size_t i = 0; i < arraysize(replace_cases); i++) {
+  for (size_t i = 0; i < base::size(replace_cases); i++) {
     const ReplaceCase& cur = replace_cases[i];
     int base_len = static_cast<int>(strlen(cur.base));
     Parsed parsed;
@@ -1540,7 +1530,7 @@ TEST(URLCanonTest, ReplaceFileURL) {
     {"file:///C:/gaba?query#ref", "http", NULL, NULL, NULL, NULL, NULL, NULL, NULL, "file:///C:/gaba?query#ref"},
   };
 
-  for (size_t i = 0; i < arraysize(replace_cases); i++) {
+  for (size_t i = 0; i < base::size(replace_cases); i++) {
     const ReplaceCase& cur = replace_cases[i];
     int base_len = static_cast<int>(strlen(cur.base));
     Parsed parsed;
@@ -1605,7 +1595,7 @@ TEST(URLCanonTest, ReplaceFileSystemURL) {
        "filesystem:http://bar.com:40/t/gaba?query#ref"},
   };
 
-  for (size_t i = 0; i < arraysize(replace_cases); i++) {
+  for (size_t i = 0; i < base::size(replace_cases); i++) {
     const ReplaceCase& cur = replace_cases[i];
     int base_len = static_cast<int>(strlen(cur.base));
     Parsed parsed;
@@ -1644,7 +1634,7 @@ TEST(URLCanonTest, ReplacePathURL) {
     {"data:foo", NULL, NULL, NULL, NULL, NULL, kDeleteComp, NULL, NULL, "data:"},
   };
 
-  for (size_t i = 0; i < arraysize(replace_cases); i++) {
+  for (size_t i = 0; i < base::size(replace_cases); i++) {
     const ReplaceCase& cur = replace_cases[i];
     int base_len = static_cast<int>(strlen(cur.base));
     Parsed parsed;
@@ -1695,7 +1685,7 @@ TEST(URLCanonTest, ReplaceMailtoURL) {
     {"mailto:addr1", NULL, NULL, NULL, NULL, NULL, NULL, NULL, "BLAH", "mailto:addr1"},
   };
 
-  for (size_t i = 0; i < arraysize(replace_cases); i++) {
+  for (size_t i = 0; i < base::size(replace_cases); i++) {
     const ReplaceCase& cur = replace_cases[i];
     int base_len = static_cast<int>(strlen(cur.base));
     Parsed parsed;
@@ -1800,7 +1790,7 @@ TEST(URLCanonTest, CanonicalizeFileURL) {
 #endif  // _WIN32
   };
 
-  for (size_t i = 0; i < arraysize(cases); i++) {
+  for (size_t i = 0; i < base::size(cases); i++) {
     int url_len = static_cast<int>(strlen(cases[i].input));
     Parsed parsed;
     ParseFileURL(cases[i].input, url_len, &parsed);
@@ -1843,7 +1833,7 @@ TEST(URLCanonTest, CanonicalizeFileSystemURL) {
     {"filesystem:File:///temporary/Bob?qUery#reF", "filesystem:file:///temporary/Bob?qUery#reF", true},
   };
 
-  for (size_t i = 0; i < arraysize(cases); i++) {
+  for (size_t i = 0; i < base::size(cases); i++) {
     int url_len = static_cast<int>(strlen(cases[i].input));
     Parsed parsed;
     ParseFileSystemURL(cases[i].input, url_len, &parsed);
@@ -1873,12 +1863,16 @@ TEST(URLCanonTest, CanonicalizePathURL) {
     const char* input;
     const char* expected;
   } path_cases[] = {
-    {"javascript:", "javascript:"},
-    {"JavaScript:Foo", "javascript:Foo"},
-    {"Foo:\":This /is interesting;?#", "foo:\":This /is interesting;?#"},
+      {"javascript:", "javascript:"},
+      {"JavaScript:Foo", "javascript:Foo"},
+      {"Foo:\":This /is interesting;?#", "foo:\":This /is interesting;?#"},
+
+      // Validation errors should not cause failure. See
+      // https://crbug.com/925614.
+      {"javascript:\uFFFF", "javascript:%EF%BF%BD"},
   };
 
-  for (size_t i = 0; i < arraysize(path_cases); i++) {
+  for (size_t i = 0; i < base::size(path_cases); i++) {
     int url_len = static_cast<int>(strlen(path_cases[i].input));
     Parsed parsed;
     ParsePathURL(path_cases[i].input, url_len, true, &parsed);
@@ -1963,7 +1957,7 @@ TEST(URLCanonTest, CanonicalizeMailtoURL) {
   Parsed parsed;
   Parsed out_parsed;
 
-  for (size_t i = 0; i < arraysize(cases); i++) {
+  for (size_t i = 0; i < base::size(cases); i++) {
     int url_len = static_cast<int>(strlen(cases[i].input));
     if (i == 0) {
       // The first test case purposely has a '\0' in it -- don't count it
@@ -2229,7 +2223,7 @@ TEST(URLCanonTest, ResolveRelativeURL) {
     {"about:blank", false, false, "content://content.Provider/", true, false, true, ""},
   };
 
-  for (size_t i = 0; i < arraysize(rel_cases); i++) {
+  for (size_t i = 0; i < base::size(rel_cases); i++) {
     const RelativeCase& cur_case = rel_cases[i];
 
     Parsed parsed;
@@ -2331,14 +2325,12 @@ TEST(URLCanonTest, DefaultPortForScheme) {
       {"ftp", 21},
       {"ws", 80},
       {"wss", 443},
-      {"gopher", 70},
       {"fake-scheme", PORT_UNSPECIFIED},
       {"HTTP", PORT_UNSPECIFIED},
       {"HTTPS", PORT_UNSPECIFIED},
       {"FTP", PORT_UNSPECIFIED},
       {"WS", PORT_UNSPECIFIED},
       {"WSS", PORT_UNSPECIFIED},
-      {"GOPHER", PORT_UNSPECIFIED},
   };
 
   for (auto& test_case : cases) {

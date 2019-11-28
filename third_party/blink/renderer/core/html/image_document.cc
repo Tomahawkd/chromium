@@ -25,8 +25,9 @@
 #include "third_party/blink/renderer/core/html/image_document.h"
 
 #include <limits>
+
 #include "third_party/blink/public/platform/web_content_settings_client.h"
-#include "third_party/blink/renderer/core/dom/events/event_listener.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/dom/raw_data_document_parser.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
@@ -35,7 +36,6 @@
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
@@ -53,45 +53,44 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
-using namespace html_names;
-
-class ImageEventListener : public EventListener {
+class ImageEventListener : public NativeEventListener {
  public:
-  static ImageEventListener* Create(ImageDocument* document) {
-    return MakeGarbageCollected<ImageEventListener>(document);
-  }
-  static const ImageEventListener* Cast(const EventListener* listener) {
-    return listener->GetType() == kImageEventListenerType
-               ? static_cast<const ImageEventListener*>(listener)
-               : nullptr;
-  }
+  ImageEventListener(ImageDocument* document) : doc_(document) {}
 
-  ImageEventListener(ImageDocument* document)
-      : EventListener(kImageEventListenerType), doc_(document) {}
+  bool Matches(const EventListener& other) const override;
 
-  bool operator==(const EventListener& other) const override;
-
-  void Trace(blink::Visitor* visitor) override {
-    visitor->Trace(doc_);
-    EventListener::Trace(visitor);
-  }
-
- private:
   void Invoke(ExecutionContext*, Event*) override;
 
+  void Trace(Visitor* visitor) override {
+    visitor->Trace(doc_);
+    NativeEventListener::Trace(visitor);
+  }
+
+  bool IsImageEventListener() const override { return true; }
+
+ private:
   Member<ImageDocument> doc_;
+};
+
+template <>
+struct DowncastTraits<ImageEventListener> {
+  static bool AllowFrom(const EventListener& event_listener) {
+    const NativeEventListener* native_event_listener =
+        DynamicTo<NativeEventListener>(event_listener);
+    return native_event_listener &&
+           native_event_listener->IsImageEventListener();
+  }
 };
 
 class ImageDocumentParser : public RawDataDocumentParser {
  public:
-  static ImageDocumentParser* Create(ImageDocument* document) {
-    return MakeGarbageCollected<ImageDocumentParser>(document);
-  }
-
   ImageDocumentParser(ImageDocument* document)
       : RawDataDocumentParser(document) {}
 
@@ -167,7 +166,8 @@ void ImageDocumentParser::Finish() {
       // Compute the title, we use the decoded filename of the resource, falling
       // back on the (decoded) hostname if there is no path.
       String file_name =
-          DecodeURLEscapeSequences(GetDocument()->Url().LastPathComponent());
+          DecodeURLEscapeSequences(GetDocument()->Url().LastPathComponent(),
+                                   DecodeURLMode::kUTF8OrIsomorphic);
       if (file_name.IsEmpty())
         file_name = GetDocument()->Url().Host();
       GetDocument()->setTitle(ImageTitle(file_name, size));
@@ -204,7 +204,7 @@ ImageDocument::ImageDocument(const DocumentInit& initializer)
 }
 
 DocumentParser* ImageDocument::CreateParser() {
-  return ImageDocumentParser::Create(this);
+  return MakeGarbageCollected<ImageDocumentParser>(this);
 }
 
 IntSize ImageDocument::ImageSize() const {
@@ -216,34 +216,34 @@ IntSize ImageDocument::ImageSize() const {
 }
 
 void ImageDocument::CreateDocumentStructure() {
-  HTMLHtmlElement* root_element = HTMLHtmlElement::Create(*this);
+  auto* root_element = MakeGarbageCollected<HTMLHtmlElement>(*this);
   AppendChild(root_element);
   root_element->InsertedByParser();
 
   if (IsStopped())
     return;  // runScriptsAtDocumentElementAvailable can detach the frame.
 
-  HTMLHeadElement* head = HTMLHeadElement::Create(*this);
-  HTMLMetaElement* meta = HTMLMetaElement::Create(*this);
-  meta->setAttribute(kNameAttr, "viewport");
-  meta->setAttribute(kContentAttr, "width=device-width, minimum-scale=0.1");
+  auto* head = MakeGarbageCollected<HTMLHeadElement>(*this);
+  auto* meta = MakeGarbageCollected<HTMLMetaElement>(*this);
+  meta->setAttribute(html_names::kNameAttr, "viewport");
+  meta->setAttribute(html_names::kContentAttr,
+                     "width=device-width, minimum-scale=0.1");
   head->AppendChild(meta);
 
-  HTMLBodyElement* body = HTMLBodyElement::Create(*this);
+  auto* body = MakeGarbageCollected<HTMLBodyElement>(*this);
 
   if (ShouldShrinkToFit()) {
     // Display the image prominently centered in the frame.
-    body->setAttribute(kStyleAttr, "margin: 0px; background: #0e0e0e;");
+    body->setAttribute(html_names::kStyleAttr,
+                       "margin: 0px; background: #0e0e0e;");
 
     // See w3c example on how to center an element:
     // https://www.w3.org/Style/Examples/007/center.en.html
-    div_element_ = HTMLDivElement::Create(*this);
-    div_element_->setAttribute(kStyleAttr,
+    div_element_ = MakeGarbageCollected<HTMLDivElement>(*this);
+    div_element_->setAttribute(html_names::kStyleAttr,
                                "display: flex;"
                                "flex-direction: column;"
-                               "justify-content: center;"
-                               "align-items: center;"
-                               "min-height: min-content;"
+                               "align-items: flex-start;"
                                "min-width: min-content;"
                                "height: 100%;"
                                "width: 100%;");
@@ -253,28 +253,29 @@ void ImageDocument::CreateDocumentStructure() {
     // Adding a UA shadow root here is because the container <div> should be
     // hidden so that only the <img> element should be visible in <body>,
     // according to the spec:
-    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#read-media
+    // https://html.spec.whatwg.org/C/#read-media
     ShadowRoot& shadow_root = body->EnsureUserAgentShadowRoot();
     shadow_root.AppendChild(div_element_);
   } else {
-    body->setAttribute(kStyleAttr, "margin: 0px;");
+    body->setAttribute(html_names::kStyleAttr, "margin: 0px;");
   }
 
   WillInsertBody();
 
-  image_element_ = HTMLImageElement::Create(*this);
+  image_element_ = MakeGarbageCollected<HTMLImageElement>(*this);
   UpdateImageStyle();
   image_element_->SetLoadingImageDocument();
-  image_element_->SetSrc(Url().GetString());
+  image_element_->setAttribute(html_names::kSrcAttr,
+                               AtomicString(Url().GetString()));
   body->AppendChild(image_element_.Get());
   if (Loader() && image_element_->CachedImageResourceForImageDocument()) {
     image_element_->CachedImageResourceForImageDocument()->ResponseReceived(
-        Loader()->GetResponse(), nullptr);
+        Loader()->GetResponse());
   }
 
   if (ShouldShrinkToFit()) {
     // Add event listeners
-    EventListener* listener = ImageEventListener::Create(this);
+    auto* listener = MakeGarbageCollected<ImageEventListener>(this);
     if (LocalDOMWindow* dom_window = domWindow())
       dom_window->addEventListener(event_type_names::kResize, listener, false);
 
@@ -309,7 +310,7 @@ float ImageDocument::Scale() const {
   // We want to pretend the viewport is larger when the user has zoomed the
   // page in (but not when the zoom is coming from device scale).
   const float viewport_zoom =
-      view->GetChromeClient()->WindowToViewportScalar(1.f);
+      view->GetChromeClient()->WindowToViewportScalar(GetFrame(), 1.f);
   float width_scale = view->Width() / (viewport_zoom * image_size.Width());
   float height_scale = view->Height() / (viewport_zoom * image_size.Height());
 
@@ -352,7 +353,8 @@ void ImageDocument::ImageClicked(int x, int y) {
 
     double scale = Scale();
     double device_scale_factor =
-        GetFrame()->View()->GetChromeClient()->WindowToViewportScalar(1.f);
+        GetFrame()->View()->GetChromeClient()->WindowToViewportScalar(
+            GetFrame(), 1.f);
 
     float scroll_x = (image_x * device_scale_factor) / scale -
                      static_cast<float>(GetFrame()->View()->Width()) / 2;
@@ -380,6 +382,7 @@ void ImageDocument::UpdateImageStyle() {
   if (ShouldShrinkToFit()) {
     if (shrink_to_fit_mode_ == kViewport)
       image_style.Append("max-width: 100%;");
+    image_style.Append("margin: auto;");
 
     if (image_is_loaded_) {
       MouseCursorMode new_cursor_mode = kDefault;
@@ -410,7 +413,8 @@ void ImageDocument::UpdateImageStyle() {
     }
   }
 
-  image_element_->setAttribute(kStyleAttr, image_style.ToAtomicString());
+  image_element_->setAttribute(html_names::kStyleAttr,
+                               image_style.ToAtomicString());
 }
 
 void ImageDocument::ImageUpdated() {
@@ -477,7 +481,7 @@ void ImageDocument::WindowSizeChanged() {
 
   if (shrink_to_fit_mode_ == kViewport) {
     int div_width = CalculateDivWidth();
-    div_element_->SetInlineStyleProperty(CSSPropertyWidth, div_width,
+    div_element_->SetInlineStyleProperty(CSSPropertyID::kWidth, div_width,
                                          CSSPrimitiveValue::UnitType::kPixels);
 
     // Explicitly set the height of the <div> containing the <img> so that it
@@ -491,7 +495,7 @@ void ImageDocument::WindowSizeChanged() {
     float aspect_ratio = View()->GetLayoutSize().AspectRatio();
     int div_height = std::max(ImageSize().Height(),
                               static_cast<int>(div_width / aspect_ratio));
-    div_element_->SetInlineStyleProperty(CSSPropertyHeight, div_height,
+    div_element_->SetInlineStyleProperty(CSSPropertyID::kHeight, div_height,
                                          CSSPrimitiveValue::UnitType::kPixels);
     return;
   }
@@ -554,7 +558,7 @@ bool ImageDocument::ShouldShrinkToFit() const {
   return GetFrame()->IsMainFrame() && !is_wrap_content_web_view;
 }
 
-void ImageDocument::Trace(blink::Visitor* visitor) {
+void ImageDocument::Trace(Visitor* visitor) {
   visitor->Trace(div_element_);
   visitor->Trace(image_element_);
   HTMLDocument::Trace(visitor);
@@ -576,10 +580,11 @@ void ImageEventListener::Invoke(ExecutionContext*, Event* event) {
   }
 }
 
-bool ImageEventListener::operator==(const EventListener& listener) const {
+bool ImageEventListener::Matches(const EventListener& listener) const {
   if (const ImageEventListener* image_event_listener =
-          ImageEventListener::Cast(&listener))
+          DynamicTo<ImageEventListener>(listener)) {
     return doc_ == image_event_listener->doc_;
+  }
   return false;
 }
 

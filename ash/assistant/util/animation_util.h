@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/component_export.h"
 #include "ui/gfx/animation/tween.h"
 
 namespace base {
@@ -20,6 +21,10 @@ class LayerAnimationObserver;
 class LayerAnimationSequence;
 class LayerAnimator;
 }  // namespace ui
+
+namespace views {
+class View;
+}  // namespace views
 
 namespace ash {
 namespace assistant {
@@ -34,6 +39,7 @@ struct LayerAnimationSequenceParams {
 // Creates a LayerAnimationSequence containing the specified
 // LayerAnimationElements with the given |params|. The method caller assumes
 // ownership of the returned pointer.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 ::ui::LayerAnimationSequence* CreateLayerAnimationSequence(
     std::unique_ptr<::ui::LayerAnimationElement> a,
     const LayerAnimationSequenceParams& params = {});
@@ -41,6 +47,7 @@ struct LayerAnimationSequenceParams {
 // Creates a LayerAnimationSequence containing the specified
 // LayerAnimationElements with the given |params|. The method caller assumes
 // ownership of the returned pointer.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 ::ui::LayerAnimationSequence* CreateLayerAnimationSequence(
     std::unique_ptr<::ui::LayerAnimationElement> a,
     std::unique_ptr<::ui::LayerAnimationElement> b,
@@ -49,6 +56,7 @@ struct LayerAnimationSequenceParams {
 // Creates a LayerAnimationSequence containing the specified
 // LayerAnimationElements with the given |params|. The method caller assumes
 // ownership of the returned pointer.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 ::ui::LayerAnimationSequence* CreateLayerAnimationSequence(
     std::unique_ptr<::ui::LayerAnimationElement> a,
     std::unique_ptr<::ui::LayerAnimationElement> b,
@@ -58,6 +66,7 @@ struct LayerAnimationSequenceParams {
 // Creates a LayerAnimationSequence containing the specified
 // LayerAnimationElements with the given |params|. The method caller assumes
 // ownership of the returned pointer.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 ::ui::LayerAnimationSequence* CreateLayerAnimationSequence(
     std::unique_ptr<::ui::LayerAnimationElement> a,
     std::unique_ptr<::ui::LayerAnimationElement> b,
@@ -66,6 +75,7 @@ struct LayerAnimationSequenceParams {
     const LayerAnimationSequenceParams& params = {});
 
 // Creates a LayerAnimationElement to animate opacity with the given parameters.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 std::unique_ptr<::ui::LayerAnimationElement> CreateOpacityElement(
     float opacity,
     const base::TimeDelta& duration,
@@ -73,7 +83,8 @@ std::unique_ptr<::ui::LayerAnimationElement> CreateOpacityElement(
 
 // Creates a LayerAnimationElement to animate transform with the given
 // parameters.
-::std::unique_ptr<::ui::LayerAnimationElement> CreateTransformElement(
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+std::unique_ptr<::ui::LayerAnimationElement> CreateTransformElement(
     const gfx::Transform& transform,
     const base::TimeDelta& duration,
     const gfx::Tween::Type& tween = gfx::Tween::Type::LINEAR);
@@ -81,18 +92,34 @@ std::unique_ptr<::ui::LayerAnimationElement> CreateOpacityElement(
 // Starts the specified |layer_animation_sequence| on the given
 // |layer_animator|. If an optional |observer| is supplied, it will be added to
 // the sequence.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 void StartLayerAnimationSequence(
     ::ui::LayerAnimator* layer_animator,
+    ::ui::LayerAnimationSequence* layer_animation_sequence,
+    ::ui::LayerAnimationObserver* observer = nullptr);
+
+// Starts the specified |layer_animation_sequence| on the layer of the given
+// |view|. If an optional |observer| is supplied, it will be added to the
+// sequence.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+void StartLayerAnimationSequence(
+    views::View* view,
     ::ui::LayerAnimationSequence* layer_animation_sequence,
     ::ui::LayerAnimationObserver* observer = nullptr);
 
 // Starts the specified |layer_animation_sequences| together on the given
 // |layer_animator|. If an optional |observer| is supplied, it will be added
 // to each sequence in the animation set.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
 void StartLayerAnimationSequencesTogether(
     ::ui::LayerAnimator* layer_animator,
     const std::vector<::ui::LayerAnimationSequence*>& layer_animation_sequences,
     ::ui::LayerAnimationObserver* observer = nullptr);
+
+// Starts the animation to fade out the given view, and hide it when the fadeout
+// is completed.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+void FadeOutAndHide(views::View* view, base::TimeDelta fade_out_duration);
 
 }  // namespace util
 }  // namespace assistant

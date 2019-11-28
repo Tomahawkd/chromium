@@ -145,23 +145,6 @@ gfx::Rect ChromeNativeAppWindowViewsMac::GetRestoredBounds() const {
   return ChromeNativeAppWindowViews::GetRestoredBounds();
 }
 
-void ChromeNativeAppWindowViewsMac::Show() {
-  UnhideWithoutActivation();
-  ChromeNativeAppWindowViews::Show();
-}
-
-void ChromeNativeAppWindowViewsMac::ShowInactive() {
-  if (is_hidden_with_app_)
-    return;
-
-  ChromeNativeAppWindowViews::ShowInactive();
-}
-
-void ChromeNativeAppWindowViewsMac::Activate() {
-  UnhideWithoutActivation();
-  ChromeNativeAppWindowViews::Activate();
-}
-
 void ChromeNativeAppWindowViewsMac::Maximize() {
   if (IsFullscreen())
     return;
@@ -184,30 +167,11 @@ void ChromeNativeAppWindowViewsMac::Restore() {
 
 void ChromeNativeAppWindowViewsMac::FlashFrame(bool flash) {
   apps::ExtensionAppShimHandler::Get()->RequestUserAttentionForWindow(
-      app_window(), flash ? apps::APP_SHIM_ATTENTION_CRITICAL
-                          : apps::APP_SHIM_ATTENTION_CANCEL);
+      app_window(), flash ? chrome::mojom::AppShimAttentionType::kCritical
+                          : chrome::mojom::AppShimAttentionType::kCancel);
 }
 
 void ChromeNativeAppWindowViewsMac::OnWidgetCreated(views::Widget* widget) {
   nswindow_observer_.reset(
       [[ResizeNotificationObserver alloc] initForNativeAppWindow:this]);
-}
-
-void ChromeNativeAppWindowViewsMac::ShowWithApp() {
-  is_hidden_with_app_ = false;
-  if (!app_window()->is_hidden())
-    ShowInactive();
-}
-
-void ChromeNativeAppWindowViewsMac::HideWithApp() {
-  is_hidden_with_app_ = true;
-  ChromeNativeAppWindowViews::Hide();
-}
-
-void ChromeNativeAppWindowViewsMac::UnhideWithoutActivation() {
-  if (is_hidden_with_app_) {
-    apps::ExtensionAppShimHandler::Get()->UnhideWithoutActivationForWindow(
-        app_window());
-    is_hidden_with_app_ = false;
-  }
 }

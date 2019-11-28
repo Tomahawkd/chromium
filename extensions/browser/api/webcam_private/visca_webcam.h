@@ -5,6 +5,11 @@
 #ifndef EXTENSIONS_BROWSER_API_WEBCAM_PRIVATE_VISCA_WEBCAM_H_
 #define EXTENSIONS_BROWSER_API_WEBCAM_PRIVATE_VISCA_WEBCAM_H_
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "base/callback.h"
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
@@ -12,6 +17,7 @@
 #include "extensions/browser/api/serial/serial_connection.h"
 #include "extensions/browser/api/webcam_private/webcam.h"
 #include "extensions/common/api/serial.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/device/public/mojom/serial.mojom.h"
 
 namespace extensions {
@@ -26,8 +32,8 @@ class ViscaWebcam : public Webcam {
   // steps (in order): 1. Open the serial port; 2. Request address; 3. Clear the
   // command buffer. After these three steps completes, |open_callback| will be
   // called.
-  void Open(const std::string& path,
-            const std::string& extension_id,
+  void Open(const std::string& extension_id,
+            mojo::PendingRemote<device::mojom::SerialPort> port,
             const OpenCompleteCallback& open_callback);
 
  private:
@@ -45,11 +51,6 @@ class ViscaWebcam : public Webcam {
 
   // Private because WebCam is base::RefCounted.
   ~ViscaWebcam() override;
-
-  void OpenOnIOThread(const std::string& path,
-                      const std::string& extension_id,
-                      device::mojom::SerialIoHandlerPtrInfo io_handler_info,
-                      const OpenCompleteCallback& open_callback);
 
   // Callback function that will be called after the serial connection has been
   // opened successfully.
@@ -70,15 +71,12 @@ class ViscaWebcam : public Webcam {
   // Send or queue a command and wait for the camera's response.
   void Send(const std::vector<char>& command,
             const CommandCompleteCallback& callback);
-  void SendOnIOThread(const std::vector<char>& data,
-                      const CommandCompleteCallback& callback);
   void OnSendCompleted(const CommandCompleteCallback& callback,
                        uint32_t bytes_sent,
                        api::serial::SendError error);
-  void ReceiveLoop(const CommandCompleteCallback& callback);
-  void OnReceiveCompleted(const CommandCompleteCallback& callback,
-                          std::vector<uint8_t> data,
-                          api::serial::ReceiveError error);
+  void OnReceiveEvent(const CommandCompleteCallback& callback,
+                      std::vector<uint8_t> data,
+                      api::serial::ReceiveError error);
 
   // Callback function that will be called after the send and reply of a command
   // are both completed.
@@ -93,7 +91,6 @@ class ViscaWebcam : public Webcam {
                           const std::vector<char>& response);
 
   void ProcessNextCommand();
-  void PostOpenFailureTask(const OpenCompleteCallback& open_callback);
 
   // Webcam Overrides:
   void GetPan(const GetPTZCompleteCallback& callback) override;
@@ -139,10 +136,8 @@ class ViscaWebcam : public Webcam {
 
   // Visca webcam always get/set pan-tilt together. |pan| and |tilt| are used to
   // store the current value of pan and tilt positions.
-  int pan_;
-  int tilt_;
-
-  base::WeakPtrFactory<ViscaWebcam> weak_ptr_factory_;
+  int pan_ = 0;
+  int tilt_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(ViscaWebcam);
 };

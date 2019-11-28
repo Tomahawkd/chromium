@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -179,7 +181,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
 
 IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, FastKeyboardLockUnlockRelock) {
   EnterActiveTabFullscreen();
-  // TODO(crbug.com/708584): Replace with ScopedTaskEnvironment using MOCK_TIME.
+  // TODO(crbug.com/708584): Replace with TaskEnvironment using MOCK_TIME.
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
@@ -198,7 +200,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, FastKeyboardLockUnlockRelock) {
 
 IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, SlowKeyboardLockUnlockRelock) {
   EnterActiveTabFullscreen();
-  // TODO(crbug.com/708584): Replace with ScopedTaskEnvironment using MOCK_TIME.
+  // TODO(crbug.com/708584): Replace with TaskEnvironment using MOCK_TIME.
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
@@ -459,7 +461,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
 IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
                        MouseLockBubbleHideCallbackTimeout) {
   SetWebContentsGrantedSilentMouseLockPermission();
-  // TODO(crbug.com/708584): Replace with ScopedTaskEnvironment using MOCK_TIME.
+  // TODO(crbug.com/708584): Replace with TaskEnvironment using MOCK_TIME.
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
@@ -477,7 +479,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
 }
 
 IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, FastMouseLockUnlockRelock) {
-  // TODO(crbug.com/708584): Replace with ScopedTaskEnvironment using MOCK_TIME.
+  // TODO(crbug.com/708584): Replace with TaskEnvironment using MOCK_TIME.
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
@@ -496,7 +498,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, FastMouseLockUnlockRelock) {
 }
 
 IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, SlowMouseLockUnlockRelock) {
-  // TODO(crbug.com/708584): Replace with ScopedTaskEnvironment using MOCK_TIME.
+  // TODO(crbug.com/708584): Replace with TaskEnvironment using MOCK_TIME.
   auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
@@ -549,7 +551,8 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
 
 // Test whether the top view's status is correct during various transitions
 // among normal state, browser fullscreen mode, and tab fullscreen mode.
-IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, TopViewStatusChange) {
+// Sheriff: http://crbug.com/925928
+IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, DISABLED_TopViewStatusChange) {
   ExclusiveAccessContext* context = GetExclusiveAccessManager()->context();
 #if defined(OS_MACOSX)
   // First, set the preference to true so we expect to see the top view in

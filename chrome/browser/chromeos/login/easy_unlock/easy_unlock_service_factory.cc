@@ -7,7 +7,6 @@
 #include "base/command_line.h"
 #include "base/memory/singleton.h"
 #include "build/build_config.h"
-#include "chrome/browser/chromeos/cryptauth/chrome_cryptauth_service_factory.h"
 #include "chrome/browser/chromeos/device_sync/device_sync_client_factory.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service_regular.h"
@@ -30,23 +29,6 @@
 namespace chromeos {
 
 namespace {
-
-// Gets the file path from which easy unlock app should be loaded.
-base::FilePath GetEasyUnlockAppPath() {
-#if defined(GOOGLE_CHROME_BUILD)
-#ifndef NDEBUG
-  // Only allow app path override switch for debug build.
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kEasyUnlockAppPath))
-    return command_line->GetSwitchValuePath(switches::kEasyUnlockAppPath);
-#endif  // !defined(NDEBUG)
-
-  return base::FilePath("/usr/share/chromeos-assets/easy_unlock");
-#endif  // defined(GOOGLE_CHROME_BUILD)
-
-  return base::FilePath();
-}
 
 bool IsFeatureAllowed(content::BrowserContext* context) {
   return multidevice_setup::IsFeatureAllowed(
@@ -73,7 +55,6 @@ EasyUnlockServiceFactory::EasyUnlockServiceFactory()
     : BrowserContextKeyedServiceFactory(
           "EasyUnlockService",
           BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(ChromeCryptAuthServiceFactory::GetInstance());
   DependsOn(
       extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   DependsOn(EasyUnlockTpmKeyManagerFactory::GetInstance());
@@ -85,7 +66,10 @@ EasyUnlockServiceFactory::~EasyUnlockServiceFactory() {}
 
 KeyedService* EasyUnlockServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
-  EasyUnlockService* service = NULL;
+  EasyUnlockService* service = nullptr;
+
+  if (!context)
+    return nullptr;
 
   if (!IsFeatureAllowed(context))
     return nullptr;
@@ -97,7 +81,7 @@ KeyedService* EasyUnlockServiceFactory::BuildServiceInstanceFor(
 
   if (ProfileHelper::IsSigninProfile(Profile::FromBrowserContext(context))) {
     if (!context->IsOffTheRecord())
-      return NULL;
+      return nullptr;
 
     service = new EasyUnlockServiceSignin(
         Profile::FromBrowserContext(context),
@@ -114,10 +98,6 @@ KeyedService* EasyUnlockServiceFactory::BuildServiceInstanceFor(
         multidevice_setup::MultiDeviceSetupClientFactory::GetForProfile(
             Profile::FromBrowserContext(context)));
   }
-
-  const base::FilePath app_path = app_path_for_testing_.empty()
-                                      ? GetEasyUnlockAppPath()
-                                      : app_path_for_testing_;
 
   service->Initialize();
   return service;
@@ -136,7 +116,7 @@ content::BrowserContext* EasyUnlockServiceFactory::GetBrowserContextToUse(
     return chrome::GetBrowserContextOwnInstanceInIncognito(context);
   }
 
-  return chrome::GetBrowserContextRedirectedInIncognito(context);
+  return context->IsOffTheRecord() ? nullptr : context;
 }
 
 bool EasyUnlockServiceFactory::ServiceIsCreatedWithBrowserContext() const {

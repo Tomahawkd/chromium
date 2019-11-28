@@ -34,18 +34,20 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+
+namespace base {
+class TickClock;
+}
 
 namespace blink {
 
 struct HeapInfo {
   DISALLOW_NEW();
-  HeapInfo()
-      : used_js_heap_size(0), total_js_heap_size(0), js_heap_size_limit(0) {}
 
-  size_t used_js_heap_size;
-  size_t total_js_heap_size;
-  size_t js_heap_size_limit;
+  size_t used_js_heap_size = 0;
+  size_t total_js_heap_size = 0;
+  size_t js_heap_size_limit = 0;
 };
 
 class CORE_EXPORT MemoryInfo final : public ScriptWrappable {
@@ -57,9 +59,6 @@ class CORE_EXPORT MemoryInfo final : public ScriptWrappable {
   // time (50 ms). A Bucketized value means that the numbers will be bucketized
   // and cached for a long period of time (20 minutes).
   enum class Precision { Precise, Bucketized };
-  static MemoryInfo* Create(Precision precision) {
-    return MakeGarbageCollected<MemoryInfo>(precision);
-  }
 
   explicit MemoryInfo(Precision precision);
 
@@ -68,6 +67,13 @@ class CORE_EXPORT MemoryInfo final : public ScriptWrappable {
   size_t jsHeapSizeLimit() const { return info_.js_heap_size_limit; }
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(MemoryInfoTest, Bucketized);
+  FRIEND_TEST_ALL_PREFIXES(MemoryInfoTest, Precise);
+  friend struct MemoryInfoTestScopedMockTime;
+  // The caller owns the |clock| which must outlive the MemoryInfo.
+  static void SetTickClockForTestingForCurrentThread(
+      const base::TickClock* clock);
+
   HeapInfo info_;
 };
 

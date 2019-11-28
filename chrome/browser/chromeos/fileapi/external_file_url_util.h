@@ -6,7 +6,7 @@
 #define CHROME_BROWSER_CHROMEOS_FILEAPI_EXTERNAL_FILE_URL_UTIL_H_
 
 #include "base/callback_forward.h"
-#include "storage/common/fileapi/file_system_types.h"
+#include "storage/common/file_system/file_system_types.h"
 
 class GURL;
 class Profile;
@@ -22,13 +22,16 @@ class FileSystemURL;
 namespace chromeos {
 
 // Returns whether the external file URL is provided for the |type| or not.
-bool IsExternalFileURLType(storage::FileSystemType type);
+// TODO(b/119597913): Remove |force| from all functions in this file
+// once ARC++ can access FUSE-mounted filesystems directly.
+bool IsExternalFileURLType(storage::FileSystemType type, bool force = false);
 
 // Obtains the external file url formatted as "externalfile:<path>" from file
 // path. Returns empty URL if the file system does not provide the external file
 // URL.
 GURL FileSystemURLToExternalFileURL(
-    const storage::FileSystemURL& file_system_url);
+    const storage::FileSystemURL& file_system_url,
+    bool force = false);
 
 // Converts a externalfile: URL back to a virtual path of FileSystemURL.
 base::FilePath ExternalFileURLToVirtualPath(const GURL& url);
@@ -40,16 +43,8 @@ GURL VirtualPathToExternalFileURL(const base::FilePath& virtual_path);
 // path (e.g. /special/drive-xxx/root/sample.txt), if the |path| points an
 // external location (drive, MTP, or FSP). Otherwise, it returns empty URL.
 GURL CreateExternalFileURLFromPath(Profile* profile,
-                                   const base::FilePath& path);
-
-// Obtains, from a file path (e.g. /special/drive-xxx/root/sample.txt), an
-// external file URL (e.g. external:drive/root/sample.txt), if the |path| points
-// an external location (drive, MTP, or FSP), or its hosted file URL if |path|
-// refers to a hosted doc (e.g. gdoc) in DriveFS. If neither condition applies,
-// |callback| is invoked with an empty GURL.
-void ResolveExternalFileUrlFromPath(Profile* profile,
-                                    const base::FilePath& path,
-                                    base::OnceCallback<void(GURL)> callback);
+                                   const base::FilePath& path,
+                                   bool force = false);
 
 }  // namespace chromeos
 

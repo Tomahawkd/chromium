@@ -22,9 +22,7 @@
 
 #if defined(OS_POSIX)
 #include <sys/mman.h>
-#if !defined(OS_FUCHSIA)
 #include <sys/resource.h>
-#endif
 #include <sys/time.h>
 #endif  // defined(OS_POSIX)
 
@@ -74,7 +72,7 @@ bool SetAddressSpaceLimit() {
 }
 
 bool ClearAddressSpaceLimit() {
-#if !defined(ARCH_CPU_64_BITS) || !defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if !defined(ARCH_CPU_64_BITS) || !defined(OS_POSIX)
   return true;
 #elif defined(OS_POSIX)
   struct rlimit limit;
@@ -1156,13 +1154,13 @@ TEST_F(PartitionAllocTest, MappingCollision) {
   page_base -= kPartitionPageSize;
   // Map a single system page either side of the mapping for our allocations,
   // with the goal of tripping up alignment of the next mapping.
-  void* map1 = AllocPages(page_base - kPageAllocationGranularity,
-                          kPageAllocationGranularity,
-                          kPageAllocationGranularity, PageInaccessible);
+  void* map1 = AllocPages(
+      page_base - kPageAllocationGranularity, kPageAllocationGranularity,
+      kPageAllocationGranularity, PageInaccessible, PageTag::kPartitionAlloc);
   EXPECT_TRUE(map1);
-  void* map2 =
-      AllocPages(page_base + kSuperPageSize, kPageAllocationGranularity,
-                 kPageAllocationGranularity, PageInaccessible);
+  void* map2 = AllocPages(
+      page_base + kSuperPageSize, kPageAllocationGranularity,
+      kPageAllocationGranularity, PageInaccessible, PageTag::kPartitionAlloc);
   EXPECT_TRUE(map2);
 
   for (i = 0; i < num_partition_pages_needed; ++i)
@@ -1180,10 +1178,11 @@ TEST_F(PartitionAllocTest, MappingCollision) {
   // with the goal of tripping up alignment of the next mapping.
   map1 = AllocPages(page_base - kPageAllocationGranularity,
                     kPageAllocationGranularity, kPageAllocationGranularity,
-                    PageReadWrite);
+                    PageReadWrite, PageTag::kPartitionAlloc);
   EXPECT_TRUE(map1);
   map2 = AllocPages(page_base + kSuperPageSize, kPageAllocationGranularity,
-                    kPageAllocationGranularity, PageReadWrite);
+                    kPageAllocationGranularity, PageReadWrite,
+                    PageTag::kPartitionAlloc);
   EXPECT_TRUE(map2);
   EXPECT_TRUE(TrySetSystemPagesAccess(map1, kPageAllocationGranularity,
                                       PageInaccessible));
@@ -1352,8 +1351,7 @@ TEST_F(PartitionAllocTest, LostFreePagesBug) {
 // cause flake.
 #if !defined(OS_WIN) &&            \
     (!defined(ARCH_CPU_64_BITS) || \
-     (defined(OS_POSIX) &&         \
-      !(defined(OS_FUCHSIA) || defined(OS_MACOSX) || defined(OS_ANDROID))))
+     (defined(OS_POSIX) && !(defined(OS_MACOSX) || defined(OS_ANDROID))))
 
 // The following four tests wrap a called function in an expect death statement
 // to perform their test, because they are non-hermetic. Specifically they are
@@ -1401,7 +1399,7 @@ TEST_F(PartitionAllocDeathTest, RepeatedTryReallocReturnNull) {
 }
 
 #endif  // !defined(ARCH_CPU_64_BITS) || (defined(OS_POSIX) &&
-        // !(defined(OS_FUCHSIA) || defined(OS_MACOSX) || defined(OS_ANDROID)))
+        // !(defined(OS_MACOSX) || defined(OS_ANDROID)))
 
 // Make sure that malloc(-1) dies.
 // In the past, we had an integer overflow that would alias malloc(-1) to
@@ -2207,7 +2205,7 @@ TEST_F(PartitionAllocTest, ZeroFill) {
 
   for (int i = 0; i < 10; ++i) {
     SCOPED_TRACE(i);
-    AllocateRandomly(generic_allocator.root(), 1000, PartitionAllocZeroFill);
+    AllocateRandomly(generic_allocator.root(), 250, PartitionAllocZeroFill);
   }
 }
 
@@ -2227,6 +2225,63 @@ TEST_F(PartitionAllocTest, Bug_897585) {
   ASSERT_NE(nullptr, ptr);
   memset(ptr, 0xbd, kDesiredSize);
   PartitionFree(ptr);
+}
+
+TEST_F(PartitionAllocTest, OverrideHooks) {
+  constexpr size_t kOverriddenSize = 1234;
+  constexpr const char* kOverriddenType = "Overridden type";
+  constexpr unsigned char kOverriddenChar = 'A';
+
+  // Marked static so that we can use them in non-capturing lambdas below.
+  // (Non-capturing lambdas convert directly to function pointers.)
+  static volatile bool free_called = false;
+  static void* overridden_allocation = malloc(kOverriddenSize);
+  memset(overridden_allocation, kOverriddenChar, kOverriddenSize);
+
+  PartitionAllocHooks::SetOverrideHooks(
+      [](void** out, int flags, size_t size, const char* type_name) -> bool {
+        if (size == kOverriddenSize && type_name == kOverriddenType) {
+          *out = overridden_allocation;
+          return true;
+        }
+        return false;
+      },
+      [](void* address) -> bool {
+        if (address == overridden_allocation) {
+          free_called = true;
+          return true;
+        }
+        return false;
+      },
+      [](size_t* out, void* address) -> bool {
+        if (address == overridden_allocation) {
+          *out = kOverriddenSize;
+          return true;
+        }
+        return false;
+      });
+
+  void* ptr = PartitionAllocGenericFlags(generic_allocator.root(),
+                                         PartitionAllocReturnNull,
+                                         kOverriddenSize, kOverriddenType);
+  ASSERT_EQ(ptr, overridden_allocation);
+
+  PartitionFree(ptr);
+  EXPECT_TRUE(free_called);
+
+  // overridden_allocation has not actually been freed so we can now immediately
+  // realloc it.
+  free_called = false;
+  ptr = PartitionReallocGenericFlags(generic_allocator.root(),
+                                     PartitionAllocReturnNull, ptr, 1, nullptr);
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_NE(ptr, overridden_allocation);
+  EXPECT_TRUE(free_called);
+  EXPECT_EQ(*(char*)ptr, kOverriddenChar);
+  PartitionFree(ptr);
+
+  PartitionAllocHooks::SetOverrideHooks(nullptr, nullptr, nullptr);
+  free(overridden_allocation);
 }
 
 }  // namespace internal

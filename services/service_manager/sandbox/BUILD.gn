@@ -18,9 +18,6 @@ component("sandbox") {
     "sandbox_type.h",
     "switches.cc",
     "switches.h",
-
-    # Duplicated here to keep private.
-    "//services/service_manager/embedder/service_manager_embedder_export.h",
   ]
   defines = [ "SERVICE_MANAGER_SANDBOX_IMPL" ]
   public_deps = [
@@ -76,6 +73,12 @@ component("sandbox") {
       "//sandbox/linux:suid_sandbox_client",
     ]
   }
+  if (is_chromeos) {
+    sources += [
+      "linux/bpf_ime_policy_linux.cc",
+      "linux/bpf_ime_policy_linux.h",
+    ]
+  }
   if (is_mac) {
     sources += [
       "mac/sandbox_mac.h",
@@ -93,6 +96,8 @@ component("sandbox") {
   }
   if (is_win) {
     sources += [
+      "win/sandbox_diagnostics.cc",
+      "win/sandbox_diagnostics.h",
       "win/sandbox_win.cc",
       "win/sandbox_win.h",
     ]
@@ -105,9 +110,14 @@ component("sandbox") {
     ]
 
     deps += [
-      "//third_party/fuchsia-sdk/sdk:fonts",
-      "//third_party/fuchsia-sdk/sdk:mediacodec",
-      "//third_party/fuchsia-sdk/sdk:scenic",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-deprecatedtimezone",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-fonts",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-logger",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-mediacodec",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-net",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-netstack",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-sysmem",
+      "//third_party/fuchsia-sdk/sdk:fuchsia-ui-scenic",
     ]
   }
 }

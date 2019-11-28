@@ -12,6 +12,7 @@
 #include "chrome/test/data/grit/webui_test_resources.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/resources/grit/webui_resources.h"
@@ -94,7 +95,21 @@ IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, I18nProcessCssTest) {
   LoadResource(IDR_WEBUI_TEST_I18N_PROCESS_CSS_TEST);
 }
 
-IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, I18nProcessTest) {
+class WebUIResourceBrowserTestV0 : public WebUIResourceBrowserTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    // TODO(yoichio): This is temporary switch to support chrome internal
+    // components migration from the old web APIs.
+    // After completion of the migration, we should remove this.
+    // See crbug.com/911943 for detail.
+    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
+                                    "HTMLImports");
+    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
+                                    "ShadowDOMV0");
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTestV0, I18nProcessTest) {
   AddLibrary(IDR_WEBUI_JS_LOAD_TIME_DATA);
   AddLibrary(IDR_WEBUI_JS_I18N_TEMPLATE_NO_PROCESS);
   AddLibrary(IDR_WEBUI_JS_UTIL);
@@ -113,6 +128,7 @@ IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, ListTest) {
   LoadFile(base::FilePath(FILE_PATH_LITERAL("list_test.html")));
 }
 
+#if defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, GridTest) {
   AddLibrary(IDR_WEBUI_JS_CR);
   AddLibrary(IDR_WEBUI_JS_CR_EVENT_TARGET);
@@ -126,12 +142,7 @@ IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, GridTest) {
   AddLibrary(IDR_WEBUI_JS_CR_UI_GRID);
   LoadFile(base::FilePath(FILE_PATH_LITERAL("grid_test.html")));
 }
-
-IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, LinkControllerTest) {
-  AddLibrary(IDR_WEBUI_JS_CR);
-  AddLibrary(IDR_WEBUI_JS_CR_LINK_CONTROLLER);
-  LoadFile(base::FilePath(FILE_PATH_LITERAL("link_controller_test.html")));
-}
+#endif
 
 IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, ListSelectionModelTest) {
   AddLibrary(IDR_WEBUI_JS_CR);
@@ -173,17 +184,11 @@ IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, PositionUtilTest) {
   LoadFile(base::FilePath(FILE_PATH_LITERAL("position_util_test.html")));
 }
 
-IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, RepeatingButtonTest) {
-  AddLibrary(IDR_WEBUI_JS_CR);
-  AddLibrary(IDR_WEBUI_JS_CR_UI);
-  AddLibrary(IDR_WEBUI_JS_CR_UI_REPEATING_BUTTON);
-  LoadFile(base::FilePath(FILE_PATH_LITERAL("repeating_button_test.html")));
-}
-
 IN_PROC_BROWSER_TEST_F(WebUIResourceBrowserTest, CommandTest) {
   AddLibrary(IDR_WEBUI_JS_ASSERT);
   AddLibrary(IDR_WEBUI_JS_CR);
   AddLibrary(IDR_WEBUI_JS_CR_UI);
+  AddLibrary(IDR_WEBUI_JS_CR_UI_KEYBOARD_SHORTCUT_LIST);
   AddLibrary(IDR_WEBUI_JS_CR_UI_COMMAND);
   LoadFile(base::FilePath(FILE_PATH_LITERAL("command_test.html")));
 }

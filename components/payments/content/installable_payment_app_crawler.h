@@ -36,7 +36,8 @@ namespace payments {
 class InstallablePaymentAppCrawler : public content::WebContentsObserver {
  public:
   using FinishedCrawlingCallback = base::OnceCallback<void(
-      std::map<GURL, std::unique_ptr<WebAppInstallationInfo>>)>;
+      std::map<GURL, std::unique_ptr<WebAppInstallationInfo>>,
+      const std::string& error_message)>;
 
   // The owner of InstallablePaymentAppCrawler owns |downloader|, |parser| and
   // |cache|. They should live until |finished_using_resources| parameter to
@@ -57,17 +58,28 @@ class InstallablePaymentAppCrawler : public content::WebContentsObserver {
       FinishedCrawlingCallback callback,
       base::OnceClosure finished_using_resources);
 
+  void IgnorePortInOriginComparisonForTesting();
+
  private:
-  void OnPaymentMethodManifestDownloaded(const GURL& method_manifest_url,
-                                         const std::string& content);
+  bool IsSameOriginWith(const GURL& a, const GURL& b);
+
+  void OnPaymentMethodManifestDownloaded(
+      const GURL& method_manifest_url,
+      const GURL& method_manifest_url_after_redirects,
+      const std::string& content,
+      const std::string& error_message);
   void OnPaymentMethodManifestParsed(
       const GURL& method_manifest_url,
+      const GURL& method_manifest_url_after_redirects,
       const std::vector<GURL>& default_applications,
       const std::vector<url::Origin>& supported_origins,
       bool all_origins_supported);
-  void OnPaymentWebAppManifestDownloaded(const GURL& method_manifest_url,
-                                         const GURL& web_app_manifest_url,
-                                         const std::string& content);
+  void OnPaymentWebAppManifestDownloaded(
+      const GURL& method_manifest_url,
+      const GURL& web_app_manifest_url,
+      const GURL& web_app_manifest_url_after_redirects,
+      const std::string& content,
+      const std::string& error_message);
   void OnPaymentWebAppInstallationInfo(
       const GURL& method_manifest_url,
       const GURL& web_app_manifest_url,
@@ -85,6 +97,7 @@ class InstallablePaymentAppCrawler : public content::WebContentsObserver {
                                              const GURL& web_app_manifest_url,
                                              const SkBitmap& icon);
   void FinishCrawlingPaymentAppsIfReady();
+  void SetFirstError(const std::string& error_message);
 
   DeveloperConsoleLogger log_;
   PaymentManifestDownloader* downloader_;
@@ -100,7 +113,13 @@ class InstallablePaymentAppCrawler : public content::WebContentsObserver {
   std::set<GURL> downloaded_web_app_manifests_;
   std::map<GURL, std::unique_ptr<WebAppInstallationInfo>> installable_apps_;
 
-  base::WeakPtrFactory<InstallablePaymentAppCrawler> weak_ptr_factory_;
+  // The first error message (if any) to be forwarded to the merchant when
+  // rejecting the promise returned from PaymentRequest.show().
+  std::string first_error_message_;
+
+  bool ignore_port_in_origin_comparison_for_testing_ = false;
+
+  base::WeakPtrFactory<InstallablePaymentAppCrawler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InstallablePaymentAppCrawler);
 };

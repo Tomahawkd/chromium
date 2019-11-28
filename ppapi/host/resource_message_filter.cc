@@ -36,15 +36,13 @@ void ResourceMessageFilterDeleteTraits::Destruct(
 ResourceMessageFilter::ResourceMessageFilter()
     : deletion_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       reply_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      resource_host_(NULL) {
-}
+      resource_host_(nullptr) {}
 
 ResourceMessageFilter::ResourceMessageFilter(
     scoped_refptr<base::SingleThreadTaskRunner> reply_thread_task_runner)
     : deletion_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       reply_thread_task_runner_(reply_thread_task_runner),
-      resource_host_(NULL) {
-}
+      resource_host_(nullptr) {}
 
 ResourceMessageFilter::~ResourceMessageFilter() {
 }
@@ -68,8 +66,9 @@ bool ResourceMessageFilter::HandleMessage(const IPC::Message& msg,
       // other threads. It would be better to have a thread-safe refcounted
       // context.
       HostMessageContext context_copy = *context;
-      runner->PostTask(FROM_HERE, base::Bind(
-          &ResourceMessageFilter::DispatchMessage, this, msg, context_copy));
+      runner->PostTask(FROM_HERE,
+                       base::BindOnce(&ResourceMessageFilter::DispatchMessage,
+                                      this, msg, context_copy));
     }
     return true;
   }
@@ -82,7 +81,7 @@ void ResourceMessageFilter::SendReply(const ReplyMessageContext& context,
   if (!reply_thread_task_runner_->BelongsToCurrentThread()) {
     reply_thread_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&ResourceMessageFilter::SendReply, this, context, msg));
+        base::BindOnce(&ResourceMessageFilter::SendReply, this, context, msg));
     return;
   }
   if (resource_host_)
@@ -91,7 +90,7 @@ void ResourceMessageFilter::SendReply(const ReplyMessageContext& context,
 
 scoped_refptr<base::TaskRunner>
 ResourceMessageFilter::OverrideTaskRunnerForMessage(const IPC::Message& msg) {
-  return NULL;
+  return nullptr;
 }
 
 void ResourceMessageFilter::DispatchMessage(const IPC::Message& msg,

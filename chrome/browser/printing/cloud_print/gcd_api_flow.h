@@ -13,14 +13,14 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "google_apis/gaia/oauth2_token_service.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "url/gurl.h"
 
 namespace base {
 class DictionaryValue;
 }
 
-namespace identity {
+namespace signin {
 class IdentityManager;
 }
 
@@ -78,7 +78,7 @@ class GCDApiFlow {
 
   static std::unique_ptr<GCDApiFlow> Create(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      identity::IdentityManager* identity_manager);
+      signin::IdentityManager* identity_manager);
 
   virtual void Start(std::unique_ptr<Request> request) = 0;
 

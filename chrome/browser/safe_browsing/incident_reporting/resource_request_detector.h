@@ -7,15 +7,10 @@
 
 #include <memory>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
 #include "components/safe_browsing/db/database_manager.h"
-
-namespace net {
-class URLRequest;
-}
 
 namespace safe_browsing {
 
@@ -31,8 +26,6 @@ struct ResourceRequestInfo {
 // Observes network requests and reports suspicious activity.
 class ResourceRequestDetector {
  public:
-  static ResourceRequestInfo GetRequestInfo(const net::URLRequest* request);
-
   ResourceRequestDetector(
       scoped_refptr<SafeBrowsingDatabaseManager> sb_database_manager,
       std::unique_ptr<IncidentReceiver> incident_receiver);
@@ -57,7 +50,7 @@ class ResourceRequestDetector {
   scoped_refptr<SafeBrowsingDatabaseManager> database_manager_;
   bool allow_null_profile_for_testing_;
 
-  base::WeakPtrFactory<ResourceRequestDetector> weak_ptr_factory_;
+  base::WeakPtrFactory<ResourceRequestDetector> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ResourceRequestDetector);
 };

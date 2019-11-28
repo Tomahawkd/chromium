@@ -24,25 +24,18 @@ const char DecryptingVideoDecoder::kDecoderName[] = "DecryptingVideoDecoder";
 DecryptingVideoDecoder::DecryptingVideoDecoder(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     MediaLog* media_log)
-    : task_runner_(task_runner),
-      media_log_(media_log),
-      state_(kUninitialized),
-      decryptor_(NULL),
-      key_added_while_decode_pending_(false),
-      support_clear_content_(false),
-      weak_factory_(this) {}
+    : task_runner_(task_runner), media_log_(media_log) {}
 
 std::string DecryptingVideoDecoder::GetDisplayName() const {
   return kDecoderName;
 }
 
-void DecryptingVideoDecoder::Initialize(
-    const VideoDecoderConfig& config,
-    bool /* low_delay */,
-    CdmContext* cdm_context,
-    const InitCB& init_cb,
-    const OutputCB& output_cb,
-    const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb) {
+void DecryptingVideoDecoder::Initialize(const VideoDecoderConfig& config,
+                                        bool /* low_delay */,
+                                        CdmContext* cdm_context,
+                                        InitCB init_cb,
+                                        const OutputCB& output_cb,
+                                        const WaitingCB& waiting_cb) {
   DVLOG(2) << __func__ << ": " << config.AsHumanReadableString();
 
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -53,7 +46,7 @@ void DecryptingVideoDecoder::Initialize(
   DCHECK(!reset_cb_);
   DCHECK(config.IsValidConfig());
 
-  init_cb_ = BindToCurrentLoop(init_cb);
+  init_cb_ = BindToCurrentLoop(std::move(init_cb));
   if (!cdm_context) {
     // Once we have a CDM context, one should always be present.
     DCHECK(!support_clear_content_);
@@ -74,8 +67,8 @@ void DecryptingVideoDecoder::Initialize(
   weak_this_ = weak_factory_.GetWeakPtr();
   config_ = config;
 
-  DCHECK(waiting_for_decryption_key_cb);
-  waiting_for_decryption_key_cb_ = waiting_for_decryption_key_cb;
+  DCHECK(waiting_cb);
+  waiting_cb_ = waiting_cb;
 
   if (state_ == kUninitialized) {
     if (!cdm_context->GetDecryptor()) {
@@ -98,7 +91,7 @@ void DecryptingVideoDecoder::Initialize(
 }
 
 void DecryptingVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
-                                    const DecodeCB& decode_cb) {
+                                    DecodeCB decode_cb) {
   DVLOG(3) << "Decode()";
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(state_ == kIdle || state_ == kDecodeFinished || state_ == kError)
@@ -106,7 +99,7 @@ void DecryptingVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DCHECK(decode_cb);
   CHECK(!decode_cb_) << "Overlapping decodes are not supported.";
 
-  decode_cb_ = BindToCurrentLoop(decode_cb);
+  decode_cb_ = BindToCurrentLoop(std::move(decode_cb));
 
   if (state_ == kError) {
     std::move(decode_cb_).Run(DecodeStatus::DECODE_ERROR);
@@ -124,7 +117,7 @@ void DecryptingVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DecodePendingBuffer();
 }
 
-void DecryptingVideoDecoder::Reset(const base::Closure& closure) {
+void DecryptingVideoDecoder::Reset(base::OnceClosure closure) {
   DVLOG(2) << "Reset() - state: " << state_;
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(state_ == kIdle || state_ == kPendingDecode ||
@@ -134,7 +127,7 @@ void DecryptingVideoDecoder::Reset(const base::Closure& closure) {
   DCHECK(!init_cb_);  // No Reset() during pending initialization.
   DCHECK(!reset_cb_);
 
-  reset_cb_ = BindToCurrentLoop(closure);
+  reset_cb_ = BindToCurrentLoop(std::move(closure));
 
   decryptor_->ResetDecoder(Decryptor::kVideo);
 
@@ -150,7 +143,7 @@ void DecryptingVideoDecoder::Reset(const base::Closure& closure) {
   if (state_ == kWaitingForKey) {
     CompleteWaitingForDecryptionKey();
     DCHECK(decode_cb_);
-    pending_buffer_to_decode_ = NULL;
+    pending_buffer_to_decode_.reset();
     std::move(decode_cb_).Run(DecodeStatus::ABORTED);
   }
 
@@ -173,7 +166,7 @@ DecryptingVideoDecoder::~DecryptingVideoDecoder() {
     decryptor_->DeinitializeDecoder(Decryptor::kVideo);
     decryptor_ = NULL;
   }
-  pending_buffer_to_decode_ = NULL;
+  pending_buffer_to_decode_.reset();
   if (init_cb_)
     std::move(init_cb_).Run(false);
   if (decode_cb_)
@@ -227,9 +220,8 @@ void DecryptingVideoDecoder::DecodePendingBuffer() {
           &DecryptingVideoDecoder::DeliverFrame, weak_this_)));
 }
 
-void DecryptingVideoDecoder::DeliverFrame(
-    Decryptor::Status status,
-    const scoped_refptr<VideoFrame>& frame) {
+void DecryptingVideoDecoder::DeliverFrame(Decryptor::Status status,
+                                          scoped_refptr<VideoFrame> frame) {
   DVLOG(3) << "DeliverFrame() - status: " << status;
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(state_, kPendingDecode) << state_;
@@ -283,7 +275,7 @@ void DecryptingVideoDecoder::DeliverFrame(
     TRACE_EVENT_ASYNC_BEGIN0(
         "media", "DecryptingVideoDecoder::WaitingForDecryptionKey", this);
     state_ = kWaitingForKey;
-    waiting_for_decryption_key_cb_.Run();
+    waiting_cb_.Run(WaitingReason::kNoDecryptionKey);
     return;
   }
 
@@ -308,7 +300,7 @@ void DecryptingVideoDecoder::DeliverFrame(
       frame->set_color_space(config_.color_space_info().ToGfxColorSpace());
   }
 
-  output_cb_.Run(frame);
+  output_cb_.Run(std::move(frame));
 
   if (scoped_pending_buffer_to_decode->end_of_stream()) {
     // Set |pending_buffer_to_decode_| back as we need to keep flushing the

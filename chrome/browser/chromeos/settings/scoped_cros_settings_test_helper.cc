@@ -17,6 +17,7 @@
 #include "components/ownership/mock_owner_key_util.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -37,18 +38,15 @@ ScopedCrosSettingsTestHelper::~ScopedCrosSettingsTestHelper() {
 std::unique_ptr<FakeOwnerSettingsService>
 ScopedCrosSettingsTestHelper::CreateOwnerSettingsService(Profile* profile) {
   return std::make_unique<FakeOwnerSettingsService>(
-      profile, new ownership::MockOwnerKeyUtil(), stub_settings_provider_ptr_);
+      stub_settings_provider_ptr_, profile, new ownership::MockOwnerKeyUtil());
 }
 
 void ScopedCrosSettingsTestHelper::ReplaceDeviceSettingsProviderWithStub() {
   CHECK(CrosSettings::IsInitialized());
-  CrosSettings* const cros_settings = CrosSettings::Get();
-
-  // If CrosSettings is already using a stub, then we shouldn't be replacing it
-  // with a different stub - that would be confusing and unnecessary.
-  CHECK(!cros_settings->stubbed_provider_for_test());
-  // And, this function shouldn't be called twice either, for the same reason:
+  // This function shouldn't be called twice.
   CHECK(!real_settings_provider_);
+
+  CrosSettings* const cros_settings = CrosSettings::Get();
 
   // TODO(olsen): This could be simplified if DeviceSettings and CrosSettings
   // were the same thing, which they nearly are, except for 3 timezone settings.
@@ -74,14 +72,6 @@ void ScopedCrosSettingsTestHelper::RestoreRealDeviceSettingsProvider() {
 }
 
 StubCrosSettingsProvider* ScopedCrosSettingsTestHelper::GetStubbedProvider() {
-  // If CrosSettings was already initialized with kStubCrosSettings, then
-  // we use the StubCrosSettingsProvider that was already initialized:
-  if (CrosSettings::IsInitialized() &&
-      CrosSettings::Get()->stubbed_provider_for_test()) {
-    return CrosSettings::Get()->stubbed_provider_for_test();
-  }
-  // Otherwise, we use this one - it has to be explicitly swapped in using
-  // ReplaceDeviceSettingsProviderWithStub() however.
   return stub_settings_provider_ptr_;
 }
 
@@ -132,6 +122,8 @@ void ScopedCrosSettingsTestHelper::StoreCachedDeviceSetting(
     OwnerSettingsServiceChromeOS::UpdateDeviceSettings(path, *value, settings);
     CHECK(settings.SerializeToString(data.mutable_policy_value()));
     CHECK(device_settings_cache::Store(data, g_browser_process->local_state()));
+    g_browser_process->local_state()->CommitPendingWrite(base::DoNothing(),
+                                                         base::DoNothing());
   }
 }
 
@@ -143,13 +135,6 @@ void ScopedCrosSettingsTestHelper::CopyStoredValue(const std::string& path) {
   if (value) {
     stub_settings_provider_ptr_->Set(path, *value);
   }
-}
-
-void ScopedCrosSettingsTestHelper::SetFakeSessionManager() {
-  DeviceSettingsService::Get()->SetSessionManager(
-      &fake_session_manager_client_, new ownership::MockOwnerKeyUtil());
-  DeviceSettingsService::Get()->Load();
-  content::RunAllTasksUntilIdle();
 }
 
 StubInstallAttributes* ScopedCrosSettingsTestHelper::InstallAttributes() {

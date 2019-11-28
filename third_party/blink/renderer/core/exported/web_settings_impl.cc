@@ -42,12 +42,9 @@ WebSettingsImpl::WebSettingsImpl(Settings* settings,
                                  DevToolsEmulator* dev_tools_emulator)
     : settings_(settings),
       dev_tools_emulator_(dev_tools_emulator),
-      show_fps_counter_(false),
-      show_paint_rects_(false),
       render_v_sync_notification_enabled_(false),
       auto_zoom_focused_node_to_legible_scale_(false),
       support_deprecated_target_density_dpi_(false),
-      viewport_meta_layout_size_quirk_(false),
       viewport_meta_non_user_scalable_quirk_(false),
       clobber_user_agent_initial_scale_quirk_(false) {
   DCHECK(settings);
@@ -76,10 +73,6 @@ void WebSettingsImpl::SetNetworkQuietTimeout(double timeout) {
 
 void WebSettingsImpl::SetForceMainWorldInitialization(bool enabled) {
   settings_->SetForceMainWorldInitialization(enabled);
-}
-
-void WebSettingsImpl::SetForcePreloadNoneForMediaElements(bool enabled) {
-  settings_->SetForcePreloadNoneForMediaElements(enabled);
 }
 
 void WebSettingsImpl::SetForceZeroLayoutHeight(bool enabled) {
@@ -189,11 +182,6 @@ void WebSettingsImpl::SetSupportDeprecatedTargetDensityDPI(
       support_deprecated_target_density_dpi;
 }
 
-void WebSettingsImpl::SetViewportMetaLayoutSizeQuirk(
-    bool viewport_meta_layout_size_quirk) {
-  viewport_meta_layout_size_quirk_ = viewport_meta_layout_size_quirk;
-}
-
 void WebSettingsImpl::SetViewportMetaMergeContentQuirk(
     bool viewport_meta_merge_content_quirk) {
   settings_->SetViewportMetaMergeContentQuirk(
@@ -257,12 +245,6 @@ void WebSettingsImpl::SetLoadWithOverviewMode(bool enabled) {
 
 void WebSettingsImpl::SetShouldReuseGlobalForUnownedMainFrame(bool enabled) {
   settings_->SetShouldReuseGlobalForUnownedMainFrame(enabled);
-}
-
-void WebSettingsImpl::SetSavePreviousDocumentResources(
-    SavePreviousDocumentResources save_resources) {
-  settings_->SetSavePreviousDocumentResources(
-      static_cast<blink::SavePreviousDocumentResources>(save_resources));
 }
 
 void WebSettingsImpl::SetPluginsEnabled(bool enabled) {
@@ -334,6 +316,12 @@ void WebSettingsImpl::SetUseWideViewport(bool use_wide_viewport) {
   settings_->SetUseWideViewport(use_wide_viewport);
 }
 
+void WebSettingsImpl::SetDontSendKeyEventsToJavascript(
+    bool dont_send_key_events_to_javascript) {
+  settings_->SetDontSendKeyEventsToJavascript(
+      dont_send_key_events_to_javascript);
+}
+
 void WebSettingsImpl::SetDoubleTapToZoomEnabled(
     bool double_tap_to_zoom_enabled) {
   dev_tools_emulator_->SetDoubleTapToZoomEnabled(double_tap_to_zoom_enabled);
@@ -345,10 +333,6 @@ void WebSettingsImpl::SetDownloadableBinaryFontsEnabled(bool enabled) {
 
 void WebSettingsImpl::SetJavaScriptCanAccessClipboard(bool enabled) {
   settings_->SetJavaScriptCanAccessClipboard(enabled);
-}
-
-void WebSettingsImpl::SetXSSAuditorEnabled(bool enabled) {
-  settings_->SetXSSAuditorEnabled(enabled);
 }
 
 void WebSettingsImpl::SetTextTrackKindUserPreference(
@@ -387,6 +371,18 @@ void WebSettingsImpl::SetTextTrackTextShadow(const WebString& shadow) {
 
 void WebSettingsImpl::SetTextTrackTextSize(const WebString& size) {
   settings_->SetTextTrackTextSize(size);
+}
+
+void WebSettingsImpl::SetTextTrackWindowColor(const WebString& color) {
+  settings_->SetTextTrackWindowColor(color);
+}
+
+void WebSettingsImpl::SetTextTrackWindowPadding(const WebString& padding) {
+  settings_->SetTextTrackWindowPadding(padding);
+}
+
+void WebSettingsImpl::SetTextTrackWindowRadius(const WebString& radius) {
+  settings_->SetTextTrackWindowRadius(radius);
 }
 
 void WebSettingsImpl::SetDNSPrefetchingEnabled(bool enabled) {
@@ -461,20 +457,8 @@ void WebSettingsImpl::SetShowContextMenuOnMouseUp(bool enabled) {
   settings_->SetShowContextMenuOnMouseUp(enabled);
 }
 
-void WebSettingsImpl::SetShowFPSCounter(bool show) {
-  show_fps_counter_ = show;
-}
-
-void WebSettingsImpl::SetShowPaintRects(bool show) {
-  show_paint_rects_ = show;
-}
-
 void WebSettingsImpl::SetEditingBehavior(EditingBehavior behavior) {
   settings_->SetEditingBehaviorType(static_cast<EditingBehaviorType>(behavior));
-}
-
-void WebSettingsImpl::SetMockScrollbarsEnabled(bool enabled) {
-  settings_->SetMockScrollbarsEnabled(enabled);
 }
 
 void WebSettingsImpl::SetHideScrollbars(bool enabled) {
@@ -501,10 +485,6 @@ void WebSettingsImpl::SetPreferCompositingToLCDTextEnabled(bool enabled) {
   dev_tools_emulator_->SetPreferCompositingToLCDTextEnabled(enabled);
 }
 
-void WebSettingsImpl::SetMinimumAccelerated2dCanvasSize(int num_pixels) {
-  settings_->SetMinimumAccelerated2dCanvasSize(num_pixels);
-}
-
 void WebSettingsImpl::SetHideDownloadUI(bool hide) {
   settings_->SetHideDownloadUI(hide);
 }
@@ -513,8 +493,8 @@ void WebSettingsImpl::SetPresentationReceiver(bool enabled) {
   settings_->SetPresentationReceiver(enabled);
 }
 
-void WebSettingsImpl::SetHistoryEntryRequiresUserGesture(bool enabled) {
-  settings_->SetHistoryEntryRequiresUserGesture(enabled);
+void WebSettingsImpl::SetHighlightAds(bool enabled) {
+  settings_->SetHighlightAds(enabled);
 }
 
 void WebSettingsImpl::SetHyperlinkAuditingEnabled(bool enabled) {
@@ -564,10 +544,6 @@ void WebSettingsImpl::SetPasswordEchoDurationInSeconds(
   settings_->SetPasswordEchoDurationInSeconds(duration_in_seconds);
 }
 
-void WebSettingsImpl::SetPerTilePaintingEnabled(bool enabled) {
-  per_tile_painting_enabled_ = enabled;
-}
-
 void WebSettingsImpl::SetShouldPrintBackgrounds(bool enabled) {
   settings_->SetShouldPrintBackgrounds(enabled);
 }
@@ -578,6 +554,10 @@ void WebSettingsImpl::SetShouldClearDocumentBackground(bool enabled) {
 
 void WebSettingsImpl::SetEnableScrollAnimator(bool enabled) {
   settings_->SetScrollAnimatorEnabled(enabled);
+}
+
+void WebSettingsImpl::SetPrefersReducedMotion(bool enabled) {
+  settings_->SetPrefersReducedMotion(enabled);
 }
 
 void WebSettingsImpl::SetEnableTouchAdjustment(bool enabled) {
@@ -616,13 +596,8 @@ void WebSettingsImpl::SetDataSaverHoldbackWebApi(bool enabled) {
   settings_->SetDataSaverHoldbackWebApi(enabled);
 }
 
-void WebSettingsImpl::SetDataSaverHoldbackMediaApi(bool enabled) {
-  settings_->SetDataSaverHoldbackMediaApi(enabled);
-}
-
-void WebSettingsImpl::SetMediaPlaybackGestureWhitelistScope(
-    const WebString& scope) {
-  settings_->SetMediaPlaybackGestureWhitelistScope(scope);
+void WebSettingsImpl::SetWebAppScope(const WebString& scope) {
+  settings_->SetWebAppScope(scope);
 }
 
 void WebSettingsImpl::SetPresentationRequiresUserGesture(bool required) {
@@ -647,6 +622,10 @@ void WebSettingsImpl::SetViewportMetaEnabled(bool enabled) {
 
 void WebSettingsImpl::SetSyncXHRInDocumentsEnabled(bool enabled) {
   settings_->SetSyncXHRInDocumentsEnabled(enabled);
+}
+
+void WebSettingsImpl::SetCaretBrowsingEnabled(bool enabled) {
+  settings_->SetCaretBrowsingEnabled(enabled);
 }
 
 void WebSettingsImpl::SetCookieEnabled(bool enabled) {
@@ -677,10 +656,6 @@ void WebSettingsImpl::SetSmartInsertDeleteEnabled(bool enabled) {
   settings_->SetSmartInsertDeleteEnabled(enabled);
 }
 
-void WebSettingsImpl::SetUseSolidColorScrollbars(bool enabled) {
-  settings_->SetUseSolidColorScrollbars(enabled);
-}
-
 void WebSettingsImpl::SetMainFrameResizesAreOrientationChanges(bool enabled) {
   dev_tools_emulator_->SetMainFrameResizesAreOrientationChanges(enabled);
 }
@@ -700,10 +675,6 @@ void WebSettingsImpl::SetMediaControlsEnabled(bool enabled) {
 void WebSettingsImpl::SetDoNotUpdateSelectionOnMutatingSelectionRange(
     bool enabled) {
   settings_->SetDoNotUpdateSelectionOnMutatingSelectionRange(enabled);
-}
-
-void WebSettingsImpl::SetMediaDownloadInProductHelpEnabled(bool enabled) {
-  settings_->SetMediaDownloadInProductHelpEnabled(enabled);
 }
 
 void WebSettingsImpl::SetLowPriorityIframesThreshold(
@@ -773,6 +744,35 @@ void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx3G(
 void WebSettingsImpl::SetLazyImageLoadingDistanceThresholdPx4G(
     int distance_px) {
   settings_->SetLazyImageLoadingDistanceThresholdPx4G(distance_px);
+}
+
+void WebSettingsImpl::SetLazyImageFirstKFullyLoadUnknown(int num_images) {
+  settings_->SetLazyImageFirstKFullyLoadUnknown(num_images);
+}
+
+void WebSettingsImpl::SetLazyImageFirstKFullyLoadSlow2G(int num_images) {
+  settings_->SetLazyImageFirstKFullyLoadSlow2G(num_images);
+}
+
+void WebSettingsImpl::SetLazyImageFirstKFullyLoad2G(int num_images) {
+  settings_->SetLazyImageFirstKFullyLoad2G(num_images);
+}
+
+void WebSettingsImpl::SetLazyImageFirstKFullyLoad3G(int num_images) {
+  settings_->SetLazyImageFirstKFullyLoad3G(num_images);
+}
+
+void WebSettingsImpl::SetLazyImageFirstKFullyLoad4G(int num_images) {
+  settings_->SetLazyImageFirstKFullyLoad4G(num_images);
+}
+
+void WebSettingsImpl::SetForceDarkModeEnabled(bool enabled) {
+  settings_->SetForceDarkModeEnabled(enabled);
+}
+
+void WebSettingsImpl::SetNavigationControls(
+    NavigationControls navigation_controls) {
+  settings_->SetNavigationControls(navigation_controls);
 }
 
 STATIC_ASSERT_ENUM(WebSettings::ImageAnimationPolicy::kAllowed,

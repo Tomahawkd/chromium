@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/login/supervised/supervised_user_login_flow.h"
 
 #include "base/base64.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -28,7 +29,7 @@ using content::BrowserThread;
 namespace chromeos {
 
 SupervisedUserLoginFlow::SupervisedUserLoginFlow(const AccountId& account_id)
-    : ExtendedUserFlow(account_id), weak_factory_(this) {}
+    : ExtendedUserFlow(account_id) {}
 
 SupervisedUserLoginFlow::~SupervisedUserLoginFlow() {}
 
@@ -62,10 +63,6 @@ bool SupervisedUserLoginFlow::SupportsEarlyRestartToApplyFlags() {
 }
 
 bool SupervisedUserLoginFlow::HandleLoginFailure(const AuthFailure& failure) {
-  return false;
-}
-
-bool SupervisedUserLoginFlow::HandlePasswordChangeDetected() {
   return false;
 }
 

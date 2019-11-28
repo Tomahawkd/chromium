@@ -4,6 +4,8 @@
 
 #include "content/public/common/content_constants.h"
 
+#include "build/branding_buildflags.h"
+
 namespace content {
 
 const base::FilePath::CharType kAppCacheDirname[] =
@@ -21,13 +23,10 @@ const char kFlashPluginSplMimeType[] = "application/futuresplash";
 const char kFlashPluginSplExtension[] = "spl";
 const char kFlashPluginSplDescription[] = "FutureSplash Player";
 
-// This number used to be limited to 32 in the past (see b/535234).
-const size_t kMaxRendererProcessCount = 82;
-const int kMaxSessionHistoryEntries = 50;
 const size_t kMaxTitleChars = 4 * 1024;
 const size_t kMaxURLDisplayChars = 32 * 1024;
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 const char kStatsFilename[] = "ChromeStats2";
 #else
 const char kStatsFilename[] = "ChromiumStats2";
@@ -44,5 +43,8 @@ const int kHistogramSynchronizerReservedSequenceNumber = 0;
 // should be and once we stop blocking multiple simultaneous requests for the
 // same resource (see bugs 46104 and 31014).
 const int kDefaultDetachableCancelDelayMs = 30000;
+
+const char kCorsExemptPurposeHeaderName[] = "Purpose";
+const char kCorsExemptRequestedWithHeaderName[] = "X-Requested-With";
 
 }  // namespace content

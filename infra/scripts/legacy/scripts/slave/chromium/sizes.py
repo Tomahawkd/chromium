@@ -92,6 +92,18 @@ def main_mac(options, args, results_collector):
   build_dir = build_directory.GetBuildOutputDirectory(SRC_DIR)
   target_dir = os.path.join(build_dir, options.target)
 
+  size_path = 'size'
+
+  # If there's a hermetic download of Xcode, directly invoke 'size' from it. The
+  # hermetic xcode binaries aren't a full Xcode install, so we can't modify
+  # DEVELOPER_DIR.
+  hermetic_size_path = os.path.join(
+      SRC_DIR, 'build', 'mac_files', 'xcode_binaries', 'Contents',
+      'Developer', 'Toolchains', 'XcodeDefault.xctoolchain', 'usr', 'bin',
+      'size')
+  if os.path.exists(hermetic_size_path):
+    size_path = hermetic_size_path
+
   result = 0
   # Work with either build type.
   base_names = ('Chromium', 'Google Chrome')
@@ -99,7 +111,7 @@ def main_mac(options, args, results_collector):
     app_bundle = base_name + '.app'
     framework_name = base_name + ' Framework'
     framework_bundle = framework_name + '.framework'
-    framework_dsym_bundle = framework_bundle + '.dSYM'
+    framework_dsym_bundle = framework_name + '.dSYM'
     framework_unstripped_name = framework_name + '.unstripped'
 
     chromium_app_dir = os.path.join(target_dir, app_bundle)
@@ -126,16 +138,18 @@ def main_mac(options, args, results_collector):
         'framework_name'   : re.sub(r'\s', '', framework_name),
         'framework_bundle' : re.sub(r'\s', '', framework_bundle),
         'app_size'         : get_size(chromium_executable),
-        'framework_size'   : get_size(chromium_framework_executable)
+        'framework_size'   : get_size(chromium_framework_executable),
+        'framework_dsym_name' : re.sub(r'\s', '', framework_name) + 'Dsym',
+        'framework_dsym_size' : get_size(chromium_framework_dsym),
       }
 
       # Collect the segment info out of the App
-      result, stdout = run_process(result, ['size', chromium_executable])
+      result, stdout = run_process(result, [size_path, chromium_executable])
       print_dict['app_text'], print_dict['app_data'], print_dict['app_objc'] = \
           re.search(r'(\d+)\s+(\d+)\s+(\d+)', stdout).groups()
 
       # Collect the segment info out of the Framework
-      result, stdout = run_process(result, ['size',
+      result, stdout = run_process(result, [size_path,
                                             chromium_framework_executable])
       print_dict['framework_text'], print_dict['framework_data'], \
         print_dict['framework_objc'] = \
@@ -173,6 +187,9 @@ def main_mac(options, args, results_collector):
       results_collector.add_result(
           print_dict['app_bundle'], print_dict['app_bundle'],
           print_dict['app_bundle_size'], 'bytes')
+      results_collector.add_result(
+          print_dict['framework_dsym_name'], print_dict['framework_dsym_name'],
+          print_dict['framework_dsym_size'], 'bytes')
 
       # Found a match, don't check the other base_names.
       return result
@@ -407,6 +424,24 @@ def main_win(options, args, results_collector):
   return 0
 
 
+def format_for_histograms_conversion(data):
+  # We need to do two things to the provided data to make it compatible with the
+  # conversion script:
+  # 1. Add a top-level "benchmark_name" key.
+  # 2. Pull out the "identifier" value to be the story name.
+  formatted_data = {}
+  for metric, metric_data in data.iteritems():
+    story = metric_data['identifier']
+    formatted_data[metric] = {
+      story: metric_data.copy()
+    }
+    del formatted_data[metric][story]['identifier']
+  return {
+    'benchmark_name': 'sizes',
+    'charts': formatted_data
+  }
+
+
 def main():
   if sys.platform in ('win32', 'cygwin'):
     default_platform = 'win'
@@ -467,13 +502,10 @@ def main():
 
   if options.output_dir:
     histogram_path = os.path.join(options.output_dir, 'perf_results.json')
-    # We need to add a bit more data to the results, otherwise the conversion
-    # fails due to the provided data being malformed.
-    updated_results = {
-      'format_version': '1.0',
-      'benchmark_name': 'sizes',
-      'charts': results_collector.results,
-    }
+    # We need to add a bit more data to the results and rearrange some things,
+    # otherwise the conversion fails due to the provided data being malformed.
+    updated_results = format_for_histograms_conversion(
+        results_collector.results)
     with open(histogram_path, 'w') as f:
       json.dump(updated_results, f)
     histogram_result = convert_chart_json.ConvertChartJson(histogram_path)

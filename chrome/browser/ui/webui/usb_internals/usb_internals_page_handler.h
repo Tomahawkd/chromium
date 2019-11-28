@@ -7,25 +7,26 @@
 
 #include "base/macros.h"
 #include "chrome/browser/ui/webui/usb_internals/usb_internals.mojom.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "services/device/public/mojom/usb_manager.mojom.h"
+#include "services/device/public/mojom/usb_manager_test.mojom.h"
 
 class UsbInternalsPageHandler : public mojom::UsbInternalsPageHandler {
  public:
   explicit UsbInternalsPageHandler(
-      mojom::UsbInternalsPageHandlerRequest request);
+      mojo::PendingReceiver<mojom::UsbInternalsPageHandler> receiver);
   ~UsbInternalsPageHandler() override;
 
-  // mojom::UsbInternalsPageHandler overrides:
-  void AddDeviceForTesting(const std::string& name,
-                           const std::string& serial_number,
-                           const std::string& landing_page,
-                           AddDeviceForTestingCallback callback) override;
-  void RemoveDeviceForTesting(const std::string& guid,
-                              RemoveDeviceForTestingCallback callback) override;
-  void GetTestDevices(GetTestDevicesCallback callback) override;
+  void BindUsbDeviceManagerInterface(
+      mojo::PendingReceiver<device::mojom::UsbDeviceManager> receiver) override;
+
+  void BindTestInterface(
+      mojo::PendingReceiver<device::mojom::UsbDeviceManagerTest> receiver)
+      override;
 
  private:
-  mojo::Binding<mojom::UsbInternalsPageHandler> binding_;
+  mojo::Receiver<mojom::UsbInternalsPageHandler> receiver_;
 
   DISALLOW_COPY_AND_ASSIGN(UsbInternalsPageHandler);
 };

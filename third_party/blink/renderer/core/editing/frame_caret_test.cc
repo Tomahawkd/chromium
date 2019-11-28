@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/editing/selection_template.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
@@ -18,14 +19,13 @@ namespace blink {
 
 class FrameCaretTest : public EditingTestBase {
  public:
-  FrameCaretTest()
-      : was_running_layout_test_(WebTestSupport::IsRunningWebTest()) {
+  FrameCaretTest() : was_running_web_test_(WebTestSupport::IsRunningWebTest()) {
     // The caret blink timer doesn't work if IsRunningWebTest() because
     // LayoutTheme::CaretBlinkInterval() returns 0.
     WebTestSupport::SetIsRunningWebTest(false);
   }
   ~FrameCaretTest() override {
-    WebTestSupport::SetIsRunningWebTest(was_running_layout_test_);
+    WebTestSupport::SetIsRunningWebTest(was_running_web_test_);
   }
 
   static bool ShouldBlinkCaret(const FrameCaret& caret) {
@@ -33,7 +33,7 @@ class FrameCaretTest : public EditingTestBase {
   }
 
  private:
-  const bool was_running_layout_test_;
+  const bool was_running_web_test_;
 };
 
 TEST_F(FrameCaretTest, BlinkAfterTyping) {
@@ -44,11 +44,11 @@ TEST_F(FrameCaretTest, BlinkAfterTyping) {
   caret.RecreateCaretBlinkTimerForTesting(task_runner.get());
   const double kInterval = 10;
   LayoutTheme::GetTheme().SetCaretBlinkInterval(
-      TimeDelta::FromSecondsD(kInterval));
+      base::TimeDelta::FromSecondsD(kInterval));
   GetDocument().GetPage()->GetFocusController().SetActive(true);
   GetDocument().GetPage()->GetFocusController().SetFocused(true);
   GetDocument().body()->SetInnerHTMLFromString("<textarea>");
-  Element* editor = ToElement(GetDocument().body()->firstChild());
+  auto* editor = To<Element>(GetDocument().body()->firstChild());
   editor->focus();
   UpdateAllLifecyclePhasesForTest();
 
@@ -94,6 +94,16 @@ TEST_F(FrameCaretTest, ShouldNotBlinkWhenSelectionLooseFocus) {
   EXPECT_EQ(selection.Base(),
             Position(input, PositionAnchorType::kBeforeChildren));
   EXPECT_FALSE(ShouldBlinkCaret(caret));
+}
+
+TEST_F(FrameCaretTest, ShouldBlinkCaretWhileCaretBrowsing) {
+  FrameCaret& caret = Selection().FrameCaretForTesting();
+  Selection().SetSelection(SetSelectionTextToBody("<div>a|b</div>"),
+                           SetSelectionOptions());
+  Selection().SetCaretVisible(true);
+  EXPECT_FALSE(ShouldBlinkCaret(caret));
+  GetDocument().GetFrame()->GetSettings()->SetCaretBrowsingEnabled(true);
+  EXPECT_TRUE(ShouldBlinkCaret(caret));
 }
 
 }  // namespace blink

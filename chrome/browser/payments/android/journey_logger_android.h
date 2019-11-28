@@ -44,6 +44,10 @@ class JourneyLoggerAndroid {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
       jboolean jvalue);
+  void SetHasEnrolledInstrumentValue(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller,
+      jboolean jvalue);
   void SetEventOccurred(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& jcaller,
                         jint jevent);
@@ -68,6 +72,14 @@ class JourneyLoggerAndroid {
   void SetNotShown(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& jcaller,
                    jint jreason);
+  void RecordTransactionAmount(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller,
+      const base::android::JavaParamRef<jstring>& jcurrency,
+      const base::android::JavaParamRef<jstring>& jvalue,
+      jboolean jcompleted);
+  void SetTriggerTime(JNIEnv* env,
+                      const base::android::JavaParamRef<jobject>& jcaller);
 
  private:
   JourneyLogger journey_logger_;

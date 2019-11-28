@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -33,19 +34,18 @@ class MockDemuxerStreamAdapter {
       scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
       const std::string& name,
       DemuxerStream* demuxer_stream,
-      mojom::RemotingDataStreamSenderPtrInfo stream_sender_info,
-      mojo::ScopedDataPipeProducerHandle producer_handle)
-      : weak_factory_(this) {
-    rpc_broker_.reset(
-        new RpcBroker(base::Bind(&MockDemuxerStreamAdapter::OnSendMessageToSink,
-                                 weak_factory_.GetWeakPtr())));
+      mojo::PendingRemote<mojom::RemotingDataStreamSender> stream_sender_remote,
+      mojo::ScopedDataPipeProducerHandle producer_handle) {
+    rpc_broker_.reset(new RpcBroker(
+        base::BindRepeating(&MockDemuxerStreamAdapter::OnSendMessageToSink,
+                            weak_factory_.GetWeakPtr())));
     demuxer_stream_adapter_.reset(new DemuxerStreamAdapter(
         std::move(main_task_runner), std::move(media_task_runner), name,
         demuxer_stream, rpc_broker_->GetWeakPtr(),
-        rpc_broker_->GetUniqueHandle(), std::move(stream_sender_info),
+        rpc_broker_->GetUniqueHandle(), std::move(stream_sender_remote),
         std::move(producer_handle),
-        base::Bind(&MockDemuxerStreamAdapter::OnError,
-                   weak_factory_.GetWeakPtr())));
+        base::BindOnce(&MockDemuxerStreamAdapter::OnError,
+                       weak_factory_.GetWeakPtr())));
 
     // Faking initialization with random callback handle to start mojo watcher.
     demuxer_stream_adapter_->Initialize(3);
@@ -103,7 +103,7 @@ class MockDemuxerStreamAdapter {
 
   std::vector<StopTrigger> errors_;
 
-  base::WeakPtrFactory<MockDemuxerStreamAdapter> weak_factory_;
+  base::WeakPtrFactory<MockDemuxerStreamAdapter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MockDemuxerStreamAdapter);
 };
@@ -119,7 +119,7 @@ class DemuxerStreamAdapterTest : public ::testing::Test {
     const MojoCreateDataPipeOptions data_pipe_options{
         sizeof(MojoCreateDataPipeOptions), MOJO_CREATE_DATA_PIPE_FLAG_NONE, 1,
         kDataPipeCapacity};
-    mojom::RemotingDataStreamSenderPtr stream_sender;
+    mojo::PendingRemote<mojom::RemotingDataStreamSender> stream_sender;
     mojo::ScopedDataPipeProducerHandle producer_end;
     mojo::ScopedDataPipeConsumerHandle consumer_end;
     CHECK_EQ(
@@ -127,10 +127,11 @@ class DemuxerStreamAdapterTest : public ::testing::Test {
         mojo::CreateDataPipe(&data_pipe_options, &producer_end, &consumer_end));
 
     data_stream_sender_.reset(new FakeRemotingDataStreamSender(
-        MakeRequest(&stream_sender), std::move(consumer_end)));
+        stream_sender.InitWithNewPipeAndPassReceiver(),
+        std::move(consumer_end)));
     demuxer_stream_adapter_.reset(new MockDemuxerStreamAdapter(
         message_loop_.task_runner(), message_loop_.task_runner(), "test",
-        demuxer_stream_.get(), stream_sender.PassInterface(),
+        demuxer_stream_.get(), std::move(stream_sender),
         std::move(producer_end)));
     // DemuxerStreamAdapter constructor posts task to main thread to
     // register MessageReceiverCallback. Therefore it should call

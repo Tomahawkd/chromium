@@ -17,9 +17,18 @@
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_mach_port.h"
 #endif
+
 #if defined(OS_WIN)
 #include <windows.h>
 #endif
+
+#if defined(OS_LINUX)
+#include <signal.h>
+#endif
+
+namespace base {
+class Time;
+}
 
 namespace crashpad {
 class CrashpadClient;
@@ -27,6 +36,13 @@ class CrashReportDatabase;
 }  // namespace crashpad
 
 namespace crash_reporter {
+
+#if defined(OS_LINUX)
+// TODO(jperaza): Remove kEnableCrashpad and IsCrashpadEnabled() when Crashpad
+// is fully enabled on Linux.
+extern const char kEnableCrashpad[];
+bool IsCrashpadEnabled();
+#endif
 
 // Initializes Crashpad in a way that is appropriate for initial_client and
 // process_type.
@@ -139,6 +155,9 @@ void CrashWithoutDumping(const std::string& message);
 // Returns the Crashpad database path, only valid in the browser.
 base::FilePath GetCrashpadDatabasePath();
 
+// Deletes any reports that were recorded or uploaded within the time range.
+void ClearReportsBetween(const base::Time& begin, const base::Time& end);
+
 // The implementation function for GetReports.
 void GetReportsImpl(std::vector<Report>* reports);
 
@@ -147,6 +166,9 @@ void RequestSingleCrashUploadImpl(const std::string& local_id);
 
 // The implementation function for GetCrashpadDatabasePath.
 base::FilePath::StringType::const_pointer GetCrashpadDatabasePathImpl();
+
+// The implementation function for ClearReportsBetween.
+void ClearReportsBetweenImpl(time_t begin, time_t end);
 
 #if defined(OS_MACOSX)
 // Captures a minidump for the process named by its |task_port| and stores it
@@ -160,7 +182,21 @@ void DumpProcessWithoutCrashing(task_t task_port);
 // success.
 class CrashReporterClient;
 bool DumpWithoutCrashingForClient(CrashReporterClient* client);
+
+// Used under WebView to whitelist a memory range so it's accessible using
+// crashpad's ProcessMemory interface.
+void WhitelistMemoryRange(void* begin, size_t size);
 #endif  // OS_ANDROID
+
+#if defined(OS_LINUX)
+// Install a handler that gets a chance to handle faults before Crashpad. This
+// is used by V8 for trap-based bounds checks.
+void SetFirstChanceExceptionHandler(bool (*handler)(int, siginfo_t*, void*));
+
+// Gets the socket and process ID of the Crashpad handler connected to this
+// process, valid if this function returns `true`.
+bool GetHandlerSocket(int* sock, pid_t* pid);
+#endif  // OS_LINUX
 
 namespace internal {
 
@@ -173,12 +209,6 @@ void GetPlatformCrashpadAnnotations(
 // The thread functions that implement the InjectDumpForHungInput in the
 // target process.
 DWORD WINAPI DumpProcessForHungInputThread(void* param);
-
-#if defined(ARCH_CPU_X86_64)
-// V8 support functions.
-void RegisterNonABICompliantCodeRangeImpl(void* start, size_t size_in_bytes);
-void UnregisterNonABICompliantCodeRangeImpl(void* start);
-#endif  // defined(ARCH_CPU_X86_64)
 
 #endif  // defined(OS_WIN)
 

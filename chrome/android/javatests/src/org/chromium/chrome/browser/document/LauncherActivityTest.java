@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.document;
 
-import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
-
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
@@ -34,7 +32,6 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
 
-import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
@@ -51,10 +48,10 @@ public class LauncherActivityTest {
             new ChromeActivityTestRule<>(ChromeActivity.class);
 
     private Context mContext;
-    private static final long DEVICE_STARTUP_TIMEOUT_MS = scaleTimeout(15000);
+    private static final long DEVICE_STARTUP_TIMEOUT_MS = 15000L;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         mContext = InstrumentationRegistry.getTargetContext();
     }
 
@@ -131,10 +128,9 @@ public class LauncherActivityTest {
                 new Criteria("ChromeLauncherActivity did not start Chrome") {
                     @Override
                     public boolean isSatisfied() {
-                        final List<WeakReference<Activity>> references =
-                                ApplicationStatus.getRunningActivities();
-                        if (references.size() != 1) return false;
-                        launchedActivity.set(references.get(0).get());
+                        final List<Activity> activities = ApplicationStatus.getRunningActivities();
+                        if (activities.size() != 1) return false;
+                        launchedActivity.set(activities.get(0));
                         return launchedActivity.get() instanceof ChromeActivity;
                     }
                 }, DEVICE_STARTUP_TIMEOUT_MS, CriteriaHelper.DEFAULT_POLLING_INTERVAL);

@@ -14,11 +14,11 @@ bool BookmarkNodeData::ClipboardContainsBookmarks() {
   return false;
 }
 
-void BookmarkNodeData::WriteToClipboard(ui::ClipboardType type) {
+void BookmarkNodeData::WriteToClipboard() {
   NOTREACHED();
 }
 
-bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardType type) {
+bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardBuffer buffer) {
   NOTREACHED();
   return false;
 }

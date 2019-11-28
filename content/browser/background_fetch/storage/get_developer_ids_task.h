@@ -12,11 +12,10 @@
 #include "base/containers/flat_map.h"
 #include "content/browser/background_fetch/storage/database_task.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
-#include "third_party/blink/public/platform/modules/background_fetch/background_fetch.mojom.h"
+#include "third_party/blink/public/mojom/background_fetch/background_fetch.mojom.h"
 #include "url/origin.h"
 
 namespace content {
-
 namespace background_fetch {
 
 // Gets the developer ids for all active registrations - registrations that have
@@ -49,13 +48,13 @@ class GetDeveloperIdsTask : public DatabaseTask {
 
   std::vector<std::string> developer_ids_;
 
-  base::WeakPtrFactory<GetDeveloperIdsTask> weak_factory_;  // Keep as last.
+  base::WeakPtrFactory<GetDeveloperIdsTask> weak_factory_{
+      this};  // Keep as last.
 
   DISALLOW_COPY_AND_ASSIGN(GetDeveloperIdsTask);
 };
 
 }  // namespace background_fetch
-
 }  // namespace content
 
 #endif  // CONTENT_BROWSER_BACKGROUND_FETCH_STORAGE_GET_DEVELOPER_IDS_TASK_H_

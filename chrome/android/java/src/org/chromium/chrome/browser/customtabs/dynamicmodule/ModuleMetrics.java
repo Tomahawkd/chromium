@@ -5,14 +5,16 @@
 package org.chromium.chrome.browser.customtabs.dynamicmodule;
 
 import android.os.SystemClock;
-import android.support.annotation.IntDef;
+
+import androidx.annotation.IntDef;
+import androidx.annotation.StringDef;
 
 import org.chromium.base.Log;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.chrome.browser.metrics.UmaSessionStats;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Records metrics related to custom tabs dynamic modules.
@@ -23,14 +25,19 @@ public final class ModuleMetrics {
     private static final String TAG = "ModuleMetrics";
 
     /**
+     * The name of the synthetic field trial for registering the module lifecycle state.
+     */
+    private static final String LIFECYCLE_STATE_TRIAL_NAME = "CCTModuleLifecycleState";
+
+    /**
      * Possible results when loading a dynamic module. Keep in sync with the
-     * CustomTabs.DynamicModule.LoadResult enum in histograms.xml. Do not remove
+     * CustomTabsDynamicModuleLoadResult enum in enums.xml. Do not remove
      * or change existing values other than NUM_ENTRIES.
      */
     @IntDef({LoadResult.SUCCESS_NEW, LoadResult.SUCCESS_CACHED, LoadResult.FEATURE_DISABLED,
             LoadResult.NOT_GOOGLE_SIGNED, LoadResult.PACKAGE_NAME_NOT_FOUND_EXCEPTION,
             LoadResult.CLASS_NOT_FOUND_EXCEPTION, LoadResult.INSTANTIATION_EXCEPTION,
-            LoadResult.INCOMPATIBLE_VERSION})
+            LoadResult.INCOMPATIBLE_VERSION, LoadResult.FAILED_TO_COPY_DEX_EXCEPTION})
     @Retention(RetentionPolicy.SOURCE)
     public @interface LoadResult {
         /** A new instance of the module was loaded successfully. */
@@ -50,8 +57,10 @@ public final class ModuleMetrics {
         int INSTANTIATION_EXCEPTION = 6;
         /** The module was loaded but the host and module versions are incompatible. */
         int INCOMPATIBLE_VERSION = 7;
+        /** The module dex could not be copied to local storage. */
+        int FAILED_TO_COPY_DEX_EXCEPTION = 8;
         /** Upper bound for legal sample values - all sample values have to be strictly lower. */
-        int NUM_ENTRIES = 8;
+        int NUM_ENTRIES = 9;
     }
 
     /**
@@ -68,12 +77,13 @@ public final class ModuleMetrics {
 
     /**
      * Possible reasons for destroying a dynamic module. Keep in sync with the
-     * CustomTabs.DynamicModule.DestructionReason enum in histograms.xml. Do not remove
-     * or change existing values other than NUM_ENTRIES.
+     * CustomTabs.DynamicModule.DestructionReason enum in tools/metrics/histograms/enums.xml.
+     * Do not remove or change existing values other than NUM_ENTRIES.
      */
     @IntDef({DestructionReason.NO_CACHING_UNUSED, DestructionReason.CACHED_SEVERE_MEMORY_PRESSURE,
             DestructionReason.CACHED_MILD_MEMORY_PRESSURE_TIME_EXCEEDED,
-            DestructionReason.CACHED_UI_HIDDEN_TIME_EXCEEDED})
+            DestructionReason.CACHED_UI_HIDDEN_TIME_EXCEEDED,
+            DestructionReason.MODULE_LOADER_CHANGED})
     @Retention(RetentionPolicy.SOURCE)
     public @interface DestructionReason {
         /** No caching enabled and the module is unused. */
@@ -84,8 +94,10 @@ public final class ModuleMetrics {
         int CACHED_MILD_MEMORY_PRESSURE_TIME_EXCEEDED = 2;
         /** Cached and app hidden and time exceeded. */
         int CACHED_UI_HIDDEN_TIME_EXCEEDED = 3;
+        /** Module loader setup is changed. */
+        int MODULE_LOADER_CHANGED = 4;
         /** Upper bound for legal sample values - all sample values have to be strictly lower. */
-        int NUM_ENTRIES = 4;
+        int NUM_ENTRIES = 5;
     }
 
     /**
@@ -110,31 +122,47 @@ public final class ModuleMetrics {
 
     public static void recordCreateActivityDelegateTime(long startTime) {
         RecordHistogram.recordMediumTimesHistogram(
-                "CustomTabs.DynamicModule.CreateActivityDelegateTime", now() - startTime,
-                TimeUnit.MILLISECONDS);
+                "CustomTabs.DynamicModule.CreateActivityDelegateTime", now() - startTime);
     }
 
     public static void recordCreatePackageContextTime(long startTime) {
         RecordHistogram.recordMediumTimesHistogram(
-                "CustomTabs.DynamicModule.CreatePackageContextTime", now() - startTime,
-                TimeUnit.MILLISECONDS);
+                "CustomTabs.DynamicModule.CreatePackageContextTime", now() - startTime);
     }
 
     public static void recordLoadClassTime(long startTime) {
         RecordHistogram.recordMediumTimesHistogram(
-                "CustomTabs.DynamicModule.EntryPointLoadClassTime", now() - startTime,
-                TimeUnit.MILLISECONDS);
+                "CustomTabs.DynamicModule.EntryPointLoadClassTime", now() - startTime);
     }
 
     public static void recordEntryPointNewInstanceTime(long startTime) {
         RecordHistogram.recordMediumTimesHistogram(
-                "CustomTabs.DynamicModule.EntryPointNewInstanceTime", now() - startTime,
-                TimeUnit.MILLISECONDS);
+                "CustomTabs.DynamicModule.EntryPointNewInstanceTime", now() - startTime);
     }
 
     public static void recordEntryPointInitTime(long startTime) {
         RecordHistogram.recordMediumTimesHistogram(
-                "CustomTabs.DynamicModule.EntryPointInitTime", now() - startTime,
-                TimeUnit.MILLISECONDS);
+                "CustomTabs.DynamicModule.EntryPointInitTime", now() - startTime);
+    }
+
+    /**
+     * Possible lifecycle states for a dynamic module.
+     */
+    @StringDef({LifecycleState.NOT_LOADED, LifecycleState.INSTANTIATED, LifecycleState.DESTROYED})
+    public @interface LifecycleState {
+        /** The module has not yet been loaded. */
+        String NOT_LOADED = "NotLoaded";
+        /** The module has been loaded and instantiated. */
+        String INSTANTIATED = "Instantiated";
+        /** The module instance has been destroyed. */
+        String DESTROYED = "Destroyed";
+    }
+
+    /**
+     * Registers the module lifecycle state in a synthetic field trial.
+     * @param state The module lifecycle state.
+     */
+    public static void registerLifecycleState(@LifecycleState String state) {
+        UmaSessionStats.registerSyntheticFieldTrial(LIFECYCLE_STATE_TRIAL_NAME, state);
     }
 }

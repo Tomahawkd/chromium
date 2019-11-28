@@ -69,8 +69,9 @@ TEST_F(Spake2AuthenticatorTest, SuccessfulAuth) {
   StreamConnectionTester tester(host_socket_.get(), client_socket_.get(),
                                 kMessageSize, kMessages);
 
-  tester.Start();
-  base::RunLoop().Run();
+  base::RunLoop run_loop;
+  tester.Start(run_loop.QuitClosure());
+  run_loop.Run();
   tester.CheckResults();
 }
 
@@ -87,7 +88,7 @@ TEST_F(Spake2AuthenticatorTest, InvalidSecret) {
   reinterpret_cast<Spake2Authenticator*>(client_.get())->state_ =
       Authenticator::MESSAGE_READY;
 
-  std::unique_ptr<buzz::XmlElement> message(client_->GetNextMessage());
+  std::unique_ptr<jingle_xmpp::XmlElement> message(client_->GetNextMessage());
   ASSERT_TRUE(message.get());
 
   ASSERT_EQ(Authenticator::WAITING_MESSAGE, client_->state());

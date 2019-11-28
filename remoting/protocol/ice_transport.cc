@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "remoting/protocol/channel_authenticator.h"
 #include "remoting/protocol/channel_multiplexer.h"
-#include "remoting/protocol/native_ip_synthesizer.h"
 #include "remoting/protocol/pseudotcp_channel_factory.h"
 #include "remoting/protocol/secure_channel_factory.h"
 #include "remoting/protocol/stream_channel_factory.h"
@@ -27,10 +26,7 @@ static const char kMuxChannelName[] = "mux";
 
 IceTransport::IceTransport(scoped_refptr<TransportContext> transport_context,
                            EventHandler* event_handler)
-    : transport_context_(transport_context),
-      event_handler_(event_handler),
-      weak_factory_(this) {
-  transport_context_->set_relay_mode(TransportContext::RelayMode::GTURN);
+    : transport_context_(transport_context), event_handler_(event_handler) {
   transport_context->Prepare();
 }
 
@@ -53,7 +49,7 @@ void IceTransport::Start(
       base::Bind(&IceTransport::OnChannelError, weak_factory_.GetWeakPtr())));
 }
 
-bool IceTransport::ProcessTransportInfo(buzz::XmlElement* transport_info_xml) {
+bool IceTransport::ProcessTransportInfo(jingle_xmpp::XmlElement* transport_info_xml) {
   IceTransportInfo transport_info;
   if (!transport_info.ParseXml(transport_info_xml))
     return false;
@@ -73,8 +69,6 @@ bool IceTransport::ProcessTransportInfo(buzz::XmlElement* transport_info_xml) {
   for (auto it = transport_info.candidates.begin();
        it != transport_info.candidates.end(); ++it) {
     auto channel = channels_.find(it->name);
-    rtc::SocketAddress address = ToNativeSocket(it->candidate.address());
-    it->candidate.set_address(address);
     if (channel != channels_.end()) {
       channel->second->AddRemoteCandidate(it->candidate);
     } else {
@@ -194,7 +188,7 @@ void IceTransport::EnsurePendingTransportInfoMessage() {
 void IceTransport::SendTransportInfo() {
   DCHECK(pending_transport_info_message_);
 
-  std::unique_ptr<buzz::XmlElement> transport_info_xml =
+  std::unique_ptr<jingle_xmpp::XmlElement> transport_info_xml =
       pending_transport_info_message_->ToXml();
   pending_transport_info_message_.reset();
   send_transport_info_callback_.Run(std::move(transport_info_xml));

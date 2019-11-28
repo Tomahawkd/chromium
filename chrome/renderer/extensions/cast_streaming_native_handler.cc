@@ -15,10 +15,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -30,10 +32,9 @@
 #include "chrome/renderer/media/cast_rtp_stream.h"
 #include "chrome/renderer/media/cast_session.h"
 #include "chrome/renderer/media/cast_udp_transport.h"
-#include "content/public/renderer/media_stream_utils.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension.h"
-#include "extensions/renderer/extension_bindings_system.h"
+#include "extensions/renderer/native_extension_bindings_system.h"
 #include "extensions/renderer/script_context.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/limits.h"
@@ -63,8 +64,6 @@ constexpr char kInvalidAesIvMask[] = "Invalid value for AES IV mask";
 constexpr char kInvalidAesKey[] = "Invalid value for AES key";
 constexpr char kInvalidDestination[] = "Invalid destination";
 constexpr char kInvalidRtpParams[] = "Invalid value for RTP params";
-constexpr char kInvalidLatency[] = "Invalid value for max_latency. (0-1000)";
-constexpr char kInvalidRtpTimebase[] = "Invalid rtp_timebase. (1000-1000000)";
 constexpr char kInvalidStreamArgs[] = "Invalid stream arguments";
 constexpr char kRtpStreamNotFound[] = "The RTP stream cannot be found";
 constexpr char kUdpTransportNotFound[] = "The UDP transport cannot be found";
@@ -80,10 +79,11 @@ constexpr char kCodecNameRemoteVideo[] = "REMOTE_VIDEO";
 constexpr int kBitsPerKilobit = 1000;
 
 bool HexDecode(const std::string& input, std::string* output) {
-  std::vector<uint8_t> bytes;
-  if (!base::HexStringToBytes(input, &bytes))
+  DCHECK(output->empty());
+  if (!base::HexStringToString(input, output)) {
+    output->clear();
     return false;
-  output->assign(reinterpret_cast<const char*>(&bytes[0]), bytes.size());
+  }
   return true;
 }
 
@@ -318,14 +318,13 @@ void FromFrameSenderConfig(const FrameSenderConfig& config,
 // unlikely to happen in normal use cases.
 CastStreamingNativeHandler::CastStreamingNativeHandler(
     ScriptContext* context,
-    ExtensionBindingsSystem* bindings_system)
+    NativeExtensionBindingsSystem* bindings_system)
     : ObjectBackedNativeHandler(context),
       last_transport_id_(
           context->extension()
               ? (((base::Hash(context->extension()->id()) & 0x7fff) << 16) + 1)
               : 1),
-      bindings_system_(bindings_system),
-      weak_factory_(this) {}
+      bindings_system_(bindings_system) {}
 
 CastStreamingNativeHandler::~CastStreamingNativeHandler() {
   // Note: A superclass's destructor will call Invalidate(), but Invalidate()
@@ -335,45 +334,51 @@ CastStreamingNativeHandler::~CastStreamingNativeHandler() {
 void CastStreamingNativeHandler::AddRoutes() {
   RouteHandlerFunction(
       "CreateSession", "cast.streaming.session",
-      base::Bind(&CastStreamingNativeHandler::CreateCastSession,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(&CastStreamingNativeHandler::CreateCastSession,
+                          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "DestroyCastRtpStream", "cast.streaming.rtpStream",
-      base::Bind(&CastStreamingNativeHandler::DestroyCastRtpStream,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(&CastStreamingNativeHandler::DestroyCastRtpStream,
+                          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "GetSupportedParamsCastRtpStream", "cast.streaming.rtpStream",
-      base::Bind(&CastStreamingNativeHandler::GetSupportedParamsCastRtpStream,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &CastStreamingNativeHandler::GetSupportedParamsCastRtpStream,
+          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "StartCastRtpStream", "cast.streaming.rtpStream",
-      base::Bind(&CastStreamingNativeHandler::StartCastRtpStream,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(&CastStreamingNativeHandler::StartCastRtpStream,
+                          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "StopCastRtpStream", "cast.streaming.rtpStream",
-      base::Bind(&CastStreamingNativeHandler::StopCastRtpStream,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(&CastStreamingNativeHandler::StopCastRtpStream,
+                          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "DestroyCastUdpTransport", "cast.streaming.udpTransport",
-      base::Bind(&CastStreamingNativeHandler::DestroyCastUdpTransport,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(&CastStreamingNativeHandler::DestroyCastUdpTransport,
+                          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "SetDestinationCastUdpTransport", "cast.streaming.udpTransport",
-      base::Bind(&CastStreamingNativeHandler::SetDestinationCastUdpTransport,
-                 weak_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &CastStreamingNativeHandler::SetDestinationCastUdpTransport,
+          weak_factory_.GetWeakPtr()));
   RouteHandlerFunction(
       "SetOptionsCastUdpTransport", "cast.streaming.udpTransport",
-      base::Bind(&CastStreamingNativeHandler::SetOptionsCastUdpTransport,
-                 weak_factory_.GetWeakPtr()));
-  RouteHandlerFunction("ToggleLogging", "cast.streaming.rtpStream",
-                       base::Bind(&CastStreamingNativeHandler::ToggleLogging,
-                                  weak_factory_.GetWeakPtr()));
-  RouteHandlerFunction("GetRawEvents", "cast.streaming.rtpStream",
-                       base::Bind(&CastStreamingNativeHandler::GetRawEvents,
-                                  weak_factory_.GetWeakPtr()));
-  RouteHandlerFunction("GetStats", "cast.streaming.rtpStream",
-                       base::Bind(&CastStreamingNativeHandler::GetStats,
-                                  weak_factory_.GetWeakPtr()));
+      base::BindRepeating(
+          &CastStreamingNativeHandler::SetOptionsCastUdpTransport,
+          weak_factory_.GetWeakPtr()));
+  RouteHandlerFunction(
+      "ToggleLogging", "cast.streaming.rtpStream",
+      base::BindRepeating(&CastStreamingNativeHandler::ToggleLogging,
+                          weak_factory_.GetWeakPtr()));
+  RouteHandlerFunction(
+      "GetRawEvents", "cast.streaming.rtpStream",
+      base::BindRepeating(&CastStreamingNativeHandler::GetRawEvents,
+                          weak_factory_.GetWeakPtr()));
+  RouteHandlerFunction(
+      "GetStats", "cast.streaming.rtpStream",
+      base::BindRepeating(&CastStreamingNativeHandler::GetStats,
+                          weak_factory_.GetWeakPtr()));
 }
 
 void CastStreamingNativeHandler::Invalidate() {
@@ -398,7 +403,8 @@ void CastStreamingNativeHandler::CreateCastSession(
 
   v8::Isolate* isolate = context()->v8_context()->GetIsolate();
 
-  scoped_refptr<CastSession> session(new CastSession());
+  auto session = base::MakeRefCounted<CastSession>(
+      context()->web_frame()->GetTaskRunner(blink::TaskType::kInternalMedia));
   std::unique_ptr<CastRtpStream> stream1, stream2;
   if ((args[0]->IsNull() || args[0]->IsUndefined()) &&
       (args[1]->IsNull() || args[1]->IsUndefined())) {
@@ -535,9 +541,11 @@ void CastStreamingNativeHandler::GetSupportedParamsCastRtpStream(
     RtpParams params;
     FromFrameSenderConfig(configs[i], &params.payload);
     std::unique_ptr<base::DictionaryValue> params_value = params.ToValue();
-    result->Set(
-        static_cast<int>(i),
-        converter->ToV8Value(params_value.get(), context()->v8_context()));
+    result
+        ->CreateDataProperty(
+            context()->v8_context(), static_cast<int>(i),
+            converter->ToV8Value(params_value.get(), context()->v8_context()))
+        .Check();
   }
   args.GetReturnValue().Set(result);
 }
@@ -743,7 +751,7 @@ void CastStreamingNativeHandler::CallGetRawEventsCallback(
   v8::Local<v8::Value> callback_args[] = {V8ValueConverter::Create()->ToV8Value(
       raw_events.get(), context()->v8_context())};
   context()->SafeCallFunction(v8::Local<v8::Function>::New(isolate, it->second),
-                              arraysize(callback_args), callback_args);
+                              base::size(callback_args), callback_args);
   get_raw_events_callbacks_.erase(it);
 }
 
@@ -761,7 +769,7 @@ void CastStreamingNativeHandler::CallGetStatsCallback(
   v8::Local<v8::Value> callback_args[] = {V8ValueConverter::Create()->ToV8Value(
       stats.get(), context()->v8_context())};
   context()->SafeCallFunction(v8::Local<v8::Function>::New(isolate, it->second),
-                              arraysize(callback_args), callback_args);
+                              base::size(callback_args), callback_args);
   get_stats_callbacks_.erase(it);
 }
 
@@ -789,90 +797,6 @@ CastUdpTransport* CastStreamingNativeHandler::GetUdpTransportOrThrow(
                               v8::NewStringType::kNormal)
           .ToLocalChecked()));
   return NULL;
-}
-
-bool CastStreamingNativeHandler::FrameReceiverConfigFromArg(
-    v8::Isolate* isolate,
-    const v8::Local<v8::Value>& arg,
-    media::cast::FrameReceiverConfig* config) const {
-  std::unique_ptr<base::Value> params_value =
-      V8ValueConverter::Create()->FromV8Value(arg, context()->v8_context());
-  if (!params_value) {
-    isolate->ThrowException(v8::Exception::TypeError(
-        v8::String::NewFromUtf8(isolate, kUnableToConvertParams,
-                                v8::NewStringType::kNormal)
-            .ToLocalChecked()));
-    return false;
-  }
-  std::unique_ptr<RtpReceiverParams> params =
-      RtpReceiverParams::FromValue(*params_value);
-  if (!params) {
-    isolate->ThrowException(v8::Exception::TypeError(
-        v8::String::NewFromUtf8(isolate, kInvalidRtpParams,
-                                v8::NewStringType::kNormal)
-            .ToLocalChecked()));
-    return false;
-  }
-
-  config->receiver_ssrc = params->receiver_ssrc;
-  config->sender_ssrc = params->sender_ssrc;
-  config->rtp_max_delay_ms = params->max_latency;
-  if (config->rtp_max_delay_ms < 0 || config->rtp_max_delay_ms > 1000) {
-    isolate->ThrowException(v8::Exception::TypeError(
-        v8::String::NewFromUtf8(isolate, kInvalidLatency,
-                                v8::NewStringType::kNormal)
-            .ToLocalChecked()));
-    return false;
-  }
-  config->channels = 2;
-  if (params->codec_name == "OPUS") {
-    config->codec = media::cast::CODEC_AUDIO_OPUS;
-    config->rtp_timebase = 48000;
-    config->rtp_payload_type = media::cast::RtpPayloadType::AUDIO_OPUS;
-  } else if (params->codec_name == "PCM16") {
-    config->codec = media::cast::CODEC_AUDIO_PCM16;
-    config->rtp_timebase = 48000;
-    config->rtp_payload_type = media::cast::RtpPayloadType::AUDIO_PCM16;
-  } else if (params->codec_name == "AAC") {
-    config->codec = media::cast::CODEC_AUDIO_AAC;
-    config->rtp_timebase = 48000;
-    config->rtp_payload_type = media::cast::RtpPayloadType::AUDIO_AAC;
-  } else if (params->codec_name == "VP8") {
-    config->codec = media::cast::CODEC_VIDEO_VP8;
-    config->rtp_timebase = 90000;
-    config->rtp_payload_type = media::cast::RtpPayloadType::VIDEO_VP8;
-  } else if (params->codec_name == "H264") {
-    config->codec = media::cast::CODEC_VIDEO_H264;
-    config->rtp_timebase = 90000;
-    config->rtp_payload_type = media::cast::RtpPayloadType::VIDEO_H264;
-  }
-  if (params->rtp_timebase) {
-    config->rtp_timebase = *params->rtp_timebase;
-    if (config->rtp_timebase < 1000 || config->rtp_timebase > 1000000) {
-      isolate->ThrowException(v8::Exception::TypeError(
-          v8::String::NewFromUtf8(isolate, kInvalidRtpTimebase,
-                                  v8::NewStringType::kNormal)
-              .ToLocalChecked()));
-      return false;
-    }
-  }
-  if (params->aes_key &&
-      !HexDecode(*params->aes_key, &config->aes_key)) {
-    isolate->ThrowException(
-        v8::Exception::Error(v8::String::NewFromUtf8(isolate, kInvalidAesKey,
-                                                     v8::NewStringType::kNormal)
-                                 .ToLocalChecked()));
-    return false;
-  }
-  if (params->aes_iv_mask &&
-      !HexDecode(*params->aes_iv_mask, &config->aes_iv_mask)) {
-    isolate->ThrowException(
-        v8::Exception::Error(v8::String::NewFromUtf8(isolate, kInvalidAesIvMask,
-                                                     v8::NewStringType::kNormal)
-                                 .ToLocalChecked()));
-    return false;
-  }
-  return true;
 }
 
 bool CastStreamingNativeHandler::IPEndPointFromArg(

@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/stl_util.h"
 #include "base/test/simple_test_clock.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -19,7 +19,7 @@ class HostZoomMapTest : public testing::Test {
   HostZoomMapTest() = default;
 
  private:
-  TestBrowserThreadBundle test_browser_thread_bundle_;
+  BrowserTaskEnvironment task_environment_;
 };
 
 TEST_F(HostZoomMapTest, GetSetZoomLevel) {
@@ -72,8 +72,8 @@ TEST_F(HostZoomMapTest, GetAllZoomLevels) {
        zoomed},
       {HostZoomMap::ZOOM_CHANGED_FOR_SCHEME_AND_HOST, "zoomed.com", "https",
        zoomed}, };
-  ASSERT_EQ(arraysize(expected), levels.size());
-  for (size_t i = 0; i < arraysize(expected); ++i) {
+  ASSERT_EQ(base::size(expected), levels.size());
+  for (size_t i = 0; i < base::size(expected); ++i) {
     SCOPED_TRACE(testing::Message() << "levels[" << i << "]");
     EXPECT_EQ(expected[i].mode, levels[i].mode);
     EXPECT_EQ(expected[i].scheme, levels[i].scheme);
@@ -108,8 +108,8 @@ TEST_F(HostZoomMapTest, LastModifiedTimestamp) {
       {HostZoomMap::ZOOM_CHANGED_FOR_SCHEME_AND_HOST, "login", "chrome", 3.0,
        base::Time()},
   };
-  ASSERT_EQ(arraysize(expected), levels.size());
-  for (size_t i = 0; i < arraysize(expected); ++i) {
+  ASSERT_EQ(base::size(expected), levels.size());
+  for (size_t i = 0; i < base::size(expected); ++i) {
     SCOPED_TRACE(testing::Message() << "levels[" << i << "]");
     EXPECT_EQ(expected[i].mode, levels[i].mode);
     EXPECT_EQ(expected[i].scheme, levels[i].scheme);

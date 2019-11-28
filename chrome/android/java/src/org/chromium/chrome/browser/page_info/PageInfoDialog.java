@@ -13,7 +13,6 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
-import android.support.annotation.NonNull;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,12 +20,13 @@ import android.view.Window;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
-import org.chromium.chrome.browser.modaldialog.DialogDismissalCause;
-import org.chromium.chrome.browser.modaldialog.ModalDialogManager;
-import org.chromium.chrome.browser.modaldialog.ModalDialogProperties;
-import org.chromium.chrome.browser.modaldialog.ModalDialogView;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
+import androidx.annotation.NonNull;
+
 import org.chromium.ui.interpolators.BakedBezierInterpolator;
+import org.chromium.ui.modaldialog.DialogDismissalCause;
+import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
 
 /**
  * Represents the dialog containing the page info view.
@@ -46,7 +46,7 @@ class PageInfoDialog {
     @NonNull
     private final ModalDialogManager mManager;
     @NonNull
-    private final ModalDialogView.Controller mController;
+    private final ModalDialogProperties.Controller mController;
 
     // Animation which is currently running, if there is one.
     private Animator mCurrentAnimation;
@@ -67,7 +67,7 @@ class PageInfoDialog {
      */
     public PageInfoDialog(Context context, @NonNull PageInfoView view, View tabView,
             boolean isSheet, @NonNull ModalDialogManager manager,
-            @NonNull ModalDialogView.Controller controller) {
+            @NonNull ModalDialogProperties.Controller controller) {
         mView = view;
         mIsSheet = isSheet;
         mManager = manager;

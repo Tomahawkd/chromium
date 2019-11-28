@@ -5,17 +5,11 @@
 #ifndef CHROMEOS_PRINTING_PRINTER_CONFIGURATION_H_
 #define CHROMEOS_PRINTING_PRINTER_CONFIGURATION_H_
 
-#include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "base/optional.h"
-#include "base/time/time.h"
 #include "chromeos/chromeos_export.h"
 #include "net/base/host_port_pair.h"
-#include "url/third_party/mozilla/url_parse.h"
-
-#include "chromeos/printing/uri_components.h"
 
 namespace net {
 class IPEndPoint;
@@ -23,11 +17,22 @@ class IPEndPoint;
 
 namespace chromeos {
 
+class UriComponents;
+
 // Parses |printer_uri| into its components and returns an optional
 // UriComponents depending on whether or not |printer_uri| was parsed
 // successfully.
 CHROMEOS_EXPORT base::Optional<UriComponents> ParseUri(
     const std::string& printer_uri);
+
+// Classes of printers tracked.  See doc/cups_printer_management.md for
+// details on what these mean.
+enum class CHROMEOS_EXPORT PrinterClass {
+  kEnterprise,
+  kAutomatic,
+  kDiscovered,
+  kSaved
+};
 
 class CHROMEOS_EXPORT Printer {
  public:
@@ -54,9 +59,6 @@ class CHROMEOS_EXPORT Printer {
 
     // True if the printer should be auto-configured and a PPD is unnecessary.
     bool autoconf = false;
-
-    // Explicitly support equivalence, to detect if a reference has changed.
-    bool operator==(const PpdReference& other) const;
   };
 
   // The location where the printer is stored.
@@ -126,11 +128,6 @@ class CHROMEOS_EXPORT Printer {
   const std::string& uri() const { return uri_; }
   void set_uri(const std::string& uri) { uri_ = uri; }
 
-  const std::string& effective_uri() const { return effective_uri_; }
-  void set_effective_uri(const std::string& effective_uri) {
-    effective_uri_ = effective_uri;
-  }
-
   const PpdReference& ppd_reference() const { return ppd_reference_; }
   PpdReference* mutable_ppd_reference() { return &ppd_reference_; }
 
@@ -146,10 +143,6 @@ class CHROMEOS_EXPORT Printer {
   // IPP Everywhere.  Computed using information from |ppd_reference_| and
   // |uri_|.
   bool IsIppEverywhere() const;
-
-  // Returns true if |effective_uri_| needs to be computed before the printer
-  // can be installed.
-  bool RequiresIpResolution() const;
 
   // Returns the hostname and port for |uri_|.  Assumes that the uri is
   // well formed.  Returns an empty string if |uri_| is not set.
@@ -167,11 +160,12 @@ class CHROMEOS_EXPORT Printer {
   //   [kIpp, kIpps, kHttp, kHttps, kSocket, kLpd]
   bool HasNetworkProtocol() const;
 
+  // Returns true if the current protocol of the printer is either kUSb or
+  // kIppUsb.
+  bool IsUsbProtocol() const;
+
   Source source() const { return source_; }
   void set_source(const Source source) { source_ = source; }
-
-  // Get the URI that we want for talking to cups.
-  std::string UriForCups() const;
 
   // Parses the printers's uri into its components and returns an optional
   // containing a UriComponents object depending on whether or not the uri was

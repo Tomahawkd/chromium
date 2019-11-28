@@ -31,12 +31,16 @@ class LocationBarModelAndroid : public ChromeLocationBarModelDelegate {
   base::android::ScopedJavaLocalRef<jstring> GetURLForDisplay(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
-  jboolean IsSecurityInfoInitialized(
+  base::android::ScopedJavaLocalRef<jstring> GetDisplaySearchTerms(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+  jint GetPageClassification(JNIEnv* env,
+                             const base::android::JavaParamRef<jobject>& obj,
+                             bool is_focused_from_fakebox);
 
   // ChromeLocationBarModelDelegate:
   content::WebContents* GetActiveWebContents() const override;
+  bool IsInstantNTP() const override;
 
  private:
   std::unique_ptr<LocationBarModel> location_bar_model_;

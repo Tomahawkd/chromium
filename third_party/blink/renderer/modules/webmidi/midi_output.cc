@@ -34,13 +34,14 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/core/timing/worker_global_scope_performance.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/modules/webmidi/midi_access.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 using midi::mojom::PortState;
 
@@ -78,10 +79,12 @@ base::TimeTicks GetTimeOrigin(ExecutionContext* context) {
 
   DCHECK(performance);
   return base::TimeTicks() +
-         TimeDelta::FromSecondsD(performance->GetTimeOrigin());
+         base::TimeDelta::FromSecondsD(performance->GetTimeOrigin());
 }
 
 class MessageValidator {
+  STACK_ALLOCATED();
+
  public:
   static bool Validate(DOMUint8Array* array,
                        ExceptionState& exception_state,
@@ -92,7 +95,7 @@ class MessageValidator {
 
  private:
   MessageValidator(DOMUint8Array* array)
-      : data_(array->Data()), length_(array->length()), offset_(0) {}
+      : data_(array->Data()), length_(array->lengthAsSizeT()), offset_(0) {}
 
   bool Process(ExceptionState& exception_state, bool sysex_enabled) {
     while (!IsEndOfData() && AcceptRealTimeMessages()) {
@@ -216,7 +219,7 @@ class MessageValidator {
 
   String GetPositionString() {
     return "at index " + String::Number(offset_) + " (" +
-           String::Number(data_[offset_]) + ").";
+           String::Number(static_cast<uint16_t>(data_[offset_])) + ").";
   }
 
   const unsigned char* data_;
@@ -317,7 +320,8 @@ void MIDIOutput::DidOpen(bool opened) {
   while (!pending_data_.empty()) {
     auto& front = pending_data_.front();
     midiAccess()->SendMIDIData(port_index_, front.first->Data(),
-                               front.first->length(), front.second);
+                               front.first->deprecatedLengthAsUnsigned(),
+                               front.second);
     pending_data_.TakeFirst();
   }
 }
@@ -346,8 +350,8 @@ void MIDIOutput::SendInternal(DOMUint8Array* array,
   if (IsOpening()) {
     pending_data_.emplace_back(array, timestamp);
   } else {
-    midiAccess()->SendMIDIData(port_index_, array->Data(), array->length(),
-                               timestamp);
+    midiAccess()->SendMIDIData(port_index_, array->Data(),
+                               array->deprecatedLengthAsUnsigned(), timestamp);
   }
 }
 

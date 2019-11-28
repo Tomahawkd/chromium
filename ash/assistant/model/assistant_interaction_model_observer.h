@@ -9,7 +9,9 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/observer_list_types.h"
 
 namespace ash {
@@ -22,7 +24,8 @@ enum class MicState;
 
 // A checked observer which receives notification of changes to an Assistant
 // interaction.
-class AssistantInteractionModelObserver : public base::CheckedObserver {
+class COMPONENT_EXPORT(ASSISTANT_MODEL) AssistantInteractionModelObserver
+    : public base::CheckedObserver {
  public:
   // Invoked when the interaction state is changed.
   virtual void OnInteractionStateChanged(InteractionState interaction_state) {}
@@ -45,11 +48,12 @@ class AssistantInteractionModelObserver : public base::CheckedObserver {
   virtual void OnPendingQueryChanged(const AssistantQuery& pending_query) {}
 
   // Invoked when the pending query associated with the interaction is cleared.
-  virtual void OnPendingQueryCleared() {}
+  // |due_to_commit| is true if called from |CommitPendingQuery()|.
+  virtual void OnPendingQueryCleared(bool due_to_commit) {}
 
   // Invoked when the response associated with the interaction is changed.
   virtual void OnResponseChanged(
-      const std::shared_ptr<AssistantResponse>& response) {}
+      const scoped_refptr<AssistantResponse>& response) {}
 
   // Invoked when the response associated with the interaction is cleared.
   virtual void OnResponseCleared() {}

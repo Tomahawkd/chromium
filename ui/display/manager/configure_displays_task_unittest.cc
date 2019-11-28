@@ -5,12 +5,12 @@
 #include <stddef.h>
 
 #include "base/bind.h"
-#include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/fake/fake_display_snapshot.h"
 #include "ui/display/manager/configure_displays_task.h"
-#include "ui/display/manager/fake_display_snapshot.h"
 #include "ui/display/manager/test/action_logger_util.h"
 #include "ui/display/manager/test/test_native_display_delegate.h"
 
@@ -48,7 +48,7 @@ class ConfigureDisplaysTaskTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   ActionLogger log_;
   TestNativeDisplayDelegate delegate_;
 
@@ -67,11 +67,11 @@ class ConfigureDisplaysTaskTest : public testing::Test {
 }  // namespace
 
 TEST_F(ConfigureDisplaysTaskTest, ConfigureWithNoDisplays) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   ConfigureDisplaysTask task(&delegate_, std::vector<DisplayConfigureRequest>(),
-                             callback);
+                             std::move(callback));
 
   task.Run();
 
@@ -81,13 +81,13 @@ TEST_F(ConfigureDisplaysTaskTest, ConfigureWithNoDisplays) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, ConfigureWithOneDisplay) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   std::vector<DisplayConfigureRequest> requests(
       1,
       DisplayConfigureRequest(displays_[0].get(), &small_mode_, gfx::Point()));
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_TRUE(callback_called_);
@@ -97,16 +97,16 @@ TEST_F(ConfigureDisplaysTaskTest, ConfigureWithOneDisplay) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, ConfigureWithTwoDisplay) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   std::vector<DisplayConfigureRequest> requests;
-  for (size_t i = 0; i < arraysize(displays_); ++i) {
+  for (size_t i = 0; i < base::size(displays_); ++i) {
     requests.push_back(DisplayConfigureRequest(
         displays_[i].get(), displays_[i]->native_mode(), gfx::Point()));
   }
 
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_TRUE(callback_called_);
@@ -120,14 +120,14 @@ TEST_F(ConfigureDisplaysTaskTest, ConfigureWithTwoDisplay) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, DisableDisplayFails) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   delegate_.set_max_configurable_pixels(1);
 
   std::vector<DisplayConfigureRequest> requests(
       1, DisplayConfigureRequest(displays_[0].get(), nullptr, gfx::Point()));
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_TRUE(callback_called_);
@@ -139,14 +139,14 @@ TEST_F(ConfigureDisplaysTaskTest, DisableDisplayFails) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, ConfigureWithOneDisplayFails) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   delegate_.set_max_configurable_pixels(1);
 
   std::vector<DisplayConfigureRequest> requests(
       1, DisplayConfigureRequest(displays_[1].get(), &big_mode_, gfx::Point()));
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_TRUE(callback_called_);
@@ -160,18 +160,18 @@ TEST_F(ConfigureDisplaysTaskTest, ConfigureWithOneDisplayFails) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, ConfigureWithTwoDisplayFails) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   delegate_.set_max_configurable_pixels(1);
 
   std::vector<DisplayConfigureRequest> requests;
-  for (size_t i = 0; i < arraysize(displays_); ++i) {
+  for (size_t i = 0; i < base::size(displays_); ++i) {
     requests.push_back(DisplayConfigureRequest(
         displays_[i].get(), displays_[i]->native_mode(), gfx::Point()));
   }
 
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_TRUE(callback_called_);
@@ -186,18 +186,18 @@ TEST_F(ConfigureDisplaysTaskTest, ConfigureWithTwoDisplayFails) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, ConfigureWithTwoDisplaysPartialSuccess) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   delegate_.set_max_configurable_pixels(small_mode_.size().GetArea());
 
   std::vector<DisplayConfigureRequest> requests;
-  for (size_t i = 0; i < arraysize(displays_); ++i) {
+  for (size_t i = 0; i < base::size(displays_); ++i) {
     requests.push_back(DisplayConfigureRequest(
         displays_[i].get(), displays_[i]->native_mode(), gfx::Point()));
   }
 
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_TRUE(callback_called_);
@@ -212,19 +212,19 @@ TEST_F(ConfigureDisplaysTaskTest, ConfigureWithTwoDisplaysPartialSuccess) {
 }
 
 TEST_F(ConfigureDisplaysTaskTest, AsyncConfigureWithTwoDisplaysPartialSuccess) {
-  ConfigureDisplaysTask::ResponseCallback callback = base::Bind(
+  ConfigureDisplaysTask::ResponseCallback callback = base::BindOnce(
       &ConfigureDisplaysTaskTest::ConfigureCallback, base::Unretained(this));
 
   delegate_.set_run_async(true);
   delegate_.set_max_configurable_pixels(small_mode_.size().GetArea());
 
   std::vector<DisplayConfigureRequest> requests;
-  for (size_t i = 0; i < arraysize(displays_); ++i) {
+  for (size_t i = 0; i < base::size(displays_); ++i) {
     requests.push_back(DisplayConfigureRequest(
         displays_[i].get(), displays_[i]->native_mode(), gfx::Point()));
   }
 
-  ConfigureDisplaysTask task(&delegate_, requests, callback);
+  ConfigureDisplaysTask task(&delegate_, requests, std::move(callback));
   task.Run();
 
   EXPECT_FALSE(callback_called_);

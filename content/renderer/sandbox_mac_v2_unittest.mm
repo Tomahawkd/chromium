@@ -24,8 +24,8 @@
 #include "content/test/test_content_client.h"
 #include "sandbox/mac/sandbox_compiler.h"
 #include "sandbox/mac/seatbelt_exec.h"
-#include "services/service_manager/sandbox/mac/common_v2.sb.h"
-#include "services/service_manager/sandbox/mac/renderer_v2.sb.h"
+#include "services/service_manager/sandbox/mac/common.sb.h"
+#include "services/service_manager/sandbox/mac/renderer.sb.h"
 #include "services/service_manager/sandbox/mac/sandbox_mac.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -78,6 +78,8 @@ void SetParametersForTest(sandbox::SandboxCompiler* compiler,
   CHECK(compiler->InsertStringParam("CURRENT_PID", std::to_string(getpid())));
   CHECK(
       compiler->InsertStringParam("EXECUTABLE_PATH", executable_path.value()));
+
+  CHECK(compiler->InsertBooleanParam("FILTER_SYSCALLS", true));
 }
 
 }  // namespace
@@ -93,8 +95,8 @@ class SandboxV2Test : public base::MultiProcessTest {};
 MULTIPROCESS_TEST_MAIN(SandboxProfileProcess) {
   TestContentClient content_client;
   const std::string profile =
-      std::string(service_manager::kSeatbeltPolicyString_common_v2) +
-      service_manager::kSeatbeltPolicyString_renderer_v2;
+      std::string(service_manager::kSeatbeltPolicyString_common) +
+      service_manager::kSeatbeltPolicyString_renderer;
   sandbox::SandboxCompiler compiler(profile);
 
   // Create the logging file and pass /bin/ls as the executable path.
@@ -159,11 +161,9 @@ MULTIPROCESS_TEST_MAIN(SandboxProfileProcess) {
                                            4096));
 
   // Check that not all sysctls, including those that can get the MAC address,
-  // are allowed. See crbug.com/738129. Only 10.10+ supports sysctl filtering.
-  if (base::mac::IsAtLeastOS10_10()) {
-    struct ifaddrs* ifap;
-    CHECK_EQ(-1, getifaddrs(&ifap));
-  }
+  // are allowed. See crbug.com/738129.
+  struct ifaddrs* ifap;
+  CHECK_EQ(-1, getifaddrs(&ifap));
 
   std::vector<uint8_t> sysctl_data(4096);
   size_t data_size = sysctl_data.size();

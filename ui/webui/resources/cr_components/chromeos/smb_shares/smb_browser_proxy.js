@@ -10,7 +10,7 @@
 /**
  *  @enum {number}
  *  These values must be kept in sync with the SmbMountResult enum in
- *  chrome/browser/chromeos/smb_client/smb_service.h.
+ *  chrome/browser/chromeos/smb_client/smb_errors.h.
  */
 const SmbMountResult = {
   SUCCESS: 0,
@@ -26,6 +26,7 @@ const SmbMountResult = {
   ABORTED: 10,
   IO_ERROR: 11,
   TOO_MANY_OPENED: 12,
+  INVALID_SSO_URL: 13,
 };
 
 /** @enum {string} */
@@ -45,16 +46,25 @@ cr.define('smb_shares', function() {
      * @param {string} password
      * @param {string} authMethod
      * @param {boolean} shouldOpenFileManagerAfterMount
+     * @param {boolean} saveCredentials
      * @return {!Promise<SmbMountResult>}
      */
     smbMount(
         smbUrl, smbName, username, password, authMethod,
-        shouldOpenFileManagerAfterMount) {}
+        shouldOpenFileManagerAfterMount, saveCredentials) {}
 
     /**
      * Starts the file share discovery process.
      */
     startDiscovery() {}
+
+    /**
+     * Updates the credentials for a mounted share.
+     * @param {number} mountId
+     * @param {string} username
+     * @param {string} password
+     */
+    updateCredentials(mountId, username, password) {}
   }
 
   /** @implements {smb_shares.SmbBrowserProxy} */
@@ -62,16 +72,21 @@ cr.define('smb_shares', function() {
     /** @override */
     smbMount(
         smbUrl, smbName, username, password, authMethod,
-        shouldOpenFileManagerAfterMount) {
+        shouldOpenFileManagerAfterMount, saveCredentials) {
       return cr.sendWithPromise(
           'smbMount', smbUrl, smbName, username, password,
-          authMethod == SmbAuthMethod.KERBEROS,
-          shouldOpenFileManagerAfterMount);
+          authMethod == SmbAuthMethod.KERBEROS, shouldOpenFileManagerAfterMount,
+          saveCredentials);
     }
 
     /** @override */
     startDiscovery() {
       chrome.send('startDiscovery');
+    }
+
+    /** @override */
+    updateCredentials(mountId, username, password) {
+      chrome.send('updateCredentials', [mountId, username, password]);
     }
   }
 

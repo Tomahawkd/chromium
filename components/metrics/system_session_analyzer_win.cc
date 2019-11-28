@@ -4,7 +4,7 @@
 
 #include "components/metrics/system_session_analyzer_win.h"
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/time/time.h"
 
 namespace metrics {
@@ -134,7 +134,7 @@ bool SystemSessionAnalyzer::FetchEvents(size_t requested_events,
 
   // Retrieve events: 2 events per session, plus the current session's start.
   DWORD desired_event_cnt = requested_events;
-  std::vector<EVT_HANDLE> events_raw(desired_event_cnt, NULL);
+  std::vector<EVT_HANDLE> events_raw(desired_event_cnt, nullptr);
   DWORD event_cnt = 0U;
   BOOL success = ::EvtNext(query_handle_.get(), desired_event_cnt,
                            events_raw.data(), kTimeoutMs, 0, &event_cnt);
@@ -249,7 +249,7 @@ bool SystemSessionAnalyzer::ProcessSession(const EventInfo& end,
 
 SystemSessionAnalyzer::EvtHandle SystemSessionAnalyzer::CreateRenderContext() {
   LPCWSTR value_paths[] = {kEventIdPath, kEventTimePath};
-  const DWORD kValueCnt = arraysize(value_paths);
+  const DWORD kValueCnt = base::size(value_paths);
 
   EVT_HANDLE context = nullptr;
   context =

@@ -10,10 +10,8 @@ import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.RemoteInput;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -21,13 +19,13 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
 import android.graphics.drawable.Icon;
 import android.os.Build;
-import android.support.annotation.IntDef;
-import android.support.annotation.Nullable;
 
-import org.chromium.base.ContextUtils;
-import org.chromium.base.VisibleForTesting;
+import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.widget.RoundedIconGenerator;
+import org.chromium.chrome.browser.ui.widget.RoundedIconGenerator;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -60,6 +58,7 @@ public abstract class NotificationBuilderBase {
         public CharSequence title;
         public PendingIntent intent;
         public @Type int type;
+        public @NotificationUmaTracker.ActionType int umaActionType;
 
         /**
          * If the action.type is TEXT, this corresponds to the placeholder text for the input.
@@ -68,11 +67,18 @@ public abstract class NotificationBuilderBase {
 
         Action(int iconId, CharSequence title, PendingIntent intent, @Type int type,
                 String placeholder) {
+            this(iconId, title, intent, type, placeholder,
+                    NotificationUmaTracker.ActionType.UNKNOWN);
+        }
+
+        Action(int iconId, CharSequence title, PendingIntent intent, @Type int type,
+                String placeholder, @NotificationUmaTracker.ActionType int umaActionType) {
             this.iconId = iconId;
             this.title = title;
             this.intent = intent;
             this.type = type;
             this.placeholder = placeholder;
+            this.umaActionType = umaActionType;
         }
 
         Action(Bitmap iconBitmap, CharSequence title, PendingIntent intent, @Type int type,
@@ -82,6 +88,7 @@ public abstract class NotificationBuilderBase {
             this.intent = intent;
             this.type = type;
             this.placeholder = placeholder;
+            this.umaActionType = NotificationUmaTracker.ActionType.UNKNOWN;
         }
     }
 
@@ -133,8 +140,8 @@ public abstract class NotificationBuilderBase {
      */
     @Nullable protected String mRemotePackageForBuilderContext;
 
-    protected PendingIntent mContentIntent;
-    protected PendingIntent mDeleteIntent;
+    protected PendingIntentProvider mContentIntent;
+    protected PendingIntentProvider mDeleteIntent;
     protected List<Action> mActions = new ArrayList<>(MAX_AUTHOR_PROVIDED_ACTION_BUTTONS);
     protected Action mSettingsAction;
     protected int mDefaults;
@@ -143,6 +150,7 @@ public abstract class NotificationBuilderBase {
     protected boolean mRenotify;
     protected int mPriority;
     private Bitmap mLargeIcon;
+    private boolean mHideLargeIcon;
 
     public NotificationBuilderBase(Resources resources) {
         mLargeIconWidthPx =
@@ -155,7 +163,7 @@ public abstract class NotificationBuilderBase {
     /**
      * Combines all of the options that have been set and returns a new Notification object.
      */
-    public abstract Notification build();
+    public abstract ChromeNotification build(NotificationMetadata metadata);
 
     /**
      * Sets the title text of the notification.
@@ -248,32 +256,13 @@ public abstract class NotificationBuilderBase {
 
     /**
      * Sets the status bar icon for a notification that will be displayed by a different app.
-     * The icon must come from a trusted app because this involves decoding a Bitmap from its
-     * resources.
-     * @param iconId An iconId for a resource in the package that will display the notification.
-     * @param packageName The package name of the package that will display the notification.
-     */
-    public NotificationBuilderBase setStatusBarIconForTrustedRemoteApp(
-            int iconId, String packageName) {
-        setStatusBarIconForRemoteApp(iconId, decodeImageResource(packageName, iconId), packageName);
-        return this;
-    }
-
-    /**
-     * Sets the status bar icon for a notification that will be displayed by a different app.
-     * Unlike {@link #setStatusBarIconForTrustedRemoteApp} this is safe to use for any app.
+     * This is safe to use for any app.
      * @param iconId An iconId for a resource in the package that will display the notification.
      * @param iconBitmap The decoded bitmap. Depending on the device we need either id or bitmap.
      * @param packageName The package name of the package that will display the notification.
      */
-    public NotificationBuilderBase setStatusBarIconForUntrustedRemoteApp(
+    public NotificationBuilderBase setStatusBarIconForRemoteApp(
             int iconId, @Nullable Bitmap iconBitmap, String packageName) {
-        setStatusBarIconForRemoteApp(iconId, iconBitmap, packageName);
-        return this;
-    }
-
-    private void setStatusBarIconForRemoteApp(int iconId, @Nullable Bitmap iconBitmap,
-            String packageName) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             // On Android M+, the small icon has to be from the resources of the app whose context
             // is passed to the Notification.Builder constructor. Thus we can't use iconId directly,
@@ -292,6 +281,7 @@ public abstract class NotificationBuilderBase {
             // NotificationManager is used in NotificationManager#notify.
             setSmallIconId(iconId);
         }
+        return this;
     }
 
     private static boolean usingRemoteAppContextAllowed() {
@@ -301,20 +291,9 @@ public abstract class NotificationBuilderBase {
 
     /**
      * Sets the small icon to be shown inside a notification that will be displayed by a different
-     * app. The icon must come from a trusted app.
+     * app. This is safe to use for any app.
      */
-    public NotificationBuilderBase setContentSmallIconForTrustedRemoteApp(
-            int iconId, String packageName) {
-        setSmallIconForContent(decodeImageResource(packageName, iconId));
-        return this;
-    }
-
-    /**
-     * Sets the small icon to be shown inside a notification that will be displayed by a different
-     * app. Unlike {@link #setContentSmallIconForTrustedRemoteApp} this is safe to use for any app.
-     */
-    public NotificationBuilderBase setContentSmallIconForUntrustedRemoteApp(
-            @Nullable Bitmap bitmap) {
+    public NotificationBuilderBase setContentSmallIconForRemoteApp(@Nullable Bitmap bitmap) {
         setSmallIconForContent(bitmap);
         return this;
     }
@@ -332,7 +311,7 @@ public abstract class NotificationBuilderBase {
     /**
      * Sets the PendingIntent to send when the notification is clicked.
      */
-    public NotificationBuilderBase setContentIntent(@Nullable PendingIntent intent) {
+    public NotificationBuilderBase setContentIntent(@Nullable PendingIntentProvider intent) {
         mContentIntent = intent;
         return this;
     }
@@ -341,7 +320,7 @@ public abstract class NotificationBuilderBase {
      * Sets the PendingIntent to send when the notification is cleared by the user directly from the
      * notification panel.
      */
-    public NotificationBuilderBase setDeleteIntent(@Nullable PendingIntent intent) {
+    public NotificationBuilderBase setDeleteIntent(@Nullable PendingIntentProvider intent) {
         mDeleteIntent = intent;
         return this;
     }
@@ -393,7 +372,8 @@ public abstract class NotificationBuilderBase {
      */
     public NotificationBuilderBase addSettingsAction(
             int iconId, @Nullable CharSequence title, @Nullable PendingIntent intent) {
-        mSettingsAction = new Action(iconId, limitLength(title), intent, Action.Type.BUTTON, null);
+        mSettingsAction = new Action(iconId, limitLength(title), intent, Action.Type.BUTTON, null,
+                NotificationUmaTracker.ActionType.SETTINGS);
         return this;
     }
 
@@ -445,6 +425,11 @@ public abstract class NotificationBuilderBase {
         return this;
     }
 
+    public NotificationBuilderBase setHideLargeIcon(boolean hideLargeIcon) {
+        mHideLargeIcon = hideLargeIcon;
+        return this;
+    }
+
     /**
      * Gets the large icon for the notification.
      *
@@ -456,6 +441,9 @@ public abstract class NotificationBuilderBase {
      * See {@link NotificationBuilderBase#ensureNormalizedIcon} for more details.
      */
     protected Bitmap getNormalizedLargeIcon() {
+        if (mHideLargeIcon) {
+            return null;
+        }
         return ensureNormalizedIcon(mLargeIcon, mOrigin);
     }
 
@@ -561,8 +549,11 @@ public abstract class NotificationBuilderBase {
         if (Build.VERSION.SDK_INT == Build.VERSION_CODES.M) {
             // Updating a notification with a bitmap status bar icon leads to a crash on Samsung
             // and Coolpad (Yulong) devices on Marshmallow, see https://crbug.com/829367.
-            // Also, there are crashes on Lenovo M devices: https://crbug.com/894361.
-            for (String name : new String[] {"samsung", "yulong", "lenovo"}) {
+            // Also, there are crashes on Lenovo M devices: https://crbug.com/894361. These include
+            // Lenovo Zuk devices, which have Build.MANUFACTURER="ZUK": https://crbug.com/927271.
+            // And some more crashes from Hisense and LeEco devices: https://crbug.com/903268.
+            for (String name : new String[] {"samsung", "yulong", "lenovo", "zuk", "hisense",
+                    "leeco"}) {
                 if (Build.MANUFACTURER.equalsIgnoreCase(name)) {
                     return false;
                 }
@@ -587,7 +578,13 @@ public abstract class NotificationBuilderBase {
                                 .setLabel(action.placeholder)
                                 .build());
             }
-            builder.addAction(actionBuilder.build());
+
+            if (action.umaActionType == NotificationUmaTracker.ActionType.UNKNOWN) {
+                builder.addAction(actionBuilder.build());
+            } else {
+                builder.addAction(actionBuilder.build(), PendingIntent.FLAG_UPDATE_CURRENT,
+                        action.umaActionType);
+            }
         } else {
             builder.addAction(action.iconId, action.title, action.intent);
         }
@@ -645,17 +642,5 @@ public abstract class NotificationBuilderBase {
         int cornerRadiusPx = Math.min(largeIconWidthPx, largeIconHeightPx) / 2;
         return new RoundedIconGenerator(largeIconWidthPx, largeIconHeightPx, cornerRadiusPx,
                 NOTIFICATION_ICON_BG_COLOR, NOTIFICATION_ICON_TEXT_SIZE_DP * density);
-    }
-
-    /** Decodes into a Bitmap an Image resource stored in another package. */
-    @Nullable
-    private static Bitmap decodeImageResource(String otherPackage, int resourceId) {
-        PackageManager packageManager = ContextUtils.getApplicationContext().getPackageManager();
-        try {
-            Resources resources = packageManager.getResourcesForApplication(otherPackage);
-            return BitmapFactory.decodeResource(resources, resourceId);
-        } catch (PackageManager.NameNotFoundException e) {
-            return null;
-        }
     }
 }

@@ -10,6 +10,7 @@
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/offline_pages/offline_page_utils.h"
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/offline_pages/core/offline_page_item.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -18,6 +19,7 @@
 #include "net/base/io_buffer.h"
 #include "net/url_request/url_request.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/resource_response.h"
 
 namespace offline_pages {
 
@@ -46,7 +48,8 @@ net::RedirectInfo CreateRedirectInfo(const GURL& redirected_url,
 
 bool ShouldCreateLoader(const network::ResourceRequest& resource_request) {
   // Ignore the requests not for the main frame.
-  if (resource_request.resource_type != content::RESOURCE_TYPE_MAIN_FRAME)
+  if (resource_request.resource_type !=
+      static_cast<int>(content::ResourceType::kMainFrame))
     return false;
 
   // Ignore non-http/https requests.
@@ -87,12 +90,8 @@ OfflinePageURLLoader::OfflinePageURLLoader(
       frame_tree_node_id_(frame_tree_node_id),
       transition_type_(tentative_resource_request.transition_type),
       loader_callback_(std::move(callback)),
-      binding_(this),
       is_offline_preview_allowed_(tentative_resource_request.previews_state &
-                                  content::OFFLINE_PAGE_ON),
-      weak_ptr_factory_(this) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-
+                                  content::OFFLINE_PAGE_ON) {
   // TODO(crbug.com/876527): Figure out how offline page interception should
   // interact with URLLoaderThrottles. It might be incorrect to use
   // |tentative_resource_request.headers| here, since throttles can rewrite
@@ -111,14 +110,9 @@ void OfflinePageURLLoader::SetTabIdGetterForTesting(
 }
 
 void OfflinePageURLLoader::FollowRedirect(
-    const base::Optional<std::vector<std::string>>&
-        to_be_removed_request_headers,
-    const base::Optional<net::HttpRequestHeaders>& modified_request_headers,
+    const std::vector<std::string>& removed_headers,
+    const net::HttpRequestHeaders& modified_headers,
     const base::Optional<GURL>& new_url) {
-  NOTREACHED();
-}
-
-void OfflinePageURLLoader::ProceedWithResponse() {
   NOTREACHED();
 }
 
@@ -200,7 +194,7 @@ void OfflinePageURLLoader::TransferRawData() {
 void OfflinePageURLLoader::SetOfflinePageNavigationUIData(
     bool is_offline_page) {
   // This method should be called before the response data is received.
-  DCHECK(!binding_.is_bound());
+  DCHECK(!receiver_.is_bound());
 
   ChromeNavigationUIData* navigation_data =
       static_cast<ChromeNavigationUIData*>(navigation_ui_data_);
@@ -241,27 +235,26 @@ void OfflinePageURLLoader::ReadRawData() {
 void OfflinePageURLLoader::OnReceiveError(
     int error,
     const network::ResourceRequest& /* resource_request */,
-    network::mojom::URLLoaderRequest request,
-    network::mojom::URLLoaderClientPtr client) {
-  client_ = std::move(client);
+    mojo::PendingReceiver<network::mojom::URLLoader> receiver,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
+  client_.Bind(std::move(client));
   Finish(error);
 }
 
 void OfflinePageURLLoader::OnReceiveResponse(
     int64_t file_size,
     const network::ResourceRequest& /* resource_request */,
-    network::mojom::URLLoaderRequest request,
-    network::mojom::URLLoaderClientPtr client) {
+    mojo::PendingReceiver<network::mojom::URLLoader> receiver,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
   // TODO(crbug.com/876527): Figure out how offline page interception should
   // interact with URLLoaderThrottles. It might be incorrect to ignore
   // |resource_request| here, since it's the current request after
   // throttles.
-  DCHECK(!binding_.is_bound());
-  binding_.Bind(std::move(request));
-  binding_.set_connection_error_handler(
-      base::BindOnce(&OfflinePageURLLoader::OnConnectionError,
-                     weak_ptr_factory_.GetWeakPtr()));
-  client_ = std::move(client);
+  DCHECK(!receiver_.is_bound());
+  receiver_.Bind(std::move(receiver));
+  receiver_.set_disconnect_handler(base::BindOnce(
+      &OfflinePageURLLoader::OnMojoDisconnect, weak_ptr_factory_.GetWeakPtr()));
+  client_.Bind(std::move(client));
 
   mojo::DataPipe pipe(kBufferSize);
   if (!pipe.consumer_handle.is_valid()) {
@@ -289,7 +282,6 @@ void OfflinePageURLLoader::OnReceiveResponse(
   }
 
   response_head.mime_type = "multipart/related";
-  response_head.charset = "utf-8";
   response_head.content_length = file_size;
 
   client_->OnReceiveResponse(response_head);
@@ -329,14 +321,14 @@ void OfflinePageURLLoader::Finish(int error) {
   MaybeDeleteSelf();
 }
 
-void OfflinePageURLLoader::OnConnectionError() {
-  binding_.Close();
+void OfflinePageURLLoader::OnMojoDisconnect() {
+  receiver_.reset();
   client_.reset();
   MaybeDeleteSelf();
 }
 
 void OfflinePageURLLoader::MaybeDeleteSelf() {
-  if (!binding_.is_bound() && !client_.is_bound())
+  if (!receiver_.is_bound() && !client_.is_bound())
     delete this;
 }
 

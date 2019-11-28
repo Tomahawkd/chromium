@@ -64,16 +64,23 @@ cd llvm/tools
 svn co http://llvm.org/svn/llvm-project/cfe/trunk@$CLANG_REV clang
 cd ../../llvm-build
 
-# Option 1: with cmake
+# On Mac, do the following:
 MACOSX_DEPLOYMENT_TARGET=10.9 cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_ASSERTIONS=NO -DLLVM_ENABLE_THREADS=NO ../llvm/
 time caffeinate ninja clang-format
 strip bin/clang-format
 
-# (On Linux, to build with clang, which produces smaller binaries, add this to
-# your cmake invocation.
-# On Mac, the system compiler is already clang so it's not needed there.)
--DCMAKE_C_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang -DCMAKE_CXX_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang++
+#On Linux, do the following:
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_ENABLE_ASSERTIONS=NO -DLLVM_ENABLE_THREADS=NO \
+    -DCMAKE_C_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang \
+    -DCMAKE_CXX_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang++ \
+    -DCMAKE_ASM_COMPILER=$PWD/../chrome/src/third_party/llvm-build/Release+Asserts/bin/clang \
+    -DLLVM_ENABLE_TERMINFO=OFF -DCMAKE_CXX_STANDARD_LIBRARIES="-static-libgcc -static-libstdc++" ../llvm/
+ninja clang-format
+strip bin/clang-format
+
+
 ```
 
 Platform specific notes:
@@ -91,7 +98,7 @@ Platform specific notes:
 Copy the binaries into your chromium checkout (under
 `src/buildtools/(win|linux64|mac)/clang-format(.exe?)`). For each binary, you'll
 need to run upload_to_google_storage.py according to the instructions in
-[README.txt](https://chromium.googlesource.com/chromium/buildtools/+/master/clang_format/README.txt).
+[README.txt](https://chromium.googlesource.com/chromium/src/+/master/buildtools/clang_format/README.txt).
 This will upload the binary into a publicly accessible google storage bucket,
 and update `.sha1` file in your Chrome checkout. You'll check in the `.sha1`
 file (but NOT the clang-format binary) into source control. In order to be able

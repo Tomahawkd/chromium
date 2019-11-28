@@ -27,11 +27,12 @@ public final class WebApkConstants {
     // Activity launch time for uma tracking of Chrome web apk startup
     public static final String EXTRA_WEBAPK_LAUNCH_TIME =
             "org.chromium.chrome.browser.webapk_launch_time";
-    // Whether the host browser's activity should be completely transparent till the page
-    // has loaded. This enables the ShellAPK's splash screen to show through the host browser's
-    // activity.
-    public static final String EXTRA_USE_TRANSPARENT_SPLASH =
-            "org.chromium.chrome.browser.webapk.transparent_splash";
+    public static final String EXTRA_NEW_STYLE_SPLASH_SHOWN_TIME =
+            "org.chromium.webapk.new_style_splash_shown_time";
+    // Whether the WebAPK provides a splash screen activity which should be launched by the host
+    // browser to hide the web contents while the page is loading.
+    public static final String EXTRA_SPLASH_PROVIDED_BY_WEBAPK =
+            "org.chromium.chrome.browser.webapk.splash_provided_by_webapk";
     // Tells the host browser to relaunch the WebAPK.
     public static final String EXTRA_RELAUNCH = "org.chromium.webapk.relaunch";
 

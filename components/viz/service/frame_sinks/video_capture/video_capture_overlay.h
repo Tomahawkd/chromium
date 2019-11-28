@@ -16,8 +16,9 @@
 #include "base/sequence_checker.h"
 #include "components/viz/service/viz_service_export.h"
 #include "media/base/video_types.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/viz/privileged/interfaces/compositing/frame_sink_video_capture.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_transform.h"
@@ -78,8 +79,9 @@ class VIZ_SERVICE_EXPORT VideoCaptureOverlay
   using OnceRenderer = base::OnceCallback<void(media::VideoFrame*)>;
 
   // |frame_source| must outlive this instance.
-  VideoCaptureOverlay(FrameSource* frame_source,
-                      mojom::FrameSinkVideoCaptureOverlayRequest request);
+  VideoCaptureOverlay(
+      FrameSource* frame_source,
+      mojo::PendingReceiver<mojom::FrameSinkVideoCaptureOverlay> receiver);
 
   ~VideoCaptureOverlay() final;
 
@@ -89,12 +91,10 @@ class VIZ_SERVICE_EXPORT VideoCaptureOverlay
 
   // Returns a OnceCallback that, when run, renders this VideoCaptureOverlay on
   // a VideoFrame. The overlay's position and size are computed based on the
-  // given content |region_in_frame|, and its color space is converted to match
-  // the |frame_color_space|. Returns a null OnceCallback if there is nothing to
-  // render at this time.
+  // given content |region_in_frame|. Returns a null OnceCallback if there is
+  // nothing to render at this time.
   OnceRenderer MakeRenderer(const gfx::Rect& region_in_frame,
-                            const media::VideoPixelFormat frame_format,
-                            const gfx::ColorSpace& frame_color_space);
+                            const media::VideoPixelFormat frame_format);
 
   // Returns a OnceCallback that renders all of the given |overlays| in
   // order. The remaining arguments are the same as in MakeRenderer(). This is a
@@ -104,26 +104,22 @@ class VIZ_SERVICE_EXPORT VideoCaptureOverlay
   static OnceRenderer MakeCombinedRenderer(
       const std::vector<VideoCaptureOverlay*>& overlays,
       const gfx::Rect& region_in_frame,
-      const media::VideoPixelFormat frame_format,
-      const gfx::ColorSpace& frame_color_space);
+      const media::VideoPixelFormat frame_format);
 
  private:
   // Transforms the overlay SkBitmap image by scaling and converting its color
   // space, and then blitting it onto a VideoFrame. The transformation is lazy:
-  // Meaning, a reference to the SkBitmap image is held until the first call to
-  // Blit(), where the transformation is then executed and the reference to the
-  // original SkBitmap dropped. The transformed data is then cached for re-use
-  // for later Blit() calls.
+  // Meaning, the transformation is executed upon the first call to Blit(), and
+  // the result is cached for re-use for later Blit() calls. The transformation
+  // is re-executed if the color space of the VideoFrame changes (rarely).
   class Sprite : public base::RefCounted<Sprite> {
    public:
     Sprite(const SkBitmap& image,
            const gfx::Size& size,
-           const media::VideoPixelFormat format,
-           const gfx::ColorSpace& color_space);
+           const media::VideoPixelFormat format);
 
     const gfx::Size& size() const { return size_; }
     media::VideoPixelFormat format() const { return format_; }
-    const gfx::ColorSpace& color_space() const { return color_space_; }
 
     void Blit(const gfx::Point& position,
               const gfx::Rect& blit_rect,
@@ -133,20 +129,20 @@ class VIZ_SERVICE_EXPORT VideoCaptureOverlay
     friend class base::RefCounted<Sprite>;
     ~Sprite();
 
-    void TransformImageOnce();
+    void TransformImage();
 
     // As Sprites can be long-lived and hidden from external code within
     // callbacks, ensure that all Blit() calls are in-sequence.
     SEQUENCE_CHECKER(sequence_checker_);
 
-    // If not null, this is the original, unscaled overlay image. After
-    // TransformImageOnce() has been called, this is set to null.
+    // Starts-out as the original, unscaled overlay image. The first call to
+    // TransformImage() replaces it with a scaled one.
     SkBitmap image_;
 
     // The size, format, and color space of the cached transformed image.
     const gfx::Size size_;
     const media::VideoPixelFormat format_;
-    const gfx::ColorSpace color_space_;
+    gfx::ColorSpace color_space_;
 
     // The transformed source image data. For blitting to ARGB format video
     // frames, the source image data will consist of 4 elements per pixel pixel
@@ -165,7 +161,7 @@ class VIZ_SERVICE_EXPORT VideoCaptureOverlay
 
   FrameSource* const frame_source_;
 
-  mojo::Binding<mojom::FrameSinkVideoCaptureOverlay> binding_;
+  mojo::Receiver<mojom::FrameSinkVideoCaptureOverlay> receiver_;
 
   // The currently-set overlay image.
   SkBitmap image_;

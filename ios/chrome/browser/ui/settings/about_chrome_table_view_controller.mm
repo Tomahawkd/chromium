@@ -11,12 +11,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/version_info/version_info.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/settings/cells/version_item.h"
-#import "ios/chrome/browser/ui/settings/settings_utils.h"
+#import "ios/chrome/browser/ui/settings/utils/settings_utils.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_detail_text_item.h"
 #import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
+#include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/common/channel_info.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
@@ -53,9 +56,11 @@ const CGFloat kDefaultHeight = 70;
 #pragma mark - Public
 
 - (instancetype)init {
-  self =
-      [super initWithTableViewStyle:UITableViewStyleGrouped
-                        appBarStyle:ChromeTableViewControllerStyleWithAppBar];
+  UITableViewStyle style = base::FeatureList::IsEnabled(kSettingsRefresh)
+                               ? UITableViewStylePlain
+                               : UITableViewStyleGrouped;
+  self = [super initWithTableViewStyle:style
+                           appBarStyle:ChromeTableViewControllerStyleNoAppBar];
   if (self) {
     self.title = l10n_util::GetNSString(IDS_IOS_ABOUT_PRODUCT_NAME);
   }
@@ -71,7 +76,7 @@ const CGFloat kDefaultHeight = 70;
   self.tableView.estimatedRowHeight = kDefaultHeight;
   self.tableView.sectionFooterHeight = UITableViewAutomaticDimension;
   self.tableView.estimatedSectionFooterHeight = kDefaultHeight;
-  self.styler.cellTitleColor = [UIColor blackColor];
+  self.styler.cellTitleColor = UIColor.cr_labelColor;
 }
 
 #pragma mark - SettingsRootTableViewController
@@ -149,7 +154,7 @@ const CGFloat kDefaultHeight = 70;
   MDCSnackbarMessage* message =
       [MDCSnackbarMessage messageWithText:messageText];
   message.category = @"version copied";
-  [MDCSnackbarManager showMessage:message];
+  [self.dispatcher showSnackbarMessage:message bottomOffset:0];
 }
 
 #pragma mark - Private methods

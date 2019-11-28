@@ -43,16 +43,63 @@ const char kCroshBuiltinAppId[] = "nkoccljplnhpfnfiajclkommnmllphnl";
 const char kTextEditorAppId[] = "mmfbcljfglbokpmkimbfghdkjmjhdgbg";
 const char kInAppPaymentsSupportAppId[] = "nmmhkkegccagdldgiimedpiccmgmieda";
 const char kMediaRouterStableExtensionId[] = "pkedcjkdefgpdelpbcmbmeomcjbeemfm";
-const char kCloudReportingExtensionId[] = "kigjhoekjcpdfjpimbdjegmgecmlicaf";
+const char kCloudReportingExtensionId[] = "oempjldejiginopiohodkdoklcjklbaa";
+
+const char* const kBuiltInFirstPartyExtensionIds[] = {
+    kCalculatorAppId,
+    kCalendarAppId,
+    kChromeRemoteDesktopAppId,
+    kCloudPrintAppId,
+    kDataSaverExtensionId,
+    kDocsOfflineExtensionId,
+    kDriveHostedAppId,
+    kEnterpriseWebStoreAppId,
+    kGmailAppId,
+    kGoogleDocAppId,
+    kGoogleMapsAppId,
+    kGooglePhotosAppId,
+    kGooglePlayBooksAppId,
+    kGooglePlayMoviesAppId,
+    kGooglePlayMusicAppId,
+    kGooglePlusAppId,
+    kGoogleSheetsAppId,
+    kGoogleSlidesAppId,
+    kHTermAppId,
+    kHTermDevAppId,
+    kIdentityApiUiAppId,
+    kCroshBuiltinAppId,
+    kTextEditorAppId,
+    kInAppPaymentsSupportAppId,
+    kMediaRouterStableExtensionId,
+    kCloudReportingExtensionId,
+#if defined(OS_CHROMEOS)
+    kAssessmentAssistantExtensionId,
+    kAutoclickExtensionId,
+    kSelectToSpeakExtensionId,
+    kSwitchAccessExtensionId,
+    kFirstRunDialogId,
+    kEspeakSpeechSynthesisExtensionId,
+    kGoogleSpeechSynthesisExtensionId,
+    kWallpaperManagerId,
+    kZipArchiverExtensionId,
+    kChromeCameraAppId,
+    kChromeCameraAppDevId,
+#endif        // defined(OS_CHROMEOS)
+    nullptr,  // Null-terminated array.
+};
 
 #if defined(OS_CHROMEOS)
 const char kAssessmentAssistantExtensionId[] =
     "gndmhdcefbhlchkhipcnnbkcmicncehk";
-const char kChromeVoxExtensionPath[] = "chromeos/chromevox";
+const char kAutoclickExtensionId[] = "egfdjlfmgnehecnclamagfafdccgfndp";
+const char kAutoclickExtensionPath[] = "chromeos/accessibility/autoclick";
+const char kChromeVoxExtensionPath[] = "chromeos/accessibility/chromevox";
 const char kSelectToSpeakExtensionId[] = "klbcgckkldhdhonijdbnhhaiedfkllef";
-const char kSelectToSpeakExtensionPath[] = "chromeos/select_to_speak";
+const char kSelectToSpeakExtensionPath[] =
+    "chromeos/accessibility/select_to_speak";
 const char kSwitchAccessExtensionId[] = "pmehocpgjmkenlokgjfkaichfjdhpeol";
-const char kSwitchAccessExtensionPath[] = "chromeos/switch_access";
+const char kSwitchAccessExtensionPath[] =
+    "chromeos/accessibility/switch_access";
 const char kGuestManifestFilename[] = "manifest_guest.json";
 const char kConnectivityDiagnosticsPath[] =
     "/usr/share/chromeos-assets/connectivity_diagnostics";
@@ -70,7 +117,11 @@ const char kGoogleSpeechSynthesisExtensionId[] =
 const char kWallpaperManagerId[] = "obklkkbkpaoaejdabbfldmcfplpdgolj";
 const char kZipArchiverExtensionId[] = "dmboannefpncccogfdikhmhpmdnddgoe";
 const char kZipArchiverExtensionPath[] = "chromeos/zip_archiver";
-#endif
+const char kChromeCameraAppId[] = "hfhhnacclhffhdffklopdkcgdhifgngh";
+const char kChromeCameraAppDevId[] = "flgnmkgjffmkephdokeeliiopbjaafpm";
+const char kChromeCameraAppPath[] = "chromeos/camera";
+
+#endif  // defined(CHROME_OS)
 
 const char kAppStateNotInstalled[] = "not_installed";
 const char kAppStateInstalled[] = "installed";

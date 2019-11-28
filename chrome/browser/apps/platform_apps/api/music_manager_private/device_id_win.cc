@@ -17,6 +17,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/scoped_native_library.h"
@@ -89,7 +90,8 @@ class MacAddressProcessor {
 
 std::string GetMacAddressFromGetAdaptersAddresses(
     const IsValidMacAddressCallback& is_valid_mac_address) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // MS recommends a default size of 15k.
   ULONG bufferSize = 15 * 1024;
@@ -124,7 +126,8 @@ std::string GetMacAddressFromGetAdaptersAddresses(
 
 std::string GetMacAddressFromGetIfTable2(
     const IsValidMacAddressCallback& is_valid_mac_address) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // This is available on Vista+ only.
   base::ScopedNativeLibrary library(base::FilePath(L"Iphlpapi.dll"));
@@ -173,8 +176,8 @@ void GetMacAddress(const IsValidMacAddressCallback& is_valid_mac_address,
     LOG(ERROR) << "Could not find appropriate MAC address.";
   }
 
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::Bind(callback, mac_address));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(callback, mac_address));
 }
 
 std::string GetRlzMachineId() {
@@ -206,7 +209,7 @@ void GetMacAddressCallback(const DeviceId::IdCallback& callback,
 void DeviceId::GetRawDeviceId(const IdCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, traits(),
       base::Bind(&GetMacAddress, base::Bind(&DeviceId::IsValidMacAddress),
                  base::Bind(&GetMacAddressCallback, callback)));

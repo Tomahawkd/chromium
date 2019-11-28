@@ -3,12 +3,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from ast import literal_eval
+import imp
 import os
 import tempfile
 import unittest
 
-from compile2 import Checker
+from compiler import Compiler
 from processor import FileCache, Processor
 
 
@@ -23,10 +23,10 @@ _CHROME_EXTERNS = os.path.join(_SRC_DIR, "third_party", "closure_compiler",
                                "externs", "chrome.js")
 _CHROME_SEND_EXTERNS = os.path.join(_SRC_DIR, "third_party", "closure_compiler",
                                     "externs", "chrome_send.js")
-_CLOSURE_ARGS_GYPI = os.path.join(_SCRIPT_DIR, "closure_args.gypi")
-_GYPI_DICT = literal_eval(open(_CLOSURE_ARGS_GYPI).read())
-_COMMON_CLOSURE_ARGS = _GYPI_DICT["default_closure_args"] + \
-                       _GYPI_DICT["default_disabled_closure_args"]
+_CLOSURE_ARGS_GNI = os.path.join(_SCRIPT_DIR, "closure_args.gni")
+_CLOSURE_ARGS = imp.load_source('closure_gni', _CLOSURE_ARGS_GNI)
+_COMMON_CLOSURE_ARGS = _CLOSURE_ARGS.default_closure_args + \
+                       _CLOSURE_ARGS.default_disabled_closure_args
 
 class CompilerTest(unittest.TestCase):
   _ASSERT_DEFINITION = Processor(_ASSERT_JS).contents
@@ -37,7 +37,7 @@ class CompilerTest(unittest.TestCase):
   _CR_UI_DECORATE_DEFINITION = Processor(_CR_UI_JS).contents
 
   def setUp(self):
-    self._checker = Checker()
+    self._compiler = Compiler()
     self._tmp_files = []
 
   def tearDown(self):
@@ -45,23 +45,23 @@ class CompilerTest(unittest.TestCase):
       if os.path.exists(file):
         os.remove(file)
 
-  def _runChecker(self, source_code, needs_output, closure_args=None):
+  def _runCompiler(self, source_code, needs_output, closure_args=None):
     file_path = "/script.js"
     FileCache._cache[file_path] = source_code
     out_file = self._createOutFiles()
     args = _COMMON_CLOSURE_ARGS + (closure_args or [])
-    if needs_output:
+    if needs_output and "checks_only" in args:
       args.remove("checks_only")
 
     sources = [file_path, _CHROME_EXTERNS, _CHROME_SEND_EXTERNS]
-    found_errors, stderr = self._checker.check(sources,
-                                               out_file=out_file,
-                                               closure_args=args)
+    found_errors, stderr = self._compiler.run(sources,
+                                              out_file=out_file,
+                                              closure_args=args)
     return found_errors, stderr, out_file
 
-  def _runCheckerTestExpectError(self, source_code, expected_error,
+  def _runCompilerTestExpectError(self, source_code, expected_error,
                                  closure_args=None):
-    _, stderr, out_file = self._runChecker(
+    _, stderr, out_file = self._runCompiler(
         source_code, needs_output=False, closure_args=closure_args)
 
     self.assertTrue(expected_error in stderr,
@@ -69,9 +69,9 @@ class CompilerTest(unittest.TestCase):
             expected_error, stderr))
     self.assertFalse(os.path.exists(out_file))
 
-  def _runCheckerTestExpectSuccess(self, source_code, expected_output=None,
-                                   closure_args=None):
-    found_errors, stderr, out_file = self._runChecker(
+  def _runCompilerTestExpectSuccess(self, source_code, expected_output=None,
+                                    closure_args=None):
+    found_errors, stderr, out_file = self._runCompiler(
         source_code, needs_output=True, closure_args=closure_args)
 
     self.assertFalse(found_errors,
@@ -89,7 +89,7 @@ class CompilerTest(unittest.TestCase):
     return out_file.name
 
   def testGetInstance(self):
-    self._runCheckerTestExpectError("""
+    self._runCompilerTestExpectError("""
 var cr = {
   /** @param {!Function} ctor */
   addSingletonGetter: function(ctor) {
@@ -107,11 +107,11 @@ function Class() {
 
 cr.addSingletonGetter(Class);
 Class.getInstance().needsNumber("wrong type");
-""", "ERROR - actual parameter 1 of Class.needsNumber does not match formal "
-        "parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of Class.needsNumber does "
+        "not match formal parameter")
 
   def testCrDefineFunctionDefinition(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION + """
 cr.define('a.b.c', function() {
   /** @param {number} num */
   function internalName(num) {}
@@ -122,11 +122,11 @@ cr.define('a.b.c', function() {
 });
 
 a.b.c.needsNumber("wrong type");
-""", "ERROR - actual parameter 1 of a.b.c.needsNumber does not match formal "
-        "parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of a.b.c.needsNumber does "
+        "not match formal parameter")
 
   def testCrDefineFunctionAssignment(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION + """
 cr.define('a.b.c', function() {
   /** @param {number} num */
   var internalName = function(num) {};
@@ -137,11 +137,11 @@ cr.define('a.b.c', function() {
 });
 
 a.b.c.needsNumber("wrong type");
-""", "ERROR - actual parameter 1 of a.b.c.needsNumber does not match formal "
-        "parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of a.b.c.needsNumber does "
+        "not match formal parameter")
 
   def testCrDefineConstructorDefinitionPrototypeMethod(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION + """
 cr.define('a.b.c', function() {
   /** @constructor */
   function ClassInternalName() {}
@@ -157,11 +157,12 @@ cr.define('a.b.c', function() {
 });
 
 new a.b.c.ClassExternalName().method("wrong type");
-""", "ERROR - actual parameter 1 of a.b.c.ClassExternalName.prototype.method "
-        "does not match formal parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of "
+        "a.b.c.ClassExternalName.prototype.method does not match formal "
+        "parameter")
 
   def testCrDefineConstructorAssignmentPrototypeMethod(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION + """
 cr.define('a.b.c', function() {
   /** @constructor */
   var ClassInternalName = function() {};
@@ -177,11 +178,12 @@ cr.define('a.b.c', function() {
 });
 
 new a.b.c.ClassExternalName().method("wrong type");
-""", "ERROR - actual parameter 1 of a.b.c.ClassExternalName.prototype.method "
-        "does not match formal parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of "
+        "a.b.c.ClassExternalName.prototype.method does not match formal "
+        "parameter")
 
   def testCrDefineEnum(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION + """
 cr.define('a.b.c', function() {
   /** @enum {string} */
   var internalNameForEnum = {key: 'wrong_type'};
@@ -195,11 +197,11 @@ cr.define('a.b.c', function() {
 function needsNumber(num) {}
 
 needsNumber(a.b.c.exportedEnum.key);
-""", "ERROR - actual parameter 1 of needsNumber does not match formal "
-        "parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of needsNumber does not "
+        "match formal parameter")
 
   def testObjectDefineProperty(self):
-    self._runCheckerTestExpectSuccess("""
+    self._runCompilerTestExpectSuccess("""
 /** @constructor */
 function Class() {}
 
@@ -209,7 +211,7 @@ alert(new Class().myProperty);
 """)
 
   def testCrDefineProperty(self):
-    self._runCheckerTestExpectSuccess(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectSuccess(self._CR_DEFINE_DEFINITION + """
 /** @constructor */
 function Class() {}
 
@@ -219,7 +221,7 @@ alert(new Class().myProperty);
 """)
 
   def testCrDefinePropertyTypeChecking(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION + """
 /** @constructor */
 function Class() {}
 
@@ -229,18 +231,18 @@ cr.defineProperty(Class.prototype, 'booleanProp', cr.PropertyKind.BOOL_ATTR);
 function needsNumber(num) {}
 
 needsNumber(new Class().booleanProp);
-""", "ERROR - actual parameter 1 of needsNumber does not match formal "
-        "parameter")
+""", "ERROR - [JSC_TYPE_MISMATCH] actual parameter 1 of needsNumber does not "
+        "match formal parameter")
 
   def testCrDefineOnCrWorks(self):
-    self._runCheckerTestExpectSuccess(self._CR_DEFINE_DEFINITION + """
+    self._runCompilerTestExpectSuccess(self._CR_DEFINE_DEFINITION + """
 cr.define('cr', function() {
   return {};
 });
 """)
 
   def testAssertWorks(self):
-    self._runCheckerTestExpectSuccess(self._ASSERT_DEFINITION + """
+    self._runCompilerTestExpectSuccess(self._ASSERT_DEFINITION + """
 /** @return {?string} */
 function f() {
   return "string";
@@ -251,7 +253,7 @@ var a = assert(f());
 """)
 
   def testAssertInstanceofWorks(self):
-    self._runCheckerTestExpectSuccess(self._ASSERT_DEFINITION + """
+    self._runCompilerTestExpectSuccess(self._ASSERT_DEFINITION + """
 /** @constructor */
 function Class() {}
 
@@ -263,7 +265,7 @@ function f() {
 """)
 
   def testCrUiDecorateWorks(self):
-    self._runCheckerTestExpectSuccess(self._CR_DEFINE_DEFINITION +
+    self._runCompilerTestExpectSuccess(self._CR_DEFINE_DEFINITION +
         self._CR_UI_DECORATE_DEFINITION + """
 /** @constructor */
 function Class() {}
@@ -277,7 +279,7 @@ function f() {
 """)
 
   def testValidScriptCompilation(self):
-    self._runCheckerTestExpectSuccess("""
+    self._runCompilerTestExpectSuccess("""
 var testScript = function() {
   console.log("hello world")
 };
@@ -293,8 +295,8 @@ var testScript = function() {
     expected_output = ("""(function(){'use strict';var testScript=function()"""
                        """{console.log("hello world")};})();\n""")
     closure_args=["output_wrapper='(function(){%output%})();'"]
-    self._runCheckerTestExpectSuccess(source_code, expected_output,
-                                      closure_args)
+    self._runCompilerTestExpectSuccess(source_code, expected_output,
+                                       closure_args)
 
   def testCustomSources(self):
     source_file1 = tempfile.NamedTemporaryFile(delete=False)
@@ -318,9 +320,9 @@ testScript();
     out_file = self._createOutFiles()
     sources = [source_file1.name, source_file2.name]
     closure_args = [a for a in _COMMON_CLOSURE_ARGS if a != "checks_only"]
-    found_errors, stderr = self._checker.check(sources, out_file=out_file,
-                                               closure_args=closure_args,
-                                               custom_sources=True)
+    found_errors, stderr = self._compiler.run(sources, out_file=out_file,
+                                              closure_args=closure_args,
+                                              custom_sources=True)
     self.assertFalse(found_errors,
         msg="Expected success, but got failure\n\nOutput:\n%s\n" % stderr)
 
@@ -330,17 +332,18 @@ testScript();
       self.assertEquals(file.read(), expected_output)
 
   def testExportPath(self):
-    self._runCheckerTestExpectSuccess(self._CR_DEFINE_DEFINITION +
+    self._runCompilerTestExpectSuccess(self._CR_DEFINE_DEFINITION +
         "cr.exportPath('a.b.c');");
 
   def testExportPathWithTargets(self):
-    self._runCheckerTestExpectSuccess(self._CR_DEFINE_DEFINITION +
+    self._runCompilerTestExpectSuccess(self._CR_DEFINE_DEFINITION +
         "var path = 'a.b.c'; cr.exportPath(path, {}, {});")
 
   def testExportPathNoPath(self):
-    self._runCheckerTestExpectError(self._CR_DEFINE_DEFINITION +
+    self._runCompilerTestExpectError(self._CR_DEFINE_DEFINITION +
         "cr.exportPath();",
-        "ERROR - cr.exportPath() should have at least 1 argument: path name")
+        "ERROR - [JSC_CR_EXPORT_PATH_TOO_FEW_ARGUMENTS] cr.exportPath() should"
+            " have at least 1 argument: path name")
 
   def testMissingReturnAssertNotReached(self):
     template = self._ASSERT_DEFINITION + """
@@ -362,10 +365,10 @@ function enumToVal(e) {
 }
 """
     args = ['warning_level=VERBOSE']
-    self._runCheckerTestExpectError(template % '', 'Missing return',
-                                    closure_args=args)
-    self._runCheckerTestExpectSuccess(template % 'assertNotReached();',
-                                      closure_args=args)
+    self._runCompilerTestExpectError(template % '', 'Missing return',
+                                     closure_args=args)
+    self._runCompilerTestExpectSuccess(template % 'assertNotReached();',
+                                       closure_args=args)
 
 
 if __name__ == "__main__":

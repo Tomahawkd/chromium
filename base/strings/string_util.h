@@ -18,6 +18,7 @@
 
 #include "base/base_export.h"
 #include "base/compiler_specific.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"  // For implicit conversions.
 #include "build/build_config.h"
@@ -39,14 +40,9 @@ int vsnprintf(char* buffer, size_t size, const char* format, va_list arguments)
 
 // We separate the declaration from the implementation of this inline
 // function just so the PRINTF_FORMAT works.
-inline int snprintf(char* buffer,
-                    size_t size,
-                    _Printf_format_string_ const char* format,
-                    ...) PRINTF_FORMAT(3, 4);
-inline int snprintf(char* buffer,
-                    size_t size,
-                    _Printf_format_string_ const char* format,
-                    ...) {
+inline int snprintf(char* buffer, size_t size, const char* format, ...)
+    PRINTF_FORMAT(3, 4);
+inline int snprintf(char* buffer, size_t size, const char* format, ...) {
   va_list arguments;
   va_start(arguments, format);
   int result = vsnprintf(buffer, size, format, arguments);
@@ -164,6 +160,7 @@ BASE_EXPORT const string16& EmptyString16();
 // by HTML5, and don't include control characters.
 BASE_EXPORT extern const wchar_t kWhitespaceWide[];  // Includes Unicode.
 BASE_EXPORT extern const char16 kWhitespaceUTF16[];  // Includes Unicode.
+BASE_EXPORT extern const char16 kWhitespaceNoCrLfUTF16[];  // Unicode w/o CR/LF.
 BASE_EXPORT extern const char kWhitespaceASCII[];
 BASE_EXPORT extern const char16 kWhitespaceASCIIAs16[];  // No unicode.
 
@@ -187,11 +184,11 @@ BASE_EXPORT bool RemoveChars(const std::string& input,
 // NOTE: Safe to use the same variable for both |input| and |output|.
 BASE_EXPORT bool ReplaceChars(const string16& input,
                               StringPiece16 replace_chars,
-                              const string16& replace_with,
+                              StringPiece16 replace_with,
                               string16* output);
 BASE_EXPORT bool ReplaceChars(const std::string& input,
                               StringPiece replace_chars,
-                              const std::string& replace_with,
+                              StringPiece replace_with,
                               std::string* output);
 
 enum TrimPositions {
@@ -207,10 +204,10 @@ enum TrimPositions {
 //
 // It is safe to use the same variable for both |input| and |output| (this is
 // the normal usage to trim in-place).
-BASE_EXPORT bool TrimString(const string16& input,
+BASE_EXPORT bool TrimString(StringPiece16 input,
                             StringPiece16 trim_chars,
                             string16* output);
-BASE_EXPORT bool TrimString(const std::string& input,
+BASE_EXPORT bool TrimString(StringPiece input,
                             StringPiece trim_chars,
                             std::string* output);
 
@@ -229,6 +226,69 @@ BASE_EXPORT void TruncateUTF8ToByteSize(const std::string& input,
                                         const size_t byte_size,
                                         std::string* output);
 
+#if defined(WCHAR_T_IS_UTF16)
+// Utility functions to access the underlying string buffer as a wide char
+// pointer.
+//
+// Note: These functions violate strict aliasing when char16 and wchar_t are
+// unrelated types. We thus pass -fno-strict-aliasing to the compiler on
+// non-Windows platforms [1], and rely on it being off in Clang's CL mode [2].
+//
+// [1] https://crrev.com/b9a0976622/build/config/compiler/BUILD.gn#244
+// [2]
+// https://github.com/llvm/llvm-project/blob/1e28a66/clang/lib/Driver/ToolChains/Clang.cpp#L3949
+inline wchar_t* as_writable_wcstr(char16* str) {
+  return reinterpret_cast<wchar_t*>(str);
+}
+
+inline wchar_t* as_writable_wcstr(string16& str) {
+  return reinterpret_cast<wchar_t*>(data(str));
+}
+
+inline const wchar_t* as_wcstr(const char16* str) {
+  return reinterpret_cast<const wchar_t*>(str);
+}
+
+inline const wchar_t* as_wcstr(StringPiece16 str) {
+  return reinterpret_cast<const wchar_t*>(str.data());
+}
+
+// Utility functions to access the underlying string buffer as a char16 pointer.
+inline char16* as_writable_u16cstr(wchar_t* str) {
+  return reinterpret_cast<char16*>(str);
+}
+
+inline char16* as_writable_u16cstr(std::wstring& str) {
+  return reinterpret_cast<char16*>(data(str));
+}
+
+inline const char16* as_u16cstr(const wchar_t* str) {
+  return reinterpret_cast<const char16*>(str);
+}
+
+inline const char16* as_u16cstr(WStringPiece str) {
+  return reinterpret_cast<const char16*>(str.data());
+}
+
+// Utility functions to convert between base::WStringPiece and
+// base::StringPiece16.
+inline WStringPiece AsWStringPiece(StringPiece16 str) {
+  return WStringPiece(as_wcstr(str.data()), str.size());
+}
+
+inline StringPiece16 AsStringPiece16(WStringPiece str) {
+  return StringPiece16(as_u16cstr(str.data()), str.size());
+}
+
+inline std::wstring AsWString(StringPiece16 str) {
+  return std::wstring(as_wcstr(str.data()), str.size());
+}
+
+inline string16 AsString16(WStringPiece str) {
+  return string16(as_u16cstr(str.data()), str.size());
+}
+#endif  // defined(WCHAR_T_IS_UTF16)
+
 // Trims any whitespace from either end of the input string.
 //
 // The StringPiece versions return a substring referencing the input buffer.
@@ -236,12 +296,12 @@ BASE_EXPORT void TruncateUTF8ToByteSize(const std::string& input,
 //
 // The std::string versions return where whitespace was found.
 // NOTE: Safe to use the same variable for both input and output.
-BASE_EXPORT TrimPositions TrimWhitespace(const string16& input,
+BASE_EXPORT TrimPositions TrimWhitespace(StringPiece16 input,
                                          TrimPositions positions,
                                          string16* output);
 BASE_EXPORT StringPiece16 TrimWhitespace(StringPiece16 input,
                                          TrimPositions positions);
-BASE_EXPORT TrimPositions TrimWhitespaceASCII(const std::string& input,
+BASE_EXPORT TrimPositions TrimWhitespaceASCII(StringPiece input,
                                               TrimPositions positions,
                                               std::string* output);
 BASE_EXPORT StringPiece TrimWhitespaceASCII(StringPiece input,
@@ -331,7 +391,7 @@ BASE_EXPORT bool EndsWith(StringPiece16 str,
 // library versions will change based on locale).
 template <typename Char>
 inline bool IsAsciiWhitespace(Char c) {
-  return c == ' ' || c == '\r' || c == '\n' || c == '\t';
+  return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\f';
 }
 template <typename Char>
 inline bool IsAsciiAlpha(Char c) {
@@ -348,6 +408,10 @@ inline bool IsAsciiLower(Char c) {
 template <typename Char>
 inline bool IsAsciiDigit(Char c) {
   return c >= '0' && c <= '9';
+}
+template <typename Char>
+inline bool IsAsciiPrintable(Char c) {
+  return c >= ' ' && c <= '~';
 }
 
 template <typename Char>
@@ -411,10 +475,6 @@ BASE_EXPORT void ReplaceSubstringsAfterOffset(
 // convenient in that is can be used inline in the call, and fast in that it
 // avoids copying the results of the call from a char* into a string.
 //
-// |length_with_null| must be at least 2, since otherwise the underlying string
-// would have size 0, and trying to access &((*str)[0]) in that case can result
-// in a number of problems.
-//
 // Internally, this takes linear time because the resize() call 0-fills the
 // underlying array for potentially all
 // (|length_with_null - 1| * sizeof(string_type::value_type)) bytes.  Ideally we
@@ -471,6 +531,23 @@ BASE_EXPORT std::string ReplaceStringPlaceholders(
 BASE_EXPORT string16 ReplaceStringPlaceholders(const string16& format_string,
                                                const string16& a,
                                                size_t* offset);
+
+#if defined(OS_WIN) && defined(BASE_STRING16_IS_STD_U16STRING)
+BASE_EXPORT TrimPositions TrimWhitespace(WStringPiece input,
+                                         TrimPositions positions,
+                                         std::wstring* output);
+
+BASE_EXPORT WStringPiece TrimWhitespace(WStringPiece input,
+                                        TrimPositions positions);
+
+BASE_EXPORT bool TrimString(WStringPiece input,
+                            WStringPiece trim_chars,
+                            std::wstring* output);
+
+BASE_EXPORT WStringPiece TrimString(WStringPiece input,
+                                    WStringPiece trim_chars,
+                                    TrimPositions positions);
+#endif
 
 }  // namespace base
 

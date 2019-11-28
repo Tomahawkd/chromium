@@ -6,9 +6,12 @@
 #define CHROME_BROWSER_SAFE_BROWSING_SERVICES_DELEGATE_H_
 
 #include <memory>
+#include <string>
 
 #include "base/memory/ref_counted.h"
+#include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 #include "chrome/browser/safe_browsing/incident_reporting/delayed_analysis_callback.h"
+#include "components/safe_browsing/password_protection/password_protection_service.h"
 
 class Profile;
 
@@ -28,6 +31,7 @@ class TrackedPreferenceValidationDelegate;
 
 namespace safe_browsing {
 
+class BinaryUploadService;
 class ClientSideDetectionService;
 class DownloadProtectionService;
 class IncidentReportingService;
@@ -37,6 +41,7 @@ struct ResourceRequestInfo;
 class SafeBrowsingService;
 class SafeBrowsingDatabaseManager;
 struct V4ProtocolConfig;
+class VerdictCacheManager;
 
 // Abstraction to help organize code for mobile vs full safe browsing modes.
 // This helper class should be owned by a SafeBrowsingService, and it handles
@@ -55,6 +60,7 @@ class ServicesDelegate {
     virtual bool CanCreateDownloadProtectionService() = 0;
     virtual bool CanCreateIncidentReportingService() = 0;
     virtual bool CanCreateResourceRequestDetector() = 0;
+    virtual bool CanCreateBinaryUploadService() = 0;
 
     // Caller takes ownership of the returned object. Cannot use std::unique_ptr
     // because services may not be implemented for some build configs.
@@ -62,6 +68,7 @@ class ServicesDelegate {
     virtual DownloadProtectionService* CreateDownloadProtectionService() = 0;
     virtual IncidentReportingService* CreateIncidentReportingService() = 0;
     virtual ResourceRequestDetector* CreateResourceRequestDetector() = 0;
+    virtual BinaryUploadService* CreateBinaryUploadService() = 0;
   };
 
   // Creates the ServicesDelegate using its's default ServicesCreator.
@@ -74,7 +81,9 @@ class ServicesDelegate {
       SafeBrowsingService* safe_browsing_service,
       ServicesDelegate::ServicesCreator* services_creator);
 
-  virtual ~ServicesDelegate() {}
+  ServicesDelegate(SafeBrowsingService* safe_browsing_service,
+                   ServicesCreator* services_creator);
+  virtual ~ServicesDelegate();
 
   virtual const scoped_refptr<SafeBrowsingDatabaseManager>& database_manager()
       const = 0;
@@ -113,10 +122,42 @@ class ServicesDelegate {
       const V4ProtocolConfig& v4_config) = 0;
   virtual void StopOnIOThread(bool shutdown) = 0;
 
-  virtual void CreatePasswordProtectionService(Profile* profile) = 0;
-  virtual void RemovePasswordProtectionService(Profile* profile) = 0;
-  virtual PasswordProtectionService* GetPasswordProtectionService(
+  void CreatePasswordProtectionService(Profile* profile);
+  void RemovePasswordProtectionService(Profile* profile);
+  PasswordProtectionService* GetPasswordProtectionService(
+      Profile* profile) const;
+
+  virtual void CreateTelemetryService(Profile* profile) {}
+  virtual void RemoveTelemetryService(Profile* profile) {}
+
+  virtual void CreateVerdictCacheManager(Profile* profile);
+  virtual void RemoveVerdictCacheManager(Profile* profile);
+  virtual VerdictCacheManager* GetVerdictCacheManager(Profile* profile) const;
+
+  virtual void CreateBinaryUploadService(Profile* profile) = 0;
+  virtual void RemoveBinaryUploadService(Profile* profile) = 0;
+  virtual BinaryUploadService* GetBinaryUploadService(
       Profile* profile) const = 0;
+
+  virtual std::string GetSafetyNetId() const = 0;
+
+ protected:
+  // Unowned pointer
+  SafeBrowsingService* const safe_browsing_service_;
+
+  // Unowned pointer
+  ServicesCreator* const services_creator_;
+
+  // Tracks existing Profiles, and their corresponding
+  // ChromePasswordProtectionService instances.
+  // Accessed on UI thread.
+  base::flat_map<Profile*, std::unique_ptr<ChromePasswordProtectionService>>
+      password_protection_service_map_;
+
+  // Tracks existing Profiles, and their corresponding VerdictCacheManager
+  // instances. Accessed on UI thread.
+  base::flat_map<Profile*, std::unique_ptr<VerdictCacheManager>>
+      cache_manager_map_;
 };
 
 }  // namespace safe_browsing

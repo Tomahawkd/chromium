@@ -11,7 +11,7 @@
 #include "ash/accessibility/accessibility_focus_ring_layer.h"
 #include "ash/accessibility/accessibility_layer.h"
 #include "ash/accessibility/layer_animation_info.h"
-#include "ash/public/interfaces/accessibility_focus_ring_controller.mojom.h"
+#include "ash/public/cpp/accessibility_focus_ring_info.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -52,26 +52,13 @@ AccessibilityFocusRingGroup::AccessibilityFocusRingGroup() {
       base::TimeDelta::FromMilliseconds(kFocusFadeOutTimeMilliseconds);
 }
 
-AccessibilityFocusRingGroup::~AccessibilityFocusRingGroup(){};
+AccessibilityFocusRingGroup::~AccessibilityFocusRingGroup() {}
 
-void AccessibilityFocusRingGroup::SetColor(
-    SkColor color,
-    AccessibilityLayerDelegate* delegate) {
-  focus_ring_color_ = color;
-  UpdateFocusRingsFromFocusRects(delegate);
-}
-
-void AccessibilityFocusRingGroup::ResetColor(
-    AccessibilityLayerDelegate* delegate) {
-  focus_ring_color_.reset();
-  UpdateFocusRingsFromFocusRects(delegate);
-}
-
-void AccessibilityFocusRingGroup::UpdateFocusRingsFromFocusRects(
+void AccessibilityFocusRingGroup::UpdateFocusRingsFromInfo(
     AccessibilityLayerDelegate* delegate) {
   previous_focus_rings_.swap(focus_rings_);
   focus_rings_.clear();
-  RectsToRings(focus_rects_, &(focus_rings_));
+  RectsToRings(focus_ring_info_->rects_in_screen, &(focus_rings_));
   focus_layers_.resize(focus_rings_.size());
   if (focus_rings_.empty())
     return;
@@ -82,10 +69,11 @@ void AccessibilityFocusRingGroup::UpdateFocusRingsFromFocusRects(
           std::make_unique<AccessibilityFocusRingLayer>(delegate);
   }
 
-  if (focus_ring_behavior_ == mojom::FocusRingBehavior::PERSIST_FOCUS_RING &&
-      focus_layers_[0]->CanAnimate()) {
+  if (focus_ring_info_->behavior == FocusRingBehavior::PERSIST &&
+      focus_layers_[0]->CanAnimate() && !no_fade_for_testing_) {
     // In PERSIST mode, animate the first ring to its destination
     // location, then set the rest of the rings directly.
+    // If no_fade_for_testing_ is set, don't wait for animation.
     for (size_t i = 1; i < focus_rings_.size(); ++i)
       focus_layers_[i]->Set(focus_rings_[i]);
   } else {
@@ -95,10 +83,9 @@ void AccessibilityFocusRingGroup::UpdateFocusRingsFromFocusRects(
   }
 
   for (size_t i = 0; i < focus_rings_.size(); ++i) {
-    if (focus_ring_color_) {
-      focus_layers_[i]->SetColor(*(focus_ring_color_));
-    } else
-      focus_layers_[i]->ResetColor();
+    focus_layers_[i]->SetAppearance(focus_ring_info_->type,
+                                    focus_ring_info_->color,
+                                    focus_ring_info_->secondary_color);
   }
 }
 
@@ -117,7 +104,7 @@ void AccessibilityFocusRingGroup::AnimateFocusRings(base::TimeTicks timestamp) {
   if (timestamp < focus_animation_info_.change_time)
     timestamp = focus_animation_info_.change_time;
 
-  if (focus_ring_behavior_ == mojom::FocusRingBehavior::PERSIST_FOCUS_RING) {
+  if (focus_ring_info_->behavior == FocusRingBehavior::PERSIST) {
     base::TimeDelta delta = timestamp - focus_animation_info_.change_time;
     base::TimeDelta transition_time =
         base::TimeDelta::FromMilliseconds(kTransitionTimeMilliseconds);
@@ -145,30 +132,30 @@ void AccessibilityFocusRingGroup::AnimateFocusRings(base::TimeTicks timestamp) {
   }
 }
 
-bool AccessibilityFocusRingGroup::SetFocusRectsAndBehavior(
-    const std::vector<gfx::Rect>& rects,
-    mojom::FocusRingBehavior focus_ring_behavior,
+bool AccessibilityFocusRingGroup::UpdateFocusRing(
+    std::unique_ptr<AccessibilityFocusRingInfo> focus_ring,
     AccessibilityLayerDelegate* delegate) {
-  std::vector<gfx::Rect> clean_rects(rects);
-  // Remove duplicates
-  if (rects.size() > 1) {
+  // Remove duplicate rects.
+  if (focus_ring && focus_ring->rects_in_screen.size() > 1) {
+    std::vector<gfx::Rect> rects(focus_ring->rects_in_screen);
     std::set<gfx::Rect> rects_set(rects.begin(), rects.end());
-    clean_rects.assign(rects_set.begin(), rects_set.end());
+    focus_ring->rects_in_screen.assign(rects_set.begin(), rects_set.end());
   }
+
   // If there is no change, don't do any work.
-  if (focus_ring_behavior_ == focus_ring_behavior &&
-      clean_rects == focus_rects_)
+  if ((!focus_ring_info_ && !focus_ring) ||
+      (focus_ring_info_ && focus_ring && *focus_ring_info_ == *focus_ring))
     return false;
-  focus_ring_behavior_ = focus_ring_behavior;
-  focus_rects_ = clean_rects;
-  UpdateFocusRingsFromFocusRects(delegate);
+
+  focus_ring_info_ = std::move(focus_ring);
+  UpdateFocusRingsFromInfo(delegate);
   return true;
 }
 
 void AccessibilityFocusRingGroup::ClearFocusRects(
     AccessibilityLayerDelegate* delegate) {
-  focus_rects_.clear();
-  UpdateFocusRingsFromFocusRects(delegate);
+  focus_ring_info_->rects_in_screen.clear();
+  UpdateFocusRingsFromInfo(delegate);
 }
 
 int AccessibilityFocusRingGroup::GetMargin() const {

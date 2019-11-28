@@ -13,11 +13,9 @@
 #include "base/time/time.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "components/download/public/background_service/download_service.h"
-#include "content/public/browser/browser_context.h"
 
-DownloadTaskSchedulerImpl::DownloadTaskSchedulerImpl(
-    content::BrowserContext* context)
-    : context_(context), weak_factory_(this) {}
+DownloadTaskSchedulerImpl::DownloadTaskSchedulerImpl(SimpleFactoryKey* key)
+    : key_(key) {}
 
 DownloadTaskSchedulerImpl::~DownloadTaskSchedulerImpl() = default;
 
@@ -49,8 +47,13 @@ void DownloadTaskSchedulerImpl::CancelTask(
 
 void DownloadTaskSchedulerImpl::RunScheduledTask(
     download::DownloadTaskType task_type) {
+  if (task_type == download::DownloadTaskType::DOWNLOAD_AUTO_RESUMPTION_TASK) {
+    NOTREACHED();
+    return;
+  }
+
   download::DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(context_);
+      DownloadServiceFactory::GetForKey(key_);
   download_service->OnStartScheduledTask(
       task_type, base::BindOnce(&DownloadTaskSchedulerImpl::OnTaskFinished,
                                 weak_factory_.GetWeakPtr()));

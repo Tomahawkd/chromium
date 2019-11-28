@@ -5,28 +5,13 @@
 source_set("ui") {
   configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
-    "default_ios_web_view_factory.h",
-    "default_ios_web_view_factory.mm",
     "fullscreen_provider.h",
     "fullscreen_provider.mm",
     "logo_vendor.h",
-    "text_field_styling.h",
   ]
   deps = [
     "//base",
     "//ios/public/provider/chrome/browser/voice",
   ]
   libs = [ "CoreGraphics.framework" ]
-}
-
-source_set("test_support") {
-  configs += [ "//build/config/compiler:enable_arc" ]
-  testonly = true
-  sources = [
-    "test_styled_text_field.h",
-    "test_styled_text_field.mm",
-  ]
-  deps = [
-    ":ui",
-  ]
 }

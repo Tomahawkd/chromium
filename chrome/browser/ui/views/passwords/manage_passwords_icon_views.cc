@@ -19,19 +19,11 @@ const char ManagePasswordsIconViews::kClassName[] = "ManagePasswordsIconViews";
 ManagePasswordsIconViews::ManagePasswordsIconViews(
     CommandUpdater* updater,
     PageActionIconView::Delegate* delegate)
-    : PageActionIconView(updater, IDC_MANAGE_PASSWORDS_FOR_PAGE, delegate),
-      state_(password_manager::ui::INACTIVE_STATE) {
+    : PageActionIconView(updater, IDC_MANAGE_PASSWORDS_FOR_PAGE, delegate) {
   DCHECK(delegate);
-#if defined(OS_MACOSX)
-  SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
-#else
-  SetFocusBehavior(FocusBehavior::ALWAYS);
-#endif
-
-  UpdateUiForState();
 }
 
-ManagePasswordsIconViews::~ManagePasswordsIconViews() {}
+ManagePasswordsIconViews::~ManagePasswordsIconViews() = default;
 
 void ManagePasswordsIconViews::SetState(password_manager::ui::State state) {
   if (state_ == state)
@@ -60,14 +52,12 @@ views::BubbleDialogDelegateView* ManagePasswordsIconViews::GetBubble() const {
   return PasswordBubbleViewBase::manage_password_bubble();
 }
 
-bool ManagePasswordsIconViews::Update() {
+void ManagePasswordsIconViews::UpdateImpl() {
   if (!GetWebContents())
-    return false;
+    return;
 
-  const bool was_visible = visible();
   ManagePasswordsUIController::FromWebContents(GetWebContents())
       ->UpdateIconAndBubbleState(this);
-  return was_visible != visible();
 }
 
 void ManagePasswordsIconViews::OnExecuting(
@@ -77,20 +67,6 @@ bool ManagePasswordsIconViews::OnMousePressed(const ui::MouseEvent& event) {
   bool result = PageActionIconView::OnMousePressed(event);
   PasswordBubbleViewBase::CloseCurrentBubble();
   return result;
-}
-
-bool ManagePasswordsIconViews::OnKeyPressed(const ui::KeyEvent& event) {
-  // Space is always ignored because otherwise the bubble appears with the
-  // default button down. Releasing the space is equivalent to clicking this
-  // button.
-  if (event.key_code() == ui::VKEY_SPACE)
-    return true;
-  if (event.key_code() == ui::VKEY_RETURN && IsBubbleShowing()) {
-    // If the bubble's open, the icon should transfer its focus to the bubble.
-    // If it still somehow got this key event, the bubble shouldn't be reopened.
-    return true;
-  }
-  return PageActionIconView::OnKeyPressed(event);
 }
 
 const gfx::VectorIcon& ManagePasswordsIconViews::GetVectorIcon() const {

@@ -2,24 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.define('discards', function() {
-  'use strict';
-
   // The following variables are initialized by 'initialize'.
-  // Points to the Mojo WebUI handler.
-  let uiHandler;
+  // Points to the DiscardsDetailsProviderRemote.
+  let discardsDetailsProvider;
 
   /**
-   * @return {!mojom.DiscardsDetailsProviderPtr} The UI handler.
+   * @return {!discards.mojom.DetailsProviderRemote} Provides discards details.
    */
-  function getOrCreateUiHandler() {
-    if (!uiHandler) {
-      uiHandler = new mojom.DiscardsDetailsProviderPtr;
-      Mojo.bindInterface(
-          mojom.DiscardsDetailsProvider.name,
-          mojo.makeRequest(uiHandler).handle);
+  export function getOrCreateDetailsProvider() {
+    if (!discardsDetailsProvider) {
+      discardsDetailsProvider = discards.mojom.DetailsProvider.getRemote();
     }
-    return uiHandler;
+    return discardsDetailsProvider;
   }
 
   /**
@@ -29,7 +23,7 @@ cr.define('discards', function() {
    * @param {number} n The count of the number of ojects.
    * @return {string} The plural version of |s| if n != 1, otherwise |s|.
    */
-  function maybeMakePlural(s, n) {
+  export function maybeMakePlural(s, n) {
     return n == 1 ? s : s + 's';
   }
 
@@ -38,7 +32,7 @@ cr.define('discards', function() {
    * @param {number} seconds The interval to render.
    * @return {string} An English string representing the interval.
    */
-  function secondsToString(seconds) {
+  export function secondsToString(seconds) {
     // These constants aren't perfect, but close enough.
     const SECONDS_PER_MINUTE = 60;
     const MINUTES_PER_HOUR = 60;
@@ -51,8 +45,9 @@ cr.define('discards', function() {
     const SECONDS_PER_YEAR = SECONDS_PER_DAY * 365;
 
     // Seconds.
-    if (seconds < SECONDS_PER_MINUTE)
+    if (seconds < SECONDS_PER_MINUTE) {
       return seconds.toString() + maybeMakePlural(' second', seconds);
+    }
 
     // Minutes.
     let minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
@@ -61,7 +56,7 @@ cr.define('discards', function() {
     }
 
     // Hours and minutes.
-    let hours = Math.floor(seconds / SECONDS_PER_HOUR);
+    const hours = Math.floor(seconds / SECONDS_PER_HOUR);
     minutes = minutes % MINUTES_PER_HOUR;
     if (hours < HOURS_PER_DAY) {
       let s = hours.toString() + maybeMakePlural(' hour', hours);
@@ -72,21 +67,21 @@ cr.define('discards', function() {
     }
 
     // Days.
-    let days = Math.floor(seconds / SECONDS_PER_DAY);
+    const days = Math.floor(seconds / SECONDS_PER_DAY);
     if (days < DAYS_PER_WEEK) {
       return days.toString() + maybeMakePlural(' day', days);
     }
 
     // Weeks. There's an awkward gap to bridge where 4 weeks can have
     // elapsed but not quite 1 month. Be sure to use weeks to report that.
-    let weeks = Math.floor(seconds / SECONDS_PER_WEEK);
-    let months = Math.floor(seconds / SECONDS_PER_MONTH);
+    const weeks = Math.floor(seconds / SECONDS_PER_WEEK);
+    const months = Math.floor(seconds / SECONDS_PER_MONTH);
     if (months < 1) {
       return 'over ' + weeks.toString() + maybeMakePlural(' week', weeks);
     }
 
     // Months.
-    let years = Math.floor(seconds / SECONDS_PER_YEAR);
+    const years = Math.floor(seconds / SECONDS_PER_YEAR);
     if (years < 1) {
       return 'over ' + months.toString() + maybeMakePlural(' month', months);
     }
@@ -100,11 +95,12 @@ cr.define('discards', function() {
    * @param {number} secondsAgo The duration to render.
    * @return {string} An English string representing the duration.
    */
-  function durationToString(secondsAgo) {
-    let ret = secondsToString(secondsAgo);
+  export function durationToString(secondsAgo) {
+    const ret = secondsToString(secondsAgo);
 
-    if (ret.endsWith(' seconds') || ret.endsWith(' second'))
+    if (ret.endsWith(' seconds') || ret.endsWith(' second')) {
       return 'just now';
+    }
 
     return ret + ' ago';
   }
@@ -114,17 +110,6 @@ cr.define('discards', function() {
    * @param {boolean} bool A boolean value.
    * @return {string} A string representing the bool.
    */
-  function boolToString(bool) {
+  export function boolToString(bool) {
     return bool ? '✔' : '✘️';
   }
-
-  // These functions are exposed on the 'discards' object created by
-  // cr.define. This allows unittesting of these functions.
-  return {
-    boolToString: boolToString,
-    durationToString: durationToString,
-    getOrCreateUiHandler: getOrCreateUiHandler,
-    maybeMakePlural: maybeMakePlural,
-    secondsToString: secondsToString
-  };
-});

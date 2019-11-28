@@ -9,7 +9,7 @@
 #include "ios/chrome/browser/sessions/ios_chrome_session_tab_helper.h"
 #include "ios/chrome/browser/sync/ios_chrome_synced_tab_delegate.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
-#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -18,14 +18,9 @@
 TabModelSyncedWindowDelegate::TabModelSyncedWindowDelegate(
     WebStateList* web_state_list)
     : web_state_list_(web_state_list), session_id_(SessionID::NewUnique()) {
-  web_state_list_->AddObserver(this);
   for (int index = 0; index < web_state_list_->count(); ++index) {
     SetWindowIdForWebState(web_state_list_->GetWebStateAt(index));
   }
-}
-
-TabModelSyncedWindowDelegate::~TabModelSyncedWindowDelegate() {
-  web_state_list_->RemoveObserver(this);
 }
 
 SessionID TabModelSyncedWindowDelegate::GetTabIdAt(int index) const {
@@ -33,6 +28,13 @@ SessionID TabModelSyncedWindowDelegate::GetTabIdAt(int index) const {
 }
 
 bool TabModelSyncedWindowDelegate::IsSessionRestoreInProgress() const {
+  for (int index = 0; index < web_state_list_->count(); ++index) {
+    const web::NavigationManager* navigation_manager =
+        web_state_list_->GetWebStateAt(index)->GetNavigationManager();
+    if (navigation_manager->IsRestoreSessionInProgress()) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -57,11 +59,7 @@ int TabModelSyncedWindowDelegate::GetActiveIndex() const {
   return web_state_list_->active_index();
 }
 
-bool TabModelSyncedWindowDelegate::IsApp() const {
-  return false;
-}
-
-bool TabModelSyncedWindowDelegate::IsTypeTabbed() const {
+bool TabModelSyncedWindowDelegate::IsTypeNormal() const {
   return true;
 }
 

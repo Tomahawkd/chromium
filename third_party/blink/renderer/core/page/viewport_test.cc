@@ -29,7 +29,6 @@
  */
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
 #include "third_party/blink/public/web/web_console_message.h"
 #include "third_party/blink/public/web/web_frame.h"
@@ -58,26 +57,26 @@
 
 namespace blink {
 
-using blink::test::RunPendingTasks;
-
 class ViewportTest : public testing::Test {
  protected:
   ViewportTest()
       : base_url_("http://www.test.com/"), chrome_url_("chrome://") {}
 
   ~ViewportTest() override {
-    Platform::Current()
-        ->GetURLLoaderMockFactory()
-        ->UnregisterAllURLsAndClearMemoryCache();
+    url_test_helpers::UnregisterAllURLsAndClearMemoryCache();
   }
 
   void RegisterMockedHttpURLLoad(const std::string& file_name) {
+    // TODO(crbug.com/751425): We should use the mock functionality
+    // via the WebViewHelper instance in each test case.
     url_test_helpers::RegisterMockedURLLoadFromBase(
         WebString::FromUTF8(base_url_), test::CoreTestDataPath(),
         WebString::FromUTF8(file_name));
   }
 
   void RegisterMockedChromeURLLoad(const std::string& file_name) {
+    // TODO(crbug.com/751425): We should use the mock functionality
+    // via the WebViewHelper instance in each test case.
     url_test_helpers::RegisterMockedURLLoadFromBase(
         WebString::FromUTF8(chrome_url_), test::CoreTestDataPath(),
         WebString::FromUTF8(file_name));
@@ -85,7 +84,7 @@ class ViewportTest : public testing::Test {
 
   void ExecuteScript(WebLocalFrame* frame, const WebString& code) {
     frame->ExecuteScript(WebScriptSource(code));
-    RunPendingTasks();
+    blink::test::RunPendingTasks();
   }
 
   std::string base_url_;
@@ -102,12 +101,12 @@ static PageScaleConstraints RunViewportTest(Page* page,
                                             int initial_width,
                                             int initial_height) {
   IntSize initial_viewport_size(initial_width, initial_height);
-  ToLocalFrame(page->MainFrame())
+  To<LocalFrame>(page->MainFrame())
       ->View()
       ->SetFrameRect(IntRect(IntPoint::Zero(), initial_viewport_size));
   ViewportDescription description = page->GetViewportDescription();
-  PageScaleConstraints constraints = description.Resolve(
-      FloatSize(initial_viewport_size), Length(980, blink::kFixed));
+  PageScaleConstraints constraints =
+      description.Resolve(FloatSize(initial_viewport_size), Length::Fixed(980));
 
   constraints.FitToContentsWidth(constraints.layout_size.Width(),
                                  initial_width);
@@ -2949,86 +2948,6 @@ TEST_F(ViewportTest, viewportLimitsAdjustedForUserScale) {
   EXPECT_NEAR(1.0f, constraints.minimum_scale, 0.01f);
 }
 
-TEST_F(ViewportTest, viewportTriggersGpuRasterization) {
-  frame_test_helpers::WebViewHelper web_view_helper;
-
-  RegisterMockedHttpURLLoad(
-      "viewport/viewport-gpu-rasterization-disabled-without-viewport.html");
-  web_view_helper.InitializeAndLoad(
-      base_url_ +
-          "viewport/viewport-gpu-rasterization-disabled-without-viewport.html",
-      nullptr, nullptr, nullptr, SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_FALSE(web_view_helper.GetWebView()
-                   ->MatchesHeuristicsForGpuRasterizationForTesting());
-  // Also test that setting enableViewport to false (as on desktop Chrome)
-  // supports GPU raster unconditionally.
-  web_view_helper.InitializeAndLoad(
-      base_url_ +
-      "viewport/viewport-gpu-rasterization-disabled-without-viewport.html");
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad("viewport/viewport-gpu-rasterization.html");
-  web_view_helper.InitializeAndLoad(
-      base_url_ + "viewport/viewport-gpu-rasterization.html", nullptr, nullptr,
-      nullptr, SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad(
-      "viewport/viewport-gpu-rasterization-expanded-heuristics.html");
-  web_view_helper.InitializeAndLoad(
-      base_url_ +
-          "viewport/viewport-gpu-rasterization-expanded-heuristics.html",
-      nullptr, nullptr, nullptr, SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad("viewport/viewport-1.html");
-  web_view_helper.InitializeAndLoad(base_url_ + "viewport/viewport-1.html",
-                                    nullptr, nullptr, nullptr,
-                                    SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad("viewport/viewport-15.html");
-  web_view_helper.InitializeAndLoad(base_url_ + "viewport/viewport-15.html",
-                                    nullptr, nullptr, nullptr,
-                                    SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad("viewport/viewport-130.html");
-  web_view_helper.InitializeAndLoad(base_url_ + "viewport/viewport-130.html",
-                                    nullptr, nullptr, nullptr,
-                                    SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad("viewport/viewport-legacy-handheldfriendly.html");
-  web_view_helper.InitializeAndLoad(
-      base_url_ + "viewport/viewport-legacy-handheldfriendly.html", nullptr,
-      nullptr, nullptr, SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-
-  RegisterMockedHttpURLLoad("viewport/viewport-legacy-mobileoptimized.html");
-  web_view_helper.InitializeAndLoad(
-      base_url_ + "viewport/viewport-legacy-handheldfriendly.html", nullptr,
-      nullptr, nullptr, SetViewportSettings);
-  web_view_helper.GetWebView()->Resize(WebSize(640, 480));
-  EXPECT_TRUE(web_view_helper.GetWebView()
-                  ->MatchesHeuristicsForGpuRasterizationForTesting());
-}
-
 class ConsoleMessageWebFrameClient
     : public frame_test_helpers::TestWebFrameClient {
  public:
@@ -3079,10 +2998,10 @@ TEST_F(ViewportTest, viewportWarnings2) {
   PageScaleConstraints constraints = RunViewportTest(page, 320, 352);
 
   EXPECT_EQ(1U, web_frame_client.messages.size());
-  EXPECT_EQ(WebConsoleMessage::kLevelWarning,
+  EXPECT_EQ(mojom::ConsoleMessageLevel::kWarning,
             web_frame_client.messages[0].level);
-  EXPECT_STREQ("The key \"wwidth\" is not recognized and ignored.",
-               web_frame_client.messages[0].text.Utf8().c_str());
+  EXPECT_EQ("The key \"wwidth\" is not recognized and ignored.",
+            web_frame_client.messages[0].text);
 
   EXPECT_EQ(980, constraints.layout_size.Width());
   EXPECT_EQ(1078, constraints.layout_size.Height());
@@ -3106,12 +3025,12 @@ TEST_F(ViewportTest, viewportWarnings3) {
   PageScaleConstraints constraints = RunViewportTest(page, 320, 352);
 
   EXPECT_EQ(1U, web_frame_client.messages.size());
-  EXPECT_EQ(WebConsoleMessage::kLevelWarning,
+  EXPECT_EQ(mojom::ConsoleMessageLevel::kWarning,
             web_frame_client.messages[0].level);
-  EXPECT_STREQ(
+  EXPECT_EQ(
       "The value \"unrecognized-width\" for key \"width\" is invalid, and has "
       "been ignored.",
-      web_frame_client.messages[0].text.Utf8().c_str());
+      web_frame_client.messages[0].text);
 
   EXPECT_NEAR(980, constraints.layout_size.Width(), 0.01);
   EXPECT_NEAR(1078, constraints.layout_size.Height(), 0.01);
@@ -3135,12 +3054,12 @@ TEST_F(ViewportTest, viewportWarnings4) {
   PageScaleConstraints constraints = RunViewportTest(page, 320, 352);
 
   EXPECT_EQ(1U, web_frame_client.messages.size());
-  EXPECT_EQ(WebConsoleMessage::kLevelWarning,
+  EXPECT_EQ(mojom::ConsoleMessageLevel::kWarning,
             web_frame_client.messages[0].level);
-  EXPECT_STREQ(
+  EXPECT_EQ(
       "The value \"123x456\" for key \"width\" was truncated to its numeric "
       "prefix.",
-      web_frame_client.messages[0].text.Utf8().c_str());
+      web_frame_client.messages[0].text);
 
   EXPECT_NEAR(123.0f, constraints.layout_size.Width(), 0.01);
   EXPECT_NEAR(135.3f, constraints.layout_size.Height(), 0.01);
@@ -3165,12 +3084,12 @@ TEST_F(ViewportTest, viewportWarnings5) {
 
   EXPECT_EQ(1U, web_frame_client.messages.size());
 
-  EXPECT_EQ(WebConsoleMessage::kLevelWarning,
+  EXPECT_EQ(mojom::ConsoleMessageLevel::kWarning,
             web_frame_client.messages[0].level);
-  EXPECT_STREQ(
+  EXPECT_EQ(
       "Error parsing a meta element's content: ';' is not a valid key-value "
       "pair separator. Please use ',' instead.",
-      web_frame_client.messages[0].text.Utf8().c_str());
+      web_frame_client.messages[0].text);
 
   EXPECT_NEAR(320.0f, constraints.layout_size.Width(), 0.01);
   EXPECT_NEAR(352.0f, constraints.layout_size.Height(), 0.01);
@@ -3194,11 +3113,11 @@ TEST_F(ViewportTest, viewportWarnings6) {
   PageScaleConstraints constraints = RunViewportTest(page, 320, 352);
 
   EXPECT_EQ(1U, web_frame_client.messages.size());
-  EXPECT_EQ(WebConsoleMessage::kLevelWarning,
+  EXPECT_EQ(mojom::ConsoleMessageLevel::kWarning,
             web_frame_client.messages[0].level);
-  EXPECT_STREQ(
+  EXPECT_EQ(
       "The value \"\" for key \"width\" is invalid, and has been ignored.",
-      web_frame_client.messages[0].text.Utf8().c_str());
+      web_frame_client.messages[0].text);
 
   EXPECT_NEAR(980, constraints.layout_size.Width(), 0.01);
   EXPECT_NEAR(1078, constraints.layout_size.Height(), 0.01);
@@ -3240,21 +3159,22 @@ TEST_F(ViewportTest, viewportWarnings8) {
   EXPECT_EQ(0U, web_frame_client.messages.size());
 }
 
-class ViewportClient : public frame_test_helpers::TestWebViewClient {
+class ViewportClient : public frame_test_helpers::TestWebWidgetClient {
  public:
-  ViewportClient() : device_scale_factor_(1.f) {}
+  // WebWidgetClient overrides.
   void ConvertWindowToViewport(WebFloatRect* rect) override {
     rect->x *= device_scale_factor_;
     rect->y *= device_scale_factor_;
     rect->width *= device_scale_factor_;
     rect->height *= device_scale_factor_;
   }
+
   void set_device_scale_factor(float device_scale_factor) {
     device_scale_factor_ = device_scale_factor;
   }
 
  private:
-  float device_scale_factor_;
+  float device_scale_factor_ = 1.f;
 };
 
 TEST_F(ViewportTest, viewportUseZoomForDSF1) {
@@ -3265,7 +3185,7 @@ TEST_F(ViewportTest, viewportUseZoomForDSF1) {
   frame_test_helpers::WebViewHelper web_view_helper;
   web_view_helper.InitializeAndLoad(
       base_url_ + "viewport/viewport-legacy-merge-quirk-1.html", nullptr,
-      &client, nullptr, SetQuirkViewportSettings);
+      nullptr, &client, SetQuirkViewportSettings);
 
   Page* page = web_view_helper.GetWebView()->GetPage();
   // Initial width and height must be scaled by DSF when --use-zoom-for-dsf
@@ -3292,7 +3212,7 @@ TEST_F(ViewportTest, viewportUseZoomForDSF2) {
   frame_test_helpers::WebViewHelper web_view_helper;
   web_view_helper.InitializeAndLoad(
       base_url_ + "viewport/viewport-legacy-merge-quirk-2.html", nullptr,
-      &client, nullptr, SetQuirkViewportSettings);
+      nullptr, &client, SetQuirkViewportSettings);
 
   Page* page = web_view_helper.GetWebView()->GetPage();
 
@@ -3321,7 +3241,7 @@ TEST_F(ViewportTest, viewportUseZoomForDSF3) {
 
   frame_test_helpers::WebViewHelper web_view_helper;
   web_view_helper.InitializeAndLoad(base_url_ + "viewport/viewport-48.html",
-                                    nullptr, &client, nullptr,
+                                    nullptr, nullptr, &client,
                                     SetViewportSettings);
 
   Page* page = web_view_helper.GetWebView()->GetPage();
@@ -3346,7 +3266,7 @@ TEST_F(ViewportTest, viewportUseZoomForDSF4) {
 
   frame_test_helpers::WebViewHelper web_view_helper;
   web_view_helper.InitializeAndLoad(base_url_ + "viewport/viewport-39.html",
-                                    nullptr, &client, nullptr,
+                                    nullptr, nullptr, &client,
                                     SetViewportSettings);
 
   Page* page = web_view_helper.GetWebView()->GetPage();
@@ -3375,7 +3295,7 @@ class ViewportHistogramsTest : public SimTest {
 
     WebView().GetSettings()->SetViewportEnabled(true);
     WebView().GetSettings()->SetViewportMetaEnabled(true);
-    WebView().Resize(WebSize(500, 600));
+    WebView().MainFrameWidget()->Resize(WebSize(500, 600));
   }
 
   void UseMetaTag(const String& metaTag) {
@@ -3413,7 +3333,7 @@ class ViewportHistogramsTest : public SimTest {
     request.Complete(responseText);
 
     // Pump the task queue so the meta tag gets processed.
-    test::RunPendingTasks();
+    blink::test::RunPendingTasks();
   }
 
   HistogramTester histogram_tester_;

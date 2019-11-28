@@ -7,8 +7,8 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/field_trial.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
 #include "third_party/icu/source/common/unicode/urename.h"
@@ -33,6 +33,7 @@ static constexpr LanguageRegion kSupportedSpellCheckerLanguages[] = {
     {"bg", "bg-BG"},
     {"ca", "ca-ES"},
     {"cs", "cs-CZ"},
+    {"cy", "cy-GB"},
     {"da", "da-DK"},
     {"de", "de-DE"},
     {"el", "el-GR"},
@@ -54,6 +55,7 @@ static constexpr LanguageRegion kSupportedSpellCheckerLanguages[] = {
     {"hi", "hi-IN"},
     {"hr", "hr-HR"},
     {"hu", "hu-HU"},
+    {"hy", "hy"},
     {"id", "id-ID"},
     {"it", "it-IT"},
     {"ko", "ko"},
@@ -109,10 +111,11 @@ base::FilePath GetVersionedFileName(base::StringPiece input_language,
   // number if you're updating either dic or aff files. Increment the minor
   // version number if you're updating only dic_delta files.
   static constexpr LanguageVersion kSpecialVersionString[] = {
-      {"tr-TR",
-       "-4-0"},  // Jan 9, 2013: Add "FLAG num" to aff to avoid heapcheck
-                 // crash.
-      {"tg-TG", "-5-0"},  // Mar 4, 2014: Add Tajik dictionary.
+      // Jan 9, 2013: Add "FLAG num" to aff to avoid heapcheck crash.
+      {"tr-TR", "-4-0"},
+
+      // Mar 4, 2014: Add Tajik dictionary.
+      {"tg-TG", "-5-0"},
 
       // October 2017: Update from upstream.
       {"en-AU", "-8-0"},
@@ -120,8 +123,18 @@ base::FilePath GetVersionedFileName(base::StringPiece input_language,
       {"en-GB", "-8-0"},
       {"en-US", "-8-0"},
 
-      // March 2016: Initial check-in of Persian
-      {"fa-IR", "-7-0"},
+      // Feb 2019: Initial check-in of Welsh.
+      {"cy-GB", "-1-0"},
+
+      // April 2019: Initial check-in of Armenian.
+      {"hy", "-1-0"},
+
+      // April 2019: Update Persian
+      {"fa-IR", "-8-0"},
+
+      // November 2019: Update Serbian-Latin and Serbian-Cyrillic
+      {"sh", "-4-0"},
+      {"sr", "-4-0"},
   };
 
   // Generate the bdict file name using default version string or special
@@ -174,9 +187,9 @@ void GetISOLanguageCountryCodeFromLocale(const std::string& locale,
   if (!locale.empty()) {
     UErrorCode error = U_ZERO_ERROR;
     char id[ULOC_LANG_CAPACITY + ULOC_SCRIPT_CAPACITY + ULOC_COUNTRY_CAPACITY];
-    uloc_addLikelySubtags(locale.c_str(), id, arraysize(id), &error);
+    uloc_addLikelySubtags(locale.c_str(), id, base::size(id), &error);
     error = U_ZERO_ERROR;
-    uloc_getLanguage(id, language, arraysize(language), &error);
+    uloc_getLanguage(id, language, base::size(language), &error);
     country = uloc_getISO3Country(id);
   }
   *language_code = std::string(language);

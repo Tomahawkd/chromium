@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_cast_button_element.h"
 
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
@@ -12,8 +13,8 @@
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/modules/media_controls/elements/media_control_elements_helper.h"
 #include "third_party/blink/renderer/modules/media_controls/media_controls_impl.h"
-#include "third_party/blink/renderer/modules/remoteplayback/html_media_element_remote_playback.h"
 #include "third_party/blink/renderer/modules/remoteplayback/remote_playback.h"
+#include "third_party/blink/renderer/platform/text/platform_locale.h"
 
 namespace blink {
 
@@ -34,7 +35,7 @@ Element* ElementFromCenter(Element& element) {
 MediaControlCastButtonElement::MediaControlCastButtonElement(
     MediaControlsImpl& media_controls,
     bool is_overlay_button)
-    : MediaControlInputElement(media_controls, kMediaCastOnButton),
+    : MediaControlInputElement(media_controls),
       is_overlay_button_(is_overlay_button) {
   SetShadowPseudoId(is_overlay_button
                         ? "-internal-media-controls-overlay-cast-button"
@@ -55,17 +56,13 @@ void MediaControlCastButtonElement::TryShowOverlay() {
 
 void MediaControlCastButtonElement::UpdateDisplayType() {
   if (IsPlayingRemotely()) {
-    if (is_overlay_button_) {
-      SetDisplayType(kMediaOverlayCastOnButton);
-    } else {
-      SetDisplayType(kMediaCastOnButton);
-    }
+    setAttribute(html_names::kAriaLabelAttr,
+                 WTF::AtomicString(
+                     GetLocale().QueryString(IDS_AX_MEDIA_CAST_ON_BUTTON)));
   } else {
-    if (is_overlay_button_) {
-      SetDisplayType(kMediaOverlayCastOffButton);
-    } else {
-      SetDisplayType(kMediaCastOffButton);
-    }
+    setAttribute(html_names::kAriaLabelAttr,
+                 WTF::AtomicString(
+                     GetLocale().QueryString(IDS_AX_MEDIA_CAST_OFF_BUTTON)));
   }
   UpdateOverflowString();
   SetClass("on", IsPlayingRemotely());
@@ -77,9 +74,8 @@ bool MediaControlCastButtonElement::WillRespondToMouseClickEvents() {
   return true;
 }
 
-WebLocalizedString::Name MediaControlCastButtonElement::GetOverflowStringName()
-    const {
-  return WebLocalizedString::kOverflowMenuCast;
+int MediaControlCastButtonElement::GetOverflowStringId() const {
+  return IDS_MEDIA_OVERFLOW_MENU_CAST;
 }
 
 bool MediaControlCastButtonElement::HasOverflowButton() const {
@@ -97,19 +93,12 @@ void MediaControlCastButtonElement::DefaultEventHandler(Event& event) {
     if (is_overlay_button_) {
       Platform::Current()->RecordAction(
           UserMetricsAction("Media.Controls.CastOverlay"));
-      Platform::Current()->RecordRapporURL("Media.Controls.CastOverlay",
-                                           WebURL(GetDocument().Url()));
     } else {
       Platform::Current()->RecordAction(
           UserMetricsAction("Media.Controls.Cast"));
-      Platform::Current()->RecordRapporURL("Media.Controls.Cast",
-                                           WebURL(GetDocument().Url()));
     }
 
-    RemotePlayback* remote =
-        HTMLMediaElementRemotePlayback::remote(MediaElement());
-    if (remote)
-      remote->PromptInternal();
+    RemotePlayback::From(MediaElement()).PromptInternal();
   }
   MediaControlInputElement::DefaultEventHandler(event);
 }
@@ -119,9 +108,8 @@ bool MediaControlCastButtonElement::KeepEventInNode(const Event& event) const {
 }
 
 bool MediaControlCastButtonElement::IsPlayingRemotely() const {
-  RemotePlayback* remote =
-      HTMLMediaElementRemotePlayback::remote(MediaElement());
-  return remote && remote->GetState() != WebRemotePlaybackState::kDisconnected;
+  return RemotePlayback::From(MediaElement()).GetState() !=
+         mojom::blink::PresentationConnectionState::CLOSED;
 }
 
 }  // namespace blink

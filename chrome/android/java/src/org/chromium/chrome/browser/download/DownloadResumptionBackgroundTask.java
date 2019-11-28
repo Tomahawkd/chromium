@@ -8,7 +8,7 @@ import android.content.Context;
 import android.os.Handler;
 
 import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask;
-import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask.StartBeforeNativeResult;
+import org.chromium.chrome.browser.flags.FeatureUtilities;
 import org.chromium.components.background_task_scheduler.TaskParameters;
 
 /**
@@ -41,6 +41,11 @@ public class DownloadResumptionBackgroundTask extends NativeBackgroundTask {
         // The task is not necessary once started, so no need to auto-resume here.  The started
         // service will handle rescheduling the job if necessary.
         return false;
+    }
+
+    @Override
+    protected boolean supportsServiceManagerOnly() {
+        return FeatureUtilities.isServiceManagerForDownloadResumptionEnabled();
     }
 
     @Override

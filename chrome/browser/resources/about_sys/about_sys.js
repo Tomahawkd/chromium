@@ -77,26 +77,6 @@ function expandAll() {
 }
 
 /**
- * Collapse only those log items with multi-line values.
- */
-function collapseMultiLineStrings() {
-  const valueDivs = document.getElementsByClassName('stat-value');
-  const nameDivs = document.getElementsByClassName('stat-name');
-  for (let i = 0; i < valueDivs.length; i++) {
-    const button = getButtonForValueDiv(valueDivs[i]);
-    button.onclick = changeCollapsedStatus;
-    if (valueDivs[i].scrollHeight > (nameDivs[i].scrollHeight * 2)) {
-      button.className = '';
-      button.textContent = loadTimeData.getString('expandBtn');
-      valueDivs[i].parentNode.className = 'number-collapsed';
-    } else {
-      button.className = 'button-hidden';
-      valueDivs[i].parentNode.className = 'number';
-    }
-  }
-}
-
-/**
  * Read in a log asynchronously, calling parseSystemLog if successful.
  * @param {File} file The file to read.
  */
@@ -120,6 +100,84 @@ function importLog(file) {
 }
 
 /**
+ * For a particular log entry, create the DOM node representing it in the
+ * log entry table.
+ * @param{log} A dictionary with the keys statName and statValue
+ * @return{Element} The DOM node for the given log entry.
+ */
+function createNodeForLogEntry(log) {
+  const row = document.createElement('tr');
+
+  const nameCell = document.createElement('td');
+  nameCell.className = 'name';
+  const nameDiv = document.createElement('div');
+  nameDiv.className = 'stat-name';
+  nameDiv.textContent = log.statName;
+  nameCell.appendChild(nameDiv);
+  row.appendChild(nameCell);
+
+  const buttonCell = document.createElement('td');
+  buttonCell.className = 'button-cell';
+  const button = document.createElement('button');
+  button.id = log.statName + '-value-btn';
+  button.className = 'expand-status';
+  button.onclick = changeCollapsedStatus;
+  buttonCell.appendChild(button);
+  row.appendChild(buttonCell);
+
+  const valueCell = document.createElement('td');
+  const valueDiv = document.createElement('div');
+  valueDiv.className = 'stat-value';
+  valueDiv.id = log.statName + '-value';
+  valueDiv.textContent = log.statValue;
+  valueCell.appendChild(valueDiv);
+  row.appendChild(valueCell);
+
+  if (log.statValue.length > 200) {
+    button.className = '';
+    button.textContent = loadTimeData.getString('expandBtn');
+    valueCell.className = 'number-collapsed';
+  } else {
+    button.className = 'button-hidden';
+    valueCell.className = 'number';
+  }
+
+  return row;
+}
+
+/**
+ * Given a list of log entries, replace the contents of the log entry table
+ * with those entries. The log entries are passed as a list of dictionaries
+ * containing the keys statName and statValue.
+ * @param {systemInfo} The log entries to insert into the DOM.
+ */
+function updateLogEntries(systemInfo) {
+  const fragment = document.createDocumentFragment();
+  systemInfo.forEach(logEntry => {
+    const node = createNodeForLogEntry(logEntry);
+    fragment.appendChild(node);
+  });
+  const table = $('details');
+
+  // Delete any existing log entries in the table
+  table.innerHtml = '';
+  table.appendChild(fragment);
+}
+
+/**
+ * Callback called by system_info_ui.cc when it has finished fetching
+ * system info. The log entries are passed as a list of dictionaries containing
+ * the keys statName and statValue.
+ * @param {systemInfo} The fetched log entries.
+ */
+function returnSystemInfo(systemInfo) {
+  updateLogEntries(systemInfo);
+  const spinner = $('loadingIndicator');
+  spinner.style.display = 'none';
+  spinner.style.animationPlayState = 'paused';
+}
+
+/**
  * Convert text-based log into list of name-value pairs.
  * @param {string} text The raw text of a log.
  * @return {boolean} True if the log was parsed successfully.
@@ -129,13 +187,15 @@ function parseSystemLog(text) {
   const lines = text.split('\n');
   for (let i = 0, len = lines.length; i < len; i++) {
     // Skip empty lines.
-    if (!lines[i])
+    if (!lines[i]) {
       continue;
+    }
 
     const delimiter = lines[i].indexOf('=');
     if (delimiter <= 0) {
-      if (i == lines.length - 1)
+      if (i == lines.length - 1) {
         break;
+      }
       // If '=' is missing here, format is wrong.
       return false;
     }
@@ -143,39 +203,43 @@ function parseSystemLog(text) {
     const name = lines[i].substring(0, delimiter);
     let value = '';
     // Set value if non-empty
-    if (lines[i].length > delimiter + 1)
+    if (lines[i].length > delimiter + 1) {
       value = lines[i].substring(delimiter + 1);
+    }
 
     // Delimiters are based on kMultilineIndicatorString, kMultilineStartString,
     // and kMultilineEndString in components/feedback/feedback_data.cc.
     // If these change, we should check for both the old and new versions.
     if (value == '<multiline>') {
       // Skip start delimiter.
-      if (i == len - 1 || lines[++i].indexOf(DELIM_START) == -1)
+      if (i == len - 1 || lines[++i].indexOf(DELIM_START) == -1) {
         return false;
+      }
 
       ++i;
       value = '';
       // Append lines between start and end delimiters.
-      while (i < len && lines[i] != DELIM_END)
+      while (i < len && lines[i] != DELIM_END) {
         value += lines[i++] + '\n';
+      }
 
       // Remove trailing newline.
-      if (value)
+      if (value) {
         value = value.substr(0, value.length - 1);
+      }
     }
     details.push({'statName': name, 'statValue': value});
   }
 
-  const templateData = {'details': details};
-  jstProcess(new JsEvalContext(templateData), $('t'));
 
-  collapseMultiLineStrings();
+
+  updateLogEntries(details);
+
   return true;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  jstProcess(loadTimeData.createJsEvalContext(), $('t'));
+  chrome.send('requestSystemInfo');
 
   $('collapseAll').onclick = collapseAll;
   $('expandAll').onclick = expandAll;
@@ -183,6 +247,4 @@ document.addEventListener('DOMContentLoaded', function() {
   const tp = $('t');
   tp.addEventListener('dragover', handleDragOver, false);
   tp.addEventListener('drop', handleDrop, false);
-
-  collapseMultiLineStrings();
 });

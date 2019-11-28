@@ -14,9 +14,10 @@
 #include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/common/process_type.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/host/resource_message_filter.h"
+#include "services/network/public/cpp/resolve_host_client_base.h"
 #include "services/network/public/mojom/host_resolver.mojom.h"
 
 struct PP_HostResolver_Private_Hint;
@@ -40,7 +41,7 @@ class BrowserPpapiHostImpl;
 
 class CONTENT_EXPORT PepperHostResolverMessageFilter
     : public ppapi::host::ResourceMessageFilter,
-      public network::mojom::ResolveHostClient {
+      public network::ResolveHostClientBase {
  public:
   PepperHostResolverMessageFilter(BrowserPpapiHostImpl* host,
                                   PP_Instance instance,
@@ -66,6 +67,7 @@ class CONTENT_EXPORT PepperHostResolverMessageFilter
   // network::mojom::ResolveHostClient overrides.
   void OnComplete(
       int result,
+      const net::ResolveErrorInfo& resolve_error_info,
       const base::Optional<net::AddressList>& resolved_addresses) override;
 
   void OnLookupFinished(int net_result,
@@ -87,9 +89,9 @@ class CONTENT_EXPORT PepperHostResolverMessageFilter
 
   // The following members are only accessed on the UI thread.
 
-  // A reference to |this| must always be taken while |binding_| is bound to
+  // A reference to |this| must always be taken while |receiver_| is bound to
   // ensure that if the error callback is called the object is alive.
-  mojo::Binding<network::mojom::ResolveHostClient> binding_;
+  mojo::Receiver<network::mojom::ResolveHostClient> receiver_{this};
 
   ppapi::host::ReplyMessageContext host_resolve_context_;
 

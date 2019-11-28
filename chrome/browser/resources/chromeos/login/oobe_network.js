@@ -12,13 +12,14 @@ Polymer({
   behaviors: [I18nBehavior, OobeDialogHostBehavior],
 
   observers:
-      ['onDemoModeSetupChanged_(isDemoModeSetup, offlineDemoModeEnabled_)'],
+      ['onDemoModeSetupChanged_(isDemoModeSetup, offlineDemoModeEnabled)'],
 
   properties: {
     /**
      * Whether network dialog is shown as a part of demo mode setup flow.
      * Additional custom elements can be displayed on network list in demo mode
      * setup.
+     * @type {boolean}
      */
     isDemoModeSetup: {
       type: Boolean,
@@ -26,24 +27,24 @@ Polymer({
     },
 
     /**
+     * Whether offline demo mode is enabled. If it is enabled offline setup
+     * option will be shown in UI.
+     * @type {boolean}
+     */
+    offlineDemoModeEnabled: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
      * Whether device is connected to the network.
+     * @type {boolean}
      * @private
      */
     isConnected_: {
       type: Boolean,
       value: false,
     },
-
-    /**
-     * Whether offline demo mode is enabled. If it is enabled offline setup
-     * option will be shown in UI.
-     * @private
-     */
-    offlineDemoModeEnabled_: {
-      type: Boolean,
-      value: false,
-    },
-
   },
 
   /** Called when dialog is shown. */
@@ -67,8 +68,6 @@ Polymer({
   /** @override */
   ready: function() {
     this.updateLocalizedContent();
-    this.offlineDemoModeEnabled_ =
-        loadTimeData.getValue('offlineDemoModeEnabled');
   },
 
   /** Shows the dialog. */
@@ -76,9 +75,12 @@ Polymer({
     this.$.networkDialog.show();
   },
 
+  focus: function() {
+    this.$.networkDialog.focus();
+  },
+
   /** Updates localized elements of the UI. */
   updateLocalizedContent: function() {
-    this.$.networkSelectLogin.setCrOncStrings();
     this.i18nUpdateLocale();
   },
 
@@ -86,13 +88,24 @@ Polymer({
    * Returns element of the network list selected by the query.
    * Used to simplify testing.
    * @param {string} query
-   * @return {CrNetworkList.CrNetworkListItemType}
+   * @return {NetworkList.NetworkListItemType}
    */
   getNetworkListItemWithQueryForTest: function(query) {
     let networkList =
         this.$.networkSelectLogin.$$('#networkSelect').getNetworkListForTest();
     assert(networkList);
     return networkList.querySelector(query);
+  },
+
+  /**
+   * Returns element of the network list with the given name.
+   * Used to simplify testing.
+   * @param {string} name
+   * @return {?NetworkList.NetworkListItemType}
+   */
+  getNetworkListItemByNameForTest: function(name) {
+    return this.$.networkSelectLogin.$$('#networkSelect')
+        .getNetworkListItemByNameForTest(name);
   },
 
   /**
@@ -129,6 +142,14 @@ Polymer({
    */
   onDemoModeSetupChanged_: function() {
     this.$.networkSelectLogin.isOfflineDemoModeSetup =
-        this.isDemoModeSetup && this.offlineDemoModeEnabled_;
+        this.isDemoModeSetup && this.offlineDemoModeEnabled;
+  },
+
+  /**
+   * This is called when network setup is done.
+   * @private
+   */
+  onNetworkConnected_: function() {
+    chrome.send('login.NetworkScreen.userActed', ['continue']);
   },
 });

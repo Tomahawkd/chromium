@@ -12,15 +12,15 @@
 #include "chromeos/services/device_sync/public/cpp/device_sync_client.h"
 #include "chromeos/services/multidevice_setup/multidevice_setup_base.h"
 #include "chromeos/services/multidevice_setup/public/mojom/multidevice_setup.mojom.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 
 class PrefService;
 
-namespace cryptauth {
-class GcmDeviceInfoProvider;
-}  // namespace cryptauth
-
 namespace chromeos {
+
+namespace device_sync {
+class GcmDeviceInfoProvider;
+}  // namespace device_sync
 
 namespace multidevice_setup {
 
@@ -46,11 +46,9 @@ class MultiDeviceSetupInitializer
         device_sync::DeviceSyncClient* device_sync_client,
         AuthTokenValidator* auth_token_validator,
         OobeCompletionTracker* oobe_completion_tracker,
-        std::unique_ptr<AndroidSmsAppHelperDelegate>
-            android_sms_app_helper_delegate,
-        std::unique_ptr<AndroidSmsPairingStateTracker>
-            android_sms_pairing_state_tracker,
-        const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider);
+        AndroidSmsAppHelperDelegate* android_sms_app_helper_delegate,
+        AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker,
+        const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider);
 
    private:
     static Factory* test_factory_;
@@ -84,19 +82,21 @@ class MultiDeviceSetupInitializer
       device_sync::DeviceSyncClient* device_sync_client,
       AuthTokenValidator* auth_token_validator,
       OobeCompletionTracker* oobe_completion_tracker,
-      std::unique_ptr<AndroidSmsAppHelperDelegate>
-          android_sms_app_helper_delegate,
-      std::unique_ptr<AndroidSmsPairingStateTracker>
-          android_sms_pairing_state_tracker,
-      const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider);
+      AndroidSmsAppHelperDelegate* android_sms_app_helper_delegate,
+      AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker,
+      const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider);
 
   // mojom::MultiDeviceSetup:
   void SetAccountStatusChangeDelegate(
-      mojom::AccountStatusChangeDelegatePtr delegate) override;
-  void AddHostStatusObserver(mojom::HostStatusObserverPtr observer) override;
+      mojo::PendingRemote<mojom::AccountStatusChangeDelegate> delegate)
+      override;
+  void AddHostStatusObserver(
+      mojo::PendingRemote<mojom::HostStatusObserver> observer) override;
   void AddFeatureStateObserver(
-      mojom::FeatureStateObserverPtr observer) override;
+      mojo::PendingRemote<mojom::FeatureStateObserver> observer) override;
   void GetEligibleHostDevices(GetEligibleHostDevicesCallback callback) override;
+  void GetEligibleActiveHostDevices(
+      GetEligibleActiveHostDevicesCallback callback) override;
   void SetHostDevice(const std::string& host_device_id,
                      const std::string& auth_token,
                      SetHostDeviceCallback callback) override;
@@ -127,20 +127,23 @@ class MultiDeviceSetupInitializer
   device_sync::DeviceSyncClient* device_sync_client_;
   AuthTokenValidator* auth_token_validator_;
   OobeCompletionTracker* oobe_completion_tracker_;
-  std::unique_ptr<AndroidSmsAppHelperDelegate> android_sms_app_helper_delegate_;
-  std::unique_ptr<AndroidSmsPairingStateTracker>
-      android_sms_pairing_state_tracker_;
-  const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider_;
+  AndroidSmsAppHelperDelegate* android_sms_app_helper_delegate_;
+  AndroidSmsPairingStateTracker* android_sms_pairing_state_tracker_;
+  const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider_;
 
   std::unique_ptr<MultiDeviceSetupBase> multidevice_setup_impl_;
 
   // If API functions are called before initialization is complete, their
   // parameters are cached here. Once asynchronous initialization is complete,
   // the parameters are passed to |multidevice_setup_impl_|.
-  mojom::AccountStatusChangeDelegatePtr pending_delegate_;
-  std::vector<mojom::HostStatusObserverPtr> pending_host_status_observers_;
-  std::vector<mojom::FeatureStateObserverPtr> pending_feature_state_observers_;
+  mojo::PendingRemote<mojom::AccountStatusChangeDelegate> pending_delegate_;
+  std::vector<mojo::PendingRemote<mojom::HostStatusObserver>>
+      pending_host_status_observers_;
+  std::vector<mojo::PendingRemote<mojom::FeatureStateObserver>>
+      pending_feature_state_observers_;
   std::vector<GetEligibleHostDevicesCallback> pending_get_eligible_hosts_args_;
+  std::vector<GetEligibleActiveHostDevicesCallback>
+      pending_get_eligible_active_hosts_args_;
   std::vector<GetHostStatusCallback> pending_get_host_args_;
   std::vector<std::tuple<mojom::Feature,
                          bool,

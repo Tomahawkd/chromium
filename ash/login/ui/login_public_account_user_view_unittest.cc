@@ -6,6 +6,7 @@
 #include "ash/login/ui/login_test_base.h"
 #include "ash/login/ui/login_test_utils.h"
 #include "ash/login/ui/login_user_view.h"
+#include "base/bind.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
@@ -45,14 +46,14 @@ class LoginPublicAccountUserViewTest : public LoginTestBase {
     // We proxy |public_account_view_| inside of |container| so we can control
     // layout.
     auto* container = new views::View();
-    container->SetLayoutManager(
-        std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
+    container->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kVertical));
     container->AddChildView(public_account_view_);
     container->AddChildView(focusable_view_);
     SetWidget(CreateWidgetWithContent(container));
   }
 
-  mojom::LoginUserInfoPtr user_;
+  LoginUserInfo user_;
 
   LoginPublicAccountUserView* public_account_view_ = nullptr;
   views::View* focusable_view_ = nullptr;

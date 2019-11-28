@@ -8,7 +8,6 @@
 #include <stddef.h>
 
 #include "base/callback_forward.h"
-#include "base/containers/hash_tables.h"
 #include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/synchronization/lock.h"
@@ -23,20 +22,19 @@ class WebTestPermissionManager : public PermissionControllerDelegate {
   ~WebTestPermissionManager() override;
 
   // PermissionManager overrides.
-  int RequestPermission(
-      PermissionType permission,
-      RenderFrameHost* render_frame_host,
-      const GURL& requesting_origin,
-      bool user_gesture,
-      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
-      override;
+  int RequestPermission(PermissionType permission,
+                        RenderFrameHost* render_frame_host,
+                        const GURL& requesting_origin,
+                        bool user_gesture,
+                        base::OnceCallback<void(blink::mojom::PermissionStatus)>
+                            callback) override;
   int RequestPermissions(
       const std::vector<PermissionType>& permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       bool user_gesture,
-      const base::Callback<
-          void(const std::vector<blink::mojom::PermissionStatus>&)>& callback)
+      base::OnceCallback<
+          void(const std::vector<blink::mojom::PermissionStatus>&)> callback)
       override;
   void ResetPermission(PermissionType permission,
                        const GURL& requesting_origin,
@@ -53,7 +51,7 @@ class WebTestPermissionManager : public PermissionControllerDelegate {
       PermissionType permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
-      const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
+      base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback)
       override;
   void UnsubscribePermissionStatusChange(int subscription_id) override;
 
@@ -85,9 +83,9 @@ class WebTestPermissionManager : public PermissionControllerDelegate {
 
   struct Subscription;
   using SubscriptionsMap = base::IDMap<std::unique_ptr<Subscription>>;
-  using PermissionsMap = base::hash_map<PermissionDescription,
-                                        blink::mojom::PermissionStatus,
-                                        PermissionDescription::Hash>;
+  using PermissionsMap = std::unordered_map<PermissionDescription,
+                                            blink::mojom::PermissionStatus,
+                                            PermissionDescription::Hash>;
 
   void OnPermissionChanged(const PermissionDescription& permission,
                            blink::mojom::PermissionStatus status);

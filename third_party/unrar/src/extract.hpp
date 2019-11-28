@@ -57,6 +57,10 @@ class CmdExtract
     void ExtractArchiveInit(Archive &Arc);
     bool ExtractCurrentFile(Archive &Arc,size_t HeaderSize,bool &Repeat);
     static void UnstoreFile(ComprDataIO &DataIO,int64 DestUnpSize);
+
+#if defined(CHROMIUM_UNRAR)
+    int64 GetCurrentFileSize() { return DataIO.CurUnpWrite; }
+#endif
 };
 
 #endif

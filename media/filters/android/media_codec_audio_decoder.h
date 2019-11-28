@@ -84,15 +84,14 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
 
   // AudioDecoder implementation.
   std::string GetDisplayName() const override;
-  void Initialize(
-      const AudioDecoderConfig& config,
-      CdmContext* cdm_context,
-      const InitCB& init_cb,
-      const OutputCB& output_cb,
-      const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb) override;
+  void Initialize(const AudioDecoderConfig& config,
+                  CdmContext* cdm_context,
+                  InitCB init_cb,
+                  const OutputCB& output_cb,
+                  const WaitingCB& waiting_cb) override;
   void Decode(scoped_refptr<DecoderBuffer> buffer,
               const DecodeCB& decode_cb) override;
-  void Reset(const base::Closure& closure) override;
+  void Reset(base::OnceClosure closure) override;
   bool NeedsBitstreamConversion() const override;
 
   // MediaCodecLoop::Client implementation
@@ -101,6 +100,7 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
   void OnInputDataQueued(bool) override;
   bool OnDecodedEos(const MediaCodecLoop::OutputBuffer& out) override;
   bool OnDecodedFrame(const MediaCodecLoop::OutputBuffer& out) override;
+  void OnWaiting(WaitingReason reason) override;
   bool OnOutputFormatChanged() override;
   void OnCodecLoopError() override;
 
@@ -126,10 +126,10 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
 
   // A helper method to start CDM initialization.  This must be called if and
   // only if we were constructed with |is_encrypted| set to true.
-  void SetCdm(const InitCB& init_cb);
+  void SetCdm(InitCB init_cb);
 
   // This callback is called after CDM obtained a MediaCrypto object.
-  void OnMediaCryptoReady(const InitCB& init_cb,
+  void OnMediaCryptoReady(InitCB init_cb,
                           JavaObjectPtr media_crypto,
                           bool requires_secure_video_codec);
 
@@ -188,6 +188,8 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
   // Callback that delivers output frames.
   OutputCB output_cb_;
 
+  WaitingCB waiting_cb_;
+
   std::unique_ptr<MediaCodecLoop> codec_loop_;
 
   std::unique_ptr<AudioTimestampHelper> timestamp_helper_;
@@ -208,7 +210,7 @@ class MEDIA_EXPORT MediaCodecAudioDecoder : public AudioDecoder,
   // an encrypted stream.
   JavaObjectPtr media_crypto_;
 
-  base::WeakPtrFactory<MediaCodecAudioDecoder> weak_factory_;
+  base::WeakPtrFactory<MediaCodecAudioDecoder> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaCodecAudioDecoder);
 };

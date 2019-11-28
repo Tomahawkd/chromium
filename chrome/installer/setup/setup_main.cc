@@ -4,6 +4,7 @@
 
 #include "chrome/installer/setup/setup_main.h"
 
+// Must be before msi.h.
 #include <windows.h>
 
 #include <msi.h>
@@ -22,14 +23,17 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/persistent_histogram_storage.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/optional.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/memory.h"
 #include "base/process/process.h"
+#include "base/process/process_metrics.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -43,6 +47,7 @@
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
+#include "build/branding_buildflags.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -62,12 +67,12 @@
 #include "chrome/installer/setup/setup_util.h"
 #include "chrome/installer/setup/uninstall.h"
 #include "chrome/installer/setup/user_experiment.h"
+#include "chrome/installer/util/conditional_work_item_list.h"
 #include "chrome/installer/util/delete_after_reboot_helper.h"
 #include "chrome/installer/util/delete_old_versions.h"
 #include "chrome/installer/util/delete_tree_work_item.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/google_update_settings.h"
-#include "chrome/installer/util/google_update_util.h"
 #include "chrome/installer/util/helper.h"
 #include "chrome/installer/util/html_dialog.h"
 #include "chrome/installer/util/install_util.h"
@@ -84,6 +89,10 @@
 #include "components/crash/content/app/crash_switches.h"
 #include "components/crash/content/app/run_as_crashpad_handler_win.h"
 #include "content/public/common/content_switches.h"
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+#include "chrome/installer/util/google_update_util.h"
+#endif
 
 using installer::InstallerState;
 using installer::InstallationState;
@@ -234,7 +243,7 @@ base::string16 FindMsiProductId(const InstallerState& installer_state) {
     base::string16 value_name(value_iter.Name());
     if (base::StartsWith(value_name, kMsiProductIdPrefix,
                          base::CompareCase::INSENSITIVE_ASCII)) {
-      return value_name.substr(arraysize(kMsiProductIdPrefix) - 1);
+      return value_name.substr(base::size(kMsiProductIdPrefix) - 1);
     }
   }
   return base::string16();
@@ -254,8 +263,15 @@ bool UncompressAndPatchChromeArchive(
     installer::InstallStatus* install_status,
     const base::Version& previous_version) {
   installer_state.SetStage(installer::UNCOMPRESSING);
-  base::TimeTicks start_time = base::TimeTicks::Now();
 
+  // UMA tells us the following about the time required for uncompression as of
+  // M75:
+  // --- Foreground (<10%) ---
+  //   Full archive: 7.5s (50%ile) / 52s (99%ile)
+  //   Archive patch: <2s (50%ile) / 10-20s (99%ile)
+  // --- Background (>90%) ---
+  //   Full archive: 22s (50%ile) / >3m (99%ile)
+  //   Archive patch: ~2s (50%ile) / 1.5m - >3m (99%ile)
   if (!archive_helper->Uncompress(NULL)) {
     *install_status = installer::UNCOMPRESSION_FAILED;
     installer_state.WriteInstallerResult(*install_status,
@@ -263,38 +279,12 @@ bool UncompressAndPatchChromeArchive(
                                          NULL);
     return false;
   }
-  base::TimeDelta elapsed_time = base::TimeTicks::Now() - start_time;
-
-  bool has_full_archive = base::PathExists(archive_helper->target());
-  if (installer_state.is_background_mode()) {
-    UMA_HISTOGRAM_BOOLEAN("Setup.Install.HasArchivePatch.background",
-                          !has_full_archive);
-  } else {
-    UMA_HISTOGRAM_BOOLEAN("Setup.Install.HasArchivePatch", !has_full_archive);
-  }
 
   // Short-circuit if uncompression produced the uncompressed archive rather
   // than a patch file.
-  if (has_full_archive) {
+  if (base::PathExists(archive_helper->target())) {
     *archive_type = installer::FULL_ARCHIVE_TYPE;
-    // Uncompression alone hopefully takes less than 3 minutes even on slow
-    // machines.
-    if (installer_state.is_background_mode()) {
-      UMA_HISTOGRAM_MEDIUM_TIMES(
-          "Setup.Install.UncompressFullArchiveTime.background", elapsed_time);
-    } else {
-      UMA_HISTOGRAM_MEDIUM_TIMES(
-          "Setup.Install.UncompressFullArchiveTime", elapsed_time);
-    }
     return true;
-  }
-
-  if (installer_state.is_background_mode()) {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "Setup.Install.UncompressArchivePatchTime.background", elapsed_time);
-  } else {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "Setup.Install.UncompressArchivePatchTime", elapsed_time);
   }
 
   // Find the installed version's archive to serve as the source for patching.
@@ -311,9 +301,11 @@ bool UncompressAndPatchChromeArchive(
   }
   archive_helper->set_patch_source(patch_source);
 
-  // Patch application sometimes takes a very long time, so use 100 buckets for
-  // up to an hour.
-  start_time = base::TimeTicks::Now();
+  // UMA tells us the following about the time required for patching as of M75:
+  // --- Foreground ---
+  //   12s (50%ile) / 3-6m (99%ile)
+  // --- Background ---
+  //   1m (50%ile) / >60m (99%ile)
   installer_state.SetStage(installer::PATCHING);
   if (!archive_helper->ApplyPatch()) {
     *install_status = installer::APPLY_DIFF_PATCH_FAILED;
@@ -322,23 +314,8 @@ bool UncompressAndPatchChromeArchive(
     return false;
   }
 
-  // Record patch time only if it was successful.
-  elapsed_time = base::TimeTicks::Now() - start_time;
-  if (installer_state.is_background_mode()) {
-    UMA_HISTOGRAM_LONG_TIMES(
-        "Setup.Install.ApplyArchivePatchTime.background", elapsed_time);
-  } else {
-    UMA_HISTOGRAM_LONG_TIMES(
-        "Setup.Install.ApplyArchivePatchTime", elapsed_time);
-  }
-
   *archive_type = installer::INCREMENTAL_ARCHIVE_TYPE;
   return true;
-}
-
-void RecordNumDeleteOldVersionsAttempsBeforeAbort(int num_attempts) {
-  UMA_HISTOGRAM_COUNTS_100(
-      "Setup.Install.NumDeleteOldVersionsAttemptsBeforeAbort", num_attempts);
 }
 
 // Repetitively attempts to delete all files that belong to old versions of
@@ -349,7 +326,11 @@ void RecordNumDeleteOldVersionsAttempsBeforeAbort(int num_attempts) {
 installer::InstallStatus RepeatDeleteOldVersions(
     const base::FilePath& install_dir,
     const installer::SetupSingleton& setup_singleton) {
-  constexpr int kMaxNumAttempts = 12;
+  // The 99th percentile of the number of attempts it takes to successfully
+  // delete old versions is 2.75. The 75th percentile is 1.77. 98% of calls to
+  // this function will successfully delete old versions.
+  // Source: 30 days of UMA data on June 25, 2019.
+  constexpr int kMaxNumAttempts = 3;
   int num_attempts = 0;
 
   while (num_attempts < kMaxNumAttempts) {
@@ -368,7 +349,6 @@ installer::InstallStatus RepeatDeleteOldVersions(
     if (setup_singleton.WaitForInterrupt(max_wait_time)) {
       VLOG(1) << "Exiting --delete-old-versions process because another "
                  "process tries to acquire the SetupSingleton.";
-      RecordNumDeleteOldVersionsAttempsBeforeAbort(num_attempts);
       return installer::SETUP_SINGLETON_RELEASED;
     }
 
@@ -383,9 +363,6 @@ installer::InstallStatus RepeatDeleteOldVersions(
     if (delete_old_versions_success) {
       VLOG(1) << "Successfully deleted all old files from "
                  "--delete-old-versions process.";
-      UMA_HISTOGRAM_COUNTS_100(
-          "Setup.Install.NumDeleteOldVersionsAttemptsBeforeSuccess",
-          num_attempts);
       return installer::DELETE_OLD_VERSIONS_SUCCESS;
     } else if (num_attempts == 1) {
       VLOG(1) << "Failed to delete all old files from --delete-old-versions "
@@ -396,7 +373,6 @@ installer::InstallStatus RepeatDeleteOldVersions(
   VLOG(1) << "Exiting --delete-old-versions process after retrying too many "
              "times to delete all old files.";
   DCHECK_EQ(num_attempts, kMaxNumAttempts);
-  RecordNumDeleteOldVersionsAttempsBeforeAbort(num_attempts);
   return installer::DELETE_OLD_VERSIONS_TOO_MANY_ATTEMPTS;
 }
 
@@ -445,11 +421,17 @@ installer::InstallStatus RenameChromeExecutables(
                                     WorkItem::ALWAYS_MOVE);
   install_list->AddDeleteTreeWorkItem(chrome_new_exe, temp_path.path());
 
-  // Move chrome_proxy.exe to old_chrome_proxy.exe, then move
-  // new_chrome_proxy.exe to chrome_proxy.exe.
-  install_list->AddMoveTreeWorkItem(
+  // Move chrome_proxy.exe to old_chrome_proxy.exe if it exists (a previous
+  // installation may not have included it), then move new_chrome_proxy.exe to
+  // chrome_proxy.exe.
+  std::unique_ptr<WorkItemList> existing_proxy_rename_list(
+      WorkItem::CreateConditionalWorkItemList(
+          new ConditionRunIfFileExists(chrome_proxy_exe)));
+  existing_proxy_rename_list->set_log_message("ExistingProxyRenameItemList");
+  existing_proxy_rename_list->AddMoveTreeWorkItem(
       chrome_proxy_exe.value(), chrome_proxy_old_exe.value(),
       temp_path.path().value(), WorkItem::ALWAYS_MOVE);
+  install_list->AddWorkItem(existing_proxy_rename_list.release());
   install_list->AddMoveTreeWorkItem(
       chrome_proxy_new_exe.value(), chrome_proxy_exe.value(),
       temp_path.path().value(), WorkItem::ALWAYS_MOVE);
@@ -634,6 +616,7 @@ installer::InstallStatus UninstallProducts(
   if (!system_level_cmd.GetProgram().empty())
     base::LaunchProcess(system_level_cmd, base::LaunchOptions());
 
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   // Tell Google Update that an uninstall has taken place if this install did
   // not originate from the MSI. Google Update has its own logic relating to
   // MSI-driven uninstalls that conflicts with this. Ignore the return value:
@@ -641,6 +624,7 @@ installer::InstallStatus UninstallProducts(
   // failure of Chrome's uninstallation.
   if (!installer_state.is_msi())
     google_update::UninstallGoogleUpdate(installer_state.system_install());
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
   return install_status;
 }
@@ -664,8 +648,7 @@ installer::InstallStatus InstallProducts(
   // normal process priority class. This is done here because InstallProducts-
   // Helper has read-only access to the state and because the action also
   // affects everything else that runs below.
-  bool entered_background_mode = installer::AdjustProcessPriority();
-  installer_state->set_background_mode(entered_background_mode);
+  const bool entered_background_mode = installer::AdjustProcessPriority();
   VLOG_IF(1, entered_background_mode) << "Entered background processing mode.";
 
   if (CheckPreInstallConditions(original_state, *installer_state,
@@ -1011,7 +994,7 @@ bool HandleNonInstallCmdLineOptions(const base::FilePath& setup_exe,
         cmd_line.GetSwitchValueNative(
             installer::switches::kSetDisplayVersionValue));
     *exit_code = OverwriteDisplayVersions(registry_product, registry_value);
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   } else if (cmd_line.HasSwitch(installer::switches::kStoreDMToken)) {
     // Write the specified token to the registry, overwriting any already
     // existing value.
@@ -1112,29 +1095,24 @@ InstallStatus InstallProductsHelper(const InstallationState& original_state,
   }
 
   // Unpack the uncompressed archive.
+  // UMA tells us the following about the time required to unpack as of M75:
+  // --- Foreground ---
+  //   <2.7s (50%ile) / 45s (99%ile)
+  // --- Background ---
+  //   ~14s (50%ile) / >3m (99%ile)
   installer_state.SetStage(UNPACKING);
-  base::TimeTicks start_time = base::TimeTicks::Now();
-  UnPackStatus unpack_status = UNPACK_NO_ERROR;
-  int32_t ntstatus = 0;
-  DWORD lzma_result = UnPackArchive(uncompressed_archive, unpack_path, NULL,
-                                    &unpack_status, &ntstatus);
-  RecordUnPackMetrics(unpack_status, ntstatus,
+  base::Optional<DWORD> error_code;
+  base::Optional<int32_t> ntstatus;
+  UnPackStatus unpack_status = UnPackArchive(uncompressed_archive, unpack_path,
+                                             nullptr, &error_code, &ntstatus);
+  RecordUnPackMetrics(unpack_status, ntstatus, error_code,
                       UnPackConsumer::UNCOMPRESSED_CHROME_ARCHIVE);
-  if (lzma_result) {
+  if (unpack_status != UNPACK_NO_ERROR) {
     installer_state.WriteInstallerResult(
         UNPACKING_FAILED,
         IDS_INSTALL_UNCOMPRESSION_FAILED_BASE,
         NULL);
     return UNPACKING_FAILED;
-  }
-
-  base::TimeDelta elapsed_time = base::TimeTicks::Now() - start_time;
-  if (installer_state.is_background_mode()) {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "Setup.Install.UnpackFullArchiveTime.background", elapsed_time);
-  } else {
-    UMA_HISTOGRAM_MEDIUM_TIMES(
-        "Setup.Install.UnpackFullArchiveTime", elapsed_time);
   }
 
   VLOG(1) << "unpacked to " << unpack_path.value();
@@ -1475,6 +1453,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance,
                             base::saturated_cast<base::HistogramBase::Sample>(
                                 pmc.PeakWorkingSetSize / 1024));
   }
+  auto process_metrics = base::ProcessMetrics::CreateCurrentProcessMetrics();
+  auto disk_usage = process_metrics->GetCumulativeDiskUsageInBytes();
+  base::UmaHistogramMemoryMB(
+      "Setup.Install.CumulativeDiskUsage",
+      base::saturated_cast<int>(base::ClampAdd(disk_usage, 1024 * 1024 / 2) /
+                                1024 * 1024));
 
   int return_code = 0;
   // MSI demands that custom actions always return 0 (ERROR_SUCCESS) or it will

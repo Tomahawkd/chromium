@@ -12,10 +12,10 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/network/network_configuration_observer.h"
 #include "chromeos/network/network_handler.h"
@@ -53,7 +53,7 @@ namespace chromeos {
 // that is suitable for logging. None of the error message text is meant for
 // user consumption.  Both |callback| and |error_callback| are permitted to be
 // null callbacks.
-class CHROMEOS_EXPORT NetworkConfigurationHandler
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConfigurationHandler
     : public NetworkStateHandlerObserver {
  public:
   ~NetworkConfigurationHandler() override;
@@ -91,6 +91,8 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
 
   // Creates a network with the given |properties| in the specified Shill
   // profile, and returns the new service_path to |callback| if successful.
+  // |callback| will only be called after the property update has been reflected
+  // in NetworkStateHandler.
   // kProfileProperty must be set in |properties|. This may also be used to
   // update an existing matching configuration, see Shill documentation for
   // Manager.ConfigureServiceForProfile. NOTE: Normally
@@ -205,9 +207,6 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
       const std::string& dbus_error_name,
       const std::string& dbus_error_message);
 
-  // Signals the device handler to request an IP config refresh.
-  void RequestRefreshIPConfigs(const std::string& service_path);
-
   // Removes network configuration for |service_path| from the profile specified
   // by |profile_path|. If |profile_path| is not set, the network is removed
   // from all the profiles that include it.
@@ -226,13 +225,14 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
       profile_entry_deleters_;
 
   // Map of configuration callbacks to run once the service becomes available
-  // in the NetworkStateHandler cache.
-  std::map<std::string, network_handler::ServiceResultCallback>
+  // in the NetworkStateHandler cache. This is a multimap because there can be
+  // multiple callbacks for the same network that have to be notified.
+  std::multimap<std::string, network_handler::ServiceResultCallback>
       configure_callbacks_;
 
   base::ObserverList<NetworkConfigurationObserver, true>::Unchecked observers_;
 
-  base::WeakPtrFactory<NetworkConfigurationHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<NetworkConfigurationHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NetworkConfigurationHandler);
 };

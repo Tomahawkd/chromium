@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/test/bind_test_util.h"
 #include "chrome/browser/extensions/browsertest_util.h"
@@ -61,8 +62,9 @@ class ContentVerifierHashTest
     // Override content verification mode before ExtensionSystemImpl initializes
     // ChromeContentVerifierDelegate.
     ChromeContentVerifierDelegate::SetDefaultModeForTesting(
-        uses_enforce_strict_mode() ? ContentVerifierDelegate::ENFORCE_STRICT
-                                   : ContentVerifierDelegate::ENFORCE);
+        uses_enforce_strict_mode()
+            ? ChromeContentVerifierDelegate::ENFORCE_STRICT
+            : ChromeContentVerifierDelegate::ENFORCE);
 
     ExtensionBrowserTest::SetUp();
   }
@@ -204,7 +206,7 @@ class ContentVerifierHashTest
       EnableExtension(id());
       registry_observer.WaitForExtensionLoaded();
     }
-    if (!base::ContainsKey(verifier_observer.completed_fetches(), id()))
+    if (!base::Contains(verifier_observer.completed_fetches(), id()))
       verifier_observer.WaitForFetchComplete(id());
     LOG(INFO) << "Verifier observer has seen FetchComplete";
 
@@ -237,9 +239,8 @@ class ContentVerifierHashTest
 
   bool HasValidComputedHashes() {
     base::ScopedAllowBlockingForTesting allow_blocking;
-    ComputedHashes::Reader reader;
-    return reader.InitFromFile(
-        file_util::GetComputedHashesPath(info_->extension_root));
+    return ComputedHashes::CreateFromFile(file_util::GetComputedHashesPath(
+               info_->extension_root)) != base::nullopt;
   }
 
   bool HasValidVerifiedContents() {
@@ -338,7 +339,7 @@ class ContentVerifierHashTest
     }
 
     const ExtensionId& extension_id = extension->id();
-    if (!base::ContainsKey(verifier_observer.completed_fetches(), extension_id))
+    if (!base::Contains(verifier_observer.completed_fetches(), extension_id))
       verifier_observer.WaitForFetchComplete(extension_id);
 
     info_ = std::make_unique<ExtensionInfo>(extension, type);
@@ -569,7 +570,7 @@ IN_PROC_BROWSER_TEST_P(ContentVerifierHashTest,
       EnableExtension(extension_id);
       registry_observer.WaitForExtensionLoaded();
     }
-    if (!base::ContainsKey(verifier_observer.completed_fetches(), extension_id))
+    if (!base::Contains(verifier_observer.completed_fetches(), extension_id))
       verifier_observer.WaitForFetchComplete(extension_id);
     LOG(INFO) << "Verifier observer has seen FetchComplete";
 
@@ -852,8 +853,8 @@ IN_PROC_BROWSER_TEST_P(
   EXPECT_TRUE(HasValidVerifiedContents());
 }
 
-INSTANTIATE_TEST_CASE_P(FetchBehaviorTests,
-                        ContentVerifierHashTest,
-                        testing::Values(kEnforce, kEnforceStrict));
+INSTANTIATE_TEST_SUITE_P(FetchBehaviorTests,
+                         ContentVerifierHashTest,
+                         testing::Values(kEnforce, kEnforceStrict));
 
 }  // namespace extensions

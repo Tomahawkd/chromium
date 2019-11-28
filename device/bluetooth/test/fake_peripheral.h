@@ -81,7 +81,6 @@ class FakePeripheral : public device::BluetoothDevice {
   bool IsGattConnected() const override;
   bool IsConnectable() const override;
   bool IsConnecting() const override;
-  UUIDSet GetUUIDs() const override;
   bool ExpectingPinCode() const override;
   bool ExpectingPasskey() const override;
   bool ExpectingConfirmation() const override;
@@ -130,7 +129,6 @@ class FakePeripheral : public device::BluetoothDevice {
 
   const std::string address_;
   base::Optional<std::string> name_;
-  UUIDSet service_uuids_;
   // True when the system has connected to the device outside of the Bluetooth
   // interface e.g. the user connected to the device through system settings.
   bool system_connected_;
@@ -155,7 +153,7 @@ class FakePeripheral : public device::BluetoothDevice {
 
   // Mutable because IsGattServicesDiscoveryComplete needs to post a task but
   // is const.
-  mutable base::WeakPtrFactory<FakePeripheral> weak_ptr_factory_;
+  mutable base::WeakPtrFactory<FakePeripheral> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakePeripheral);
 };

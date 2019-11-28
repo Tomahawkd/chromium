@@ -13,20 +13,6 @@ namespace content {
 
 class CONTENT_EXPORT OverscrollConfig {
  public:
-  // Determines overscroll history navigation mode according to
-  // --overscroll-history-navigation flag.
-  enum class HistoryNavigationMode {
-    // History navigation is disabled.
-    kDisabled,
-
-    // History navigation is enabled and uses the UI with parallax effect and
-    // screenshots.
-    kParallaxUi,
-
-    // History navigation is enabled and uses the simplified UI.
-    kSimpleUi,
-  };
-
   // Determines pull-to-refresh mode according to --pull-to-refresh flag.
   enum class PullToRefreshMode {
     // Pull-to-refresh is disabled.
@@ -39,41 +25,22 @@ class CONTENT_EXPORT OverscrollConfig {
     kEnabledTouchschreen,
   };
 
-  // Specifies an overscroll controller threshold.
-  enum class Threshold {
-    // Threshold to complete touchpad overscroll, in terms of the percentage of
-    // the display size.
-    kCompleteTouchpad,
+  // These are percentages of the display size.
+  static const float kCompleteTouchpadThresholdPercent;
+  static const float kCompleteTouchscreenThresholdPercent;
 
-    // Threshold to complete touchscreen overscroll, in terms of the percentage
-    // of the display size.
-    kCompleteTouchscreen,
+  static const float kStartTouchpadThresholdDips;
+  static const float kStartTouchscreenThresholdDips;
 
-    // Threshold to start touchpad overscroll, in DIPs.
-    kStartTouchpad,
-
-    // Threshold to start touchscreen overscroll, in DIPs.
-    kStartTouchscreen,
-  };
-
-  static HistoryNavigationMode GetHistoryNavigationMode();
   static PullToRefreshMode GetPullToRefreshMode();
-
-  static float GetThreshold(Threshold threshold);
 
   static bool TouchpadOverscrollHistoryNavigationEnabled();
 
   static base::TimeDelta MaxInertialEventsBeforeOverscrollCancellation();
 
  private:
-  friend class ScopedHistoryNavigationMode;
   friend class ScopedPullToRefreshMode;
   friend class OverscrollControllerTest;
-
-  // Helper functions used by |ScopedHistoryNavigationMode| to set and reset
-  // mode in tests.
-  static void SetHistoryNavigationMode(HistoryNavigationMode mode);
-  static void ResetHistoryNavigationMode();
 
   // Helper functions used by |ScopedPullToRefreshMode| to set and reset mode in
   // tests.

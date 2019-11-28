@@ -24,10 +24,13 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "storage/common/storage_histograms.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 
 namespace content {
 
 namespace {
+
+using OnceCompletionCallback = base::OnceCallback<void(int)>;
 
 // Disk cache entry data indices.
 enum { kResponseInfoIndex, kResponseContentIndex, kResponseMetadataIndex };
@@ -53,7 +56,7 @@ class WrappedPickleIOBuffer : public net::WrappedIOBuffer {
 // AppCacheResponseInfo ----------------------------------------------
 
 AppCacheResponseInfo::AppCacheResponseInfo(
-    AppCacheStorage* storage,
+    base::WeakPtr<AppCacheStorage> storage,
     const GURL& manifest_url,
     int64_t response_id,
     std::unique_ptr<net::HttpResponseInfo> http_info,
@@ -62,24 +65,26 @@ AppCacheResponseInfo::AppCacheResponseInfo(
       response_id_(response_id),
       http_response_info_(std::move(http_info)),
       response_data_size_(response_data_size),
-      storage_(storage) {
+      storage_(std::move(storage)) {
   DCHECK(http_response_info_);
-  DCHECK(response_id != kAppCacheNoResponseId);
+  DCHECK(response_id != blink::mojom::kAppCacheNoResponseId);
   storage_->working_set()->AddResponseInfo(this);
 }
 
 AppCacheResponseInfo::~AppCacheResponseInfo() {
-  storage_->working_set()->RemoveResponseInfo(this);
+  if (storage_)
+    storage_->working_set()->RemoveResponseInfo(this);
 }
 
 // HttpResponseInfoIOBuffer ------------------------------------------
 
 HttpResponseInfoIOBuffer::HttpResponseInfoIOBuffer()
-    : response_data_size(kUnkownResponseDataSize) {}
+    : response_data_size(kUnknownResponseDataSize) {}
 
 HttpResponseInfoIOBuffer::HttpResponseInfoIOBuffer(
     std::unique_ptr<net::HttpResponseInfo> info)
-    : http_info(std::move(info)), response_data_size(kUnkownResponseDataSize) {}
+    : http_info(std::move(info)),
+      response_data_size(kUnknownResponseDataSize) {}
 
 HttpResponseInfoIOBuffer::~HttpResponseInfoIOBuffer() = default;
 
@@ -188,8 +193,7 @@ AppCacheResponseReader::AppCacheResponseReader(
       range_offset_(0),
       range_length_(std::numeric_limits<int32_t>::max()),
       read_position_(0),
-      reading_metadata_size_(0),
-      weak_factory_(this) {}
+      reading_metadata_size_(0) {}
 
 AppCacheResponseReader::~AppCacheResponseReader() = default;
 
@@ -235,11 +239,11 @@ void AppCacheResponseReader::ReadData(net::IOBuffer* buf,
 }
 
 void AppCacheResponseReader::ContinueReadData() {
-  if (read_position_ + buffer_len_ > range_length_) {
-    // TODO(michaeln): What about integer overflows?
-    DCHECK(range_length_ >= read_position_);
+  // Since every read reads at most (range_length_ - read_position_) bytes,
+  // read_position_ can never become larger than range_length_.
+  DCHECK_GE(range_length_, read_position_);
+  if (range_length_ - read_position_ < buffer_len_)
     buffer_len_ = range_length_ - read_position_;
-  }
   ReadRaw(kResponseContentIndex,
           range_offset_ + read_position_,
           buffer_.get(),
@@ -261,7 +265,7 @@ void AppCacheResponseReader::OnIOComplete(int result) {
     } else if (info_buffer_.get()) {
       // Deserialize the http info structure, ensuring we got headers.
       base::Pickle pickle(buffer_->data(), result);
-      std::unique_ptr<net::HttpResponseInfo> info(new net::HttpResponseInfo);
+      auto info = std::make_unique<net::HttpResponseInfo>();
       bool response_truncated = false;
       if (!info->InitFromPickle(pickle, &response_truncated) ||
           !info->headers.get()) {
@@ -320,8 +324,7 @@ AppCacheResponseWriter::AppCacheResponseWriter(
       info_size_(0),
       write_position_(0),
       write_amount_(0),
-      creation_phase_(INITIAL_ATTEMPT),
-      weak_factory_(this) {}
+      creation_phase_(INITIAL_ATTEMPT) {}
 
 AppCacheResponseWriter::~AppCacheResponseWriter() = default;
 
@@ -485,8 +488,7 @@ AppCacheResponseMetadataWriter::AppCacheResponseMetadataWriter(
     int64_t response_id,
     base::WeakPtr<AppCacheDiskCache> disk_cache)
     : AppCacheResponseIO(response_id, std::move(disk_cache)),
-      write_amount_(0),
-      weak_factory_(this) {}
+      write_amount_(0) {}
 
 AppCacheResponseMetadataWriter::~AppCacheResponseMetadataWriter() = default;
 

@@ -77,8 +77,7 @@ gfx::Rect WebContentsViewChildFrame::GetViewBounds() const {
   return gfx::Rect();
 }
 
-void WebContentsViewChildFrame::CreateView(const gfx::Size& initial_size,
-                                           gfx::NativeView context) {
+void WebContentsViewChildFrame::CreateView(gfx::NativeView context) {
   // The WebContentsViewChildFrame does not have a native view.
 }
 
@@ -110,12 +109,8 @@ void WebContentsViewChildFrame::SetOverscrollControllerEnabled(bool enabled) {
 }
 
 #if defined(OS_MACOSX)
-bool WebContentsViewChildFrame::IsEventTracking() const {
+bool WebContentsViewChildFrame::CloseTabAfterEventTrackingIfNeeded() {
   return false;
-}
-
-void WebContentsViewChildFrame::CloseTabAfterEventTracking() {
-  NOTREACHED();
 }
 #endif
 

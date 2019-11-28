@@ -10,7 +10,9 @@
 
 #include "base/callback.h"
 
-class GURL;
+namespace url {
+class Origin;
+}
 
 namespace content {
 
@@ -39,7 +41,7 @@ class DOMStorageContext {
   // Deletes the local storage for the origin of |origin_url|. |callback| is
   // called when the deletion is sent to the database and GetLocalStorageUsage()
   // will not return entries for |origin_url| anymore.
-  virtual void DeleteLocalStorage(const GURL& origin_url,
+  virtual void DeleteLocalStorage(const url::Origin& origin,
                                   base::OnceClosure callback) = 0;
 
   // Removes traces of deleted data from the local storage backend.
@@ -50,12 +52,6 @@ class DOMStorageContext {
                                     base::OnceClosure callback) = 0;
 
   virtual void PerformSessionStorageCleanup(base::OnceClosure callback) = 0;
-
-  // If this is called, sessionStorage data will be stored on disk, and can be
-  // restored after a browser restart (with RecreateSessionStorage). This
-  // function must be called right after DOMStorageContextWrapper is created,
-  // and before it's used.
-  virtual void SetSaveSessionStorageOnDisk() = 0;
 
   // Creates a SessionStorageNamespace with the given |namespace_id|. Used
   // after tabs are restored by session restore. When created, the

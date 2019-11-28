@@ -6,8 +6,9 @@
 
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/clipboard/clipboard_constants.h"
 #include "ui/base/dragdrop/file_info.h"
 #include "ui/events/platform/x11/x11_event_source_glib.h"
 #include "ui/gfx/x/x11_atom_cache.h"
@@ -23,8 +24,7 @@ namespace ui {
 class OSExchangeDataProviderAuraX11Test : public testing::Test {
  public:
   OSExchangeDataProviderAuraX11Test()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+      : task_environment_(base::test::TaskEnvironment::MainThreadType::UI),
         event_source(gfx::GetXDisplay()) {}
 
   void AddURLList(const std::string& list_contents) {
@@ -32,12 +32,11 @@ class OSExchangeDataProviderAuraX11Test : public testing::Test {
     scoped_refptr<base::RefCountedMemory> mem(
         base::RefCountedString::TakeString(&contents_copy));
 
-    provider.format_map_.Insert(gfx::GetAtom(ui::Clipboard::kMimeTypeURIList),
-                                mem);
+    provider.format_map_.Insert(gfx::GetAtom(ui::kMimeTypeURIList), mem);
   }
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   X11EventSourceGlib event_source;
   ui::OSExchangeDataProviderAuraX11 provider;
 };

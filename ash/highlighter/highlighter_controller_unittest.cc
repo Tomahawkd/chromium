@@ -299,11 +299,7 @@ TEST_F(HighlighterControllerTest, HighlighterGesturesScaled) {
   ui::test::EventGenerator* event_generator = GetEventGenerator();
   event_generator->EnterPenPointerMode();
 
-  const gfx::Rect original_rect(200, 100, 400, 300);
-
-  // Allow for rounding errors.
-  gfx::Rect inflated(original_rect);
-  inflated.Inset(-1, -1);
+  const gfx::Rect original_px(200, 100, 400, 300);
 
   constexpr float display_scales[] = {1.f, 1.5f, 2.0f};
   constexpr float ui_scales[] = {0.5f,  0.67f, 1.0f,  1.25f,
@@ -320,12 +316,21 @@ TEST_F(HighlighterControllerTest, HighlighterGesturesScaled) {
       UpdateDisplayAndWaitForCompositingEnded(display_spec);
 
       controller_test_api_->ResetSelection();
-      TraceRect(original_rect);
+      TraceRect(original_px);
       EXPECT_TRUE(controller_test_api_->HandleSelectionCalled());
 
-      const gfx::Rect selection = controller_test_api_->selection();
-      EXPECT_TRUE(inflated.Contains(selection));
-      EXPECT_TRUE(selection.Contains(original_rect));
+      const float combined_scale = display_scale * ui_scale;
+
+      const gfx::Rect selection_dp = controller_test_api_->selection();
+      const gfx::Rect selection_px = gfx::ToEnclosingRect(
+          gfx::ScaleRect(gfx::RectF(selection_dp), combined_scale));
+      EXPECT_TRUE(selection_px.Contains(original_px));
+
+      gfx::Rect inflated_px(original_px);
+      // Allow for rounding errors within 1dp.
+      const int error_margin = static_cast<int>(std::ceil(combined_scale));
+      inflated_px.Inset(-error_margin, -error_margin);
+      EXPECT_TRUE(inflated_px.Contains(selection_px));
     }
   }
 }

@@ -17,6 +17,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -27,7 +28,6 @@
 #include "build/build_config.h"
 #include "content/browser/devtools/devtools_http_handler.h"
 #include "content/browser/devtools/devtools_manager.h"
-#include "content/browser/devtools/grit/devtools_resources.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -48,11 +48,14 @@
 #include "net/server/http_server_response_info.h"
 #include "net/socket/server_socket.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "third_party/brotli/include/brotli/decode.h"
 #include "v8/include/v8-version-string.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
+#endif
+
+#if !defined(OS_FUCHSIA)
+#include "content/browser/devtools/grit/devtools_resources.h"  // nogncheck
 #endif
 
 namespace content {
@@ -147,8 +150,7 @@ class ServerWrapper : net::HttpServer::Delegate {
                      const net::HttpServerRequestInfo& info) override;
   void OnWebSocketRequest(int connection_id,
                           const net::HttpServerRequestInfo& info) override;
-  void OnWebSocketMessage(int connection_id,
-                          const std::string& data) override;
+  void OnWebSocketMessage(int connection_id, std::string data) override;
   void OnClose(int connection_id) override;
 
   base::WeakPtr<DevToolsHttpHandler> handler_;
@@ -222,8 +224,10 @@ void TerminateOnUI(std::unique_ptr<base::Thread> thread,
   if (socket_factory)
     thread->task_runner()->DeleteSoon(FROM_HERE, std::move(socket_factory));
   if (thread) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+    base::PostTask(
+        FROM_HERE,
+        {base::ThreadPool(), base::WithBaseSyncPrimitives(),
+         base::TaskPriority::BEST_EFFORT},
         BindOnce([](std::unique_ptr<base::Thread>) {}, std::move(thread)));
   }
 }
@@ -296,7 +300,7 @@ void StartServerOnHandlerThread(
 #endif
   }
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&ServerStartedOnUI, std::move(handler), thread.release(),
                      server_wrapper.release(), socket_factory.release(),
@@ -324,7 +328,7 @@ class DevToolsAgentHostClientImpl : public DevToolsAgentHostClient {
 
   ~DevToolsAgentHostClientImpl() override {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    if (agent_host_.get())
+    if (agent_host_)
       agent_host_->DetachClient(this);
   }
 
@@ -356,7 +360,7 @@ class DevToolsAgentHostClientImpl : public DevToolsAgentHostClient {
 
   void OnMessage(const std::string& message) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    if (agent_host_.get())
+    if (agent_host_)
       agent_host_->DispatchProtocolMessage(this, message);
   }
 
@@ -384,7 +388,7 @@ DevToolsHttpHandler::~DevToolsHttpHandler() {
 }
 
 static std::string PathWithoutParams(const std::string& path) {
-  size_t query_position = path.find("?");
+  size_t query_position = path.find('?');
   if (query_position != std::string::npos)
     return path.substr(0, query_position);
   return path;
@@ -429,18 +433,17 @@ void ServerWrapper::OnHttpRequest(int connection_id,
   server_->SetSendBufferSize(connection_id, kSendBufferSizeForDevTools);
 
   if (base::StartsWith(info.path, "/json", base::CompareCase::SENSITIVE)) {
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::BindOnce(&DevToolsHttpHandler::OnJsonRequest,
-                                            handler_, connection_id, info));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&DevToolsHttpHandler::OnJsonRequest, handler_,
+                                  connection_id, info));
     return;
   }
 
   if (info.path.empty() || info.path == "/") {
     // Discovery page request.
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        base::BindOnce(&DevToolsHttpHandler::OnDiscoveryPageRequest, handler_,
-                       connection_id));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&DevToolsHttpHandler::OnDiscoveryPageRequest,
+                                  handler_, connection_id));
     return;
   }
 
@@ -463,7 +466,7 @@ void ServerWrapper::OnHttpRequest(int connection_id,
   }
 
   if (bundles_resources_) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&DevToolsHttpHandler::OnFrontendResourceRequest,
                        handler_, connection_id, filename));
@@ -475,22 +478,19 @@ void ServerWrapper::OnHttpRequest(int connection_id,
 void ServerWrapper::OnWebSocketRequest(
     int connection_id,
     const net::HttpServerRequestInfo& request) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&DevToolsHttpHandler::OnWebSocketRequest, handler_,
-                     connection_id, request));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&DevToolsHttpHandler::OnWebSocketRequest,
+                                handler_, connection_id, request));
 }
 
-void ServerWrapper::OnWebSocketMessage(int connection_id,
-                                       const std::string& data) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&DevToolsHttpHandler::OnWebSocketMessage, handler_,
-                     connection_id, data));
+void ServerWrapper::OnWebSocketMessage(int connection_id, std::string data) {
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&DevToolsHttpHandler::OnWebSocketMessage,
+                                handler_, connection_id, std::move(data)));
 }
 
 void ServerWrapper::OnClose(int connection_id) {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&DevToolsHttpHandler::OnClose, handler_, connection_id));
 }
@@ -547,13 +547,13 @@ void DevToolsHttpHandler::OnJsonRequest(
 
   // Trim fragment and query
   std::string query;
-  size_t query_pos = path.find("?");
+  size_t query_pos = path.find('?');
   if (query_pos != std::string::npos) {
     query = path.substr(query_pos + 1);
     path = path.substr(0, query_pos);
   }
 
-  size_t fragment_pos = path.find("#");
+  size_t fragment_pos = path.find('#');
   if (fragment_pos != std::string::npos)
     path = path.substr(0, fragment_pos);
 
@@ -602,9 +602,7 @@ void DevToolsHttpHandler::OnJsonRequest(
   }
 
   if (command == "new") {
-    GURL url(net::UnescapeURLComponent(
-        query, net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
-                   net::UnescapeRule::PATH_SEPARATORS));
+    GURL url(net::UnescapeBinaryURLComponent(query));
     if (!url.is_valid())
       url = GURL(url::kAboutBlankURL);
     scoped_refptr<DevToolsAgentHost> agent_host = nullptr;
@@ -652,40 +650,16 @@ void DevToolsHttpHandler::OnJsonRequest(
   }
   SendJson(connection_id, net::HTTP_NOT_FOUND, nullptr,
            "Unknown command: " + command);
-  return;
 }
 
 void DevToolsHttpHandler::DecompressAndSendJsonProtocol(int connection_id) {
-  scoped_refptr<base::RefCountedMemory> raw_bytes =
+#if defined(OS_FUCHSIA)
+  NOTREACHED();
+#else
+  scoped_refptr<base::RefCountedMemory> bytes =
       GetContentClient()->GetDataResourceBytes(COMPRESSED_PROTOCOL_JSON);
-  const uint8_t* next_encoded_byte = raw_bytes->front();
-  size_t input_size_remaining = raw_bytes->size();
-  BrotliDecoderState* decoder = BrotliDecoderCreateInstance(
-      nullptr /* no custom allocator */, nullptr /* no custom deallocator */,
-      nullptr /* no custom memory handle */);
-  CHECK(!!decoder);
-  std::vector<std::string> decoded_parts;
-  size_t decompressed_size = 0;
-  while (!BrotliDecoderIsFinished(decoder)) {
-    size_t output_size_remaining = 0;
-    CHECK(BrotliDecoderDecompressStream(
-              decoder, &input_size_remaining, &next_encoded_byte,
-              &output_size_remaining, nullptr,
-              nullptr) != BROTLI_DECODER_RESULT_ERROR);
-    const uint8_t* output_buffer =
-        BrotliDecoderTakeOutput(decoder, &output_size_remaining);
-    decoded_parts.emplace_back(reinterpret_cast<const char*>(output_buffer),
-                               output_size_remaining);
-    decompressed_size += output_size_remaining;
-  }
-  BrotliDecoderDestroyInstance(decoder);
-
-  // Ideally we'd use a StringBuilder here but there isn't one in base/.
-  std::string json_protocol;
-  json_protocol.reserve(decompressed_size);
-  for (const std::string& part : decoded_parts) {
-    json_protocol.append(part);
-  }
+  std::string json_protocol(reinterpret_cast<const char*>(bytes->front()),
+                            bytes->size());
 
   net::HttpServerResponseInfo response(net::HTTP_OK);
   response.SetBody(json_protocol, "application/json; charset=UTF-8");
@@ -694,6 +668,7 @@ void DevToolsHttpHandler::DecompressAndSendJsonProtocol(int connection_id) {
       FROM_HERE, base::BindOnce(&ServerWrapper::SendResponse,
                                 base::Unretained(server_wrapper_.get()),
                                 connection_id, response));
+#endif  // defined(OS_FUCHSIA)
 }
 
 void DevToolsHttpHandler::RespondToJsonList(
@@ -719,7 +694,7 @@ void DevToolsHttpHandler::OnFrontendResourceRequest(
   Send404(connection_id);
 #else
   Send200(connection_id,
-          content::DevToolsFrontendHost::GetFrontendResource(path).as_string(),
+          content::DevToolsFrontendHost::GetFrontendResource(path),
           GetMimeType(path));
 #endif
 }
@@ -781,7 +756,7 @@ DevToolsHttpHandler::DevToolsHttpHandler(
     std::unique_ptr<DevToolsSocketFactory> socket_factory,
     const base::FilePath& output_directory,
     const base::FilePath& debug_frontend_dir)
-    : delegate_(delegate), weak_factory_(this) {
+    : delegate_(delegate) {
   browser_guid_ = delegate_->IsBrowserTargetDiscoverable()
                       ? kBrowserUrlPrefix
                       : base::StringPrintf("%s/%s", kBrowserUrlPrefix,
@@ -789,9 +764,10 @@ DevToolsHttpHandler::DevToolsHttpHandler(
   std::unique_ptr<base::Thread> thread(
       new base::Thread(kDevToolsHandlerThreadName));
   base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
+  options.message_pump_type = base::MessagePumpType::IO;
   if (thread->StartWithOptions(options)) {
-    thread->task_runner()->PostTask(
+    auto task_runner = thread->task_runner();
+    task_runner->PostTask(
         FROM_HERE,
         base::BindOnce(&StartServerOnHandlerThread, weak_factory_.GetWeakPtr(),
                        std::move(thread), std::move(socket_factory),

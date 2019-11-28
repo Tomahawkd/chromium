@@ -9,10 +9,10 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -32,9 +32,9 @@
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
-#include "storage/browser/fileapi/file_system_context.h"
+#include "storage/browser/file_system/file_system_context.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
@@ -109,7 +109,7 @@ class LocalFileSyncServiceTest
       public LocalFileSyncService::Observer {
  protected:
   LocalFileSyncServiceTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD),
+      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD),
         num_changes_(0) {}
 
   void SetUp() override {
@@ -118,8 +118,9 @@ class LocalFileSyncServiceTest
 
     file_system_.reset(new CannedSyncableFileSystem(
         GURL(kOrigin), in_memory_env_.get(),
-        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}),
-        base::CreateSingleThreadTaskRunnerWithTraits({base::MayBlock()})));
+        base::CreateSingleThreadTaskRunner({BrowserThread::IO}),
+        base::CreateSingleThreadTaskRunner(
+            {base::ThreadPool(), base::MayBlock()})));
 
     local_service_ = LocalFileSyncService::CreateForTesting(
         &profile_, in_memory_env_.get());
@@ -146,7 +147,7 @@ class LocalFileSyncServiceTest
     file_system_->TearDown();
     RevokeSyncableFileSystem();
 
-    base::TaskScheduler::GetInstance()->FlushForTesting();
+    base::ThreadPoolInstance::Get()->FlushForTesting();
     content::RunAllPendingInMessageLoop(BrowserThread::IO);
   }
 
@@ -197,7 +198,7 @@ class LocalFileSyncServiceTest
     return file_system_->backend()->change_tracker()->num_changes();
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<leveldb::Env> in_memory_env_;
@@ -215,7 +216,7 @@ TEST_F(LocalFileSyncServiceTest, RemoteSyncStepsSimple) {
   const FileSystemURL kFile(file_system_->URL("file"));
   const FileSystemURL kDir(file_system_->URL("dir"));
   const char kTestFileData[] = "0123456789";
-  const int kTestFileDataSize = static_cast<int>(arraysize(kTestFileData) - 1);
+  const int kTestFileDataSize = static_cast<int>(base::size(kTestFileData) - 1);
 
   base::FilePath local_path;
   ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &local_path));
@@ -275,7 +276,7 @@ TEST_F(LocalFileSyncServiceTest, LocalChangeObserver) {
   const FileSystemURL kFile(file_system_->URL("file"));
   const FileSystemURL kDir(file_system_->URL("dir"));
   const char kTestFileData[] = "0123456789";
-  const int kTestFileDataSize = static_cast<int>(arraysize(kTestFileData) - 1);
+  const int kTestFileDataSize = static_cast<int>(base::size(kTestFileData) - 1);
 
   EXPECT_EQ(base::File::FILE_OK, file_system_->CreateFile(kFile));
 
@@ -301,8 +302,9 @@ TEST_F(LocalFileSyncServiceTest, MAYBE_LocalChangeObserverMultipleContexts) {
   const char kOrigin2[] = "http://foo";
   CannedSyncableFileSystem file_system2(
       GURL(kOrigin2), in_memory_env_.get(),
-      base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO}),
-      base::CreateSingleThreadTaskRunnerWithTraits({base::MayBlock()}));
+      base::CreateSingleThreadTaskRunner({BrowserThread::IO}),
+      base::CreateSingleThreadTaskRunner(
+          {base::ThreadPool(), base::MayBlock()}));
   file_system2.SetUp(CannedSyncableFileSystem::QUOTA_ENABLED);
 
   base::RunLoop run_loop;
@@ -334,7 +336,7 @@ TEST_F(LocalFileSyncServiceTest, MAYBE_LocalChangeObserverMultipleContexts) {
 TEST_F(LocalFileSyncServiceTest, ProcessLocalChange_CreateFile) {
   const FileSystemURL kFile(file_system_->URL("foo"));
   const char kTestFileData[] = "0123456789";
-  const int kTestFileDataSize = static_cast<int>(arraysize(kTestFileData) - 1);
+  const int kTestFileDataSize = static_cast<int>(base::size(kTestFileData) - 1);
 
   base::RunLoop run_loop;
 
@@ -630,12 +632,12 @@ TEST_F(OriginChangeMapTest, Basic) {
 
   const GURL kOrigins[] = { kOrigin1, kOrigin2, kOrigin3 };
   std::set<GURL> all_origins;
-  all_origins.insert(kOrigins, kOrigins + arraysize(kOrigins));
+  all_origins.insert(kOrigins, kOrigins + base::size(kOrigins));
 
   GURL origin;
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -648,7 +650,7 @@ TEST_F(OriginChangeMapTest, Basic) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -659,7 +661,7 @@ TEST_F(OriginChangeMapTest, Basic) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -667,10 +669,10 @@ TEST_F(OriginChangeMapTest, Basic) {
   SetOriginChangeCount(kOrigin2, 8);
   ASSERT_EQ(1 + 4 + 8, GetTotalChangeCount());
 
-  all_origins.insert(kOrigins, kOrigins + arraysize(kOrigins));
+  all_origins.insert(kOrigins, kOrigins + base::size(kOrigins));
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 }
@@ -690,12 +692,12 @@ TEST_F(OriginChangeMapTest, WithDisabled) {
   ASSERT_EQ(1 + 2 + 4, GetTotalChangeCount());
 
   std::set<GURL> all_origins;
-  all_origins.insert(kOrigins, kOrigins + arraysize(kOrigins));
+  all_origins.insert(kOrigins, kOrigins + base::size(kOrigins));
 
   GURL origin;
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -707,7 +709,7 @@ TEST_F(OriginChangeMapTest, WithDisabled) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 
@@ -727,7 +729,7 @@ TEST_F(OriginChangeMapTest, WithDisabled) {
   all_origins.insert(kOrigin3);
   while (!all_origins.empty()) {
     ASSERT_TRUE(NextOriginToProcess(&origin));
-    ASSERT_TRUE(base::ContainsKey(all_origins, origin));
+    ASSERT_TRUE(base::Contains(all_origins, origin));
     all_origins.erase(origin);
   }
 }

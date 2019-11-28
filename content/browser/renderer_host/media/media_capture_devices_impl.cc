@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/media/media_capture_devices_impl.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
@@ -16,7 +17,7 @@ namespace {
 
 void EnsureMonitorCaptureDevices() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(
           &MediaStreamManager::EnsureDeviceMonitorStarted,
@@ -34,7 +35,7 @@ MediaCaptureDevicesImpl* MediaCaptureDevicesImpl::GetInstance() {
   return base::Singleton<MediaCaptureDevicesImpl>::get();
 }
 
-const MediaStreamDevices&
+const blink::MediaStreamDevices&
 MediaCaptureDevicesImpl::GetAudioCaptureDevices() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!devices_enumerated_) {
@@ -44,7 +45,7 @@ MediaCaptureDevicesImpl::GetAudioCaptureDevices() {
   return audio_devices_;
 }
 
-const MediaStreamDevices&
+const blink::MediaStreamDevices&
 MediaCaptureDevicesImpl::GetVideoCaptureDevices() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!devices_enumerated_) {
@@ -59,7 +60,7 @@ void MediaCaptureDevicesImpl::AddVideoCaptureObserver(
   MediaStreamManager* media_stream_manager =
       BrowserMainLoop::GetInstance()->media_stream_manager();
   if (media_stream_manager != nullptr) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&MediaStreamManager::AddVideoCaptureObserver,
                        base::Unretained(media_stream_manager), observer));
@@ -72,7 +73,7 @@ void MediaCaptureDevicesImpl::RemoveAllVideoCaptureObservers() {
   MediaStreamManager* media_stream_manager =
       BrowserMainLoop::GetInstance()->media_stream_manager();
   if (media_stream_manager != nullptr) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&MediaStreamManager::RemoveAllVideoCaptureObservers,
                        base::Unretained(media_stream_manager)));
@@ -82,11 +83,11 @@ void MediaCaptureDevicesImpl::RemoveAllVideoCaptureObservers() {
 }
 
 void MediaCaptureDevicesImpl::OnAudioCaptureDevicesChanged(
-    const MediaStreamDevices& devices) {
+    const blink::MediaStreamDevices& devices) {
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     UpdateAudioDevicesOnUIThread(devices);
   } else {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&MediaCaptureDevicesImpl::UpdateAudioDevicesOnUIThread,
                        base::Unretained(this), devices));
@@ -94,11 +95,11 @@ void MediaCaptureDevicesImpl::OnAudioCaptureDevicesChanged(
 }
 
 void MediaCaptureDevicesImpl::OnVideoCaptureDevicesChanged(
-    const MediaStreamDevices& devices) {
+    const blink::MediaStreamDevices& devices) {
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     UpdateVideoDevicesOnUIThread(devices);
   } else {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&MediaCaptureDevicesImpl::UpdateVideoDevicesOnUIThread,
                        base::Unretained(this), devices));
@@ -113,14 +114,14 @@ MediaCaptureDevicesImpl::~MediaCaptureDevicesImpl() {
 }
 
 void MediaCaptureDevicesImpl::UpdateAudioDevicesOnUIThread(
-    const MediaStreamDevices& devices) {
+    const blink::MediaStreamDevices& devices) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   devices_enumerated_ = true;
   audio_devices_ = devices;
 }
 
 void MediaCaptureDevicesImpl::UpdateVideoDevicesOnUIThread(
-    const MediaStreamDevices& devices) {
+    const blink::MediaStreamDevices& devices) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   devices_enumerated_ = true;
   video_devices_ = devices;

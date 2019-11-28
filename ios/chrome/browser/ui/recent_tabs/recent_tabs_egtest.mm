@@ -8,21 +8,27 @@
 #import <map>
 #import <string>
 
+#include "base/ios/ios_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/strings/grit/components_strings.h"
+#import "ios/chrome/app/main_controller.h"
+#import "ios/chrome/browser/tabs/tab_model.h"
+#import "ios/chrome/browser/ui/authentication/cells/signin_promo_view_constants.h"
 #import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui.h"
 #import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils.h"
 #import "ios/chrome/browser/ui/history/history_ui_constants.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_constants.h"
+#import "ios/chrome/browser/ui/table_view/feature_flags.h"
 #import "ios/chrome/browser/ui/table_view/table_view_model.h"
 #import "ios/chrome/browser/ui/table_view/table_view_navigation_controller_constants.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
-#import "ios/chrome/test/app/tab_test_util.h"
+#import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
@@ -43,8 +49,13 @@ NSString* const kTitleOfTestPage = @"TestPageTitle";
 // Makes sure at least one tab is opened and opens the recent tab panel.
 void OpenRecentTabsPanel() {
   // At least one tab is needed to be able to open the recent tabs panel.
-  if (chrome_test_util::GetMainTabCount() == 0)
-    [ChromeEarlGrey openNewTab];
+  if ([ChromeEarlGrey isIncognitoMode]) {
+    if ([ChromeEarlGrey incognitoTabCount] == 0)
+      [ChromeEarlGrey openNewIncognitoTab];
+  } else {
+    if ([ChromeEarlGrey mainTabCount] == 0)
+      [ChromeEarlGrey openNewTab];
+  }
 
   [ChromeEarlGreyUI openToolsMenu];
   [ChromeEarlGreyUI tapToolsMenuButton:RecentTabsMenuButton()];
@@ -94,7 +105,7 @@ id<GREYMatcher> TitleOfTestPage() {
 
   // Open the test page in a new tab.
   [ChromeEarlGrey loadURL:testPageURL];
-  [ChromeEarlGrey waitForWebViewContainingText:"hello"];
+  [ChromeEarlGrey waitForWebStateContainingText:"hello"];
 
   // Open the Recent Tabs panel, check that the test page is not
   // present.
@@ -157,7 +168,7 @@ id<GREYMatcher> TitleOfTestPage() {
   // Sign-in promo should be visible with cold state.
   [SigninEarlGreyUI checkSigninPromoVisibleWithMode:SigninPromoViewModeColdState
                                         closeButton:NO];
-  ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
+  FakeChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
       identity);
   // Sign-in promo should be visible with warm state.
@@ -185,7 +196,7 @@ id<GREYMatcher> TitleOfTestPage() {
   [SigninEarlGreyUI checkSigninPromoNotVisible];
 
   // Add an account.
-  ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
+  FakeChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
       identity);
 
@@ -197,6 +208,37 @@ id<GREYMatcher> TitleOfTestPage() {
   [self closeRecentTabs];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()
       ->RemoveIdentity(identity);
+}
+
+// Tests that the VC can be dismissed by swiping down.
+- (void)testSwipeDownDismiss {
+  if (!base::ios::IsRunningOnOrLater(13, 0, 0)) {
+    EARL_GREY_TEST_SKIPPED(@"Test disabled on iOS 12 and lower.");
+  }
+  if (!IsCollectionsCardPresentationStyleEnabled()) {
+    EARL_GREY_TEST_SKIPPED(@"Test disabled on when feature flag is off.");
+  }
+  OpenRecentTabsPanel();
+
+  // Check that the TableView is presented.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kRecentTabsTableViewControllerAccessibilityIdentifier)]
+      assertWithMatcher:grey_notNil()];
+
+  // Swipe TableView down.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kRecentTabsTableViewControllerAccessibilityIdentifier)]
+      performAction:grey_swipeFastInDirection(kGREYDirectionDown)];
+
+  // Check that the TableView has been dismissed.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kRecentTabsTableViewControllerAccessibilityIdentifier)]
+      assertWithMatcher:grey_nil()];
+
+  [ChromeEarlGrey closeCurrentTab];
 }
 
 @end

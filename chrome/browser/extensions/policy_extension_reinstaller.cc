@@ -45,9 +45,7 @@ const net::BackoffEntry::Policy kPolicyReinstallBackoffPolicy = {
 
 PolicyExtensionReinstaller::PolicyExtensionReinstaller(
     content::BrowserContext* context)
-    : context_(context),
-      backoff_entry_(&kPolicyReinstallBackoffPolicy),
-      weak_factory_(this) {}
+    : context_(context), backoff_entry_(&kPolicyReinstallBackoffPolicy) {}
 
 PolicyExtensionReinstaller::~PolicyExtensionReinstaller() {}
 
@@ -86,13 +84,13 @@ void PolicyExtensionReinstaller::ScheduleNextReinstallAttempt() {
 
   scheduled_fire_pending_ = true;
   base::TimeDelta reinstall_delay = GetNextFireDelay();
-  base::Closure callback =
-      base::Bind(&PolicyExtensionReinstaller::Fire, weak_factory_.GetWeakPtr());
+  base::OnceClosure callback = base::BindOnce(&PolicyExtensionReinstaller::Fire,
+                                              weak_factory_.GetWeakPtr());
   if (g_reinstall_action_for_test) {
-    g_reinstall_action_for_test->Run(callback, reinstall_delay);
+    g_reinstall_action_for_test->Run(std::move(callback), reinstall_delay);
   } else {
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(FROM_HERE, callback,
-                                                         reinstall_delay);
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, std::move(callback), reinstall_delay);
   }
 }
 

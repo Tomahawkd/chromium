@@ -7,10 +7,10 @@
 
 #include <memory>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
-#include "chromeos/chromeos_export.h"
 
 class PrefService;
 
@@ -33,11 +33,12 @@ class NetworkStateHandler;
 class NetworkSmsHandler;
 class ProhibitedTechnologiesHandler;
 class UIProxyConfigService;
+class CellularMetricsLogger;
 
 // Class for handling initialization and access to chromeos network handlers.
 // This class should NOT be used in unit tests. Instead, construct individual
 // classes independently.
-class CHROMEOS_EXPORT NetworkHandler {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkHandler {
  public:
   // Sets the global instance. Must be called before any calls to Get().
   static void Initialize();
@@ -84,6 +85,7 @@ class CHROMEOS_EXPORT NetworkHandler {
 
   // Global network configuration services.
   UIProxyConfigService* ui_proxy_config_service();
+  bool has_ui_proxy_config_service() { return ui_proxy_config_service_.get(); }
 
  private:
   NetworkHandler();
@@ -110,6 +112,7 @@ class CHROMEOS_EXPORT NetworkHandler {
   std::unique_ptr<ProhibitedTechnologiesHandler>
       prohibited_technologies_handler_;
   std::unique_ptr<UIProxyConfigService> ui_proxy_config_service_;
+  std::unique_ptr<CellularMetricsLogger> cellular_metrics_logger_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkHandler);
 };

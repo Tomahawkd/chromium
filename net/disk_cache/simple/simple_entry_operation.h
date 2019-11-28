@@ -9,6 +9,8 @@
 
 #include "base/memory/ref_counted.h"
 #include "net/base/completion_once_callback.h"
+#include "net/disk_cache/disk_cache.h"
+#include "net/disk_cache/simple/simple_histogram_enums.h"
 
 namespace net {
 class IOBuffer;
@@ -16,7 +18,6 @@ class IOBuffer;
 
 namespace disk_cache {
 
-class Entry;
 class SimpleEntryImpl;
 
 // SimpleEntryOperation stores the information regarding operations in
@@ -29,26 +30,37 @@ class SimpleEntryOperation {
   enum EntryOperationType {
     TYPE_OPEN = 0,
     TYPE_CREATE = 1,
-    TYPE_CLOSE = 2,
-    TYPE_READ = 3,
-    TYPE_WRITE = 4,
-    TYPE_READ_SPARSE = 5,
-    TYPE_WRITE_SPARSE = 6,
-    TYPE_GET_AVAILABLE_RANGE = 7,
-    TYPE_DOOM = 8,
+    TYPE_OPEN_OR_CREATE = 2,
+    TYPE_CLOSE = 3,
+    TYPE_READ = 4,
+    TYPE_WRITE = 5,
+    TYPE_READ_SPARSE = 6,
+    TYPE_WRITE_SPARSE = 7,
+    TYPE_GET_AVAILABLE_RANGE = 8,
+    TYPE_DOOM = 9,
+  };
+
+  // Whether an open/create method has returned an entry (optimistically)
+  // already, or if it still needs to be delivered via a callback.
+  enum EntryResultState {
+    ENTRY_ALREADY_RETURNED = 0,
+    ENTRY_NEEDS_CALLBACK = 1,
   };
 
   SimpleEntryOperation(SimpleEntryOperation&& other);
   ~SimpleEntryOperation();
 
   static SimpleEntryOperation OpenOperation(SimpleEntryImpl* entry,
-                                            bool have_index,
-                                            CompletionOnceCallback,
-                                            Entry** out_entry);
+                                            EntryResultState result_state,
+                                            EntryResultCallback);
   static SimpleEntryOperation CreateOperation(SimpleEntryImpl* entry,
-                                              bool have_index,
-                                              CompletionOnceCallback callback,
-                                              Entry** out_entry);
+                                              EntryResultState result_state,
+                                              EntryResultCallback);
+  static SimpleEntryOperation OpenOrCreateOperation(
+      SimpleEntryImpl* entry,
+      OpenEntryIndexEnum index_state,
+      EntryResultState result_state,
+      EntryResultCallback);
   static SimpleEntryOperation CloseOperation(SimpleEntryImpl* entry);
   static SimpleEntryOperation ReadOperation(SimpleEntryImpl* entry,
                                             int index,
@@ -89,9 +101,13 @@ class SimpleEntryOperation {
     return static_cast<EntryOperationType>(type_);
   }
   CompletionOnceCallback ReleaseCallback() { return std::move(callback_); }
+  EntryResultCallback ReleaseEntryResultCallback() {
+    return std::move(entry_callback_);
+  }
 
-  Entry** out_entry() { return out_entry_; }
-  bool have_index() const { return have_index_; }
+  EntryResultState entry_result_state() { return entry_result_state_; }
+
+  OpenEntryIndexEnum index_state() const { return index_state_; }
   int index() const { return index_; }
   int offset() const { return offset_; }
   int64_t sparse_offset() const { return sparse_offset_; }
@@ -105,13 +121,12 @@ class SimpleEntryOperation {
   SimpleEntryOperation(SimpleEntryImpl* entry,
                        net::IOBuffer* buf,
                        CompletionOnceCallback callback,
-                       Entry** out_entry,
                        int offset,
                        int64_t sparse_offset,
                        int length,
                        int64_t* out_start,
                        EntryOperationType type,
-                       bool have_index,
+                       OpenEntryIndexEnum index_state,
                        int index,
                        bool truncate,
                        bool optimistic);
@@ -122,7 +137,8 @@ class SimpleEntryOperation {
   CompletionOnceCallback callback_;
 
   // Used in open and create operations.
-  Entry** out_entry_;
+  EntryResultCallback entry_callback_;
+  EntryResultState entry_result_state_;
 
   // Used in write and read operations.
   const int offset_;
@@ -133,8 +149,8 @@ class SimpleEntryOperation {
   int64_t* const out_start_;
 
   const EntryOperationType type_;
-  // Used in open and create operations.
-  const bool have_index_;
+  // Used in the "open or create" operation.
+  const OpenEntryIndexEnum index_state_;
   // Used in write and read operations.
   const unsigned int index_;
   // Used only in write operations.

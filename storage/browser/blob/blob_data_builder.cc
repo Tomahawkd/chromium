@@ -17,8 +17,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
-#include "net/disk_cache/disk_cache.h"
-#include "services/network/public/cpp/data_element.h"
 #include "storage/browser/blob/blob_entry.h"
 #include "storage/browser/blob/blob_storage_registry.h"
 #include "storage/browser/blob/shareable_blob_data_item.h"
@@ -28,21 +26,15 @@ using base::FilePath;
 
 namespace storage {
 
-namespace {
-
-const static int kInvalidDiskCacheSideStreamIndex = -1;
-
-}  // namespace
-
 BlobDataBuilder::FutureData::FutureData(FutureData&&) = default;
 BlobDataBuilder::FutureData& BlobDataBuilder::FutureData::operator=(
     FutureData&&) = default;
 BlobDataBuilder::FutureData::~FutureData() = default;
 
-bool BlobDataBuilder::FutureData::Populate(base::span<const char> data,
+bool BlobDataBuilder::FutureData::Populate(base::span<const uint8_t> data,
                                            size_t offset) const {
   DCHECK(data.data());
-  base::span<char> target = GetDataToPopulate(offset, data.size());
+  base::span<uint8_t> target = GetDataToPopulate(offset, data.size());
   if (!target.data())
     return false;
   DCHECK_EQ(target.size(), data.size());
@@ -50,7 +42,7 @@ bool BlobDataBuilder::FutureData::Populate(base::span<const char> data,
   return true;
 }
 
-base::span<char> BlobDataBuilder::FutureData::GetDataToPopulate(
+base::span<uint8_t> BlobDataBuilder::FutureData::GetDataToPopulate(
     size_t offset,
     size_t length) const {
   // We lazily allocate our data buffer by waiting until the first
@@ -68,7 +60,7 @@ base::span<char> BlobDataBuilder::FutureData::GetDataToPopulate(
   checked_end += length;
   if (!checked_end.IsValid() || checked_end.ValueOrDie() > item_->length()) {
     DVLOG(1) << "Invalid offset or length.";
-    return base::span<char>();
+    return base::span<uint8_t>();
   }
   return item_->mutable_bytes().subspan(offset, length);
 }
@@ -101,40 +93,10 @@ BlobDataBuilder::FutureFile::FutureFile(scoped_refptr<BlobDataItem> item)
 BlobDataBuilder::BlobDataBuilder(const std::string& uuid) : uuid_(uuid) {}
 BlobDataBuilder::~BlobDataBuilder() = default;
 
-void BlobDataBuilder::AppendIPCDataElement(
-    const network::DataElement& ipc_data,
-    const BlobStorageRegistry& blob_registry) {
-  uint64_t length = ipc_data.length();
-  switch (ipc_data.type()) {
-    case network::DataElement::TYPE_BYTES:
-      DCHECK(!ipc_data.offset());
-      AppendData(ipc_data.bytes(),
-                 base::checked_cast<size_t>(length));
-      break;
-    case network::DataElement::TYPE_FILE:
-      AppendFile(ipc_data.path(), ipc_data.offset(), length,
-                 ipc_data.expected_modification_time());
-      break;
-    case network::DataElement::TYPE_BLOB:
-      // This will be deconstructed immediately into the items the blob is made
-      // up of.
-      AppendBlob(ipc_data.blob_uuid(), ipc_data.offset(), ipc_data.length(),
-                 blob_registry);
-      break;
-    case network::DataElement::TYPE_RAW_FILE:
-    case network::DataElement::TYPE_UNKNOWN:
-    // This type can't be sent by IPC.
-    case network::DataElement::TYPE_DATA_PIPE:
-    case network::DataElement::TYPE_CHUNKED_DATA_PIPE:
-      NOTREACHED();
-      break;
-  }
-}
-
-void BlobDataBuilder::AppendData(const char* data, size_t length) {
-  if (!length)
+void BlobDataBuilder::AppendData(base::span<const uint8_t> data) {
+  if (!data.size())
     return;
-  auto item = BlobDataItem::CreateBytes(base::make_span(data, length));
+  auto item = BlobDataItem::CreateBytes(data);
   auto shareable_item = base::MakeRefCounted<ShareableBlobDataItem>(
       std::move(item), ShareableBlobDataItem::QUOTA_NEEDED);
   // Even though we already prepopulate this data, we treat it as needing
@@ -142,11 +104,10 @@ void BlobDataBuilder::AppendData(const char* data, size_t length) {
   pending_transport_items_.push_back(shareable_item);
   items_.push_back(std::move(shareable_item));
 
-  total_size_ += length;
-  total_memory_size_ += length;
-  transport_quota_needed_ += length;
+  total_size_ += data.size();
+  total_memory_size_ += data.size();
+  transport_quota_needed_ += data.size();
   found_memory_transport_ = true;
-  UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.Bytes", length / 1024);
 }
 
 BlobDataBuilder::FutureData BlobDataBuilder::AppendFutureData(size_t length) {
@@ -161,7 +122,6 @@ BlobDataBuilder::FutureData BlobDataBuilder::AppendFutureData(size_t length) {
   total_memory_size_ += length;
   transport_quota_needed_ += length;
   found_memory_transport_ = true;
-  UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.Bytes", length / 1024);
 
   return FutureData(std::move(item));
 }
@@ -183,7 +143,6 @@ BlobDataBuilder::FutureFile BlobDataBuilder::AppendFutureFile(
   transport_quota_needed_ += length;
   found_file_transport_ = true;
   UMA_HISTOGRAM_BOOLEAN("Storage.BlobItemSize.File.Unknown", false);
-  UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.File", length / 1024);
 
   return FutureFile(std::move(item));
 }
@@ -204,8 +163,6 @@ void BlobDataBuilder::AppendFile(const FilePath& file_path,
   total_size_ += length;
   bool unknown_size = length == blink::BlobUtils::kUnknownSize;
   UMA_HISTOGRAM_BOOLEAN("Storage.BlobItemSize.File.Unknown", unknown_size);
-  if (!unknown_size)
-    UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.File", length / 1024);
 }
 
 void BlobDataBuilder::AppendBlob(const std::string& uuid,
@@ -236,8 +193,6 @@ void BlobDataBuilder::AppendBlob(const std::string& uuid,
 
   if (length == blink::BlobUtils::kUnknownSize)
     length = ref_entry->total_size() - offset;
-
-  UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.Blob", length / 1024);
 
   total_size_ += length;
 
@@ -311,8 +266,6 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
     switch (type) {
       case BlobDataItem::Type::kBytesDescription:
       case BlobDataItem::Type::kBytes: {
-        UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.BlobSlice.Bytes",
-                                read_size / 1024);
         need_copy = true;
         copy_quota_needed_ += read_size;
         total_memory_size_ += read_size;
@@ -326,12 +279,9 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
         break;
       }
       case BlobDataItem::Type::kFile: {
-        UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.BlobSlice.File",
-                                read_size / 1024);
         data_item = BlobDataItem::CreateFile(
             source_item->path(), source_item->offset() + item_offset, read_size,
-            source_item->expected_modification_time(),
-            source_item->data_handle_);
+            source_item->expected_modification_time(), source_item->file_ref_);
 
         if (source_item->IsFutureFileItem()) {
           // The source file isn't a real file yet (path is fake), so store the
@@ -341,22 +291,16 @@ void BlobDataBuilder::SliceBlob(const BlobEntry* source,
         break;
       }
       case BlobDataItem::Type::kFileFilesystem: {
-        UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.BlobSlice.FileSystem",
-                                read_size / 1024);
         data_item = BlobDataItem::CreateFileFilesystem(
             source_item->filesystem_url(), source_item->offset() + item_offset,
             read_size, source_item->expected_modification_time(),
             source_item->file_system_context());
         break;
       }
-      case BlobDataItem::Type::kDiskCacheEntry: {
-        UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.BlobSlice.CacheEntry",
-                                read_size / 1024);
-        data_item = BlobDataItem::CreateDiskCacheEntry(
-            source_item->offset() + item_offset, read_size,
-            source_item->data_handle_, source_item->disk_cache_entry(),
-            source_item->disk_cache_stream_index(),
-            source_item->disk_cache_side_stream_index());
+      case BlobDataItem::Type::kReadableDataHandle: {
+        data_item = BlobDataItem::CreateReadableDataHandle(
+            source_item->data_handle_, source_item->offset() + item_offset,
+            read_size);
         break;
       }
     }
@@ -391,36 +335,29 @@ void BlobDataBuilder::AppendFileSystemFile(
   items_.push_back(std::move(shareable_item));
 
   total_size_ += length;
-  bool unknown_size = length == blink::BlobUtils::kUnknownSize;
-  UMA_HISTOGRAM_BOOLEAN("Storage.BlobItemSize.FileSystem.Unknown",
-                        unknown_size);
-  if (!unknown_size)
-    UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.FileSystem", length / 1024);
 }
 
-void BlobDataBuilder::AppendDiskCacheEntry(
+void BlobDataBuilder::AppendReadableDataHandle(
     scoped_refptr<DataHandle> data_handle,
-    disk_cache::Entry* disk_cache_entry,
-    int disk_cache_stream_index) {
-  AppendDiskCacheEntryWithSideData(std::move(data_handle), disk_cache_entry,
-                                   disk_cache_stream_index,
-                                   kInvalidDiskCacheSideStreamIndex);
-}
-
-void BlobDataBuilder::AppendDiskCacheEntryWithSideData(
-    scoped_refptr<DataHandle> data_handle,
-    disk_cache::Entry* disk_cache_entry,
-    int disk_cache_stream_index,
-    int disk_cache_side_stream_index) {
-  auto item = BlobDataItem::CreateDiskCacheEntry(
-      0u, disk_cache_entry->GetDataSize(disk_cache_stream_index),
-      std::move(data_handle), disk_cache_entry, disk_cache_stream_index,
-      disk_cache_side_stream_index);
+    uint64_t offset,
+    uint64_t length) {
+  if (length == 0ul)
+    return;
+  auto item = BlobDataItem::CreateReadableDataHandle(std::move(data_handle),
+                                                     offset, length);
 
   total_size_ += item->length();
-  UMA_HISTOGRAM_COUNTS_1M("Storage.BlobItemSize.CacheEntry",
-                          item->length() / 1024);
+  auto shareable_item = base::MakeRefCounted<ShareableBlobDataItem>(
+      std::move(item), ShareableBlobDataItem::POPULATED_WITHOUT_QUOTA);
+  items_.push_back(std::move(shareable_item));
+}
 
+void BlobDataBuilder::AppendMojoDataItem(mojom::BlobDataItemPtr item_ptr) {
+  if (item_ptr->size == 0ul)
+    return;
+  auto item = BlobDataItem::CreateMojoDataItem(std::move(item_ptr));
+
+  total_size_ += item->length();
   auto shareable_item = base::MakeRefCounted<ShareableBlobDataItem>(
       std::move(item), ShareableBlobDataItem::POPULATED_WITHOUT_QUOTA);
   items_.push_back(std::move(shareable_item));
@@ -428,6 +365,7 @@ void BlobDataBuilder::AppendDiskCacheEntryWithSideData(
 
 std::unique_ptr<BlobDataSnapshot> BlobDataBuilder::CreateSnapshot() const {
   std::vector<scoped_refptr<BlobDataItem>> items;
+  items.reserve(items_.size());
   for (const auto& item : items_)
     items.push_back(item->item());
   return base::WrapUnique(new BlobDataSnapshot(

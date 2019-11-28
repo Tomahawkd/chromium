@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -30,8 +31,7 @@ DefaultBrowserInfoBarDelegate::DefaultBrowserInfoBarDelegate(Profile* profile)
     : ConfirmInfoBarDelegate(),
       profile_(profile),
       should_expire_(false),
-      action_taken_(false),
-      weak_factory_(this) {
+      action_taken_(false) {
   // We want the info-bar to stick-around for few seconds and then be hidden
   // on the next navigation after that.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(

@@ -5,10 +5,8 @@
 #include "cc/input/scrollbar_animation_controller.h"
 
 #include "cc/layers/solid_color_scrollbar_layer_impl.h"
-#include "cc/test/fake_impl_task_runner_provider.h"
-#include "cc/test/fake_layer_tree_host_impl.h"
 #include "cc/test/geometry_test_utils.h"
-#include "cc/test/test_task_graph_runner.h"
+#include "cc/test/layer_tree_impl_test_base.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -37,9 +35,9 @@ class MockScrollbarAnimationControllerClient
       : host_impl_(host_impl) {}
   ~MockScrollbarAnimationControllerClient() override = default;
 
-  void PostDelayedScrollbarAnimationTask(const base::Closure& start_fade,
+  void PostDelayedScrollbarAnimationTask(base::OnceClosure start_fade,
                                          base::TimeDelta delay) override {
-    start_fade_ = start_fade;
+    start_fade_ = std::move(start_fade);
     delay_ = delay;
   }
   void SetNeedsRedrawForScrollbarAnimation() override {}
@@ -49,20 +47,20 @@ class MockScrollbarAnimationControllerClient
   }
   MOCK_METHOD0(DidChangeScrollbarVisibility, void());
 
-  base::Closure& start_fade() { return start_fade_; }
+  base::OnceClosure& start_fade() { return start_fade_; }
   base::TimeDelta& delay() { return delay_; }
 
  private:
-  base::Closure start_fade_;
+  base::OnceClosure start_fade_;
   base::TimeDelta delay_;
   LayerTreeHostImpl* host_impl_;
 };
 
-class ScrollbarAnimationControllerAuraOverlayTest : public testing::Test {
+class ScrollbarAnimationControllerAuraOverlayTest
+    : public LayerTreeImplTestBase,
+      public testing::Test {
  public:
-  ScrollbarAnimationControllerAuraOverlayTest()
-      : host_impl_(&task_runner_provider_, &task_graph_runner_),
-        client_(&host_impl_) {}
+  ScrollbarAnimationControllerAuraOverlayTest() : client_(host_impl()) {}
 
   void ExpectScrollbarsOpacity(float opacity) {
     EXPECT_FLOAT_EQ(opacity, v_scrollbar_layer_->Opacity());
@@ -75,57 +73,47 @@ class ScrollbarAnimationControllerAuraOverlayTest : public testing::Test {
   const base::TimeDelta kThinningDuration = base::TimeDelta::FromSeconds(2);
 
   void SetUp() override {
-    std::unique_ptr<LayerImpl> scroll_layer =
-        LayerImpl::Create(host_impl_.active_tree(), 1);
-    std::unique_ptr<LayerImpl> clip =
-        LayerImpl::Create(host_impl_.active_tree(), 2);
-    clip_layer_ = clip.get();
-    scroll_layer->SetElementId(
-        LayerIdToElementIdForTesting(scroll_layer->id()));
-    LayerImpl* scroll_layer_ptr = scroll_layer.get();
-
     const int kTrackStart = 0;
     const int kTrackLength = 100;
     const bool kIsLeftSideVerticalScrollbar = false;
-    const bool kIsOverlayScrollbar = true;
 
-    std::unique_ptr<SolidColorScrollbarLayerImpl> h_scrollbar =
-        SolidColorScrollbarLayerImpl::Create(
-            host_impl_.active_tree(), 3, HORIZONTAL, kThumbThickness,
-            kTrackStart, kIsLeftSideVerticalScrollbar, kIsOverlayScrollbar);
-    h_scrollbar->test_properties()->opacity = 0.0f;
-    std::unique_ptr<SolidColorScrollbarLayerImpl> v_scrollbar =
-        SolidColorScrollbarLayerImpl::Create(
-            host_impl_.active_tree(), 4, VERTICAL, kThumbThickness, kTrackStart,
-            kIsLeftSideVerticalScrollbar, kIsOverlayScrollbar);
-    v_scrollbar->test_properties()->opacity = 0.0f;
-    v_scrollbar_layer_ = v_scrollbar.get();
-    h_scrollbar_layer_ = h_scrollbar.get();
+    scroll_layer_ = AddLayer<LayerImpl>();
+    h_scrollbar_layer_ = AddLayer<SolidColorScrollbarLayerImpl>(
+        HORIZONTAL, kThumbThickness, kTrackStart, kIsLeftSideVerticalScrollbar);
+    v_scrollbar_layer_ = AddLayer<SolidColorScrollbarLayerImpl>(
+        VERTICAL, kThumbThickness, kTrackStart, kIsLeftSideVerticalScrollbar);
+    SetElementIdsForTesting();
 
-    scroll_layer->test_properties()->AddChild(std::move(v_scrollbar));
-    scroll_layer->test_properties()->AddChild(std::move(h_scrollbar));
-    clip_layer_->test_properties()->AddChild(std::move(scroll_layer));
-    host_impl_.active_tree()->SetRootLayerForTesting(std::move(clip));
+    clip_layer_ = root_layer();
+    clip_layer_->SetBounds(gfx::Size(100, 100));
+
+    scroll_layer_->SetScrollable(gfx::Size(100, 100));
+    scroll_layer_->SetBounds(gfx::Size(200, 200));
+    CopyProperties(clip_layer_, scroll_layer_);
+    CreateTransformNode(scroll_layer_);
+    CreateScrollNode(scroll_layer_);
 
     v_scrollbar_layer_->SetBounds(gfx::Size(kThumbThickness, kTrackLength));
-    v_scrollbar_layer_->SetPosition(gfx::PointF(90, 0));
-    v_scrollbar_layer_->SetScrollElementId(scroll_layer_ptr->element_id());
-    v_scrollbar_layer_->test_properties()->opacity_can_animate = true;
+    v_scrollbar_layer_->SetScrollElementId(scroll_layer_->element_id());
+    CopyProperties(scroll_layer_, v_scrollbar_layer_);
+    v_scrollbar_layer_->SetOffsetToTransformParent(gfx::Vector2dF(90, 0));
+    auto& v_scrollbar_effect = CreateEffectNode(v_scrollbar_layer_);
+    v_scrollbar_effect.opacity = 0.f;
+    v_scrollbar_effect.has_potential_opacity_animation = true;
 
     h_scrollbar_layer_->SetBounds(gfx::Size(kTrackLength, kThumbThickness));
-    h_scrollbar_layer_->SetPosition(gfx::PointF(0, 90));
-    h_scrollbar_layer_->SetScrollElementId(scroll_layer_ptr->element_id());
-    h_scrollbar_layer_->test_properties()->opacity_can_animate = true;
+    h_scrollbar_layer_->SetScrollElementId(scroll_layer_->element_id());
+    CopyProperties(scroll_layer_, h_scrollbar_layer_);
+    h_scrollbar_layer_->SetOffsetToTransformParent(gfx::Vector2dF(0, 90));
+    auto& h_scrollbar_effect = CreateEffectNode(h_scrollbar_layer_);
+    h_scrollbar_effect.opacity = 0.f;
+    h_scrollbar_effect.has_potential_opacity_animation = true;
 
-    clip_layer_->SetBounds(gfx::Size(100, 100));
-    scroll_layer_ptr->SetScrollable(gfx::Size(100, 100));
-    scroll_layer_ptr->SetBounds(gfx::Size(200, 200));
-    host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
-    host_impl_.active_tree()->UpdateScrollbarGeometries();
+    UpdateActiveTreeDrawProperties();
 
     scrollbar_controller_ = ScrollbarAnimationController::
         CreateScrollbarAnimationControllerAuraOverlay(
-            scroll_layer_ptr->element_id(), &client_, kFadeDelay, kFadeDuration,
+            scroll_layer_->element_id(), &client_, kFadeDelay, kFadeDuration,
             kThinningDuration, 0.0f);
     v_scrollbar_layer_->SetCurrentPos(0);
     h_scrollbar_layer_->SetCurrentPos(0);
@@ -153,11 +141,9 @@ class ScrollbarAnimationControllerAuraOverlayTest : public testing::Test {
     return p;
   }
 
-  FakeImplTaskRunnerProvider task_runner_provider_;
-  TestTaskGraphRunner task_graph_runner_;
-  FakeLayerTreeHostImpl host_impl_;
   std::unique_ptr<ScrollbarAnimationController> scrollbar_controller_;
   LayerImpl* clip_layer_;
+  LayerImpl* scroll_layer_;
   SolidColorScrollbarLayerImpl* v_scrollbar_layer_;
   SolidColorScrollbarLayerImpl* h_scrollbar_layer_;
   NiceMock<MockScrollbarAnimationControllerClient> client_;
@@ -185,16 +171,17 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, AppearOnResize) {
 
   // Make the Layer non-scrollable, scrollbar disappears.
   clip_layer_->SetBounds(gfx::Size(200, 200));
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  scroll_layer->SetScrollable(gfx::Size(200, 200));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(200, 200));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(200, 200);
+  UpdateActiveTreeDrawProperties();
   scrollbar_controller_->DidScrollUpdate();
   ExpectScrollbarsOpacity(0);
 
   // Make the layer scrollable, scrollbar appears again.
   clip_layer_->SetBounds(gfx::Size(100, 100));
-  scroll_layer->SetScrollable(gfx::Size(100, 100));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(100, 100));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(100, 100);
+  UpdateActiveTreeDrawProperties();
   scrollbar_controller_->DidScrollUpdate();
   ExpectScrollbarsOpacity(1);
 }
@@ -204,15 +191,14 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, HideOnResize) {
   base::TimeTicks time;
   time += base::TimeDelta::FromSeconds(1);
 
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  EXPECT_EQ(gfx::Size(200, 200), scroll_layer->bounds());
+  EXPECT_EQ(gfx::Size(200, 200), scroll_layer_->bounds());
 
   // Shrink along X axis, horizontal scrollbar should appear.
   clip_layer_->SetBounds(gfx::Size(100, 200));
   EXPECT_EQ(gfx::Size(100, 200), clip_layer_->bounds());
-  scroll_layer->SetScrollable(gfx::Size(100, 200));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(100, 200));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(100, 200);
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -225,8 +211,9 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, HideOnResize) {
   // should disappear.
   clip_layer_->SetBounds(gfx::Size(200, 100));
   EXPECT_EQ(gfx::Size(200, 100), clip_layer_->bounds());
-  scroll_layer->SetScrollable(gfx::Size(200, 100));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(200, 100));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(200, 100);
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -261,7 +248,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, BasicAppearAndFadeOut) {
   // An fade out animation should have been enqueued.
   EXPECT_EQ(kFadeDelay, client_.delay());
   EXPECT_FALSE(client_.start_fade().is_null());
-  client_.start_fade().Run();
+  std::move(client_.start_fade()).Run();
 
   // Scrollbar should fade out over kFadeDuration.
   scrollbar_controller_->Animate(time);
@@ -290,7 +277,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest,
   // An fade out animation should have been enqueued.
   EXPECT_EQ(kFadeDelay, client_.delay());
   EXPECT_FALSE(client_.start_fade().is_null());
-  client_.start_fade().Run();
+  std::move(client_.start_fade()).Run();
 
   // Scrollbar should fade out over kFadeDuration.
   scrollbar_controller_->Animate(time);
@@ -651,7 +638,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest,
   // A fade out animation should have been enqueued. Start it.
   EXPECT_EQ(kFadeDelay, client_.delay());
   EXPECT_FALSE(client_.start_fade().is_null());
-  client_.start_fade().Run();
+  std::move(client_.start_fade()).Run();
 
   scrollbar_controller_->Animate(time);
   ExpectScrollbarsOpacity(1);
@@ -691,7 +678,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, TestCantCaptureWhenFaded) {
   EXPECT_EQ(kFadeDelay, client_.delay());
   EXPECT_FALSE(client_.start_fade().is_null());
   EXPECT_FALSE(client_.start_fade().IsCancelled());
-  client_.start_fade().Run();
+  std::move(client_.start_fade()).Run();
   scrollbar_controller_->Animate(time);
   ExpectScrollbarsOpacity(1);
 
@@ -736,8 +723,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, TestCantCaptureWhenFaded) {
   EXPECT_EQ(kFadeDelay, client_.delay());
 
   // Play the delay animation.
-  client_.start_fade().Run();
-  EXPECT_TRUE(client_.start_fade().IsCancelled());
+  std::move(client_.start_fade()).Run();
 
   scrollbar_controller_->Animate(time);
   time += kFadeDuration;
@@ -831,7 +817,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, FadeAnimated) {
   // An fade out animation should have been enqueued.
   EXPECT_EQ(kFadeDelay, client_.delay());
   EXPECT_FALSE(client_.start_fade().is_null());
-  client_.start_fade().Run();
+  std::move(client_.start_fade()).Run();
 
   // Test that at half the fade duration time, the opacity is at half.
   scrollbar_controller_->Animate(time);
@@ -865,7 +851,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, NotifyChangedVisibility) {
   // to) notify during the animation that the scrollbars are still visible.
   EXPECT_CALL(client_, DidChangeScrollbarVisibility()).Times(0);
   ASSERT_FALSE(client_.start_fade().is_null());
-  client_.start_fade().Run();
+  std::move(client_.start_fade()).Run();
   scrollbar_controller_->Animate(time);
   time += kFadeDuration / 4;
   EXPECT_FALSE(scrollbar_controller_->ScrollbarsHidden());
@@ -1123,8 +1109,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, BasicMouseHoverFadeIn) {
   EXPECT_EQ(kFadeDelay, client_.delay());
 
   // Play the delay animation.
-  client_.start_fade().Run();
-  EXPECT_TRUE(client_.start_fade().IsCancelled());
+  std::move(client_.start_fade()).Run();
 
   scrollbar_controller_->Animate(time);
   time += kFadeDuration / 2;
@@ -1156,13 +1141,13 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest,
   EXPECT_FALSE(client_.start_fade().IsCancelled());
   EXPECT_EQ(kFadeDelay, client_.delay());
 
-  base::Closure& fade = client_.start_fade();
+  client_.start_fade().Reset();
   // Move mouse still hover the fade in region of scrollbar should not
   // post a new fade in.
   scrollbar_controller_->DidMouseMove(
       NearVerticalScrollbarBegin(-kMouseMoveDistanceToTriggerFadeIn + 2, 0));
 
-  EXPECT_TRUE(fade.Equals(client_.start_fade()));
+  EXPECT_TRUE(client_.start_fade().is_null());
 }
 
 // Scrollbars should cancel delay fade in when mouse hover hidden scrollbar then
@@ -1220,8 +1205,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest,
   EXPECT_EQ(kFadeDelay, client_.delay());
 
   // Play the delay animation.
-  client_.start_fade().Run();
-  EXPECT_TRUE(client_.start_fade().IsCancelled());
+  std::move(client_.start_fade()).Run();
 
   scrollbar_controller_->Animate(time);
   time += kFadeDuration;
@@ -1269,8 +1253,7 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest,
   EXPECT_EQ(kFadeDelay, client_.delay());
 
   // Play the delay animation.
-  client_.start_fade().Run();
-  EXPECT_TRUE(client_.start_fade().IsCancelled());
+  std::move(client_.start_fade()).Run();
 
   scrollbar_controller_->Animate(time);
   time += kFadeDuration;
@@ -1367,17 +1350,16 @@ TEST_F(ScrollbarAnimationControllerAuraOverlayTest, TickmakrsShowHide) {
 }
 
 class ScrollbarAnimationControllerAndroidTest
-    : public testing::Test,
+    : public LayerTreeImplTestBase,
+      public testing::Test,
       public ScrollbarAnimationControllerClient {
  public:
   ScrollbarAnimationControllerAndroidTest()
-      : host_impl_(&task_runner_provider_, &task_graph_runner_),
-        did_request_redraw_(false),
-        did_request_animate_(false) {}
+      : did_request_redraw_(false), did_request_animate_(false) {}
 
-  void PostDelayedScrollbarAnimationTask(const base::Closure& start_fade,
+  void PostDelayedScrollbarAnimationTask(base::OnceClosure start_fade,
                                          base::TimeDelta delay) override {
-    start_fade_ = start_fade;
+    start_fade_ = std::move(start_fade);
     delay_ = delay;
   }
   void SetNeedsRedrawForScrollbarAnimation() override {
@@ -1387,7 +1369,7 @@ class ScrollbarAnimationControllerAndroidTest
     did_request_animate_ = true;
   }
   ScrollbarSet ScrollbarsFor(ElementId scroll_element_id) const override {
-    return host_impl_.ScrollbarsFor(scroll_element_id);
+    return host_impl()->ScrollbarsFor(scroll_element_id);
   }
   void DidChangeScrollbarVisibility() override {}
 
@@ -1395,50 +1377,41 @@ class ScrollbarAnimationControllerAndroidTest
   void SetUp() override {
     const int kTrackStart = 0;
     const bool kIsLeftSideVerticalScrollbar = false;
-    const bool kIsOverlayScrollbar = true;  // Allow opacity animations.
 
-    std::unique_ptr<LayerImpl> scroll_layer =
-        LayerImpl::Create(host_impl_.active_tree(), 1);
-    std::unique_ptr<SolidColorScrollbarLayerImpl> scrollbar =
-        SolidColorScrollbarLayerImpl::Create(
-            host_impl_.active_tree(), 2, orientation(), kThumbThickness,
-            kTrackStart, kIsLeftSideVerticalScrollbar, kIsOverlayScrollbar);
-    scrollbar->test_properties()->opacity = 0.0f;
-    scrollbar_layer_ = scrollbar.get();
-    scrollbar_layer_->test_properties()->opacity_can_animate = true;
-    std::unique_ptr<LayerImpl> root =
-        LayerImpl::Create(host_impl_.active_tree(), 3);
+    LayerImpl* root = root_layer();
+    scroll_layer_ = AddLayer<LayerImpl>();
+    scrollbar_layer_ = AddLayer<SolidColorScrollbarLayerImpl>(
+        orientation(), kThumbThickness, kTrackStart,
+        kIsLeftSideVerticalScrollbar);
+    SetElementIdsForTesting();
 
-    scroll_layer->SetScrollable(gfx::Size(100, 100));
-    scroll_layer->SetElementId(
-        LayerIdToElementIdForTesting(scroll_layer->id()));
-    LayerImpl* scroll_layer_ptr = scroll_layer.get();
-    scroll_layer->test_properties()->AddChild(std::move(scrollbar));
-    root->test_properties()->AddChild(std::move(scroll_layer));
-    host_impl_.active_tree()->SetRootLayerForTesting(std::move(root));
+    scroll_layer_->SetBounds(gfx::Size(200, 200));
+    scroll_layer_->SetScrollable(gfx::Size(100, 100));
+    CopyProperties(root, scroll_layer_);
+    CreateTransformNode(scroll_layer_);
+    CreateScrollNode(scroll_layer_);
 
-    scrollbar_layer_->SetScrollElementId(scroll_layer_ptr->element_id());
-    scroll_layer_ptr->SetBounds(gfx::Size(200, 200));
-    host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
-    DCHECK(host_impl_.active_tree()->ScrollbarGeometriesNeedUpdate());
-    host_impl_.active_tree()->UpdateScrollbarGeometries();
+    scrollbar_layer_->SetScrollElementId(scroll_layer_->element_id());
+    CopyProperties(scroll_layer_, scrollbar_layer_);
+    auto& scrollbar_effect = CreateEffectNode(scrollbar_layer_);
+    scrollbar_effect.opacity = 0.f;
+    scrollbar_effect.has_potential_opacity_animation = true;
+
+    UpdateActiveTreeDrawProperties();
 
     scrollbar_controller_ =
         ScrollbarAnimationController::CreateScrollbarAnimationControllerAndroid(
-            scroll_layer_ptr->element_id(), this,
-            base::TimeDelta::FromSeconds(2), base::TimeDelta::FromSeconds(3),
-            0.0f);
+            scroll_layer_->element_id(), this, base::TimeDelta::FromSeconds(2),
+            base::TimeDelta::FromSeconds(3), 0.0f);
   }
 
   virtual ScrollbarOrientation orientation() const { return HORIZONTAL; }
 
-  FakeImplTaskRunnerProvider task_runner_provider_;
-  TestTaskGraphRunner task_graph_runner_;
-  FakeLayerTreeHostImpl host_impl_;
   std::unique_ptr<ScrollbarAnimationController> scrollbar_controller_;
+  LayerImpl* scroll_layer_;
   SolidColorScrollbarLayerImpl* scrollbar_layer_;
 
-  base::Closure start_fade_;
+  base::OnceClosure start_fade_;
   base::TimeDelta delay_;
   bool did_request_redraw_;
   bool did_request_animate_;
@@ -1467,7 +1440,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest,
   EXPECT_FLOAT_EQ(0.0f, scrollbar_layer_->Opacity());
   scrollbar_controller_->DidScrollEnd();
 
-  EXPECT_TRUE(start_fade_.Equals(base::Closure()));
+  EXPECT_TRUE(start_fade_.is_null());
 
   time += base::TimeDelta::FromSeconds(100);
   scrollbar_controller_->Animate(time);
@@ -1490,19 +1463,18 @@ TEST_F(ScrollbarAnimationControllerAndroidTest,
   EXPECT_TRUE(scrollbar_controller_->ScrollbarsHidden());
 
   // No fade out animation should have been enqueued.
-  EXPECT_TRUE(start_fade_.Equals(base::Closure()));
+  EXPECT_TRUE(start_fade_.is_null());
 }
 
 TEST_F(ScrollbarAnimationControllerAndroidTest, HideOnResize) {
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  EXPECT_EQ(gfx::Size(200, 200), scroll_layer->bounds());
+  EXPECT_EQ(gfx::Size(200, 200), scroll_layer_->bounds());
 
   EXPECT_EQ(HORIZONTAL, scrollbar_layer_->orientation());
 
   // Shrink along X axis, horizontal scrollbar should appear.
-  scroll_layer->SetScrollable(gfx::Size(100, 200));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(100, 200));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(100, 200);
+  UpdateActiveTreeDrawProperties();
   scrollbar_controller_->DidScrollBegin();
 
   scrollbar_controller_->DidScrollUpdate();
@@ -1511,8 +1483,9 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, HideOnResize) {
 
   // Shrink along Y axis and expand along X, horizontal scrollbar
   // should disappear.
-  scroll_layer->SetScrollable(gfx::Size(200, 100));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(200, 100));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(200, 100);
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -1523,15 +1496,14 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, HideOnResize) {
 }
 
 TEST_F(VerticalScrollbarAnimationControllerAndroidTest, HideOnResize) {
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  EXPECT_EQ(gfx::Size(200, 200), scroll_layer->bounds());
+  EXPECT_EQ(gfx::Size(200, 200), scroll_layer_->bounds());
 
   EXPECT_EQ(VERTICAL, scrollbar_layer_->orientation());
 
   // Shrink along X axis, vertical scrollbar should remain invisible.
-  scroll_layer->SetScrollable(gfx::Size(100, 200));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(100, 200));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(100, 200);
+  UpdateActiveTreeDrawProperties();
   scrollbar_controller_->DidScrollBegin();
 
   scrollbar_controller_->DidScrollUpdate();
@@ -1539,8 +1511,9 @@ TEST_F(VerticalScrollbarAnimationControllerAndroidTest, HideOnResize) {
   scrollbar_controller_->DidScrollEnd();
 
   // Shrink along Y axis and expand along X, vertical scrollbar should appear.
-  scroll_layer->SetScrollable(gfx::Size(200, 100));
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  scroll_layer_->SetScrollable(gfx::Size(200, 100));
+  GetScrollNode(scroll_layer_)->container_bounds = gfx::Size(200, 100);
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -1553,10 +1526,8 @@ TEST_F(VerticalScrollbarAnimationControllerAndroidTest, HideOnResize) {
 TEST_F(ScrollbarAnimationControllerAndroidTest, HideOnUserNonScrollableHorz) {
   EXPECT_EQ(HORIZONTAL, scrollbar_layer_->orientation());
 
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  scroll_layer->test_properties()->user_scrollable_horizontal = false;
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  GetScrollNode(scroll_layer_)->user_scrollable_horizontal = false;
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -1569,10 +1540,8 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, HideOnUserNonScrollableHorz) {
 TEST_F(ScrollbarAnimationControllerAndroidTest, ShowOnUserNonScrollableVert) {
   EXPECT_EQ(HORIZONTAL, scrollbar_layer_->orientation());
 
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  scroll_layer->test_properties()->user_scrollable_vertical = false;
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  GetScrollNode(scroll_layer_)->user_scrollable_vertical = false;
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -1586,10 +1555,8 @@ TEST_F(VerticalScrollbarAnimationControllerAndroidTest,
        HideOnUserNonScrollableVert) {
   EXPECT_EQ(VERTICAL, scrollbar_layer_->orientation());
 
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  scroll_layer->test_properties()->user_scrollable_vertical = false;
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  GetScrollNode(scroll_layer_)->user_scrollable_vertical = false;
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -1603,10 +1570,8 @@ TEST_F(VerticalScrollbarAnimationControllerAndroidTest,
        ShowOnUserNonScrollableHorz) {
   EXPECT_EQ(VERTICAL, scrollbar_layer_->orientation());
 
-  LayerImpl* scroll_layer = host_impl_.active_tree()->LayerById(1);
-  ASSERT_TRUE(scroll_layer);
-  scroll_layer->test_properties()->user_scrollable_horizontal = false;
-  host_impl_.active_tree()->BuildLayerListAndPropertyTreesForTesting();
+  GetScrollNode(scroll_layer_)->user_scrollable_horizontal = false;
+  UpdateActiveTreeDrawProperties();
 
   scrollbar_controller_->DidScrollBegin();
 
@@ -1626,7 +1591,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, AwakenByScrollingGesture) {
   EXPECT_FALSE(did_request_animate_);
   EXPECT_FLOAT_EQ(1.0f, scrollbar_layer_->Opacity());
 
-  EXPECT_TRUE(start_fade_.Equals(base::Closure()));
+  EXPECT_TRUE(start_fade_.is_null());
 
   time += base::TimeDelta::FromSeconds(100);
 
@@ -1635,7 +1600,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, AwakenByScrollingGesture) {
   EXPECT_FLOAT_EQ(1.0f, scrollbar_layer_->Opacity());
   scrollbar_controller_->DidScrollEnd();
   EXPECT_FALSE(did_request_animate_);
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   EXPECT_TRUE(did_request_animate_);
   did_request_animate_ = false;
 
@@ -1663,7 +1628,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, AwakenByScrollingGesture) {
   scrollbar_controller_->DidScrollUpdate();
   scrollbar_controller_->DidScrollEnd();
 
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   EXPECT_TRUE(did_request_animate_);
   did_request_animate_ = false;
 
@@ -1697,7 +1662,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, AwakenByProgrammaticScroll) {
   scrollbar_controller_->DidScrollUpdate();
   EXPECT_FALSE(did_request_animate_);
 
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   EXPECT_TRUE(did_request_animate_);
   did_request_animate_ = false;
   scrollbar_controller_->Animate(time);
@@ -1713,7 +1678,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, AwakenByProgrammaticScroll) {
   scrollbar_controller_->DidScrollUpdate();
   EXPECT_FALSE(did_request_animate_);
 
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   EXPECT_TRUE(did_request_animate_);
   did_request_animate_ = false;
   time += base::TimeDelta::FromSeconds(2);
@@ -1736,7 +1701,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest, AwakenByProgrammaticScroll) {
 
   time += base::TimeDelta::FromSeconds(1);
   scrollbar_controller_->DidScrollUpdate();
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   time += base::TimeDelta::FromSeconds(1);
   scrollbar_controller_->Animate(time);
   EXPECT_TRUE(did_request_animate_);
@@ -1766,7 +1731,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest,
   base::TimeTicks time;
   time += base::TimeDelta::FromSeconds(1);
   scrollbar_controller_->DidScrollUpdate();
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   EXPECT_TRUE(did_request_animate_);
   did_request_animate_ = false;
   scrollbar_controller_->Animate(time);
@@ -1806,7 +1771,7 @@ TEST_F(ScrollbarAnimationControllerAndroidTest,
   time += base::TimeDelta::FromSeconds(1);
   scrollbar_controller_->DidScrollUpdate();
   EXPECT_FALSE(did_request_animate_);
-  start_fade_.Run();
+  std::move(start_fade_).Run();
   EXPECT_TRUE(did_request_animate_);
   did_request_animate_ = false;
   scrollbar_controller_->Animate(time);

@@ -41,6 +41,7 @@ function expand(button, valueDiv, delayFactor) {
   button.textContent = loadTimeData.getString('sysinfoPageCollapseBtn');
   // Show the spinner container.
   const valueCell = valueDiv.parentNode;
+  valueCell.removeAttribute('aria-hidden');
   valueCell.firstChild.hidden = false;
   // Expanding huge logs can take a very long time, so we do it after a delay
   // to have a chance to render the spinner.
@@ -59,6 +60,9 @@ function expand(button, valueDiv, delayFactor) {
 function collapse(button, valueDiv) {
   button.textContent = loadTimeData.getString('sysinfoPageExpandBtn');
   valueDiv.parentNode.className = 'number-collapsed';
+  // Don't have screen readers announce the empty cell.
+  valueCell = valueDiv.parentNode;
+  valueCell.setAttribute('aria-hidden', 'true');
 }
 
 /**
@@ -66,10 +70,11 @@ function collapse(button, valueDiv) {
  */
 function changeCollapsedStatus() {
   const valueDiv = getValueDivForButton(this);
-  if (valueDiv.parentNode.className == 'number-collapsed')
+  if (valueDiv.parentNode.className == 'number-collapsed') {
     expand(this, valueDiv, 1);
-  else
+  } else {
     collapse(this, valueDiv);
+  }
 }
 
 /**
@@ -78,11 +83,13 @@ function changeCollapsedStatus() {
 function collapseAll() {
   const valueDivs = document.getElementsByClassName('stat-value');
   for (let i = 0; i < valueDivs.length; ++i) {
-    if (valueDivs[i].parentNode.className != 'number-expanded')
+    if (valueDivs[i].parentNode.className != 'number-expanded') {
       continue;
+    }
     const button = getButtonForValueDiv(valueDivs[i]);
-    if (button)
+    if (button) {
       collapse(button, valueDivs[i]);
+    }
   }
 }
 
@@ -92,11 +99,13 @@ function collapseAll() {
 function expandAll() {
   const valueDivs = document.getElementsByClassName('stat-value');
   for (let i = 0; i < valueDivs.length; ++i) {
-    if (valueDivs[i].parentNode.className != 'number-collapsed')
+    if (valueDivs[i].parentNode.className != 'number-collapsed') {
       continue;
+    }
     const button = getButtonForValueDiv(valueDivs[i]);
-    if (button)
+    if (button) {
       expand(button, valueDivs[i], i + 1);
+    }
   }
 }
 
@@ -117,9 +126,13 @@ function createButtonCell(key, isMultiLine) {
   if (isMultiLine) {
     const button = document.createElement('button');
     button.setAttribute('id', '' + key + '-value-btn');
+    button.setAttribute('aria-controls', '' + key + '-value');
     button.onclick = changeCollapsedStatus;
     button.textContent = loadTimeData.getString('sysinfoPageExpandBtn');
     buttonCell.appendChild(button);
+  } else {
+    // Don't have screen reader read the empty cell.
+    buttonCell.setAttribute('aria-hidden', 'true');
   }
 
   return buttonCell;
@@ -138,6 +151,8 @@ function createValueCell(key, value, isMultiLine) {
     loadingContainer.setAttribute('id', '' + key + '-value-loading');
     loadingContainer.hidden = true;
     valueCell.appendChild(loadingContainer);
+    // Don't have screen readers read the empty cell.
+    valueCell.setAttribute('aria-hidden', 'true');
   } else {
     valueCell.className = 'number';
   }
@@ -174,8 +189,9 @@ function finishPageLoading() {
  */
 function processQueue() {
   const closure = tableCreationClosuresQueue.shift();
-  if (closure)
+  if (closure) {
     closure();
+  }
 
   if (tableCreationClosuresQueue.length > 0) {
     // Post a task to process the next item in the queue.

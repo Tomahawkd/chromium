@@ -90,9 +90,7 @@ class EasyUnlockServiceSignin
       override;
   EasyUnlockService::Type GetType() const override;
   AccountId GetAccountId() const override;
-  void ClearPermitAccess() override;
   const base::ListValue* GetRemoteDevices() const override;
-  void SetRemoteDevices(const base::ListValue& devices) override;
   std::string GetChallenge() const override;
   std::string GetWrappedSecret() const override;
   void RecordEasySignInOutcome(const AccountId& account_id,
@@ -103,7 +101,6 @@ class EasyUnlockServiceSignin
   bool IsAllowedInternal() const override;
   bool IsEnabled() const override;
   bool IsChromeOSLoginEnabled() const override;
-  void OnWillFinalizeUnlock(bool success) override;
   void OnSuspendDoneInternal() override;
   void OnBluetoothAdapterPresentChanged() override;
 
@@ -160,7 +157,7 @@ class EasyUnlockServiceSignin
   std::unique_ptr<proximity_auth::ProximityAuthLocalStatePrefManager>
       pref_manager_;
 
-  base::WeakPtrFactory<EasyUnlockServiceSignin> weak_ptr_factory_;
+  base::WeakPtrFactory<EasyUnlockServiceSignin> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EasyUnlockServiceSignin);
 };

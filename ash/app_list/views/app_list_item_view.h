@@ -12,9 +12,6 @@
 
 #include "ash/app_list/app_list_export.h"
 #include "ash/app_list/model/app_list_item_observer.h"
-#include "ash/app_list/views/app_list_menu_model_adapter.h"
-#include "ash/app_list/views/image_shadow_animator.h"
-#include "ash/public/interfaces/menu.mojom.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
@@ -22,24 +19,27 @@
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
 
+namespace ui {
+class SimpleMenuModel;
+}  // namespace ui
+
 namespace views {
 class ImageView;
 class Label;
 class ProgressBar;
 }  // namespace views
 
-namespace app_list {
+namespace ash {
 
+class AppListConfig;
 class AppListItem;
+class AppListMenuModelAdapter;
 class AppListViewDelegate;
 class AppsGridView;
 
-class APP_LIST_EXPORT AppListItemView
-    : public views::Button,
-      public views::ContextMenuController,
-      public AppListItemObserver,
-      public ImageShadowAnimator::Delegate,
-      public AppListMenuModelAdapter::Delegate {
+class APP_LIST_EXPORT AppListItemView : public views::Button,
+                                        public views::ContextMenuController,
+                                        public AppListItemObserver {
  public:
   // Internal class name.
   static const char kViewClassName[];
@@ -59,8 +59,6 @@ class APP_LIST_EXPORT AppListItemView
   void SetItemName(const base::string16& display_name,
                    const base::string16& full_name);
   void SetItemIsInstalling(bool is_installing);
-  bool is_highlighted() { return is_highlighted_; }  // for unit test
-  void SetItemIsHighlighted(bool is_highlighted);
   void SetItemPercentDownloaded(int percent_downloaded);
 
   void CancelContextMenu();
@@ -69,6 +67,13 @@ class APP_LIST_EXPORT AppListItemView
   gfx::Point GetDragImageOffset();
 
   void SetAsAttemptedFolderTarget(bool is_target_folder);
+
+  // Sets focus without a11y announcements or focus ring.
+  void SilentlyRequestFocus();
+
+  // Helper for getting current app list config from the parents in the app list
+  // view hierarchy.
+  const AppListConfig& GetAppListConfig() const;
 
   AppListItem* item() const { return item_weak_; }
 
@@ -96,12 +101,14 @@ class APP_LIST_EXPORT AppListItemView
   // Returns the icon bounds for with |target_bounds| as the bounds of this view
   // and given |icon_size|.
   static gfx::Rect GetIconBoundsForTargetViewBounds(
+      const AppListConfig& config,
       const gfx::Rect& target_bounds,
       const gfx::Size& icon_size);
 
   // Returns the title bounds for with |target_bounds| as the bounds of this
   // view and given |title_size|.
   static gfx::Rect GetTitleBoundsForTargetViewBounds(
+      const AppListConfig& config,
       const gfx::Rect& target_bounds,
       const gfx::Size& title_size);
 
@@ -111,19 +118,11 @@ class APP_LIST_EXPORT AppListItemView
       const gfx::Rect& target_bounds,
       const gfx::Size& progress_bar_size);
 
-  // If the item is not in a folder, not highlighted, not being dragged, and not
-  // having something dropped onto it, enables subpixel AA for the title.
-  void SetTitleSubpixelAA();
-
   // views::Button overrides:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
   // views::View overrides:
-  bool GetTooltipText(const gfx::Point& p,
-                      base::string16* tooltip) const override;
-
-  // ImageShadowAnimator::Delegate overrides:
-  void ImageShadowAnimationProgressed(ImageShadowAnimator* animator) override;
+  base::string16 GetTooltipText(const gfx::Point& p) const override;
 
   // When a dragged view enters this view, a preview circle is shown for
   // non-folder item while the icon is enlarged for folder item. When a
@@ -133,6 +132,13 @@ class APP_LIST_EXPORT AppListItemView
 
   // Enables background blur for folder icon if |enabled| is true.
   void SetBackgroundBlurEnabled(bool enabled);
+
+  // Ensures this item view has its own layer.
+  void EnsureLayer();
+
+  void FireMouseDragTimerForTest();
+
+  bool is_folder() const { return is_folder_; }
 
  private:
   class IconImageView;
@@ -176,17 +182,17 @@ class APP_LIST_EXPORT AppListItemView
 
   // Callback invoked when a context menu is received after calling
   // |AppListViewDelegate::GetContextMenuModel|.
-  void OnContextMenuModelReceived(const gfx::Point& point,
-                                  ui::MenuSourceType source_type,
-                                  std::vector<ash::mojom::MenuItemPtr> menu);
+  void OnContextMenuModelReceived(
+      const gfx::Point& point,
+      ui::MenuSourceType source_type,
+      std::unique_ptr<ui::SimpleMenuModel> menu_model);
 
   // views::ContextMenuController overrides:
-  void ShowContextMenuForView(views::View* source,
-                              const gfx::Point& point,
-                              ui::MenuSourceType source_type) override;
+  void ShowContextMenuForViewImpl(views::View* source,
+                                  const gfx::Point& point,
+                                  ui::MenuSourceType source_type) override;
 
   // views::Button overrides:
-  void StateChanged(ButtonState old_state) override;
   bool ShouldEnterPushedState(const ui::Event& event) override;
   void PaintButtonContents(gfx::Canvas* canvas) override;
 
@@ -203,14 +209,11 @@ class APP_LIST_EXPORT AppListItemView
   void OnBlur() override;
 
   // AppListItemObserver overrides:
-  void ItemIconChanged() override;
+  void ItemIconChanged(ash::AppListConfigType config_type) override;
   void ItemNameChanged() override;
   void ItemIsInstallingChanged() override;
   void ItemPercentDownloadedChanged() override;
   void ItemBeingDestroyed() override;
-
-  // AppListMenuModelAdapter::Delegate overrides;
-  void ExecuteCommand(int command_id, int event_flags) override;
 
   // Returns the radius of preview circle.
   int GetPreviewCircleRadius() const;
@@ -222,13 +225,12 @@ class APP_LIST_EXPORT AppListItemView
   void AdaptBoundsForSelectionHighlight(gfx::Rect* rect);
 
   const bool is_folder_;
-  const bool is_in_folder_;
 
   // Whether context menu options have been requested. Prevents multiple
   // requests.
   bool waiting_for_context_menu_options_ = false;
 
-  AppListItem* item_weak_;  // Owned by AppListModel. Can be NULL.
+  AppListItem* item_weak_;  // Owned by AppListModel. Can be nullptr.
 
   AppListViewDelegate* delegate_;            // Unowned.
   AppsGridView* apps_grid_view_;             // Parent view, owns this.
@@ -249,7 +251,9 @@ class APP_LIST_EXPORT AppListItemView
   // True if the drag host proxy is crated for mouse dragging.
   bool mouse_drag_proxy_created_ = false;
 
-  std::unique_ptr<ImageShadowAnimator> shadow_animator_;
+  // Whether AppsGridView should not be notified of a focus event, triggering
+  // A11y alerts and a focus ring.
+  bool focus_silently_ = false;
 
   // The animation that runs when dragged view enters or exits this view.
   std::unique_ptr<gfx::SlideAnimation> dragged_view_hover_animation_;
@@ -258,11 +262,13 @@ class APP_LIST_EXPORT AppListItemView
   int preview_circle_radius_ = 0;
 
   bool is_installing_ = false;
-  bool is_highlighted_ = false;
 
   // Whether |context_menu_| was cancelled as the result of a continuous drag
   // gesture.
   bool menu_close_initiated_from_drag_ = false;
+
+  // Whether |context_menu_| was shown via key event.
+  bool menu_show_initiated_from_key_ = false;
 
   base::string16 tooltip_text_;
 
@@ -271,11 +277,14 @@ class APP_LIST_EXPORT AppListItemView
   // A timer to defer showing drag UI when the app item is touch pressed.
   base::OneShotTimer touch_drag_timer_;
 
-  base::WeakPtrFactory<AppListItemView> weak_ptr_factory_;
+  // The shadow margins added to the app list item title.
+  gfx::Insets title_shadow_margins_;
+
+  base::WeakPtrFactory<AppListItemView> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppListItemView);
 };
 
-}  // namespace app_list
+}  // namespace ash
 
 #endif  // ASH_APP_LIST_VIEWS_APP_LIST_ITEM_VIEW_H_

@@ -28,7 +28,8 @@ void PasswordTabHelper::SetBaseViewController(
   controller_.baseViewController = baseViewController;
 }
 
-void PasswordTabHelper::SetDispatcher(id<ApplicationCommands> dispatcher) {
+void PasswordTabHelper::SetDispatcher(
+    id<ApplicationCommands, PasswordBreachCommands> dispatcher) {
   controller_.dispatcher = dispatcher;
 }
 
@@ -45,6 +46,15 @@ id<PasswordFormFiller> PasswordTabHelper::GetPasswordFormFiller() {
   return controller_.passwordFormFiller;
 }
 
+password_manager::PasswordGenerationFrameHelper*
+PasswordTabHelper::GetGenerationHelper() {
+  return controller_.passwordGenerationHelper;
+}
+
+password_manager::PasswordManager* PasswordTabHelper::GetPasswordManager() {
+  return controller_.passwordManager;
+}
+
 PasswordTabHelper::PasswordTabHelper(web::WebState* web_state)
     : controller_([[PasswordController alloc] initWithWebState:web_state]) {
   web_state->AddObserver(this);
@@ -54,3 +64,5 @@ void PasswordTabHelper::WebStateDestroyed(web::WebState* web_state) {
   web_state->RemoveObserver(this);
   controller_ = nil;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(PasswordTabHelper)

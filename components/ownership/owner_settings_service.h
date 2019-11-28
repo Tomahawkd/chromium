@@ -51,12 +51,12 @@ class OWNERSHIP_EXPORT OwnerSettingsService : public KeyedService {
         const enterprise_management::PolicyData& policy_data) {}
   };
 
-  typedef base::Callback<void(
+  typedef base::OnceCallback<void(
       std::unique_ptr<enterprise_management::PolicyFetchResponse>
           policy_response)>
       AssembleAndSignPolicyAsyncCallback;
 
-  typedef base::Callback<void(bool is_owner)> IsOwnerCallback;
+  typedef base::RepeatingCallback<void(bool is_owner)> IsOwnerCallback;
 
   explicit OwnerSettingsService(
       const scoped_refptr<ownership::OwnerKeyUtil>& owner_key_util);
@@ -70,13 +70,18 @@ class OWNERSHIP_EXPORT OwnerSettingsService : public KeyedService {
 
   void RemoveObserver(Observer* observer);
 
-  // Returns whether current user is owner or not. When this method
-  // is called too early, incorrect result can be returned because
-  // private key loading may be in progress.
+  // Returns whether this OwnerSettingsService has finished loading keys, and so
+  // we are able to confirm whether the current user is the owner or not.
+  virtual bool IsReady();
+
+  // Returns whether current user is owner or not - as long as IsReady()
+  // returns true. When IsReady() is false, we don't yet know if the current
+  // user is the owner or not. In that case this method returns false.
   virtual bool IsOwner();
 
-  // Determines whether current user is owner or not, responds via
-  // |callback|.
+  // Determines whether current user is owner or not, responds via |callback|.
+  // Reliably returns the correct value, but will not respond on the callback
+  // until IsReady() returns true.
   virtual void IsOwnerAsync(const IsOwnerCallback& callback);
 
   // Assembles and signs |policy| on the |task_runner|, responds on
@@ -84,7 +89,7 @@ class OWNERSHIP_EXPORT OwnerSettingsService : public KeyedService {
   bool AssembleAndSignPolicyAsync(
       base::TaskRunner* task_runner,
       std::unique_ptr<enterprise_management::PolicyData> policy,
-      const AssembleAndSignPolicyAsyncCallback& callback);
+      AssembleAndSignPolicyAsyncCallback callback);
 
   // Checks whether |setting| is handled by OwnerSettingsService.
   virtual bool HandlesSetting(const std::string& setting) = 0;
@@ -141,7 +146,7 @@ class OWNERSHIP_EXPORT OwnerSettingsService : public KeyedService {
   base::ThreadChecker thread_checker_;
 
  private:
-  base::WeakPtrFactory<OwnerSettingsService> weak_factory_;
+  base::WeakPtrFactory<OwnerSettingsService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(OwnerSettingsService);
 };

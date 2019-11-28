@@ -55,8 +55,8 @@ class TestShellContentRendererClient : public ShellContentRendererClient {
         latest_error_stale_copy_in_cache_(false) {}
 
   void PrepareErrorPage(content::RenderFrame* render_frame,
-                        const blink::WebURLRequest& failed_request,
                         const blink::WebURLError& error,
+                        const std::string& http_method,
                         std::string* error_html) override {
     if (error_html)
       *error_html = "A suffusion of yellow.";
@@ -123,10 +123,9 @@ class RenderViewBrowserTest : public ContentBrowserTest {
       int* error_code, bool* stale_cache_entry_present) {
     bool result = false;
 
-    PostTaskToInProcessRendererAndWait(
-        base::Bind(&RenderViewBrowserTest::GetLatestErrorFromRendererClient0,
-                   renderer_client_, &result, error_code,
-                   stale_cache_entry_present));
+    PostTaskToInProcessRendererAndWait(base::BindOnce(
+        &RenderViewBrowserTest::GetLatestErrorFromRendererClient0,
+        renderer_client_, &result, error_code, stale_cache_entry_present));
     return result;
   }
 

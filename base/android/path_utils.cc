@@ -10,7 +10,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/files/file_path.h"
 
-#include "jni/PathUtils_jni.h"
+#include "base/base_jni_headers/PathUtils_jni.h"
 
 namespace base {
 namespace android {
@@ -75,15 +75,6 @@ bool GetExternalStorageDirectory(FilePath* result) {
       Java_PathUtils_getExternalStorageDirectory(env);
   FilePath storage_path(ConvertJavaStringToUTF8(path));
   *result = storage_path;
-  return true;
-}
-
-bool GetPathToBaseApk(FilePath* result) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> path =
-      Java_PathUtils_getPathToBaseApk(env);
-  FilePath apk_path(ConvertJavaStringToUTF8(path));
-  *result = apk_path;
   return true;
 }
 

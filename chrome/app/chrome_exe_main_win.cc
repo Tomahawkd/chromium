@@ -15,6 +15,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "base/process/memory.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
@@ -27,12 +28,12 @@
 #include "chrome/app/main_dll_loader_win.h"
 #include "chrome/browser/policy/policy_path_parser.h"
 #include "chrome/browser/win/chrome_process_finder.h"
+#include "chrome/chrome_elf/chrome_elf_main.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "chrome/install_static/install_util.h"
 #include "chrome/install_static/user_data_dir.h"
-#include "chrome_elf/chrome_elf_main.h"
 #include "components/crash/content/app/crash_switches.h"
 #include "components/crash/content/app/crashpad.h"
 #include "components/crash/content/app/fallback_crash_handling_win.h"
@@ -53,7 +54,7 @@ const char* const kFastStartSwitches[] = {
 };
 
 bool IsFastStartSwitch(const std::string& command_line_switch) {
-  for (size_t i = 0; i < arraysize(kFastStartSwitches); ++i) {
+  for (size_t i = 0; i < base::size(kFastStartSwitches); ++i) {
     if (command_line_switch == kFastStartSwitches[i])
       return true;
   }
@@ -62,7 +63,7 @@ bool IsFastStartSwitch(const std::string& command_line_switch) {
 
 bool ContainsNonFastStartFlag(const base::CommandLine& command_line) {
   const base::CommandLine::SwitchMap& switches = command_line.GetSwitches();
-  if (switches.size() > arraysize(kFastStartSwitches))
+  if (switches.size() > base::size(kFastStartSwitches))
     return true;
   for (base::CommandLine::SwitchMap::const_iterator it = switches.begin();
        it != switches.end(); ++it) {
@@ -94,11 +95,11 @@ bool HasValidWindowsPrefetchArgument(const base::CommandLine& command_line) {
   const base::char16 kPrefetchArgumentPrefix[] = L"/prefetch:";
 
   for (const auto& arg : command_line.argv()) {
-    if (arg.size() == arraysize(kPrefetchArgumentPrefix) &&
+    if (arg.size() == base::size(kPrefetchArgumentPrefix) &&
         base::StartsWith(arg, kPrefetchArgumentPrefix,
                          base::CompareCase::SENSITIVE)) {
-      return arg[arraysize(kPrefetchArgumentPrefix) - 1] >= L'1' &&
-             arg[arraysize(kPrefetchArgumentPrefix) - 1] <= L'8';
+      return arg[base::size(kPrefetchArgumentPrefix) - 1] >= L'1' &&
+             arg[base::size(kPrefetchArgumentPrefix) - 1] <= L'8';
     }
   }
   return false;
@@ -152,7 +153,7 @@ int RunFallbackCrashHandler(const base::CommandLine& cmd_line) {
   // Retrieve the product & version details we need to report the crash
   // correctly.
   wchar_t exe_file[MAX_PATH] = {};
-  CHECK(::GetModuleFileName(nullptr, exe_file, arraysize(exe_file)));
+  CHECK(::GetModuleFileName(nullptr, exe_file, base::size(exe_file)));
 
   base::string16 product_name;
   base::string16 version;
@@ -176,6 +177,10 @@ int main() {
 #endif
   install_static::InitializeFromPrimaryModule();
   SignalInitializeCrashReporting();
+
+  // Done here to ensure that OOMs that happen early in process initialization
+  // are correctly signaled to the OS.
+  base::EnableTerminationOnOutOfMemory();
 
   // Initialize the CommandLine singleton from the environment.
   base::CommandLine::Init(0, nullptr);
@@ -216,7 +221,9 @@ int main() {
   // The exit manager is in charge of calling the dtors of singletons.
   base::AtExitManager exit_manager;
 
-  base::win::EnableHighDPISupport();
+  // Only enable High DPI support for browser and GPU process.
+  if (process_type.empty() || process_type == switches::kGpuProcess)
+    base::win::EnableHighDPISupport();
 
   if (AttemptFastNotify(*command_line))
     return 0;

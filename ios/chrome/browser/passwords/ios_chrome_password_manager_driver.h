@@ -11,7 +11,6 @@
 #include "components/password_manager/core/browser/password_manager_driver.h"
 
 namespace autofill {
-struct PasswordForm;
 struct PasswordFormFillData;
 }  // namespace autofill
 
@@ -22,6 +21,8 @@ class PasswordManager;
 
 // Defines the interface the driver needs to the controller.
 @protocol PasswordManagerDriverDelegate
+
+@property(readonly, nonatomic) const GURL& lastCommittedURL;
 
 - (password_manager::PasswordManager*)passwordManager;
 
@@ -34,6 +35,14 @@ class PasswordManager;
 
 // Informs delegate that there are no saved credentials for the current page.
 - (void)onNoSavedCredentials;
+
+// Gets the PasswordGenerationFrameHelper owned by this delegate.
+- (password_manager::PasswordGenerationFrameHelper*)passwordGenerationHelper;
+
+// Informs delegate of form for password generation found.
+- (void)formEligibleForGenerationFound:
+    (const autofill::PasswordFormGenerationData&)form;
+
 @end
 
 // An iOS implementation of password_manager::PasswordManagerDriver.
@@ -45,28 +54,26 @@ class IOSChromePasswordManagerDriver
   ~IOSChromePasswordManagerDriver() override;
 
   // password_manager::PasswordManagerDriver implementation.
+  int GetId() const override;
   void FillPasswordForm(
       const autofill::PasswordFormFillData& form_data) override;
   void InformNoSavedCredentials() override;
-  void AllowPasswordGenerationForForm(
-      const autofill::PasswordForm& form) override;
-  void FormsEligibleForGenerationFound(
-      const std::vector<autofill::PasswordFormGenerationData>& forms) override;
+  void FormEligibleForGenerationFound(
+      const autofill::PasswordFormGenerationData& form) override;
   void GeneratedPasswordAccepted(const base::string16& password) override;
   void FillSuggestion(const base::string16& username,
                       const base::string16& password) override;
   void PreviewSuggestion(const base::string16& username,
                          const base::string16& password) override;
-  void ShowInitialPasswordAccountSuggestions(
-      const autofill::PasswordFormFillData& form_data) override;
   void ClearPreviewedForm() override;
-  password_manager::PasswordGenerationManager* GetPasswordGenerationManager()
+  password_manager::PasswordGenerationFrameHelper* GetPasswordGenerationHelper()
       override;
   password_manager::PasswordManager* GetPasswordManager() override;
   password_manager::PasswordAutofillManager* GetPasswordAutofillManager()
       override;
   autofill::AutofillDriver* GetAutofillDriver() override;
   bool IsMainFrame() const override;
+  const GURL& GetLastCommittedURL() const override;
 
  private:
   id<PasswordManagerDriverDelegate> delegate_;  // (weak)

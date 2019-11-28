@@ -6,17 +6,21 @@
 #define ASH_LOGIN_UI_LOCK_SCREEN_H_
 
 #include "ash/ash_export.h"
+#include "ash/public/cpp/login_types.h"
 #include "ash/session/session_observer.h"
+#include "ash/tray_action/tray_action.h"
 #include "ash/tray_action/tray_action_observer.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
+#include "ui/base/clipboard/clipboard.h"
+
+namespace views {
+class Widget;
+}
 
 namespace ash {
 
 class LockContentsView;
-class LockWindow;
-class LoginDataDispatcher;
-class TrayAction;
 
 class ASH_EXPORT LockScreen : public TrayActionObserver,
                               public SessionObserver {
@@ -47,21 +51,21 @@ class ASH_EXPORT LockScreen : public TrayActionObserver,
   // Returns true if the instance has been instantiated.
   static bool HasInstance();
 
-  LockWindow* window() { return window_; }
+  views::Widget* widget() { return widget_.get(); }
 
   // Destroys an existing lock screen instance.
   void Destroy();
 
   ScreenType screen_type() const { return type_; }
 
-  // Returns the active data dispatcher.
-  LoginDataDispatcher* data_dispatcher();
-
   // Returns if the screen has been shown (i.e. |LockWindow::Show| was called).
   bool is_shown() const { return is_shown_; }
 
   void FocusNextUser();
   void FocusPreviousUser();
+  void ShowParentAccessDialog();
+  void RequestSecurityTokenPin(SecurityTokenPinRequest request);
+  void ClearSecurityTokenPinRequest();
 
   // TrayActionObserver:
   void OnLockScreenNoteStateChanged(mojom::TrayActionState state) override;
@@ -77,13 +81,15 @@ class ASH_EXPORT LockScreen : public TrayActionObserver,
   // The type of screen shown. Controls how the screen is dismissed.
   const ScreenType type_;
 
-  // Unowned pointer to the window which hosts the lock screen.
-  LockWindow* window_ = nullptr;
+  // The lock screen widget.
+  std::unique_ptr<views::Widget> widget_;
 
   // Unowned pointer to the LockContentsView hosted in lock window.
   LockContentsView* contents_view_ = nullptr;
 
   bool is_shown_ = false;
+
+  std::unique_ptr<ui::Clipboard> saved_clipboard_;
 
   ScopedObserver<TrayAction, TrayActionObserver> tray_action_observer_{this};
   ScopedSessionObserver session_observer_{this};

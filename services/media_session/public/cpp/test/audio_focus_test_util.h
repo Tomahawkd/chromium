@@ -10,7 +10,8 @@
 #include "base/component_export.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
 
 namespace media_session {
@@ -22,40 +23,42 @@ class COMPONENT_EXPORT(MEDIA_SESSION_TEST_SUPPORT_CPP) TestAudioFocusObserver
   TestAudioFocusObserver();
   ~TestAudioFocusObserver() override;
 
-  void OnFocusGained(media_session::mojom::MediaSessionInfoPtr session,
-                     media_session::mojom::AudioFocusType type) override;
-  void OnFocusLost(media_session::mojom::MediaSessionInfoPtr session) override;
-  void OnActiveSessionChanged(
+  void OnFocusGained(
+      media_session::mojom::AudioFocusRequestStatePtr session) override;
+  void OnFocusLost(
       media_session::mojom::AudioFocusRequestStatePtr session) override;
 
   void WaitForGainedEvent();
   void WaitForLostEvent();
 
-  media_session::mojom::AudioFocusType focus_gained_type() const {
-    DCHECK(!focus_gained_session_.is_null());
-    return focus_gained_type_;
+  mojo::PendingRemote<media_session::mojom::AudioFocusObserver>
+  BindNewPipeAndPassRemote();
+
+  const media_session::mojom::AudioFocusRequestStatePtr& focus_gained_session()
+      const {
+    return focus_gained_session_;
   }
 
-  void BindToMojoRequest(media_session::mojom::AudioFocusObserverRequest);
-
-  // These store the values we received.
-  media_session::mojom::MediaSessionInfoPtr focus_gained_session_;
-  media_session::mojom::MediaSessionInfoPtr focus_lost_session_;
-  media_session::mojom::AudioFocusRequestStatePtr active_session_;
+  const media_session::mojom::AudioFocusRequestStatePtr& focus_lost_session()
+      const {
+    return focus_lost_session_;
+  }
 
   // These store the order of notifications that were received by the observer.
   enum class NotificationType {
     kFocusGained,
     kFocusLost,
-    kActiveSessionChanged,
   };
   const std::vector<NotificationType>& notifications() const {
     return notifications_;
   }
 
  private:
-  mojo::Binding<mojom::AudioFocusObserver> binding_;
-  media_session::mojom::AudioFocusType focus_gained_type_;
+  mojo::Receiver<mojom::AudioFocusObserver> receiver_{this};
+
+  // These store the values we received.
+  media_session::mojom::AudioFocusRequestStatePtr focus_gained_session_;
+  media_session::mojom::AudioFocusRequestStatePtr focus_lost_session_;
 
   // If either of these are true we will quit the run loop if we observe a gain
   // or lost event.

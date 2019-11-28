@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/signin/dice_turn_sync_on_helper_delegate_impl.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
@@ -13,9 +14,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/startup/startup_types.h"
 #include "chrome/browser/ui/tab_dialogs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
@@ -91,16 +90,15 @@ void DiceTurnSyncOnHelperDelegateImpl::SigninDialogDelegate::
 
 DiceTurnSyncOnHelperDelegateImpl::DiceTurnSyncOnHelperDelegateImpl(
     Browser* browser)
-    : browser_(browser),
-      profile_(browser_->profile()),
-      scoped_browser_list_observer_(this),
-      scoped_login_ui_service_observer_(this) {
+    : browser_(browser), profile_(browser_->profile()) {
   DCHECK(browser);
   DCHECK(profile_);
-  scoped_browser_list_observer_.Add(BrowserList::GetInstance());
+  BrowserList::AddObserver(this);
 }
 
-DiceTurnSyncOnHelperDelegateImpl::~DiceTurnSyncOnHelperDelegateImpl() {}
+DiceTurnSyncOnHelperDelegateImpl::~DiceTurnSyncOnHelperDelegateImpl() {
+  BrowserList::RemoveObserver(this);
+}
 
 void DiceTurnSyncOnHelperDelegateImpl::ShowLoginError(
     const std::string& email,
@@ -159,17 +157,9 @@ void DiceTurnSyncOnHelperDelegateImpl::ShowSyncSettings() {
   chrome::ShowSettingsSubPage(browser_, chrome::kSyncSetupSubPage);
 }
 
-void DiceTurnSyncOnHelperDelegateImpl::ShowSigninPageInNewProfile(
-    Profile* new_profile,
-    const std::string& username) {
-  profiles::FindOrCreateNewWindowForProfile(
-      new_profile, chrome::startup::IS_PROCESS_STARTUP,
-      chrome::startup::IS_FIRST_RUN, false);
-  Browser* browser = chrome::FindTabbedBrowser(new_profile, false);
-  browser->signin_view_controller()->ShowDiceSigninTab(
-      profiles::BUBBLE_VIEW_MODE_GAIA_SIGNIN, browser,
-      signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
-      signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO, username);
+void DiceTurnSyncOnHelperDelegateImpl::SwitchToProfile(Profile* new_profile) {
+  profile_ = new_profile;
+  browser_ = nullptr;
 }
 
 void DiceTurnSyncOnHelperDelegateImpl::OnSyncConfirmationUIClosed(

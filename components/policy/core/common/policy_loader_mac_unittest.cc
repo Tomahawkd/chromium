@@ -12,9 +12,9 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "components/policy/core/common/async_policy_provider.h"
@@ -133,10 +133,9 @@ PolicyProviderTestHarness* TestHarness::Create() {
 }  // namespace
 
 // Instantiate abstract test case for basic policy reading tests.
-INSTANTIATE_TEST_CASE_P(
-    PolicyProviderMacTest,
-    ConfigurationPolicyProviderTest,
-    testing::Values(TestHarness::Create));
+INSTANTIATE_TEST_SUITE_P(PolicyProviderMacTest,
+                         ConfigurationPolicyProviderTest,
+                         testing::Values(TestHarness::Create));
 
 // TODO(joaodasilva): instantiate Configuration3rdPartyPolicyProviderTest too
 // once the mac loader supports 3rd party policy. http://crbug.com/108995
@@ -149,9 +148,8 @@ class PolicyLoaderMacTest : public PolicyTestBase {
 
   void SetUp() override {
     PolicyTestBase::SetUp();
-    std::unique_ptr<AsyncPolicyLoader> loader(
-        new PolicyLoaderMac(scoped_task_environment_.GetMainThreadTaskRunner(),
-                            base::FilePath(), prefs_));
+    std::unique_ptr<AsyncPolicyLoader> loader(new PolicyLoaderMac(
+        task_environment_.GetMainThreadTaskRunner(), base::FilePath(), prefs_));
     provider_.reset(
         new AsyncPolicyProvider(&schema_registry_, std::move(loader)));
     provider_->Init(&schema_registry_);
@@ -171,16 +169,15 @@ TEST_F(PolicyLoaderMacTest, Invalid) {
       base::SysUTF8ToCFStringRef(test_keys::kKeyString));
   const char buffer[] = "binary \xde\xad\xbe\xef data";
   ScopedCFTypeRef<CFDataRef> invalid_data(
-      CFDataCreate(kCFAllocatorDefault,
-                   reinterpret_cast<const UInt8 *>(buffer),
-                   arraysize(buffer)));
+      CFDataCreate(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(buffer),
+                   base::size(buffer)));
   ASSERT_TRUE(invalid_data);
   prefs_->AddTestItem(name, invalid_data.get(), true);
   prefs_->AddTestItem(name, invalid_data.get(), false);
 
   // Make the provider read the updated |prefs_|.
   provider_->RefreshPolicies();
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
   const PolicyBundle kEmptyBundle;
   EXPECT_TRUE(provider_->policies().Equals(kEmptyBundle));
 }
@@ -195,7 +192,7 @@ TEST_F(PolicyLoaderMacTest, TestNonForcedValue) {
 
   // Make the provider read the updated |prefs_|.
   provider_->RefreshPolicies();
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
   PolicyBundle expected_bundle;
   expected_bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
       .Set(test_keys::kKeyString, POLICY_LEVEL_RECOMMENDED,

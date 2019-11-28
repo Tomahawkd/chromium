@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "components/keyed_service/core/keyed_service.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer.h"
-#import "ios/web/public/web_state/web_state_observer.h"
+#include "ios/web/public/web_state_observer.h"
 
 @class TextToSpeechNotificationHandler;
 class WebStateList;
@@ -59,9 +59,8 @@ class TextToSpeechPlaybackController : public KeyedService,
                            bool user_action) override;
 
   // WebStateObserver:
-  void NavigationItemCommitted(
-      web::WebState* web_state,
-      const web::LoadCommittedDetails& load_details) override;
+  void DidFinishNavigation(web::WebState* web_state,
+                           web::NavigationContext* navigation_context) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // Helper object that listens for TTS notifications.

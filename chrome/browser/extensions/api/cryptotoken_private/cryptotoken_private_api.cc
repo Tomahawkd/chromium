@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
@@ -23,6 +24,10 @@
 #include "extensions/common/error_utils.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/origin.h"
+
+#if defined(OS_WIN)
+#include "device/fido/win/webauthn_api.h"
+#endif  // defined(OS_WIN)
 
 namespace {
 
@@ -208,6 +213,23 @@ CryptotokenPrivateCanAppIdGetAttestationFunction::Run() {
     return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
   }
 
+#if defined(OS_WIN)
+  // If the request was handled by the Windows WebAuthn API on a version of
+  // Windows that shows an attestation permission prompt, don't show another
+  // one.
+  //
+  // Note that this does not account for the possibility of the
+  // WinWebAuthnApi having been disabled by a FidoDiscoveryFactory override,
+  // which may be done in tests or via the Virtual Authenticator WebDriver
+  // API.
+  if (base::FeatureList::IsEnabled(device::kWebAuthUseNativeWinApi) &&
+      device::WinWebAuthnApi::GetDefault()->IsAvailable() &&
+      device::WinWebAuthnApi::GetDefault()->Version() >=
+          WEBAUTHN_API_VERSION_2) {
+    return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
+  }
+#endif  // defined(OS_WIN)
+
   // Otherwise, show a permission prompt and pass the user's decision back.
   const GURL app_id_url(app_id);
   EXTENSION_FUNCTION_VALIDATE(app_id_url.is_valid());
@@ -215,9 +237,7 @@ CryptotokenPrivateCanAppIdGetAttestationFunction::Run() {
   content::WebContents* web_contents = nullptr;
   if (!ExtensionTabUtil::GetTabById(params->options.tab_id, browser_context(),
                                     true /* include incognito windows */,
-                                    nullptr /* out_browser */,
-                                    nullptr /* out_tab_strip */, &web_contents,
-                                    nullptr /* out_tab_index */)) {
+                                    &web_contents)) {
     return RespondNow(Error("cannot find specified tab"));
   }
 
@@ -240,15 +260,6 @@ void CryptotokenPrivateCanAppIdGetAttestationFunction::Complete(bool result) {
   RecordAttestationEvent(result ? U2FAttestationPromptResult::kAllowed
                                 : U2FAttestationPromptResult::kBlocked);
   Respond(OneArgument(std::make_unique<base::Value>(result)));
-}
-
-CryptotokenPrivateCanProxyToWebAuthnFunction::
-    CryptotokenPrivateCanProxyToWebAuthnFunction() {}
-
-ExtensionFunction::ResponseAction
-CryptotokenPrivateCanProxyToWebAuthnFunction::Run() {
-  return RespondNow(OneArgument(std::make_unique<base::Value>(
-      base::FeatureList::IsEnabled(device::kWebAuthProxyCryptotoken))));
 }
 
 }  // namespace api

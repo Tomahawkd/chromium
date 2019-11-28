@@ -69,9 +69,17 @@ HRESULT WinHttpUrlFetcher::SetRequestBody(const char* body) {
   return S_OK;
 }
 
-HRESULT WinHttpUrlFetcher::Fetch(std::string* response) {
+HRESULT WinHttpUrlFetcher::SetHttpRequestTimeout(const int timeout_in_millis) {
+  DCHECK(timeout_in_millis);
+  timeout_in_millis_ = timeout_in_millis;
+  return S_OK;
+}
+
+HRESULT WinHttpUrlFetcher::Fetch(std::vector<char>* response) {
   USES_CONVERSION;
   DCHECK(response);
+
+  response->clear();
 
   if (!session_.IsValid()) {
     LOGFN(ERROR) << "Invalid fetcher";
@@ -92,9 +100,24 @@ HRESULT WinHttpUrlFetcher::Fetch(std::string* response) {
   }
 
   {
+    // Set timeout if specified.
+    if (timeout_in_millis_ != 0) {
+      if (!::WinHttpSetTimeouts(session_.Get(), timeout_in_millis_,
+                                timeout_in_millis_, timeout_in_millis_,
+                                timeout_in_millis_)) {
+        HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+        LOGFN(ERROR) << "WinHttpSetTimeouts hr=" << putHR(hr);
+        return hr;
+      }
+    }
+  }
+
+  {
     bool use_post = !body_.empty();
     ScopedWinHttpHandle::Handle request = ::WinHttpOpenRequest(
-        connect.Get(), use_post ? L"POST" : L"GET", A2CW(url_.path().c_str()),
+        connect.Get(), use_post ? L"POST" : L"GET",
+        use_post ? A2CW(url_.path().c_str())
+                 : A2CW(url_.PathForRequest().c_str()),
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
         WINHTTP_FLAG_REFRESH | WINHTTP_FLAG_SECURE);
     if (!request) {
@@ -147,19 +170,29 @@ HRESULT WinHttpUrlFetcher::Fetch(std::string* response) {
     return hr;
   }
 
+  // 256k max response size to make sure bad data does not crash GCPW.
+  // This fetcher is only used to retrieve small information such as token
+  // handle status and profile picture images so it should not need a larger
+  // buffer than 256k.
+  constexpr size_t kMaxResponseSize = 256 * 1024 * 1024;
   // Read the response.
   std::unique_ptr<char> buffer(new char[length]);
-  while (length > 0) {
-    DWORD actual;
+  DWORD actual = 0;
+  do {
     if (!::WinHttpReadData(request_.Get(), buffer.get(), length, &actual)) {
       HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
       LOGFN(ERROR) << "WinHttpReadData hr=" << putHR(hr);
       return hr;
     }
 
-    response->append(buffer.get(), actual);
-    length -= actual;
-  }
+    size_t current_size = response->size();
+    response->resize(response->size() + actual);
+    memcpy(response->data() + current_size, buffer.get(), actual);
+    if (response->size() >= kMaxResponseSize) {
+      LOGFN(ERROR) << "Response has exceeded max size=" << kMaxResponseSize;
+      return E_OUTOFMEMORY;
+    }
+  } while (actual);
 
   return S_OK;
 }

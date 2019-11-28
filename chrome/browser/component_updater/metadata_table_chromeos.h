@@ -22,11 +22,8 @@ namespace component_updater {
 // The instance of this Class lives on UI thread.
 class MetadataTable {
  public:
+  explicit MetadataTable(PrefService* pref_service);
   ~MetadataTable();
-
-  // Create and return a MetadataTable instance.
-  static std::unique_ptr<component_updater::MetadataTable> Create(
-      PrefService* perf_service);
 
   // Create and return a MetadataTable instance for testing purpose.
   static std::unique_ptr<component_updater::MetadataTable> CreateForTest();
@@ -47,9 +44,7 @@ class MetadataTable {
   FRIEND_TEST_ALL_PREFIXES(CrOSComponentInstallerMetadataTest, Add);
   FRIEND_TEST_ALL_PREFIXES(CrOSComponentInstallerMetadataTest, Delete);
 
-  explicit MetadataTable(PrefService* pref_service);
-
-  // Constructor for testing purpose.
+  // Constructor for testing purpose. Access via CreateForTest().
   MetadataTable();
 
   // Loads |installed_items_| from PrefService.
@@ -70,9 +65,11 @@ class MetadataTable {
   bool HasComponentForUser(const std::string& hashed_user_id,
                            const std::string& component_name) const;
 
-  base::Value::ListStorage::const_iterator GetInstalledItemIndex(
-      const std::string& hashed_user_id,
-      const std::string& component_name) const;
+  // Returns the index of an installed item with the given |hashed_user_id| and
+  // |component_name|. Returns `installed_items_.GetList().size()` if no such
+  // item exists.
+  size_t GetInstalledItemIndex(const std::string& hashed_user_id,
+                               const std::string& component_name) const;
 
   // Information about installed items.
   base::Value installed_items_;

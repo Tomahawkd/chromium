@@ -10,8 +10,9 @@
 #include "ash/public/cpp/ash_public_export.h"
 #include "ash/public/cpp/caption_buttons/caption_button_model.h"
 #include "ash/public/cpp/caption_buttons/frame_size_button_delegate.h"
+#include "ash/public/cpp/caption_buttons/snap_controller.h"
 #include "base/macros.h"
-#include "ui/gfx/animation/animation_delegate.h"
+#include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/view.h"
 #include "ui/views/window/frame_caption_button.h"
@@ -33,13 +34,12 @@ class ASH_PUBLIC_EXPORT FrameCaptionButtonContainerView
     : public views::View,
       public views::ButtonListener,
       public FrameSizeButtonDelegate,
-      public gfx::AnimationDelegate {
+      public views::AnimationDelegateViews {
  public:
   static const char kViewClassName[];
 
   // |frame| is the views::Widget that the caption buttons act on.
-  FrameCaptionButtonContainerView(views::Widget* frame,
-                                  FrameCaptionDelegate* delegate);
+  explicit FrameCaptionButtonContainerView(views::Widget* frame);
   ~FrameCaptionButtonContainerView() override;
 
   // For testing.
@@ -82,9 +82,6 @@ class ASH_PUBLIC_EXPORT FrameCaptionButtonContainerView
   // a repaint.
   void SetPaintAsActive(bool paint_as_active);
 
-  // Sets whether the buttons should use themed foreground color computation.
-  void SetColorMode(views::FrameCaptionButton::ColorMode color_mode);
-
   // Sets the background frame color that buttons should compute their color
   // respective to.
   void SetBackgroundColor(SkColor background_color);
@@ -110,7 +107,7 @@ class ASH_PUBLIC_EXPORT FrameCaptionButtonContainerView
   void ChildPreferredSizeChanged(View* child) override;
   void ChildVisibilityChanged(View* child) override;
 
-  // gfx::AnimationDelegate:
+  // views::AnimationDelegateViews:
   void AnimationEnded(const gfx::Animation* animation) override;
   void AnimationProgressed(const gfx::Animation* animation) override;
 
@@ -140,14 +137,11 @@ class ASH_PUBLIC_EXPORT FrameCaptionButtonContainerView
       const views::FrameCaptionButton* to_hover,
       const views::FrameCaptionButton* to_press) override;
   bool CanSnap() override;
-  void ShowSnapPreview(mojom::SnapDirection snap) override;
-  void CommitSnap(mojom::SnapDirection snap) override;
+  void ShowSnapPreview(SnapDirection snap) override;
+  void CommitSnap(SnapDirection snap) override;
 
   // The widget that the buttons act on.
   views::Widget* frame_;
-
-  // The delegate that handles button actions.
-  FrameCaptionDelegate* delegate_;
 
   // The buttons. In the normal button style, at most one of |minimize_button_|
   // and |size_button_| is visible.

@@ -24,6 +24,8 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "device/gamepad/gamepad_id_list.h"
+#include "device/gamepad/gamepad_uma.h"
 
 namespace device {
 
@@ -134,14 +136,6 @@ struct XboxOneButtonData {
   int16_t stick_right_y;
 };
 
-struct XboxOneEliteButtonData {
-  // The Xbox One Elite controller supports button remapping and exposes both
-  // the mapped and unmapped data in the button state report.
-  XboxOneButtonData button_data;
-  XboxOneButtonData true_button_data;
-  int8_t paddle;
-};
-
 struct XboxOneGuideData {
   uint8_t down;
   uint8_t dummy1;
@@ -167,10 +161,17 @@ struct XboxOneRumbleData {
 static_assert(sizeof(Xbox360ButtonData) == 18, "Xbox360ButtonData wrong size");
 static_assert(sizeof(Xbox360RumbleData) == 8, "Xbox360RumbleData wrong size");
 static_assert(sizeof(XboxOneButtonData) == 14, "XboxOneButtonData wrong size");
-static_assert(sizeof(XboxOneEliteButtonData) == 29,
-              "XboxOneEliteButtonData wrong size");
 static_assert(sizeof(XboxOneGuideData) == 2, "XboxOneGuideData wrong size");
 static_assert(sizeof(XboxOneRumbleData) == 13, "XboxOneRumbleData wrong size");
+
+// Report lengths for the input reports that carry gamepad button and axis data
+// on special Xbox One devices. These devices support input remapping and
+// include both the mapped and unmapped data in the input report, along with
+// additional data specific to the device. This driver only uses the mapped
+// data, which is at the beginning of the report and has the same structure as
+// the standard XboxOneButtonData report.
+const size_t kXboxOneEliteButtonDataBytes = 29;
+const size_t kXboxAdaptiveButtonDataBytes = 50;
 
 // From MSDN:
 // http://msdn.microsoft.com/en-us/library/windows/desktop/ee417001(v=vs.85).aspx#dead_zone
@@ -291,6 +292,8 @@ XboxControllerMac::ControllerType ControllerTypeFromIds(uint16_t vendor_id,
         return XboxControllerMac::XBOX_ONE_ELITE_CONTROLLER;
       case XboxControllerMac::kProductXboxOneSController:
         return XboxControllerMac::XBOX_ONE_S_CONTROLLER;
+      case XboxControllerMac::kProductXboxAdaptiveController:
+        return XboxControllerMac::XBOX_ADAPTIVE_CONTROLLER;
       default:
         break;
     }
@@ -303,103 +306,24 @@ XboxControllerMac::ControllerType ControllerTypeFromIds(uint16_t vendor_id,
 XboxControllerMac::XboxControllerMac(Delegate* delegate)
     : delegate_(delegate) {}
 
-XboxControllerMac::~XboxControllerMac() {
-  if (playing_effect_callback_)
-    RunCallbackOnMojoThread(
-        mojom::GamepadHapticsResult::GamepadHapticsResultPreempted);
+XboxControllerMac::~XboxControllerMac() = default;
+
+void XboxControllerMac::DoShutdown() {
   if (source_)
     CFRunLoopSourceInvalidate(source_);
+  source_.reset();
   if (interface_ && interface_is_open_)
     (*interface_)->USBInterfaceClose(interface_);
+  interface_.reset();
   if (device_ && device_is_open_)
     (*device_)->USBDeviceClose(device_);
+  device_.reset();
 }
 
-void XboxControllerMac::PlayEffect(
-    mojom::GamepadHapticEffectType type,
-    mojom::GamepadEffectParametersPtr params,
-    mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback) {
-  if (type !=
-      mojom::GamepadHapticEffectType::GamepadHapticEffectTypeDualRumble) {
-    // Only dual-rumble effects are supported.
-    std::move(callback).Run(
-        mojom::GamepadHapticsResult::GamepadHapticsResultNotSupported);
-    return;
-  }
-
-  int sequence_id = ++sequence_id_;
-
-  if (playing_effect_callback_) {
-    RunCallbackOnMojoThread(
-        mojom::GamepadHapticsResult::GamepadHapticsResultPreempted);
-  }
-
-  playing_effect_task_runner_ = base::ThreadTaskRunnerHandle::Get();
-  playing_effect_callback_ = std::move(callback);
-
-  PlayDualRumbleEffect(sequence_id, params->duration, params->start_delay,
-                       params->strong_magnitude, params->weak_magnitude);
-}
-
-void XboxControllerMac::ResetVibration(
-    mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback) {
-  ++sequence_id_;
-  if (playing_effect_callback_) {
-    SetVibration(0.0, 0.0);
-    RunCallbackOnMojoThread(
-        mojom::GamepadHapticsResult::GamepadHapticsResultPreempted);
-  }
-  std::move(callback).Run(
-      mojom::GamepadHapticsResult::GamepadHapticsResultComplete);
-}
-
-void XboxControllerMac::PlayDualRumbleEffect(int sequence_id,
-                                             double duration,
-                                             double start_delay,
-                                             double strong_magnitude,
-                                             double weak_magnitude) {
-  playing_effect_task_runner_->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(&XboxControllerMac::StartVibration, base::Unretained(this),
-                     sequence_id, duration, strong_magnitude, weak_magnitude),
-      base::TimeDelta::FromMillisecondsD(start_delay));
-}
-
-void XboxControllerMac::StartVibration(int sequence_id,
-                                       double duration,
-                                       double strong_magnitude,
-                                       double weak_magnitude) {
-  if (sequence_id != sequence_id_)
-    return;
-  SetVibration(strong_magnitude, weak_magnitude);
-
+double XboxControllerMac::GetMaxEffectDurationMillis() {
   // The Xbox One controller rumble packet specifies a duration for the rumble
-  // effect with a maximum length of about 3 seconds. Support longer durations
-  // by sending a second rumble packet to extend the duration.
-  if (duration > kXboxOneMaxEffectDurationMillis) {
-    double remaining = duration - kXboxOneMaxEffectDurationMillis;
-    playing_effect_task_runner_->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(&XboxControllerMac::StartVibration,
-                       base::Unretained(this), sequence_id, remaining,
-                       strong_magnitude, weak_magnitude),
-        base::TimeDelta::FromMillisecondsD(kXboxOneMaxEffectDurationMillis));
-  } else {
-    playing_effect_task_runner_->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(&XboxControllerMac::StopVibration,
-                       base::Unretained(this), sequence_id),
-        base::TimeDelta::FromMillisecondsD(duration));
-  }
-}
-
-void XboxControllerMac::StopVibration(int sequence_id) {
-  if (sequence_id != sequence_id_)
-    return;
-  SetVibration(0.0, 0.0);
-
-  RunCallbackOnMojoThread(
-      mojom::GamepadHapticsResult::GamepadHapticsResultComplete);
+  // effect with a maximum length of about 3 seconds.
+  return kXboxOneMaxEffectDurationMillis;
 }
 
 void XboxControllerMac::SetVibration(double strong_magnitude,
@@ -440,12 +364,22 @@ XboxControllerMac::OpenDeviceResult XboxControllerMac::OpenDevice(
 
   uint16_t vendor_id;
   kr = (*device_)->GetDeviceVendor(device_, &vendor_id);
-  if (kr != KERN_SUCCESS || vendor_id != kVendorMicrosoft)
+  if (kr != KERN_SUCCESS)
     return OPEN_FAILED;
 
   uint16_t product_id;
   kr = (*device_)->GetDeviceProduct(device_, &product_id);
   if (kr != KERN_SUCCESS)
+    return OPEN_FAILED;
+
+  // Record a connected XInput gamepad. Non-XInput devices are recorded
+  // elsewhere.
+  DCHECK_NE(kXInputTypeNone,
+            GamepadIdList::Get().GetXInputType(vendor_id, product_id));
+  RecordConnectedGamepad(vendor_id, product_id);
+
+  // Only genuine Microsoft Xbox, Xbox 360, and Xbox One devices are supported.
+  if (vendor_id != kVendorMicrosoft)
     return OPEN_FAILED;
 
   controller_type_ = ControllerTypeFromIds(vendor_id, product_id);
@@ -464,6 +398,7 @@ XboxControllerMac::OpenDeviceResult XboxControllerMac::OpenDevice(
     case XBOX_ONE_CONTROLLER_2015:
     case XBOX_ONE_ELITE_CONTROLLER:
     case XBOX_ONE_S_CONTROLLER:
+    case XBOX_ADAPTIVE_CONTROLLER:
       read_endpoint_ = kXboxOneReadEndpoint;
       control_endpoint_ = kXboxOneControlEndpoint;
       request.bInterfaceClass = 255;
@@ -597,7 +532,8 @@ XboxControllerMac::OpenDeviceResult XboxControllerMac::OpenDevice(
       if (controller_type_ == XBOX_ONE_CONTROLLER_2013 ||
           controller_type_ == XBOX_ONE_CONTROLLER_2015 ||
           controller_type_ == XBOX_ONE_ELITE_CONTROLLER ||
-          controller_type_ == XBOX_ONE_S_CONTROLLER)
+          controller_type_ == XBOX_ONE_S_CONTROLLER ||
+          controller_type_ == XBOX_ADAPTIVE_CONTROLLER)
         WriteXboxOneInit();
     }
   }
@@ -640,6 +576,7 @@ uint16_t XboxControllerMac::GetVendorId() const {
     case XBOX_ONE_CONTROLLER_2015:
     case XBOX_ONE_ELITE_CONTROLLER:
     case XBOX_ONE_S_CONTROLLER:
+    case XBOX_ADAPTIVE_CONTROLLER:
       return kVendorMicrosoft;
     default:
       return 0;
@@ -658,6 +595,8 @@ uint16_t XboxControllerMac::GetProductId() const {
       return kProductXboxOneEliteController;
     case XBOX_ONE_S_CONTROLLER:
       return kProductXboxOneSController;
+    case XBOX_ADAPTIVE_CONTROLLER:
+      return kProductXboxAdaptiveController;
     default:
       return 0;
   }
@@ -675,6 +614,7 @@ std::string XboxControllerMac::GetControllerTypeString() const {
     case XBOX_ONE_CONTROLLER_2015:
     case XBOX_ONE_ELITE_CONTROLLER:
     case XBOX_ONE_S_CONTROLLER:
+    case XBOX_ADAPTIVE_CONTROLLER:
       return "Xbox One Controller";
     default:
       return "Unrecognized Controller";
@@ -685,6 +625,11 @@ std::string XboxControllerMac::GetIdString() const {
   return base::StringPrintf("%s (STANDARD GAMEPAD Vendor: %04x Product: %04x)",
                             GetControllerTypeString().c_str(), GetVendorId(),
                             GetProductId());
+}
+
+bool XboxControllerMac::SupportsVibration() const {
+  // The Xbox Adaptive Controller has no vibration actuators.
+  return controller_type_ != XBOX_ADAPTIVE_CONTROLLER;
 }
 
 // static
@@ -782,8 +727,10 @@ void XboxControllerMac::ProcessXboxOnePacket(size_t length) {
   switch (type) {
     case XBOX_ONE_STATUS_MESSAGE_BUTTONS: {
       if (length != sizeof(XboxOneButtonData) &&
-          length != sizeof(XboxOneEliteButtonData))
+          length != kXboxOneEliteButtonDataBytes &&
+          length != kXboxAdaptiveButtonDataBytes) {
         return;
+      }
       XboxOneButtonData* data = reinterpret_cast<XboxOneButtonData*>(buffer);
       Data normalized_data;
       NormalizeXboxOneButtonData(*data, &normalized_data);
@@ -817,7 +764,8 @@ void XboxControllerMac::QueueRead() {
 }
 
 void XboxControllerMac::IOError() {
-  if (delegate_)
+  // Ignore errors that occur while the controller is being shut down.
+  if (delegate_ && !IsShuttingDown())
     delegate_->XboxControllerError(this);
 }
 
@@ -939,23 +887,8 @@ void XboxControllerMac::WriteXboxOneAckGuide(uint8_t sequence_number) {
   }
 }
 
-void XboxControllerMac::RunCallbackOnMojoThread(
-    mojom::GamepadHapticsResult result) {
-  if (playing_effect_task_runner_->RunsTasksInCurrentSequence()) {
-    DoRunCallback(std::move(playing_effect_callback_), result);
-    return;
-  }
-
-  playing_effect_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&XboxControllerMac::DoRunCallback,
-                                std::move(playing_effect_callback_), result));
-}
-
-// static
-void XboxControllerMac::DoRunCallback(
-    mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback,
-    mojom::GamepadHapticsResult result) {
-  std::move(callback).Run(result);
+base::WeakPtr<AbstractHapticGamepad> XboxControllerMac::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 }  // namespace device

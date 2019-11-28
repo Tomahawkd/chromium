@@ -12,21 +12,20 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller_test.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/fullscreen_control/fullscreen_control_host.h"
 #include "chrome/browser/ui/views/fullscreen_control/fullscreen_control_view.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/web/web_fullscreen_options.h"
+#include "third_party/blink/public/mojom/frame/fullscreen.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
@@ -44,19 +43,6 @@ namespace {
 
 constexpr base::TimeDelta kPopupEventTimeout = base::TimeDelta::FromSeconds(5);
 
-// Observer for NOTIFICATION_FULLSCREEN_CHANGED notifications.
-class FullscreenNotificationObserver
-    : public content::WindowedNotificationObserver {
- public:
-  FullscreenNotificationObserver()
-      : WindowedNotificationObserver(
-            chrome::NOTIFICATION_FULLSCREEN_CHANGED,
-            content::NotificationService::AllSources()) {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(FullscreenNotificationObserver);
-};
-
 }  // namespace
 
 class FullscreenControlViewTest : public InProcessBrowserTest {
@@ -64,12 +50,10 @@ class FullscreenControlViewTest : public InProcessBrowserTest {
   FullscreenControlViewTest() = default;
 
   void SetUp() override {
-    // Ensure the KeyboardLockAPI is enabled and system keyboard lock is
-    // disabled. It is important to disable system keyboard lock as low-level
-    // test utilities may install a keyboard hook to listen for keyboard events
-    // and having an active system hook may cause issues with that mechanism.
-    scoped_feature_list_.InitWithFeatures({features::kKeyboardLockAPI},
-                                          {features::kSystemKeyboardLock});
+    // It is important to disable system keyboard lock as low-level test
+    // utilities may install a keyboard hook to listen for keyboard events and
+    // having an active system hook may cause issues with that mechanism.
+    scoped_feature_list_.InitWithFeatures({}, {features::kSystemKeyboardLock});
     InProcessBrowserTest::SetUp();
   }
 
@@ -122,12 +106,12 @@ class FullscreenControlViewTest : public InProcessBrowserTest {
   bool IsPopupCreated() { return GetFullscreenControlHost()->IsPopupCreated(); }
 
   void EnterActiveTabFullscreen() {
-    FullscreenNotificationObserver fullscreen_observer;
+    FullscreenNotificationObserver fullscreen_observer(browser());
     content::WebContentsDelegate* delegate =
         static_cast<content::WebContentsDelegate*>(browser());
     delegate->EnterFullscreenModeForTab(GetActiveWebContents(),
                                         GURL("about:blank"),
-                                        blink::WebFullscreenOptions());
+                                        blink::mojom::FullscreenOptions());
     fullscreen_observer.Wait();
     ASSERT_TRUE(delegate->IsFullscreenForTabOrPending(GetActiveWebContents()));
   }
@@ -177,13 +161,12 @@ IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest,
   ASSERT_FALSE(IsPopupCreated());
 }
 
-#if defined(OS_MACOSX)
-// Entering fullscreen is flaky on Mac: http://crbug.com/824517
-#define MAYBE_MouseExitFullscreen DISABLED_MouseExitFullscreen
-#else
-#define MAYBE_MouseExitFullscreen MouseExitFullscreen
-#endif
-IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, MAYBE_MouseExitFullscreen) {
+// These four tests which cover the mouse/touch fullscreen UI are covering
+// behavior that doesn't exist on Mac - Mac has its own native fullscreen exit
+// UI. See IsExitUiEnabled() in FullscreenControlHost.
+#if !defined(OS_MACOSX)
+
+IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, MouseExitFullscreen) {
   EnterActiveTabFullscreen();
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   ASSERT_TRUE(browser_view->IsFullscreen());
@@ -211,16 +194,8 @@ IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, MAYBE_MouseExitFullscreen) {
   ASSERT_FALSE(browser_view->IsFullscreen());
 }
 
-#if defined(OS_MACOSX)
-// Entering fullscreen is flaky on Mac: http://crbug.com/824517
-#define MAYBE_MouseExitFullscreen_TimeoutAndRetrigger \
-  DISABLED_MouseExitFullscreen_TimeoutAndRetrigger
-#else
-#define MAYBE_MouseExitFullscreen_TimeoutAndRetrigger \
-  MouseExitFullscreen_TimeoutAndRetrigger
-#endif
 IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest,
-                       MAYBE_MouseExitFullscreen_TimeoutAndRetrigger) {
+                       MouseExitFullscreen_TimeoutAndRetrigger) {
   EnterActiveTabFullscreen();
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   ASSERT_TRUE(browser_view->IsFullscreen());
@@ -273,13 +248,7 @@ IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest,
   ASSERT_TRUE(browser_view->IsFullscreen());
 }
 
-#if defined(OS_MACOSX)
-// Entering fullscreen is flaky on Mac: http://crbug.com/824517
-#define MAYBE_TouchPopupInteraction DISABLED_TouchPopupInteraction
-#else
-#define MAYBE_TouchPopupInteraction TouchPopupInteraction
-#endif
-IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, MAYBE_TouchPopupInteraction) {
+IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, TouchPopupInteraction) {
   EnterActiveTabFullscreen();
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   ASSERT_TRUE(browser_view->IsFullscreen());
@@ -358,16 +327,8 @@ IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, MAYBE_TouchPopupInteraction) {
   ASSERT_FALSE(browser_view->IsFullscreen());
 }
 
-#if defined(OS_MACOSX)
-// Entering fullscreen is flaky on Mac: http://crbug.com/824517
-#define MAYBE_MouseAndTouchInteraction_NoInterference \
-  DISABLED_MouseAndTouchInteraction_NoInterference
-#else
-#define MAYBE_MouseAndTouchInteraction_NoInterference \
-  MouseAndTouchInteraction_NoInterference
-#endif
 IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest,
-                       MAYBE_MouseAndTouchInteraction_NoInterference) {
+                       MouseAndTouchInteraction_NoInterference) {
   EnterActiveTabFullscreen();
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   ASSERT_TRUE(browser_view->IsFullscreen());
@@ -440,15 +401,9 @@ IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest,
   RunLoopUntilVisibilityChanges();
   ASSERT_FALSE(host->IsVisible());
 }
-
-#if defined(OS_MACOSX)
-// Entering fullscreen is flaky on Mac: http://crbug.com/824517
-#define MAYBE_KeyboardPopupInteraction DISABLED_KeyboardPopupInteraction
-#else
-#define MAYBE_KeyboardPopupInteraction KeyboardPopupInteraction
 #endif
-IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest,
-                       MAYBE_KeyboardPopupInteraction) {
+
+IN_PROC_BROWSER_TEST_F(FullscreenControlViewTest, KeyboardPopupInteraction) {
   EnterActiveTabFullscreen();
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   ASSERT_TRUE(browser_view->IsFullscreen());

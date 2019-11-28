@@ -9,8 +9,7 @@
 
 #include "base/macros.h"
 #include "content/browser/background_fetch/background_fetch_request_info.h"
-#include "content/common/service_worker/service_worker_types.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 
@@ -25,7 +24,7 @@ const char kAccessControlAllowOriginHeader[] = "access-control-allow-origin";
 class BackgroundFetchCrossOriginFilterTest : public ::testing::Test {
  public:
   BackgroundFetchCrossOriginFilterTest()
-      : thread_bundle_(TestBrowserThreadBundle::REAL_IO_THREAD),
+      : task_environment_(BrowserTaskEnvironment::REAL_IO_THREAD),
         source_(url::Origin::Create(GURL(kFirstOrigin))) {}
   ~BackgroundFetchCrossOriginFilterTest() override = default;
 
@@ -39,7 +38,8 @@ class BackgroundFetchCrossOriginFilterTest : public ::testing::Test {
           response_headers) {
     scoped_refptr<BackgroundFetchRequestInfo> request_info =
         base::MakeRefCounted<BackgroundFetchRequestInfo>(
-            0 /* request_info */, blink::mojom::FetchAPIRequest::New());
+            0 /* request_info */, blink::mojom::FetchAPIRequest::New(),
+            /* has_request_body= */ false);
 
     request_info->response_headers_ = response_headers;
     request_info->url_chain_ = {GURL(response_url)};
@@ -48,7 +48,7 @@ class BackgroundFetchCrossOriginFilterTest : public ::testing::Test {
   }
 
  protected:
-  TestBrowserThreadBundle thread_bundle_;  // Must be first member.
+  BrowserTaskEnvironment task_environment_;  // Must be first member.
 
   url::Origin source_;
 

@@ -19,7 +19,7 @@ bool AllowFromSources(const GURL& url,
   return false;
 }
 
-};  // namespace
+}  // namespace
 
 CSPSourceList::CSPSourceList()
     : allow_self(false),
@@ -35,6 +35,15 @@ CSPSourceList::CSPSourceList(bool allow_self,
       allow_star(allow_star),
       allow_response_redirects(allow_response_redirects),
       sources(sources) {}
+
+CSPSourceList::CSPSourceList(
+    const network::mojom::CSPSourceList& csp_source_list)
+    : allow_self(csp_source_list.allow_self),
+      allow_star(csp_source_list.allow_star),
+      allow_response_redirects(false) {
+  for (auto& source : csp_source_list.sources)
+    sources.push_back(CSPSource(*source));
+}
 
 CSPSourceList::CSPSourceList(const CSPSourceList&) = default;
 CSPSourceList::~CSPSourceList() = default;

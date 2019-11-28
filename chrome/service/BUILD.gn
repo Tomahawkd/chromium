@@ -4,7 +4,6 @@
 
 import("//build/config/features.gni")
 import("//printing/buildflags/buildflags.gni")
-import("//services/catalog/public/tools/catalog.gni")
 
 assert(!is_chromeos)
 
@@ -57,15 +56,14 @@ static_library("service") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   deps = [
-    ":service_process_catalog_source",
     "//base",
     "//chrome:strings",
     "//chrome/common",
     "//chrome/services/printing/public/mojom",
     "//components/cloud_devices/common",
-    "//components/data_use_measurement/core",
     "//components/network_session_configurator/browser",
     "//components/printing/common",
+    "//content/public/app:service_manifests",
     "//google_apis",
     "//jingle:notifier",
     "//mojo/public/cpp/platform",
@@ -74,7 +72,7 @@ static_library("service") {
     "//printing",
     "//services/network/public/cpp",
     "//skia",
-    "//third_party/webrtc_overrides",
+    "//third_party/webrtc_overrides:webrtc_component",
   ]
 
   public_deps = [
@@ -88,18 +86,7 @@ static_library("service") {
     sources += [
       "service_utility_process_host.cc",
       "service_utility_process_host.h",
+      "service_utility_process_host_receiver_bindings.cc",
     ]
   }
-}
-
-catalog("service_process_catalog") {
-  embedded_services = [
-    "//content/public/app:browser_manifest",
-    "//content/public/app:utility_manifest",
-  ]
-}
-
-catalog_cpp_source("service_process_catalog_source") {
-  catalog = ":service_process_catalog"
-  generated_function_name = "CreateServiceProcessCatalog"
 }

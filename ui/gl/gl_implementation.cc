@@ -10,17 +10,15 @@
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/protected_memory.h"
-#include "base/memory/protected_memory_cfi.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "ui/gl/buildflags.h"
 #include "ui/gl/gl_bindings.h"
-#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_version_info.h"
 
@@ -38,17 +36,16 @@ const struct {
     {kGLImplementationAppleName, kGLImplementationAppleGL},
 #endif
     {kGLImplementationEGLName, kGLImplementationEGLGLES2},
+    {kGLImplementationANGLEName, kGLImplementationEGLANGLE},
     {kGLImplementationMockName, kGLImplementationMockGL},
+    {kGLImplementationStubName, kGLImplementationStubGL},
     {kGLImplementationDisabledName, kGLImplementationDisabled}};
 
 typedef std::vector<base::NativeLibrary> LibraryArray;
 
 GLImplementation g_gl_implementation = kGLImplementationNone;
 LibraryArray* g_libraries;
-// Place the function pointer for GetProcAddress in read-only memory after being
-// resolved to prevent it being tampered with. See crbug.com/771365 for details.
-PROTECTED_MEMORY_SECTION base::ProtectedMemory<GLGetProcAddressProc>
-    g_get_proc_address;
+GLGetProcAddressProc g_get_proc_address;
 
 void CleanupNativeLibraries(void* due_to_fallback) {
   if (g_libraries) {
@@ -111,7 +108,7 @@ GLXApi* g_current_glx_context;
 #endif
 
 GLImplementation GetNamedGLImplementation(const std::string& name) {
-  for (size_t i = 0; i < arraysize(kGLImplementationNamePairs); ++i) {
+  for (size_t i = 0; i < base::size(kGLImplementationNamePairs); ++i) {
     if (name == kGLImplementationNamePairs[i].name)
       return kGLImplementationNamePairs[i].implementation;
   }
@@ -124,7 +121,7 @@ GLImplementation GetSoftwareGLImplementation() {
 }
 
 const char* GetGLImplementationName(GLImplementation implementation) {
-  for (size_t i = 0; i < arraysize(kGLImplementationNamePairs); ++i) {
+  for (size_t i = 0; i < base::size(kGLImplementationNamePairs); ++i) {
     if (implementation == kGLImplementationNamePairs[i].implementation)
       return kGLImplementationNamePairs[i].name;
   }
@@ -163,10 +160,10 @@ void UnloadGLNativeLibraries(bool due_to_fallback) {
 
 void SetGLGetProcAddressProc(GLGetProcAddressProc proc) {
   DCHECK(proc);
-  auto writer = base::AutoWritableMemory::Create(g_get_proc_address);
-  *g_get_proc_address = proc;
+  g_get_proc_address = proc;
 }
 
+NO_SANITIZE("cfi-icall")
 GLFunctionPointerType GetGLProcAddress(const char* name) {
   DCHECK(g_gl_implementation != kGLImplementationNone);
 
@@ -178,9 +175,8 @@ GLFunctionPointerType GetGLProcAddress(const char* name) {
         return proc;
     }
   }
-  if (*g_get_proc_address) {
-    GLFunctionPointerType proc =
-        base::UnsanitizedCfiCall(g_get_proc_address)(name);
+  if (g_get_proc_address) {
+    GLFunctionPointerType proc = g_get_proc_address(name);
     if (proc)
       return proc;
   }
@@ -206,7 +202,7 @@ std::string FilterGLExtensionList(
       extensions, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   auto is_disabled = [&disabled_extensions](const base::StringPiece& ext) {
-    return base::ContainsValue(disabled_extensions, ext);
+    return base::Contains(disabled_extensions, ext);
   };
   base::EraseIf(extension_vec, is_disabled);
 
@@ -221,8 +217,8 @@ DisableNullDrawGLBindings::~DisableNullDrawGLBindings() {
   SetNullDrawGLBindingsEnabled(initial_enabled_);
 }
 
-GLWindowSystemBindingInfo::GLWindowSystemBindingInfo()
-    : direct_rendering(true) {}
+GLWindowSystemBindingInfo::GLWindowSystemBindingInfo() {}
+GLWindowSystemBindingInfo::~GLWindowSystemBindingInfo() {}
 
 std::string GetGLExtensionsFromCurrentContext() {
   return GetGLExtensionsFromCurrentContext(g_current_gl_context);

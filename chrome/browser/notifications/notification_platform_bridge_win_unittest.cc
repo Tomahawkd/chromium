@@ -13,12 +13,11 @@
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/scoped_hstring.h"
 #include "base/win/windows_version.h"
@@ -27,7 +26,7 @@
 #include "chrome/browser/notifications/win/fake_notification_image_retainer.h"
 #include "chrome/browser/notifications/win/notification_launch_id.h"
 #include "chrome/browser/notifications/win/notification_template_builder.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
@@ -50,9 +49,7 @@ constexpr char kProfileId[] = "Default";
 class NotificationPlatformBridgeWinTest : public testing::Test {
  public:
   NotificationPlatformBridgeWinTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME),
-        thread_bundle_(content::TestBrowserThreadBundle::PLAIN_MAINLOOP) {}
+      : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 
   ~NotificationPlatformBridgeWinTest() override = default;
 
@@ -94,8 +91,7 @@ class NotificationPlatformBridgeWinTest : public testing::Test {
     return toast2;
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NotificationPlatformBridgeWinTest);
@@ -104,7 +100,7 @@ class NotificationPlatformBridgeWinTest : public testing::Test {
 TEST_F(NotificationPlatformBridgeWinTest, GroupAndTag) {
   // This test requires WinRT core functions, which are not available in
   // older versions of Windows.
-  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+  if (base::win::GetVersion() < base::win::Version::WIN8)
     return;
 
   base::win::ScopedCOMInitializer com_initializer;
@@ -131,14 +127,14 @@ TEST_F(NotificationPlatformBridgeWinTest, GroupAndTag) {
   ASSERT_HRESULT_SUCCEEDED(toast2->get_Tag(&hstring_tag));
   base::win::ScopedHString tag(hstring_tag);
   std::string tag_data = std::string(kNotificationId) + "|" + kProfileId + "|0";
-  ASSERT_STREQ(base::UintToString16(base::Hash(tag_data)).c_str(),
+  ASSERT_STREQ(base::NumberToString16(base::Hash(tag_data)).c_str(),
                tag.Get().as_string().c_str());
 }
 
 TEST_F(NotificationPlatformBridgeWinTest, GroupAndTagUniqueness) {
   // This test requires WinRT core functions, which are not available in
   // older versions of Windows.
-  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+  if (base::win::GetVersion() < base::win::Version::WIN8)
     return;
 
   base::win::ScopedCOMInitializer com_initializer;
@@ -215,7 +211,7 @@ TEST_F(NotificationPlatformBridgeWinTest, GroupAndTagUniqueness) {
 TEST_F(NotificationPlatformBridgeWinTest, Suppress) {
   // This test requires WinRT core functions, which are not available in
   // older versions of Windows.
-  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+  if (base::win::GetVersion() < base::win::Version::WIN8)
     return;
 
   base::win::ScopedCOMInitializer com_initializer;
@@ -243,7 +239,7 @@ TEST_F(NotificationPlatformBridgeWinTest, Suppress) {
 
   // Register a single notification with a specific tag.
   std::string tag_data = std::string(kNotificationId) + "|" + kProfileId + "|0";
-  base::string16 tag = base::UintToString16(base::Hash(tag_data));
+  base::string16 tag = base::NumberToString16(base::Hash(tag_data));
   // Microsoft::WRL::Make() requires FakeIToastNotification to derive from
   // RuntimeClass.
   notifications.push_back(Microsoft::WRL::Make<FakeIToastNotification>(

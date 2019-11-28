@@ -68,19 +68,6 @@ const char* {{v8_class}}::NameInHeapSnapshot() const {
   return "{{v8_class}}";
 }
 
-// static
-{{v8_class}}* {{v8_class}}::CreateOrNull(v8::Local<v8::Object> callback_object) {
-  v8::Local<v8::Context> creation_context = callback_object->CreationContext();
-  // When |callback_object| is an object in RemoteContext (i.e. RemoteInstance),
-  // the object has no creation context, and no way to proceed.
-  // TODO(crbug.com/886588): Make CreateOrNull into Create removing the early
-  // return with nullptr.
-  if (creation_context.IsEmpty())
-    return nullptr;
-
-  return MakeGarbageCollected<{{v8_class}}>(callback_object, creation_context);
-}
-
 {% for method in methods %}
 
 v8::Maybe<{{method.cpp_type}}> {{v8_class}}::{{method.name}}({{method.argument_declarations | join(', ')}}) {
@@ -111,22 +98,22 @@ void {{v8_class}}::InvokeAndReportException({{methods[0].argument_declarations |
 
 {% if interface_name == 'EventListener' %}
 bool {{v8_class}}::IsRunnableOrThrowException(IgnorePause ignore_pause) {
+  ScriptState* callback_relevant_script_state =
+      CallbackRelevantScriptState();
+
   bool is_runnable =
       ignore_pause == IgnorePause::kIgnore ?
       IsCallbackFunctionRunnableIgnoringPause(
-          CallbackRelevantScriptState(), IncumbentScriptState()) :
+          callback_relevant_script_state, IncumbentScriptState()) :
       IsCallbackFunctionRunnable(
-          CallbackRelevantScriptState(), IncumbentScriptState());
+          callback_relevant_script_state, IncumbentScriptState());
   if (is_runnable)
     return true;
 
   // Wrapper-tracing for the callback function makes the function object and
   // its creation context alive. Thus it's safe to use the creation context
   // of the callback function here.
-  v8::HandleScope handle_scope(GetIsolate());
-  v8::Local<v8::Object> callback_object = CallbackObject();
-  CHECK(!callback_object.IsEmpty());
-  v8::Context::Scope context_scope(callback_object->CreationContext());
+  ScriptState::Scope scope(callback_relevant_script_state);
   V8ThrowException::ThrowError(
       GetIsolate(),
       ExceptionMessages::FailedToExecute(
@@ -142,29 +129,6 @@ v8::Maybe<{{methods[0].cpp_type}}> {{v8_class}}::InvokeWithoutRunnabilityCheck({
     methods[0].cpp_type, methods[0].native_value_traits_tag, methods[0].arguments,
     False, True,
     interface_name, methods[0].name)}}
-}
-{% endif %}
-
-{% for method in methods %}
-v8::Maybe<{{method.cpp_type}}> V8PersistentCallbackInterface<{{v8_class}}>::{{method.name}}({{method.argument_declarations | join(', ')}}) {
-  return Proxy()->{{method.name}}(
-      {{
-         (['callback_this_value'] +
-          (method.arguments|map(attribute='name')|list)
-         )|join(', ')
-      }});
-}
-
-{% endfor %}
-
-{% if methods|length == 1 and methods[0].idl_type == 'void' %}
-void V8PersistentCallbackInterface<{{v8_class}}>::InvokeAndReportException({{methods[0].argument_declarations | join(', ')}}) {
-  Proxy()->InvokeAndReportException(
-      {{
-         (['callback_this_value'] +
-          (methods[0].arguments|map(attribute='name')|list)
-         )|join(', ')
-      }});
 }
 {% endif %}
 

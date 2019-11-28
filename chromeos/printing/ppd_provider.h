@@ -16,6 +16,7 @@
 #include "base/version.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "chromeos/printing/usb_printer_id.h"
 
 namespace network {
 namespace mojom {
@@ -26,6 +27,42 @@ class URLLoaderFactory;
 namespace chromeos {
 
 class PpdCache;
+
+// Everything we might know about a printer when looking for a
+// driver for it.  All of the default values for fields in this struct
+// mean we *don't* have that piece of information.
+//
+// Fields are listed in search order preference -- we use earlier
+// fields first to attempt to find a match.
+struct CHROMEOS_EXPORT PrinterSearchData {
+  PrinterSearchData();
+  PrinterSearchData(const PrinterSearchData& other);
+  ~PrinterSearchData();
+
+  // Make-and-model string guesses.
+  std::vector<std::string> make_and_model;
+
+  // 16-bit usb identifiers.
+  int usb_vendor_id = 0;
+  int usb_product_id = 0;
+
+  // Method of printer discovery.
+  enum PrinterDiscoveryType {
+    kUnknown = 0,
+    kManual = 1,
+    kUsb = 2,
+    kZeroconf = 3,
+    kDiscoveryTypeMax
+  };
+  PrinterDiscoveryType discovery_type;
+
+  // Set of MIME types supported by this printer.
+  std::vector<std::string> supported_document_formats;
+
+  // Representation of IEEE1284 standard printing device ID.
+  // Contains a set of languages this printer understands.
+  UsbPrinterId printer_id;
+};
 
 // PpdProvider is responsible for mapping printer descriptions to
 // CUPS-PostScript Printer Description (PPD) files.  It provides PPDs that a
@@ -66,25 +103,6 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
 
     // Root of the ppd serving hierarchy.
     std::string ppd_server_root = "https://www.gstatic.com/chromeos_printing";
-  };
-
-  // Everything we might know about a printer when looking for a
-  // driver for it.  All of the default values for fields in this struct
-  // mean we *don't* have that piece of information.
-  //
-  // Fields are listed in search order preference -- we use earlier
-  // fields first to attempt to find a match.
-  struct PrinterSearchData {
-    PrinterSearchData();
-    PrinterSearchData(const PrinterSearchData& other);
-    ~PrinterSearchData();
-
-    // Make-and-model string guesses.
-    std::vector<std::string> make_and_model;
-
-    // 16-bit usb identifiers.
-    int usb_vendor_id = 0;
-    int usb_product_id = 0;
   };
 
   // Defines the limitations on when we show a particular PPD
@@ -132,14 +150,16 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   using ResolvePrintersCallback =
       base::OnceCallback<void(CallbackResultCode, const ResolvedPrintersList&)>;
 
-  // Result of a ResolvePpdReference call.  If the result code is
-  // SUCCESS, then the second argument contains the a PpdReference
-  // that we have high confidence can be used to obtain a driver for
-  // the printer.  NOT_FOUND means we couldn't confidently figure out
-  // a driver for the printer.
+  // Result of a ResolvePpdReference call.  If the result code is SUCCESS, then
+  // the second argument contains the a PpdReference that we have high
+  // confidence can be used to obtain a driver for the printer.  NOT_FOUND means
+  // we couldn't confidently figure out a driver for the printer.  If we got
+  // NOT_FOUND from a USB printer, we may have been able to determine the
+  // manufacturer name which is the third argument.
   using ResolvePpdReferenceCallback =
       base::OnceCallback<void(CallbackResultCode,
-                              const Printer::PpdReference&)>;
+                              const Printer::PpdReference& ref,
+                              const std::string& manufacturer)>;
 
   // Result of a ReverseLookup call.  If the result code is SUCCESS, then
   // |manufactuer| and |model| contain the strings that could have generated

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/values.h"
+#include "remoting/proto/remoting/v1/chromoting_event.pb.h"
 
 namespace remoting {
 
@@ -95,6 +96,14 @@ class ChromotingEvent {
     AUTO_RECONNECT_ON_HOST_OFFLINE = 4,
   };
 
+  enum SignalStrategyType {
+    NOT_SET = 0,
+    XMPP = 1,
+    WCS = 2,
+    LCS = 3,
+    FTL = 4,
+  };
+
   enum class Type {
     SESSION_STATE = 1,
     CONNECTION_STATISTICS = 2,
@@ -133,6 +142,7 @@ class ChromotingEvent {
   static const char kSessionEntryPointKey[];
   static const char kSessionIdKey[];
   static const char kSessionStateKey[];
+  static const char kSignalStrategyTypeKey[];
   static const char kTypeKey[];
   static const char kVideoBandwidthKey[];
   static const char kWebAppVersionKey[];
@@ -171,6 +181,9 @@ class ChromotingEvent {
 
   // Returns a copy of the internal dictionary value.
   std::unique_ptr<base::DictionaryValue> CopyDictionaryValue() const;
+
+  // Converts into a ChromotingEvent protobuf.
+  apis::v1::ChromotingEvent CreateProto() const;
 
   // Returns true if the SessionState concludes the end of session.
   static bool IsEndOfSession(SessionState state);

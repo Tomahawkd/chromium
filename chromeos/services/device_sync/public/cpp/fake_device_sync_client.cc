@@ -36,17 +36,30 @@ FakeDeviceSyncClient::GetLocalDeviceMetadata() {
 
 void FakeDeviceSyncClient::SetSoftwareFeatureState(
     const std::string public_key,
-    cryptauth::SoftwareFeature software_feature,
+    multidevice::SoftwareFeature software_feature,
     bool enabled,
     bool is_exclusive,
     mojom::DeviceSync::SetSoftwareFeatureStateCallback callback) {
   set_software_feature_state_callback_queue_.push(std::move(callback));
 }
 
+void FakeDeviceSyncClient::SetFeatureStatus(
+    const std::string& device_instance_id,
+    multidevice::SoftwareFeature feature,
+    FeatureStatusChange status_change,
+    mojom::DeviceSync::SetFeatureStatusCallback callback) {
+  set_feature_status_callback_queue_.push(std::move(callback));
+}
+
 void FakeDeviceSyncClient::FindEligibleDevices(
-    cryptauth::SoftwareFeature software_feature,
+    multidevice::SoftwareFeature software_feature,
     FindEligibleDevicesCallback callback) {
   find_eligible_devices_callback_queue_.push(std::move(callback));
+}
+
+void FakeDeviceSyncClient::GetDevicesActivityStatus(
+    mojom::DeviceSync::GetDevicesActivityStatusCallback callback) {
+  get_devices_activity_status_callback_queue_.push(std::move(callback));
 }
 
 void FakeDeviceSyncClient::GetDebugInfo(
@@ -64,6 +77,10 @@ int FakeDeviceSyncClient::GetForceSyncNowCallbackQueueSize() {
 
 int FakeDeviceSyncClient::GetSetSoftwareFeatureStateCallbackQueueSize() {
   return set_software_feature_state_callback_queue_.size();
+}
+
+int FakeDeviceSyncClient::GetSetFeatureStatusCallbackQueueSize() {
+  return set_feature_status_callback_queue_.size();
 }
 
 int FakeDeviceSyncClient::GetFindEligibleDevicesCallbackQueueSize() {
@@ -95,6 +112,13 @@ void FakeDeviceSyncClient::InvokePendingSetSoftwareFeatureStateCallback(
   set_software_feature_state_callback_queue_.pop();
 }
 
+void FakeDeviceSyncClient::InvokePendingSetFeatureStatusCallback(
+    mojom::NetworkRequestResult result_code) {
+  DCHECK(set_feature_status_callback_queue_.size() > 0);
+  std::move(set_feature_status_callback_queue_.front()).Run(result_code);
+  set_feature_status_callback_queue_.pop();
+}
+
 void FakeDeviceSyncClient::InvokePendingFindEligibleDevicesCallback(
     mojom::NetworkRequestResult result_code,
     multidevice::RemoteDeviceRefList eligible_devices,
@@ -103,6 +127,16 @@ void FakeDeviceSyncClient::InvokePendingFindEligibleDevicesCallback(
   std::move(find_eligible_devices_callback_queue_.front())
       .Run(result_code, eligible_devices, ineligible_devices);
   find_eligible_devices_callback_queue_.pop();
+}
+
+void FakeDeviceSyncClient::InvokePendingGetDevicesActivityStatusCallback(
+    mojom::NetworkRequestResult result_code,
+    base::Optional<std::vector<mojom::DeviceActivityStatusPtr>>
+        device_activity_status) {
+  DCHECK(get_devices_activity_status_callback_queue_.size() > 0);
+  std::move(get_devices_activity_status_callback_queue_.front())
+      .Run(result_code, std::move(device_activity_status));
+  get_devices_activity_status_callback_queue_.pop();
 }
 
 void FakeDeviceSyncClient::InvokePendingGetDebugInfoCallback(

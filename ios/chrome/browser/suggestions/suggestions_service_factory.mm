@@ -8,20 +8,20 @@
 #include <utility>
 
 #include "base/files/file_path.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "base/task/post_task.h"
 #include "base/time/default_tick_clock.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/suggestions/blacklist_store.h"
 #include "components/suggestions/suggestions_service_impl.h"
 #include "components/suggestions/suggestions_store.h"
+#include "components/sync/driver/sync_service.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/web_thread.h"
-#include "services/identity/public/cpp/identity_manager.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -32,7 +32,8 @@ namespace suggestions {
 
 // static
 SuggestionsServiceFactory* SuggestionsServiceFactory::GetInstance() {
-  return base::Singleton<SuggestionsServiceFactory>::get();
+  static base::NoDestructor<SuggestionsServiceFactory> instance;
+  return instance.get();
 }
 
 // static
@@ -58,20 +59,20 @@ SuggestionsServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForBrowserState(browser_state);
-  browser_sync::ProfileSyncService* sync_service =
+  syncer::SyncService* sync_service =
       ProfileSyncServiceFactory::GetForBrowserState(browser_state);
 
   std::unique_ptr<SuggestionsStore> suggestions_store(
       new SuggestionsStore(browser_state->GetPrefs()));
-  std::unique_ptr<BlacklistStore> blacklist_store(
+  std::unique_ptr<BlacklistStore> blocked_suggestions(
       new BlacklistStore(browser_state->GetPrefs()));
 
   return std::make_unique<SuggestionsServiceImpl>(
       identity_manager, sync_service,
       browser_state->GetSharedURLLoaderFactory(), std::move(suggestions_store),
-      std::move(blacklist_store), base::DefaultTickClock::GetInstance());
+      std::move(blocked_suggestions), base::DefaultTickClock::GetInstance());
 }
 
 void SuggestionsServiceFactory::RegisterBrowserStatePrefs(

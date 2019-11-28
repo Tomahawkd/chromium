@@ -11,6 +11,7 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/common/content_client.h"
+#include "content/public/test/mock_navigation_handle.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
@@ -66,41 +67,31 @@ class ExtensionNavigationThrottleUnitTest
 
   // Checks that trying to navigate the given |host| to |extension_url| results
   // in the |expected_will_start_result|, and also that navigating to
-  // |extension_url| via http redirect will cancel the request unless
-  // |expected_will_start_result| is PROCEED.
+  // |extension_url| via http redirect gives the same result.
   void CheckTestCase(
       content::RenderFrameHost* host,
       const GURL& extension_url,
       NavigationThrottle::ThrottleAction expected_will_start_result) {
+    content::MockNavigationHandle test_handle(extension_url, host);
+    test_handle.set_initiator_origin(host->GetLastCommittedOrigin());
+    test_handle.set_starting_site_instance(host->GetSiteInstance());
+    auto throttle = std::make_unique<ExtensionNavigationThrottle>(&test_handle);
+
     // First subtest: direct navigation to |extension_url|.
-    std::unique_ptr<content::NavigationHandle> handle =
-        content::NavigationHandle::CreateNavigationHandleForTesting(
-            extension_url, host);
-    EXPECT_EQ(expected_will_start_result,
-              handle->CallWillStartRequestForTesting())
+    EXPECT_EQ(expected_will_start_result, throttle->WillStartRequest().action())
         << extension_url;
 
-    // Reset the handle for a second subtest: server redirect to
+    // Second subtest: server redirect to
     // |extension_url|.
     GURL http_url("https://example.com");
-    handle = content::NavigationHandle::CreateNavigationHandleForTesting(
-        http_url, host);
+    test_handle.set_url(http_url);
 
-    // TODO(nick): https://crbug.com/695421 Once PlzNavigate is enabled 100%, it
-    // should be possible to support return values other than PROCEED and CANCEL
-    // from ExtensionNavigationThrottle::WillRedirectRequest.
-    NavigationThrottle::ThrottleAction expected_will_redirect_result =
-        (expected_will_start_result == NavigationThrottle::PROCEED)
-            ? NavigationThrottle::PROCEED
-            : NavigationThrottle::CANCEL;
     EXPECT_EQ(NavigationThrottle::PROCEED,
-              handle->CallWillStartRequestForTesting())
+              throttle->WillStartRequest().action())
         << http_url;
-    EXPECT_EQ(expected_will_redirect_result,
-              handle->CallWillRedirectRequestForTesting(
-                  extension_url,
-                  /*new_method_is_post=*/false, http_url,
-                  /*new_is_external_protocol=*/false))
+    test_handle.set_url(extension_url);
+    EXPECT_EQ(expected_will_start_result,
+              throttle->WillRedirectRequest().action())
         << extension_url;
   }
 
@@ -167,29 +158,6 @@ TEST_F(ExtensionNavigationThrottleUnitTest, SameExtension) {
   CheckTestCase(child, extension()->GetResourceURL(kAccessible),
                 NavigationThrottle::PROCEED);
   CheckTestCase(child, extension()->GetResourceURL(kAccessibleDirResource),
-                NavigationThrottle::PROCEED);
-}
-
-// Tests that if any of the ancestors are an external web page, we restrict
-// the resources.
-TEST_F(ExtensionNavigationThrottleUnitTest, WebPageAncestor) {
-  web_contents_tester()->NavigateAndCommit(GURL("http://example.com"));
-  content::RenderFrameHost* child =
-      render_frame_host_tester(main_rfh())->AppendChild("subframe1");
-  GURL url = extension()->GetResourceURL(kAccessible);
-  child =
-      content::NavigationSimulator::NavigateAndCommitFromDocument(url, child);
-  content::RenderFrameHost* grand_child =
-      render_frame_host_tester(child)->AppendChild("grandchild");
-
-  // Even though the immediate parent is a trusted frame, we should restrict
-  // to web_accessible_resources since the grand parent is external.
-  CheckTestCase(grand_child, extension()->GetResourceURL(kPrivate),
-                NavigationThrottle::BLOCK_REQUEST);
-  CheckTestCase(grand_child, extension()->GetResourceURL(kAccessible),
-                NavigationThrottle::PROCEED);
-  CheckTestCase(grand_child,
-                extension()->GetResourceURL(kAccessibleDirResource),
                 NavigationThrottle::PROCEED);
 }
 

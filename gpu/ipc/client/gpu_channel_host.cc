@@ -9,6 +9,7 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/bind.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -17,19 +18,15 @@
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/common/gpu_messages.h"
 #include "gpu/ipc/common/gpu_param_traits_macros.h"
+#include "gpu/ipc/common/gpu_watchdog_timeout.h"
 #include "ipc/ipc_channel_mojo.h"
 #include "ipc/ipc_sync_message.h"
+#include "mojo/public/cpp/bindings/lib/message_quota_checker.h"
 #include "url/gurl.h"
 
 using base::AutoLock;
 
 namespace gpu {
-namespace {
-
-// Global atomic to generate unique transfer buffer IDs.
-base::AtomicSequenceNumber g_next_transfer_buffer_id;
-
-}  // namespace
 
 GpuChannelHost::GpuChannelHost(int channel_id,
                                const gpu::GPUInfo& gpu_info,
@@ -91,7 +88,33 @@ bool GpuChannelHost::Send(IPC::Message* msg) {
 
   // http://crbug.com/125264
   base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
-  pending_sync.done_event->Wait();
+
+  // TODO(magchen): crbug.com/949839. Remove this histogram and do only one
+  // done_event->Wait() after the GPU watchdog V2 is fully launched.
+  base::TimeTicks start_time = base::TimeTicks::Now();
+
+  // The wait for event is split into two phases so we can still record the
+  // case in which the GPU hangs but not killed. Also all data should be
+  // recorded in the range of max_wait_sec seconds for easier comparison.
+  bool signaled =
+      pending_sync.done_event->TimedWait(kGpuChannelHostMaxWaitTime);
+
+  base::TimeDelta wait_duration = base::TimeTicks::Now() - start_time;
+
+  // Histogram of wait-for-sync time, used for monitoring the GPU watchdog.
+  UMA_HISTOGRAM_CUSTOM_TIMES("GPU.GPUChannelHostWaitTime2", wait_duration,
+                             base::TimeDelta::FromSeconds(1),
+                             kGpuChannelHostMaxWaitTime, 50);
+
+  // Histogram to measure how long the browser UI thread spends blocked.
+  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+      "GPU.GPUChannelHostWaitTime.MicroSeconds", wait_duration,
+      base::TimeDelta::FromMicroseconds(10), base::TimeDelta::FromSeconds(10),
+      50);
+
+  // Continue waiting for the event if not signaled
+  if (!signaled)
+    pending_sync.done_event->Wait();
 
   return pending_sync.send_result;
 }
@@ -160,7 +183,8 @@ void GpuChannelHost::EnqueuePendingOrderingBarrier() {
   deferred_message.message = GpuCommandBufferMsg_AsyncFlush(
       pending_ordering_barrier_->route_id,
       pending_ordering_barrier_->put_offset,
-      pending_ordering_barrier_->deferred_message_id);
+      pending_ordering_barrier_->deferred_message_id,
+      pending_ordering_barrier_->sync_token_fences);
   deferred_message.sync_token_fences =
       std::move(pending_ordering_barrier_->sync_token_fences);
   deferred_messages_.push_back(std::move(deferred_message));
@@ -199,40 +223,16 @@ void GpuChannelHost::AddRouteWithTaskRunner(
     int route_id,
     base::WeakPtr<IPC::Listener> listener,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-  io_thread_->PostTask(FROM_HERE,
-                       base::Bind(&GpuChannelHost::Listener::AddRoute,
-                                  base::Unretained(listener_.get()), route_id,
-                                  listener, task_runner));
+  io_thread_->PostTask(
+      FROM_HERE, base::BindOnce(&GpuChannelHost::Listener::AddRoute,
+                                base::Unretained(listener_.get()), route_id,
+                                listener, task_runner));
 }
 
 void GpuChannelHost::RemoveRoute(int route_id) {
-  io_thread_->PostTask(FROM_HERE,
-                       base::Bind(&GpuChannelHost::Listener::RemoveRoute,
-                                  base::Unretained(listener_.get()), route_id));
-}
-
-base::SharedMemoryHandle GpuChannelHost::ShareToGpuProcess(
-    const base::SharedMemoryHandle& source_handle) {
-  if (IsLost())
-    return base::SharedMemoryHandle();
-
-  return base::SharedMemory::DuplicateHandle(source_handle);
-}
-
-base::UnsafeSharedMemoryRegion GpuChannelHost::ShareToGpuProcess(
-    const base::UnsafeSharedMemoryRegion& source_region) {
-  if (IsLost())
-    return base::UnsafeSharedMemoryRegion();
-
-  return source_region.Duplicate();
-}
-
-int32_t GpuChannelHost::ReserveTransferBufferId() {
-  // 0 is a reserved value.
-  int32_t id = g_next_transfer_buffer_id.GetNext();
-  if (id)
-    return id;
-  return g_next_transfer_buffer_id.GetNext();
+  io_thread_->PostTask(
+      FROM_HERE, base::BindOnce(&GpuChannelHost::Listener::RemoveRoute,
+                                base::Unretained(listener_.get()), route_id));
 }
 
 int32_t GpuChannelHost::ReserveImageId() {
@@ -275,11 +275,13 @@ operator=(OrderingBarrierInfo&&) = default;
 GpuChannelHost::Listener::Listener(
     mojo::ScopedMessagePipeHandle handle,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner)
-    : channel_(IPC::ChannelMojo::Create(std::move(handle),
-                                        IPC::Channel::MODE_CLIENT,
-                                        this,
-                                        io_task_runner,
-                                        base::ThreadTaskRunnerHandle::Get())) {
+    : channel_(IPC::ChannelMojo::Create(
+          std::move(handle),
+          IPC::Channel::MODE_CLIENT,
+          this,
+          io_task_runner,
+          base::ThreadTaskRunnerHandle::Get(),
+          mojo::internal::MessageQuotaChecker::MaybeCreate())) {
   DCHECK(channel_);
   DCHECK(io_task_runner->BelongsToCurrentThread());
   bool result = channel_->Connect();
@@ -307,7 +309,8 @@ void GpuChannelHost::Listener::AddRoute(
 
   if (lost_) {
     info.task_runner->PostTask(
-        FROM_HERE, base::Bind(&IPC::Listener::OnChannelError, info.listener));
+        FROM_HERE,
+        base::BindOnce(&IPC::Listener::OnChannelError, info.listener));
   }
 }
 
@@ -338,8 +341,8 @@ bool GpuChannelHost::Listener::OnMessageReceived(const IPC::Message& message) {
   const RouteInfo& info = it->second;
   info.task_runner->PostTask(
       FROM_HERE,
-      base::Bind(base::IgnoreResult(&IPC::Listener::OnMessageReceived),
-                 info.listener, message));
+      base::BindOnce(base::IgnoreResult(&IPC::Listener::OnMessageReceived),
+                     info.listener, message));
   return true;
 }
 
@@ -364,7 +367,8 @@ void GpuChannelHost::Listener::OnChannelError() {
   for (const auto& kv : routes_) {
     const RouteInfo& info = kv.second;
     info.task_runner->PostTask(
-        FROM_HERE, base::Bind(&IPC::Listener::OnChannelError, info.listener));
+        FROM_HERE,
+        base::BindOnce(&IPC::Listener::OnChannelError, info.listener));
   }
 
   routes_.clear();

@@ -22,6 +22,7 @@
 #include "media/base/moving_average.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/timestamp_constants.h"
+#include "media/base/waiting.h"
 #include "media/filters/decoder_selector.h"
 #include "media/filters/decoder_stream_traits.h"
 
@@ -59,7 +60,7 @@ class MEDIA_EXPORT DecoderStream {
   using InitCB = base::OnceCallback<void(bool success)>;
 
   // Indicates completion of a DecoderStream read.
-  using ReadCB = base::OnceCallback<void(Status, const scoped_refptr<Output>&)>;
+  using ReadCB = base::OnceCallback<void(Status, scoped_refptr<Output>)>;
 
   DecoderStream(std::unique_ptr<DecoderStreamTraits<StreamType>> traits,
                 const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
@@ -78,7 +79,7 @@ class MEDIA_EXPORT DecoderStream {
                   InitCB init_cb,
                   CdmContext* cdm_context,
                   StatisticsCB statistics_cb,
-                  base::RepeatingClosure waiting_for_decryption_key_cb);
+                  WaitingCB waiting_cb);
 
   // Reads a decoded Output and returns it via the |read_cb|. Note that
   // |read_cb| is always called asynchronously. This method should only be
@@ -119,9 +120,9 @@ class MEDIA_EXPORT DecoderStream {
   // prepared at any one time; this alleviates resource usage issues incurred by
   // the preparation process when a decoder has a burst of outputs after on
   // Decode(). For more context on why, see https://crbug.com/820167.
-  using OutputReadyCB = base::OnceCallback<void(const scoped_refptr<Output>&)>;
-  using PrepareCB = base::RepeatingCallback<void(const scoped_refptr<Output>&,
-                                                 OutputReadyCB)>;
+  using OutputReadyCB = base::OnceCallback<void(scoped_refptr<Output>)>;
+  using PrepareCB =
+      base::RepeatingCallback<void(scoped_refptr<Output>, OutputReadyCB)>;
   void SetPrepareCB(PrepareCB prepare_cb);
 
   // Indicates that we won't need to prepare outputs before |start_timestamp|,
@@ -174,7 +175,7 @@ class MEDIA_EXPORT DecoderStream {
       std::unique_ptr<DecryptingDemuxerStream> decrypting_demuxer_stream);
 
   // Satisfy pending |read_cb_| with |status| and |output|.
-  void SatisfyRead(Status status, const scoped_refptr<Output>& output);
+  void SatisfyRead(Status status, scoped_refptr<Output> output);
 
   // Decodes |buffer| and returns the result via OnDecodeOutputReady().
   // Saves |buffer| into |pending_buffers_| if appropriate.
@@ -194,7 +195,7 @@ class MEDIA_EXPORT DecoderStream {
                     DecodeStatus status);
 
   // Output callback passed to Decoder::Initialize().
-  void OnDecodeOutputReady(const scoped_refptr<Output>& output);
+  void OnDecodeOutputReady(scoped_refptr<Output> output);
 
   // Reads a buffer from |stream_| and returns the result via OnBufferReady().
   void ReadFromDemuxerStream();
@@ -215,7 +216,7 @@ class MEDIA_EXPORT DecoderStream {
 
   void ClearOutputs();
   void MaybePrepareAnotherOutput();
-  void OnPreparedOutputReady(const scoped_refptr<Output>& frame);
+  void OnPreparedOutputReady(scoped_refptr<Output> frame);
   void CompletePrepare(const Output* output);
 
   std::unique_ptr<DecoderStreamTraits<StreamType>> traits_;
@@ -227,7 +228,7 @@ class MEDIA_EXPORT DecoderStream {
 
   StatisticsCB statistics_cb_;
   InitCB init_cb_;
-  base::RepeatingClosure waiting_for_decryption_key_cb_;
+  WaitingCB waiting_cb_;
 
   ReadCB read_cb_;
   base::OnceClosure reset_cb_;
@@ -292,15 +293,15 @@ class MEDIA_EXPORT DecoderStream {
   base::TimeDelta skip_prepare_until_timestamp_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<DecoderStream<StreamType>> weak_factory_;
+  base::WeakPtrFactory<DecoderStream<StreamType>> weak_factory_{this};
 
   // Used to invalidate pending decode requests and output callbacks.
-  base::WeakPtrFactory<DecoderStream<StreamType>> fallback_weak_factory_;
+  base::WeakPtrFactory<DecoderStream<StreamType>> fallback_weak_factory_{this};
 
   // Used to invalidate outputs awaiting preparation. This can't use either of
   // the above factories since they are used to bind one time callbacks given
   // to decoders that may not be reinitialized after Reset().
-  base::WeakPtrFactory<DecoderStream<StreamType>> prepare_weak_factory_;
+  base::WeakPtrFactory<DecoderStream<StreamType>> prepare_weak_factory_{this};
 };
 
 template <>

@@ -11,19 +11,19 @@
 #include "components/viz/test/begin_frame_args_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/presentation_feedback.h"
-#include "ui/gl/gl_utils.h"
+#include "ui/gl/color_space_utils.h"
 
 namespace viz {
 
 FakeOutputSurface::FakeOutputSurface(
     scoped_refptr<ContextProvider> context_provider)
-    : OutputSurface(std::move(context_provider)), weak_ptr_factory_(this) {
+    : OutputSurface(std::move(context_provider)) {
   DCHECK(OutputSurface::context_provider());
 }
 
 FakeOutputSurface::FakeOutputSurface(
     std::unique_ptr<SoftwareOutputDevice> software_device)
-    : OutputSurface(std::move(software_device)), weak_ptr_factory_(this) {
+    : OutputSurface(std::move(software_device)) {
   DCHECK(OutputSurface::software_device());
 }
 
@@ -37,7 +37,7 @@ void FakeOutputSurface::Reshape(const gfx::Size& size,
   if (context_provider()) {
     context_provider()->ContextGL()->ResizeCHROMIUM(
         size.width(), size.height(), device_scale_factor,
-        gl::GetGLColorSpace(color_space), has_alpha);
+        gl::ColorSpaceUtils::GetGLColorSpace(color_space), has_alpha);
   } else {
     software_device()->Resize(size, device_scale_factor);
   }
@@ -50,16 +50,13 @@ void FakeOutputSurface::SwapBuffers(OutputSurfaceFrame frame) {
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(&FakeOutputSurface::SwapBuffersAck,
-                                weak_ptr_factory_.GetWeakPtr(),
-                                frame.need_presentation_feedback));
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
-void FakeOutputSurface::SwapBuffersAck(bool need_presentation_feedback) {
-  client_->DidReceiveSwapBuffersAck();
-  if (need_presentation_feedback) {
-    client_->DidReceivePresentationFeedback(
-        {base::TimeTicks::Now(), base::TimeDelta(), 0});
-  }
+void FakeOutputSurface::SwapBuffersAck() {
+  base::TimeTicks now = base::TimeTicks::Now();
+  client_->DidReceiveSwapBuffersAck({now, now});
+  client_->DidReceivePresentationFeedback({now, base::TimeDelta(), 0});
 }
 
 void FakeOutputSurface::BindFramebuffer() {
@@ -87,11 +84,6 @@ bool FakeOutputSurface::HasExternalStencilTest() const {
   return has_external_stencil_test_;
 }
 
-OverlayCandidateValidator* FakeOutputSurface::GetOverlayCandidateValidator()
-    const {
-  return overlay_candidate_validator_;
-}
-
 gfx::BufferFormat FakeOutputSurface::GetOverlayBufferFormat() const {
   return gfx::BufferFormat::RGBX_8888;
 }
@@ -104,15 +96,20 @@ unsigned FakeOutputSurface::GetOverlayTextureId() const {
   return overlay_texture_id_;
 }
 
-#if BUILDFLAG(ENABLE_VULKAN)
-gpu::VulkanSurface* FakeOutputSurface::GetVulkanSurface() {
-  NOTIMPLEMENTED();
-  return nullptr;
-}
-#endif
-
 unsigned FakeOutputSurface::UpdateGpuFence() {
   return gpu_fence_id_;
 }
+
+void FakeOutputSurface::SetUpdateVSyncParametersCallback(
+    UpdateVSyncParametersCallback callback) {}
+
+gfx::OverlayTransform FakeOutputSurface::GetDisplayTransform() {
+  return gfx::OVERLAY_TRANSFORM_NONE;
+}
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+void FakeOutputSurface::SetNeedsSwapSizeNotifications(
+    bool needs_swap_size_notifications) {}
+#endif
 
 }  // namespace viz

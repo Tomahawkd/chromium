@@ -4,13 +4,13 @@
 
 #include "chrome/browser/memory/memory_kills_monitor.h"
 
-#include "base/macros.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
+#include "base/stl_util.h"
 #include "base/time/time.h"
 #include "chrome/browser/memory/memory_kills_histogram.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace memory {
@@ -29,7 +29,7 @@ base::HistogramBase* GetOOMKillsCountHistogram() {
 
 class MemoryKillsMonitorTest : public testing::Test {
  private:
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 TEST_F(MemoryKillsMonitorTest, TestHistograms) {
@@ -117,7 +117,7 @@ TEST_F(MemoryKillsMonitorTest, TestHistograms) {
       "score 653 or sacrifice child"
   };
 
-  for (unsigned long i = 0; i < arraysize(sample_lines); ++i) {
+  for (unsigned long i = 0; i < base::size(sample_lines); ++i) {
     MemoryKillsMonitor::TryMatchOomKillLine(sample_lines[i]);
   }
 

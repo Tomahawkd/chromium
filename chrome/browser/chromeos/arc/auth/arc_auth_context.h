@@ -11,53 +11,52 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/timer/timer.h"
-#include "google_apis/gaia/ubertoken_fetcher.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "google_apis/gaia/gaia_auth_consumer.h"
 #include "net/base/backoff_entry.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
+class GaiaAuthFetcher;
 class Profile;
 
-namespace net {
-class URLRequestContextGetter;
+namespace signin {
+class UbertokenFetcher;
 }
 
 namespace arc {
 
-class ArcAuthContext : public UbertokenConsumer,
-                       public GaiaAuthConsumer,
-                       public identity::IdentityManager::Observer {
+class ArcAuthContext : public GaiaAuthConsumer,
+                       public signin::IdentityManager::Observer {
  public:
   // Creates an |ArcAuthContext| for the given |account_id|. This |account_id|
   // must be the |account_id| used by the OAuth Token Service chain.
   // Note: |account_id| can be the Device Account or a Secondary Account stored
   // in Chrome OS Account Manager.
-  ArcAuthContext(Profile* profile, const std::string& account_id);
+  ArcAuthContext(Profile* profile, const CoreAccountId& account_id);
   ~ArcAuthContext() override;
 
   // Prepares the context. Calling while an inflight operation exists will
   // cancel the inflight operation.
-  // On completion, |context| is passed to the callback. On error, |context|
-  // is nullptr.
-  using PrepareCallback =
-      base::Callback<void(net::URLRequestContextGetter* context)>;
+  // On completion, |true| is passed to the callback. On error, |false|
+  // is passed.
+  using PrepareCallback = base::Callback<void(bool success)>;
   void Prepare(const PrepareCallback& callback);
 
   // Creates and starts a request to fetch an access token for the given
   // |scopes|. The caller owns the returned request. |callback| will be
   // called with results if the returned request is not deleted.
-  std::unique_ptr<identity::AccessTokenFetcher> CreateAccessTokenFetcher(
+  std::unique_ptr<signin::AccessTokenFetcher> CreateAccessTokenFetcher(
       const std::string& consumer_name,
       const identity::ScopeSet& scopes,
-      identity::AccessTokenFetcher::TokenCallback callback);
+      signin::AccessTokenFetcher::TokenCallback callback);
 
-  // identity::IdentityManager::Observer:
+  // signin::IdentityManager::Observer:
   void OnRefreshTokenUpdatedForAccount(
-      const AccountInfo& account_info) override;
+      const CoreAccountInfo& account_info) override;
   void OnRefreshTokensLoaded() override;
 
-  // UbertokenConsumer:
-  void OnUbertokenSuccess(const std::string& token) override;
-  void OnUbertokenFailure(const GoogleServiceAuthError& error) override;
+  // Ubertoken fetch completion callback.
+  void OnUbertokenFetchComplete(GoogleServiceAuthError error,
+                                const std::string& uber_token);
 
   // GaiaAuthConsumer:
   void OnMergeSessionSuccess(const std::string& data) override;
@@ -76,8 +75,8 @@ class ArcAuthContext : public UbertokenConsumer,
 
   // Unowned pointer.
   Profile* const profile_;
-  const std::string account_id_;
-  identity::IdentityManager* const identity_manager_;
+  const CoreAccountId account_id_;
+  signin::IdentityManager* const identity_manager_;
 
   // Whether the merge session should be skipped. Set to true only in testing.
   bool skip_merge_session_for_testing_ = false;
@@ -91,7 +90,7 @@ class ArcAuthContext : public UbertokenConsumer,
   base::OneShotTimer refresh_token_timeout_;
   base::OneShotTimer retry_timeout_;
   std::unique_ptr<GaiaAuthFetcher> merger_fetcher_;
-  std::unique_ptr<UbertokenFetcher> ubertoken_fetcher_;
+  std::unique_ptr<signin::UbertokenFetcher> ubertoken_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcAuthContext);
 };

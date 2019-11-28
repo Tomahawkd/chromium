@@ -16,7 +16,6 @@
 #include "base/command_line.h"
 #include "base/debug/alias.h"
 #include "base/debug/stack_trace.h"
-#include "base/debug/thread_heap_usage_tracker.h"
 #include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
@@ -140,8 +139,6 @@ void MemoryDumpManager::Initialize(
   RegisterDumpProvider(JavaHeapDumpProvider::GetInstance(), "JavaHeap",
                        nullptr);
 #endif
-
-  TRACE_EVENT_WARMUP_CATEGORY(kTraceCategory);
 }
 
 void MemoryDumpManager::RegisterDumpProvider(
@@ -286,9 +283,8 @@ MemoryDumpManager::GetOrCreateBgTaskRunnerLocked() {
   return dump_thread_->task_runner();
 }
 
-void MemoryDumpManager::CreateProcessDump(
-    const MemoryDumpRequestArgs& args,
-    const ProcessMemoryDumpCallback& callback) {
+void MemoryDumpManager::CreateProcessDump(const MemoryDumpRequestArgs& args,
+                                          ProcessMemoryDumpCallback callback) {
   char guid_str[20];
   sprintf(guid_str, "0x%" PRIx64, args.dump_guid);
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(kTraceCategory, "ProcessMemoryDump",
@@ -310,7 +306,8 @@ void MemoryDumpManager::CreateProcessDump(
     AutoLock lock(lock_);
 
     pmd_async_state.reset(new ProcessMemoryDumpAsyncState(
-        args, dump_providers_, callback, GetOrCreateBgTaskRunnerLocked()));
+        args, dump_providers_, std::move(callback),
+        GetOrCreateBgTaskRunnerLocked()));
   }
 
   // Start the process dump. This involves task runner hops as specified by the
@@ -476,10 +473,9 @@ void MemoryDumpManager::FinishAsyncProcessDump(
   TRACE_EVENT0(kTraceCategory, "MemoryDumpManager::FinishAsyncProcessDump");
 
   if (!pmd_async_state->callback.is_null()) {
-    pmd_async_state->callback.Run(
-        true /* success */, dump_guid,
-        std::move(pmd_async_state->process_memory_dump));
-    pmd_async_state->callback.Reset();
+    std::move(pmd_async_state->callback)
+        .Run(true /* success */, dump_guid,
+             std::move(pmd_async_state->process_memory_dump));
   }
 
   TRACE_EVENT_NESTABLE_ASYNC_END0(kTraceCategory, "ProcessMemoryDump",
@@ -528,12 +524,13 @@ MemoryDumpManager::ProcessMemoryDumpAsyncState::ProcessMemoryDumpAsyncState(
     ProcessMemoryDumpCallback callback,
     scoped_refptr<SequencedTaskRunner> dump_thread_task_runner)
     : req_args(req_args),
-      callback(callback),
+      callback(std::move(callback)),
       callback_task_runner(ThreadTaskRunnerHandle::Get()),
       dump_thread_task_runner(std::move(dump_thread_task_runner)) {
   pending_dump_providers.reserve(dump_providers.size());
   pending_dump_providers.assign(dump_providers.rbegin(), dump_providers.rend());
-  MemoryDumpArgs args = {req_args.level_of_detail, req_args.dump_guid};
+  MemoryDumpArgs args = {req_args.level_of_detail, req_args.determinism,
+                         req_args.dump_guid};
   process_memory_dump = std::make_unique<ProcessMemoryDump>(args);
 }
 

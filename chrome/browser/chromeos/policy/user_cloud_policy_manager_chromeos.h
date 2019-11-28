@@ -10,14 +10,16 @@
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/debug/stack_trace.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/optional.h"
+#include "base/scoped_observer.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/policy/wildcard_login_checker.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_manager_observer.h"
 #include "components/account_id/account_id.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
@@ -25,8 +27,6 @@
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_manager.h"
 #include "components/policy/core/common/cloud/cloud_policy_service.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 
 class GoogleServiceAuthError;
 class PrefService;
@@ -52,8 +52,7 @@ class RemoteCommandsInvalidator;
 class UserCloudPolicyManagerChromeOS : public CloudPolicyManager,
                                        public CloudPolicyClient::Observer,
                                        public CloudPolicyService::Observer,
-                                       public content::NotificationObserver,
-                                       public KeyedService {
+                                       public ProfileManagerObserver {
  public:
   // Enum describing what behavior we want to enforce here.
   enum class PolicyEnforcement {
@@ -120,9 +119,19 @@ class UserCloudPolicyManagerChromeOS : public CloudPolicyManager,
   // using the ProfileOAuth2TokenService directly to get the access token, a 3rd
   // service (UserCloudPolicyTokenForwarder) will fetch it later and pass it to
   // this method once available.
-  // The |access_token| can then be used to authenticate the registration
-  // request to the DMServer.
-  void OnAccessTokenAvailable(const std::string& access_token);
+  // UserCloudPolicyTokenForwarder will continue delivering fresh OAuth tokens
+  // upon expected previous token expiration if this class requires OAuth token
+  // to be always available (needed for child user). The |access_token| is used
+  // to authenticate the registration request to DMServer for all users. It is
+  // also used to authorize policy fetch request and status upload for child
+  // user.
+  // Note: This method will be called once for regular user and multiple times
+  // (periodically) for child user.
+  virtual void OnAccessTokenAvailable(const std::string& access_token);
+
+  // Whether OAuth2 token is required for DMServer requests (policy fetch,
+  // uploading status report) for child user.
+  bool RequiresOAuthTokenForChildUser() const;
 
   // Returns true if the underlying CloudPolicyClient is already registered.
   bool IsClientRegistered() const;
@@ -209,14 +218,15 @@ class UserCloudPolicyManagerChromeOS : public CloudPolicyManager,
   // user is not managed).
   void CancelWaitForPolicyFetch(bool success);
 
+  // Starts refresh scheduler if all the required conditions are fullfilled.
+  // Exits immediately if refresh scheduler is already started, so it is safe to
+  // call it multiple times.
   void StartRefreshSchedulerIfReady();
 
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // ProfileManagerObserver:
+  void OnProfileAdded(Profile* profile) override;
 
-  // Observer called on profile shutdown.
+  // Called on profile shutdown.
   void ProfileShutdown();
 
   // Profile associated with the current user.
@@ -239,7 +249,7 @@ class UserCloudPolicyManagerChromeOS : public CloudPolicyManager,
 
   // Whether we're waiting for a policy fetch to complete before reporting
   // IsInitializationComplete().
-  bool waiting_for_policy_fetch_;
+  bool waiting_for_policy_fetch_ = false;
 
   // What kind of enforcement we need to implement.
   PolicyEnforcement enforcement_type_;
@@ -269,20 +279,12 @@ class UserCloudPolicyManagerChromeOS : public CloudPolicyManager,
   base::Time time_token_available_;
   base::Time time_client_registered_;
 
-  // Stack trace of the previous Connect() method call.
-  // TODO(emaxx): Remove after the crashes tracked at https://crbug.com/685996
-  // are fixed.
-  base::debug::StackTrace connect_callstack_;
-
   // The AccountId associated with the user whose policy is being loaded.
-  AccountId account_id_;
+  const AccountId account_id_;
 
   // The callback to invoke if the user session should be shutdown. This is
   // injected in the constructor to make it easier to write tests.
   base::OnceClosure fatal_error_callback_;
-
-  // Used to register for notification that profile creation is complete.
-  content::NotificationRegistrar registrar_;
 
   // Invalidator used for remote commands to be delivered to this user.
   std::unique_ptr<RemoteCommandsInvalidator> invalidator_;
@@ -296,6 +298,9 @@ class UserCloudPolicyManagerChromeOS : public CloudPolicyManager,
       system_url_loader_factory_for_tests_;
   scoped_refptr<network::SharedURLLoaderFactory>
       signin_url_loader_factory_for_tests_;
+
+  ScopedObserver<ProfileManager, ProfileManagerObserver>
+      observed_profile_manager_{this};
 
   // Refresh token used in tests instead of the user context refresh token to
   // fetch the policy OAuth token.

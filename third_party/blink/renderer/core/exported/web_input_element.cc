@@ -61,6 +61,10 @@ bool WebInputElement::IsPasswordField() const {
   return ConstUnwrap<HTMLInputElement>()->type() == input_type_names::kPassword;
 }
 
+void WebInputElement::SetHasBeenPasswordField() {
+  Unwrap<HTMLInputElement>()->SetHasBeenPasswordField();
+}
+
 bool WebInputElement::IsPasswordFieldForAutofill() const {
   if (ConstUnwrap<HTMLInputElement>()->IsTextField() &&
       ConstUnwrap<HTMLInputElement>()->HasBeenPasswordField()) {
@@ -105,8 +109,9 @@ bool WebInputElement::IsValidValue(const WebString& value) const {
 
 void WebInputElement::SetChecked(bool now_checked, bool send_events) {
   Unwrap<HTMLInputElement>()->setChecked(
-      now_checked,
-      send_events ? kDispatchInputAndChangeEvent : kDispatchNoEvent);
+      now_checked, send_events
+                       ? TextFieldEventBehavior::kDispatchInputAndChangeEvent
+                       : TextFieldEventBehavior::kDispatchNoEvent);
 }
 
 bool WebInputElement::IsChecked() const {
@@ -143,7 +148,7 @@ WebInputElement::WebInputElement(HTMLInputElement* elem)
     : WebFormControlElement(elem) {}
 
 DEFINE_WEB_NODE_TYPE_CASTS(WebInputElement,
-                           IsHTMLInputElement(ConstUnwrap<Node>()));
+                           IsHTMLInputElement(ConstUnwrap<Node>()))
 
 WebInputElement& WebInputElement::operator=(HTMLInputElement* elem) {
   private_ = elem;

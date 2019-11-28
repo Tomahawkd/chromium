@@ -5,9 +5,9 @@
 #include "chrome/browser/payments/android/journey_logger_android.h"
 
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/JourneyLogger_jni.h"
 #include "components/ukm/content/source_url_recorder.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/JourneyLogger_jni.h"
 
 namespace payments {
 namespace {
@@ -78,6 +78,13 @@ void JourneyLoggerAndroid::SetCanMakePaymentValue(
   journey_logger_.SetCanMakePaymentValue(jvalue);
 }
 
+void JourneyLoggerAndroid::SetHasEnrolledInstrumentValue(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jcaller,
+    jboolean jvalue) {
+  journey_logger_.SetHasEnrolledInstrumentValue(jvalue);
+}
+
 void JourneyLoggerAndroid::SetEventOccurred(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& jcaller,
@@ -131,6 +138,23 @@ void JourneyLoggerAndroid::SetNotShown(
   DCHECK_LT(jreason, JourneyLogger::NotShownReason::NOT_SHOWN_REASON_MAX);
   journey_logger_.SetNotShown(
       static_cast<JourneyLogger::NotShownReason>(jreason));
+}
+
+void JourneyLoggerAndroid::RecordTransactionAmount(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jcaller,
+    const base::android::JavaParamRef<jstring>& jcurrency,
+    const base::android::JavaParamRef<jstring>& jvalue,
+    jboolean jcompleted) {
+  journey_logger_.RecordTransactionAmount(
+      ConvertJavaStringToUTF8(env, jcurrency),
+      ConvertJavaStringToUTF8(env, jvalue), jcompleted);
+}
+
+void JourneyLoggerAndroid::SetTriggerTime(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& jcaller) {
+  journey_logger_.SetTriggerTime();
 }
 
 static jlong JNI_JourneyLogger_InitJourneyLoggerAndroid(

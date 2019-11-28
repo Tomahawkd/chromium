@@ -10,43 +10,46 @@ const WEBRTC_SERIAL = 'WEBRTC';
 let HOST_CHROME_VERSION;
 
 const queryParamsObject = {};
-let browserInspector;
-let browserInspectorTitle;
+let browserInspector = 'chrome://tracing';
+let browserInspectorTitle = 'trace';
 
 (function() {
 const chromeMatch = navigator.userAgent.match(/(?:^|\W)Chrome\/(\S+)/);
-if (chromeMatch && chromeMatch.length > 1)
+if (chromeMatch && chromeMatch.length > 1) {
   HOST_CHROME_VERSION = chromeMatch[1].split('.').map(s => Number(s) || 0);
+}
 
 const queryParams = window.location.search;
-if (!queryParams)
+if (!queryParams) {
   return;
+}
 const params = queryParams.substring(1).split('&');
 for (let i = 0; i < params.length; ++i) {
   const pair = params[i].split('=');
   queryParamsObject[pair[0]] = pair[1];
 }
 
-if ('trace' in queryParamsObject || 'tracing' in queryParamsObject) {
-  browserInspector = 'chrome://tracing';
-  browserInspectorTitle = 'trace';
-} else {
+if ('browser-inspector' in queryParamsObject) {
   browserInspector = queryParamsObject['browser-inspector'];
   browserInspectorTitle = 'inspect';
 }
 })();
 
 function isVersionNewerThanHost(version) {
-  if (!HOST_CHROME_VERSION)
+  if (!HOST_CHROME_VERSION) {
     return false;
+  }
   version = version.split('.').map(s => Number(s) || 0);
   for (let i = 0; i < HOST_CHROME_VERSION.length; i++) {
-    if (i > version.length)
+    if (i > version.length) {
       return false;
-    if (HOST_CHROME_VERSION[i] > version[i])
+    }
+    if (HOST_CHROME_VERSION[i] > version[i]) {
       return false;
-    if (HOST_CHROME_VERSION[i] < version[i])
+    }
+    if (HOST_CHROME_VERSION[i] < version[i]) {
       return true;
+    }
   }
   return false;
 }
@@ -67,15 +70,17 @@ function removeChildren(element_id) {
 function removeAdditionalChildren(element_id) {
   const element = $(element_id);
   const elements = element.querySelectorAll('.row.additional');
-  for (let i = 0; i != elements.length; i++)
+  for (let i = 0; i != elements.length; i++) {
     element.removeChild(elements[i]);
+  }
 }
 
 function removeChildrenExceptAdditional(element_id) {
   const element = $(element_id);
   const elements = element.querySelectorAll('.row:not(.additional)');
-  for (let i = 0; i != elements.length; i++)
+  for (let i = 0; i != elements.length; i++) {
     element.removeChild(elements[i]);
+  }
 }
 
 function onload() {
@@ -99,8 +104,9 @@ function onload() {
 
 function onHashChange() {
   const hash = window.location.hash.slice(1).toLowerCase();
-  if (!selectTab(hash))
+  if (!selectTab(hash)) {
     selectTab('devices');
+  }
 }
 
 /**
@@ -123,25 +129,28 @@ function selectTab(id) {
       tabHeader.classList.remove('selected');
     }
   }
-  if (!found)
+  if (!found) {
     return false;
+  }
   window.location.hash = id;
   return true;
 }
 
 function populateTargets(source, data) {
-  if (source == 'local')
+  if (source == 'local') {
     populateLocalTargets(data);
-  else if (source == 'remote')
+  } else if (source == 'remote') {
     populateRemoteTargets(data);
-  else
+  } else {
     console.error('Unknown source type: ' + source);
+  }
 }
 
 function populateAdditionalTargets(data) {
   removeAdditionalChildren('others-list');
-  for (let i = 0; i < data.length; i++)
+  for (let i = 0; i < data.length; i++) {
     addAdditionalTargetsToOthersList(data[i]);
+  }
 }
 
 function populateLocalTargets(data) {
@@ -153,18 +162,19 @@ function populateLocalTargets(data) {
   removeChildrenExceptAdditional('others-list');
 
   for (let i = 0; i < data.length; i++) {
-    if (data[i].type === 'page')
+    if (data[i].type === 'page') {
       addToPagesList(data[i]);
-    else if (data[i].type === 'background_page')
+    } else if (data[i].type === 'background_page') {
       addToExtensionsList(data[i]);
-    else if (data[i].type === 'app')
+    } else if (data[i].type === 'app') {
       addToAppsList(data[i]);
-    else if (data[i].type === 'shared_worker')
+    } else if (data[i].type === 'shared_worker') {
       addToWorkersList(data[i]);
-    else if (data[i].type === 'service_worker')
+    } else if (data[i].type === 'service_worker') {
       addToServiceWorkersList(data[i]);
-    else
+    } else {
       addToOthersList(data[i]);
+    }
   }
 }
 
@@ -174,8 +184,9 @@ function showIncognitoWarning() {
 
 function alreadyDisplayed(element, data) {
   const json = JSON.stringify(data);
-  if (element.cachedJSON == json)
+  if (element.cachedJSON == json) {
     return true;
+  }
   element.cachedJSON = json;
   return false;
 }
@@ -183,8 +194,7 @@ function alreadyDisplayed(element, data) {
 function updateBrowserVisibility(browserSection) {
   const icon = browserSection.querySelector('.used-for-port-forwarding');
   browserSection.hidden = !browserSection.querySelector('.open') &&
-      !browserSection.querySelector('.row') && !browserInspector &&
-      (!icon || icon.hidden);
+      !browserSection.querySelector('.row') && (!icon || icon.hidden);
 }
 
 function updateUsernameVisibility(deviceSection) {
@@ -194,22 +204,25 @@ function updateUsernameVisibility(deviceSection) {
   Array.prototype.forEach.call(browsers, function(browserSection) {
     if (!browserSection.hidden) {
       const browserUser = browserSection.querySelector('.browser-user');
-      if (browserUser)
+      if (browserUser) {
         users.add(browserUser.textContent);
+      }
     }
   });
   const hasSingleUser = users.size <= 1;
 
   Array.prototype.forEach.call(browsers, function(browserSection) {
     const browserUser = browserSection.querySelector('.browser-user');
-    if (browserUser)
+    if (browserUser) {
       browserUser.hidden = hasSingleUser;
+    }
   });
 }
 
 function populateRemoteTargets(devices) {
-  if (!devices)
+  if (!devices) {
     return;
+  }
 
   if ($('config-dialog').open) {
     window.holdDevices = devices;
@@ -217,10 +230,12 @@ function populateRemoteTargets(devices) {
   }
 
   function browserCompare(a, b) {
-    if (a.adbBrowserName != b.adbBrowserName)
+    if (a.adbBrowserName != b.adbBrowserName) {
       return a.adbBrowserName < b.adbBrowserName;
-    if (a.adbBrowserVersion != b.adbBrowserVersion)
+    }
+    if (a.adbBrowserVersion != b.adbBrowserVersion) {
       return a.adbBrowserVersion < b.adbBrowserVersion;
+    }
     return a.id < b.id;
   }
 
@@ -236,12 +251,14 @@ function populateRemoteTargets(devices) {
   }
 
   const deviceList = $('devices-list');
-  if (alreadyDisplayed(deviceList, devices))
+  if (alreadyDisplayed(deviceList, devices)) {
     return;
+  }
 
   function removeObsolete(validIds, section) {
-    if (validIds.indexOf(section.id) < 0)
+    if (validIds.indexOf(section.id) < 0) {
       section.remove();
+    }
   }
 
   const newDeviceIds = devices.map(function(d) {
@@ -277,8 +294,9 @@ function populateRemoteTargets(devices) {
       deviceSerial.textContent = '#' + serial;
       deviceHeader.appendChild(deviceSerial);
 
-      if (serial === WEBRTC_SERIAL)
+      if (serial === WEBRTC_SERIAL) {
         deviceHeader.classList.add('hidden');
+      }
 
       const devicePorts = document.createElement('div');
       devicePorts.className = 'device-ports';
@@ -293,8 +311,9 @@ function populateRemoteTargets(devices) {
       deviceSection.appendChild(authenticating);
     }
 
-    if (alreadyDisplayed(deviceSection, device))
+    if (alreadyDisplayed(deviceSection, device)) {
       continue;
+    }
 
     deviceSection.querySelector('.device-name').textContent = device.adbModel;
     deviceSection.querySelector('.device-auth').textContent =
@@ -332,8 +351,9 @@ function populateRemoteTargets(devices) {
         browserName.className = 'browser-name';
         browserHeader.appendChild(browserName);
         browserName.textContent = browser.adbBrowserName;
-        if (browser.adbBrowserVersion)
+        if (browser.adbBrowserVersion) {
           browserName.textContent += ' (' + browser.adbBrowserVersion + ')';
+        }
         if (browser.adbBrowserUser) {
           const browserUser = document.createElement('div');
           browserUser.className = 'browser-user';
@@ -366,8 +386,9 @@ function populateRemoteTargets(devices) {
             input.value = '';
           }.bind(null, browser.source, browser.id, newPageUrl);
           newPageUrl.addEventListener('keyup', function(handler, event) {
-            if (event.key == 'Enter' && event.target.value)
+            if (event.key == 'Enter' && event.target.value) {
               handler();
+            }
           }.bind(null, openHandler), true);
 
           const newPageButton = document.createElement('button');
@@ -385,19 +406,17 @@ function populateRemoteTargets(devices) {
             'forwarding. Closing it will drop current connections.';
         browserHeader.appendChild(portForwardingInfo);
 
-        if (browserInspector) {
-          const link = document.createElement('span');
-          link.classList.add('action');
-          link.setAttribute('tabindex', 1);
-          link.textContent = browserInspectorTitle;
-          browserHeader.appendChild(link);
-          link.addEventListener(
-              'click',
-              sendCommand.bind(
-                  null, 'inspect-browser', browser.source, browser.id,
-                  browserInspector),
-              false);
-        }
+        const link = document.createElement('span');
+        link.classList.add('action');
+        link.setAttribute('tabindex', 1);
+        link.textContent = browserInspectorTitle;
+        browserHeader.appendChild(link);
+        link.addEventListener(
+            'click',
+            sendCommand.bind(
+                null, 'inspect-browser', browser.source, browser.id,
+                browserInspector),
+            false);
 
         pageList = document.createElement('div');
         pageList.className = 'list pages';
@@ -413,10 +432,11 @@ function populateRemoteTargets(devices) {
           page.hasNoUniqueId = page.attached && majorChromeVersion &&
               majorChromeVersion < MIN_VERSION_TARGET_ID;
           const row = addTargetToList(page, pageList, ['name', 'url']);
-          if (page['description'])
+          if (page['description']) {
             addWebViewDetails(row, page);
-          else
+          } else {
             addFavicon(row, page);
+          }
           if (majorChromeVersion >= MIN_VERSION_TAB_ACTIVATE) {
             addActionLink(
                 row, 'focus tab',
@@ -449,22 +469,25 @@ function populateRemoteTargets(devices) {
 function addToPagesList(data) {
   const row = addTargetToList(data, $('pages-list'), ['name', 'url']);
   addFavicon(row, data);
-  if (data.guests)
+  if (data.guests) {
     addGuestViews(row, data.guests);
+  }
 }
 
 function addToExtensionsList(data) {
   const row = addTargetToList(data, $('extensions-list'), ['name', 'url']);
   addFavicon(row, data);
-  if (data.guests)
+  if (data.guests) {
     addGuestViews(row, data.guests);
+  }
 }
 
 function addToAppsList(data) {
   const row = addTargetToList(data, $('apps-list'), ['name', 'url']);
   addFavicon(row, data);
-  if (data.guests)
+  if (data.guests) {
     addGuestViews(row, data.guests);
+  }
 }
 
 function addGuestViews(row, guests) {
@@ -505,8 +528,9 @@ function formatValue(data, property) {
   }
 
   let text = value ? String(value) : '';
-  if (text.length > 100)
+  if (text.length > 100) {
     text = text.substring(0, 100) + '\u2026';
+  }
 
   const div = document.createElement('div');
   div.textContent = text;
@@ -516,8 +540,9 @@ function formatValue(data, property) {
 
 function addFavicon(row, data) {
   const favicon = document.createElement('img');
-  if (data['faviconUrl'])
+  if (data['faviconUrl']) {
     favicon.src = data['faviconUrl'];
+  }
   const propertiesBox = row.querySelector('.properties-box');
   propertiesBox.insertBefore(favicon, propertiesBox.firstChild);
 }
@@ -530,18 +555,20 @@ function addWebViewDetails(row, data) {
     return;
   }
   addWebViewDescription(row, webview);
-  if (data.adbScreenWidth && data.adbScreenHeight)
+  if (data.adbScreenWidth && data.adbScreenHeight) {
     addWebViewThumbnail(
         row, webview, data.adbScreenWidth, data.adbScreenHeight);
+  }
 }
 
 function addWebViewDescription(row, webview) {
   const viewStatus = {visibility: '', position: '', size: ''};
   if (!webview.empty) {
-    if (webview.attached && !webview.visible)
+    if (webview.attached && !webview.visible) {
       viewStatus.visibility = 'hidden';
-    else if (!webview.attached)
+    } else if (!webview.attached) {
       viewStatus.visibility = 'detached';
+    }
     viewStatus.size = 'size ' + webview.width + ' \u00d7 ' + webview.height;
   } else {
     viewStatus.visibility = 'empty';
@@ -553,12 +580,15 @@ function addWebViewDescription(row, webview) {
 
   const subRow = document.createElement('div');
   subRow.className = 'subrow webview';
-  if (webview.empty || !webview.attached || !webview.visible)
+  if (webview.empty || !webview.attached || !webview.visible) {
     subRow.className += ' invisible-view';
-  if (viewStatus.visibility)
+  }
+  if (viewStatus.visibility) {
     subRow.appendChild(formatValue(viewStatus, 'visibility'));
-  if (viewStatus.position)
+  }
+  if (viewStatus.position) {
     subRow.appendChild(formatValue(viewStatus, 'position'));
+  }
   subRow.appendChild(formatValue(viewStatus, 'size'));
   const subrowBox = row.querySelector('.subrow-box');
   subrowBox.insertBefore(subRow, row.querySelector('.actions'));
@@ -596,8 +626,9 @@ function addWebViewThumbnail(row, webview, screenWidth, screenHeight) {
   if (!webview.empty && webview.attached) {
     const viewRect = document.createElement('div');
     viewRect.className = 'view-rect';
-    if (!webview.visible)
+    if (!webview.visible) {
       viewRect.classList.add('hidden');
+    }
     function percent(ratio) {
       return ratio * 100 + '%';
     }
@@ -629,8 +660,9 @@ function addTargetToList(data, list, properties) {
   subrow.className = 'subrow';
   subrowBox.appendChild(subrow);
 
-  for (let j = 0; j < properties.length; j++)
+  for (let j = 0; j < properties.length; j++) {
     subrow.appendChild(formatValue(data, properties[j]));
+  }
 
   const actionBox = document.createElement('div');
   actionBox.className = 'actions';
@@ -645,6 +677,11 @@ function addTargetToList(data, list, properties) {
     addActionLink(
         row, 'inspect', sendTargetCommand.bind(null, 'inspect', data),
         data.hasNoUniqueId || data.adbAttachedForeign);
+    if (data.type === 'page') {
+      addActionLink(
+          row, 'pause', sendTargetCommand.bind(null, 'pause', data),
+          data.hasNoUniqueId || data.adbAttachedForeign);
+    }
   }
 
   list.appendChild(row);
@@ -655,10 +692,11 @@ function addActionLink(row, text, handler, opt_disabled) {
   const link = document.createElement('span');
   link.classList.add('action');
   link.setAttribute('tabindex', 1);
-  if (opt_disabled)
+  if (opt_disabled) {
     link.classList.add('disabled');
-  else
+  } else {
     link.classList.remove('disabled');
+  }
 
   link.textContent = text;
   link.addEventListener('click', handler, true);
@@ -734,8 +772,9 @@ function commitDialog(commitHandler, shouldClose) {
 
 function openConfigDialog(dialogClass, commitHandler, lineFactory, data) {
   const dialog = $('config-dialog');
-  if (dialog.open)
+  if (dialog.open) {
     return;
+  }
 
   dialog.className = dialogClass;
   dialog.classList.add('config');
@@ -749,16 +788,18 @@ function openConfigDialog(dialogClass, commitHandler, lineFactory, data) {
   list.textContent = '';
 
   list.createRow = appendRow.bind(null, list, lineFactory);
-  for (const key in data)
+  for (const key in data) {
     list.createRow(key, data[key]);
+  }
   list.createRow(null, null);
 
   dialog.showModal();
   const defaultFocus = dialog.querySelector('.fresh .preselected');
-  if (defaultFocus)
+  if (defaultFocus) {
     defaultFocus.focus();
-  else
+  } else {
     doneButton.focus();
+  }
 }
 
 function openPortForwardingConfig() {
@@ -825,12 +866,14 @@ function filterList(fieldSelectors, callback) {
       const input = line.querySelector(selector);
       const value = input.classList.contains('invalid') ? input.lastValidValue :
                                                           input.value;
-      if (!value)
+      if (!value) {
         break;
+      }
       values.push(value);
     }
-    if (values.length == fieldSelectors.length)
+    if (values.length == fieldSelectors.length) {
       callback.apply(null, values);
+    }
   }
 }
 
@@ -870,8 +913,9 @@ function appendRow(list, lineFactory, key, value) {
     if (e.key == 'Tab' && !hasKeyModifiers(e) &&
         line.classList.contains('fresh') && !line.classList.contains('empty')) {
       // Tabbing forward on the fresh line, try create a new empty one.
-      if (commitFreshLineIfValid(true))
+      if (commitFreshLineIfValid(true)) {
         e.preventDefault();
+      }
     }
   });
 
@@ -889,34 +933,40 @@ function appendRow(list, lineFactory, key, value) {
   line.addEventListener('focus', selectLine.bind(null, line, true));
   checkEmptyLine(line);
 
-  if (!key && !value)
+  if (!key && !value) {
     line.classList.add('fresh');
+  }
 
   return list.appendChild(line);
 }
 
 function validatePort(input) {
   const match = input.value.match(/^(\d+)$/);
-  if (!match)
+  if (!match) {
     return false;
+  }
   const port = parseInt(match[1]);
-  if (port < 1024 || 65535 < port)
+  if (port < 1024 || 65535 < port) {
     return false;
+  }
 
   const inputs = document.querySelectorAll('input.port:not(.invalid)');
   for (let i = 0; i != inputs.length; ++i) {
-    if (inputs[i] == input)
+    if (inputs[i] == input) {
       break;
-    if (parseInt(inputs[i].value) == port)
+    }
+    if (parseInt(inputs[i].value) == port) {
       return false;
+    }
   }
   return true;
 }
 
 function validateLocation(input) {
   const match = input.value.match(/^([a-zA-Z0-9\.\-_]+):(\d+)$/);
-  if (!match)
+  if (!match) {
     return false;
+  }
   const port = parseInt(match[2]);
   return port <= 65535;
 }
@@ -930,12 +980,14 @@ function createConfigField(value, className, hint, validate) {
   input.lastValidValue = value || '';
 
   function checkInput() {
-    if (validate(input))
+    if (validate(input)) {
       input.classList.remove('invalid');
-    else
+    } else {
       input.classList.add('invalid');
-    if (input.parentNode)
+    }
+    if (input.parentNode) {
       checkEmptyLine(input.parentNode);
+    }
   }
   checkInput();
 
@@ -945,8 +997,9 @@ function createConfigField(value, className, hint, validate) {
   });
 
   input.addEventListener('blur', function() {
-    if (validate(input))
+    if (validate(input)) {
       input.lastValidValue = input.value;
+    }
   });
 
   return input;
@@ -956,22 +1009,26 @@ function checkEmptyLine(line) {
   const inputs = line.querySelectorAll('input');
   let empty = true;
   for (let i = 0; i != inputs.length; i++) {
-    if (inputs[i].value != '')
+    if (inputs[i].value != '') {
       empty = false;
+    }
   }
-  if (empty)
+  if (empty) {
     line.classList.add('empty');
-  else
+  } else {
     line.classList.remove('empty');
+  }
 }
 
 function selectLine(line, opt_focusInput) {
-  if (line.classList.contains('selected'))
+  if (line.classList.contains('selected')) {
     return;
+  }
   const selected =
       line.parentElement && line.parentElement.querySelector('.selected');
-  if (selected)
+  if (selected) {
     selected.classList.remove('selected');
+  }
   line.classList.add('selected');
   if (opt_focusInput) {
     const el = line.querySelector('.preselected');
@@ -984,43 +1041,50 @@ function selectLine(line, opt_focusInput) {
 
 function commitFreshLineIfValid(opt_selectNew) {
   const line = $('config-dialog').querySelector('.config-list-row.fresh');
-  if (line.querySelector('.invalid'))
+  if (line.querySelector('.invalid')) {
     return false;
+  }
   line.classList.remove('fresh');
   const freshLine = line.parentElement.createRow();
-  if (opt_selectNew)
+  if (opt_selectNew) {
     freshLine.querySelector('.preselected').focus();
+  }
   return true;
 }
 
 function populatePortStatus(devicesStatusMap) {
   for (const deviceId in devicesStatusMap) {
-    if (!devicesStatusMap.hasOwnProperty(deviceId))
+    if (!devicesStatusMap.hasOwnProperty(deviceId)) {
       continue;
+    }
     const deviceStatus = devicesStatusMap[deviceId];
     const deviceStatusMap = deviceStatus.ports;
 
     const deviceSection = $(deviceId);
-    if (!deviceSection)
+    if (!deviceSection) {
       continue;
+    }
 
     const devicePorts = deviceSection.querySelector('.device-ports');
-    if (alreadyDisplayed(devicePorts, deviceStatus))
+    if (alreadyDisplayed(devicePorts, deviceStatus)) {
       continue;
+    }
 
     devicePorts.textContent = '';
     for (const port in deviceStatusMap) {
-      if (!deviceStatusMap.hasOwnProperty(port))
+      if (!deviceStatusMap.hasOwnProperty(port)) {
         continue;
+      }
 
       const status = deviceStatusMap[port];
       const portIcon = document.createElement('div');
       portIcon.className = 'port-icon';
       // status === 0 is the default (connected) state.
-      if (status === -1 || status === -2)
+      if (status === -1 || status === -2) {
         portIcon.classList.add('transient');
-      else if (status < 0)
+      } else if (status < 0) {
         portIcon.classList.add('error');
+      }
       devicePorts.appendChild(portIcon);
 
       const portNumber = document.createElement('div');
@@ -1031,8 +1095,9 @@ function populatePortStatus(devicesStatusMap) {
 
     function updatePortForwardingInfo(browserSection) {
       const icon = browserSection.querySelector('.used-for-port-forwarding');
-      if (icon)
+      if (icon) {
         icon.hidden = (browserSection.id !== deviceStatus.browserId);
+      }
       updateBrowserVisibility(browserSection);
     }
 
@@ -1044,14 +1109,16 @@ function populatePortStatus(devicesStatusMap) {
 
   function clearBrowserPorts(browserSection) {
     const icon = browserSection.querySelector('.used-for-port-forwarding');
-    if (icon)
+    if (icon) {
       icon.hidden = true;
+    }
     updateBrowserVisibility(browserSection);
   }
 
   function clearPorts(deviceSection) {
-    if (deviceSection.id in devicesStatusMap)
+    if (deviceSection.id in devicesStatusMap) {
       return;
+    }
     const devicePorts = deviceSection.querySelector('.device-ports');
     devicePorts.textContent = '';
     delete devicePorts.cachedJSON;

@@ -24,6 +24,8 @@ run () {
   fi
 }
 
+ADB=${ADB:-adb}
+
 # Run a command through adb shell, strip the extra \r from the output
 # and return the correct status code to detect failures. This assumes
 # that the adb shell command prints a final \n to stdout.
@@ -34,7 +36,6 @@ run () {
 adb_shell () {
   local TMPOUT="$(mktemp)"
   local LASTLINE RET
-  local ADB=${ADB:-adb}
 
   # The weird sed rule is to strip the final \r on each output line
   # Since 'adb shell' never returns the command's proper exit/status code,
@@ -65,6 +66,7 @@ adb_shell () {
 VERBOSE=0
 DO_HELP=
 DO_TEST=
+DO_UNIT_TESTS=
 for OPT; do
   case $OPT in
     --output-dir=*)
@@ -72,6 +74,9 @@ for OPT; do
       ;;
     --help|-?)
       DO_HELP=true
+      ;;
+    --unit-tests)
+      DO_UNIT_TESTS=true
       ;;
     --verbose)
       VERBOSE=$(( $VERBOSE + 1 ))
@@ -109,6 +114,7 @@ Possible options:
 
    --help|-?           Print this message.
    --output-dir=<dir>  Manually set the Chromium output directory.
+   --unit-tests        Also run the unit-tests suite (for convenience).
    --verbose           Increment verbosity.
 
 EOF
@@ -146,25 +152,29 @@ libcrazy_linker_tests_libfoo_with_relro_and_relr.so \
 libcrazy_linker_tests_libfoo_with_static_constructor.so \
 libcrazy_linker_tests_libfoo_with_gnu_hash_table.so \
 libcrazy_linker_tests_libfoo2.so \
+libcrazy_linker_tests_libjni_lib.so \
 libcrazy_linker_tests_libzoo.so \
 libcrazy_linker_tests_libzoo_dlopen_in_initializer.so \
 libcrazy_linker_tests_libzoo_dlopen_in_initializer_inner.so \
 libcrazy_linker_tests_libzoo_with_dlopen_handle.so \
+libcrazy_linker_tests_libzoo_with_android_dlopen_ext.so \
 "
 
-# TODO(digit): Fix crazy_linker_test_load_library_callbacks and add it
-# to the list.
 TEST_FILES="\
 crazy_linker_bench_load_library \
 crazy_linker_test_constructors_destructors \
 crazy_linker_test_dl_wrappers \
 crazy_linker_test_dl_wrappers_recursive \
-crazy_linker_test_dl_wrappers_with_system_handle \
 crazy_linker_test_dl_wrappers_valid_handles \
+crazy_linker_test_dl_wrappers_with_android_dlopen_ext \
+crazy_linker_test_dl_wrappers_with_system_handle \
+crazy_linker_test_jni_hooks \
 crazy_linker_test_load_library \
 crazy_linker_test_load_library_depends \
+crazy_linker_test_load_library_with_fd \
 crazy_linker_test_load_library_with_gnu_hash_table \
 crazy_linker_test_load_library_with_relr_relocations \
+crazy_linker_test_load_library_with_reserved_map \
 crazy_linker_test_relocated_shared_relro \
 crazy_linker_test_search_path_list \
 crazy_linker_test_shared_relro \
@@ -192,8 +202,23 @@ fi
 run_test () {
   local TEST_NAME=$1
   shift
-  run adb_shell LD_LIBRARY_PATH=$RUN_DIR $RUN_DIR/$TEST_NAME "$@"
+  if [ "$VERBOSE" -ge 1 ]; then
+    # Using adb_shell doesn't print stderr, but it gives a status code.
+    # Consider that this is lesser important when debugging the test execution
+    # and run "adb shell" from the command-line instead.
+    echo "cd $RUN_DIR && LD_LIBRARY_PATH=. ./$TEST_NAME $@" | "$ADB" shell
+  else
+    run adb_shell "cd $RUN_DIR && LD_LIBRARY_PATH=. ./$TEST_NAME $@"
+  fi
 }
+
+if [ -n "$DO_UNIT_TESTS" ]; then
+  UT_FLAGS=
+  if [ "$VERBOSE" -ge 1 ]; then
+    UT_FLAGS="--verbose"
+  fi
+  $PROGDIR/run_android_crazy_linker_unittests $UT_FLAGS
+fi
 
 if [ -n "$DO_TEST" ]; then
   run_test "$DO_TEST"

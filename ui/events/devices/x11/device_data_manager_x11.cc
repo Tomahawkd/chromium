@@ -12,8 +12,8 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/stl_util.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "ui/display/display.h"
@@ -102,7 +102,7 @@ constexpr const char* kCachedAtoms[] = {
 };
 
 // Make sure the sizes of enum and |kCachedAtoms| are aligned.
-static_assert(arraysize(kCachedAtoms) ==
+static_assert(base::size(kCachedAtoms) ==
                   ui::DeviceDataManagerX11::DT_LAST_ENTRY,
               "kCachedAtoms count / enum mismatch");
 
@@ -150,13 +150,11 @@ void DeviceDataManagerX11::CreateInstance() {
   if (HasInstance())
     return;
 
-  DeviceDataManagerX11* device_data_manager = new DeviceDataManagerX11();
+  new DeviceDataManagerX11();
 
   // TODO(bruthig): Replace the DeleteInstance callbacks with explicit calls.
   base::AtExitManager::RegisterTask(
-      base::Bind(DeviceDataManager::DeleteInstance));
-
-  set_instance(device_data_manager);
+      base::BindOnce(DeviceDataManager::DeleteInstance));
 }
 
 // static
@@ -635,9 +633,8 @@ int DeviceDataManagerX11::GetMappedButton(int button) {
 }
 
 void DeviceDataManagerX11::UpdateButtonMap() {
-  button_map_count_ = XGetPointerMapping(gfx::GetXDisplay(),
-                                         button_map_,
-                                         arraysize(button_map_));
+  button_map_count_ = XGetPointerMapping(gfx::GetXDisplay(), button_map_,
+                                         base::size(button_map_));
 }
 
 void DeviceDataManagerX11::GetGestureTimes(const XEvent& xev,

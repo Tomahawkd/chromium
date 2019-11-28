@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_QUIC_STREAM_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_QUIC_STREAM_H_
 
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/modules/peerconnection/adapters/quic_stream_proxy.h"
 #include "third_party/blink/renderer/modules/peerconnection/byte_buffer_queue.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_quic_stream_read_result.h"
+#include "third_party/blink/renderer/modules/peerconnection/rtc_quic_stream_write_parameters.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_quic_transport.h"
 
 namespace blink {
@@ -65,8 +66,8 @@ class MODULES_EXPORT RTCQuicStream final : public EventTargetWithInlineData,
   uint32_t maxWriteBufferedAmount() const;
   RTCQuicStreamReadResult* readInto(NotShared<DOMUint8Array> data,
                                     ExceptionState& exception_state);
-  void write(NotShared<DOMUint8Array> data, ExceptionState& exception_state);
-  void finish();
+  void write(const RTCQuicStreamWriteParameters* data,
+             ExceptionState& exception_state);
   void reset();
   ScriptPromise waitForWriteBufferedAmountBelow(
       ScriptState* script_state,
@@ -75,7 +76,7 @@ class MODULES_EXPORT RTCQuicStream final : public EventTargetWithInlineData,
   ScriptPromise waitForReadable(ScriptState* script_state,
                                 uint32_t amount,
                                 ExceptionState& exception_state);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange, kStatechange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(statechange, kStatechange)
 
   // EventTarget overrides.
   const AtomicString& InterfaceName() const override;

@@ -15,12 +15,12 @@
 #include "build/build_config.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/media_stream_request.h"
 #include "media/audio/audio_input_ipc.h"
 #include "media/audio/audio_system.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/channel_layout.h"
 #include "media/base/media_switches.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/audio/cras_audio_handler.h"
@@ -28,12 +28,7 @@
 
 namespace content {
 
-const int AudioInputDeviceManager::kFakeOpenSessionId = 1;
-
 namespace {
-
-// Starting id for the first capture session.
-const int kFirstSessionId = AudioInputDeviceManager::kFakeOpenSessionId + 1;
 
 #if defined(OS_CHROMEOS)
 void SetKeyboardMicStreamActiveOnUIThread(bool active) {
@@ -46,7 +41,7 @@ void SetKeyboardMicStreamActiveOnUIThread(bool active) {
 
 AudioInputDeviceManager::AudioInputDeviceManager(
     media::AudioSystem* audio_system)
-    : next_capture_session_id_(kFirstSessionId),
+    :
 #if defined(OS_CHROMEOS)
       keyboard_mic_streams_count_(0),
 #endif
@@ -56,8 +51,8 @@ AudioInputDeviceManager::AudioInputDeviceManager(
 AudioInputDeviceManager::~AudioInputDeviceManager() {
 }
 
-const MediaStreamDevice* AudioInputDeviceManager::GetOpenedDeviceById(
-    int session_id) {
+const blink::MediaStreamDevice* AudioInputDeviceManager::GetOpenedDeviceById(
+    const base::UnguessableToken& session_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto device = GetDevice(session_id);
   if (device == devices_.end())
@@ -80,10 +75,11 @@ void AudioInputDeviceManager::UnregisterListener(
   listeners_.RemoveObserver(listener);
 }
 
-int AudioInputDeviceManager::Open(const MediaStreamDevice& device) {
+base::UnguessableToken AudioInputDeviceManager::Open(
+    const blink::MediaStreamDevice& device) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   // Generate a new id for this device.
-  int session_id = next_capture_session_id_++;
+  auto session_id = base::UnguessableToken::Create();
 
   // base::Unretained(this) is safe, because AudioInputDeviceManager is
   // destroyed not earlier than on the IO message loop destruction.
@@ -115,21 +111,19 @@ int AudioInputDeviceManager::Open(const MediaStreamDevice& device) {
   return session_id;
 }
 
-void AudioInputDeviceManager::Close(int session_id) {
+void AudioInputDeviceManager::Close(const base::UnguessableToken& session_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   auto device = GetDevice(session_id);
   if (device == devices_.end())
     return;
-  const MediaStreamType stream_type = device->type;
-  if (session_id != kFakeOpenSessionId)
-    devices_.erase(device);
+  const blink::mojom::MediaStreamType stream_type = device->type;
+  devices_.erase(device);
 
   // Post a callback through the listener on IO thread since
   // MediaStreamManager is expecting the callback asynchronously.
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(&AudioInputDeviceManager::ClosedOnIOThread, this,
-                     stream_type, session_id));
+  base::PostTask(FROM_HERE, {BrowserThread::IO},
+                 base::BindOnce(&AudioInputDeviceManager::ClosedOnIOThread,
+                                this, stream_type, session_id));
 }
 
 #if defined(OS_CHROMEOS)
@@ -157,7 +151,7 @@ void AudioInputDeviceManager::KeyboardMicRegistration::DeregisterIfNeeded() {
     --*shared_registration_count_;
     DCHECK_GE(*shared_registration_count_, 0);
     if (*shared_registration_count_ == 0) {
-      base::PostTaskWithTraits(
+      base::PostTask(
           FROM_HERE, {BrowserThread::UI},
           base::BindOnce(&SetKeyboardMicStreamActiveOnUIThread, false));
     }
@@ -174,7 +168,7 @@ void AudioInputDeviceManager::RegisterKeyboardMicStream(
 
   ++keyboard_mic_streams_count_;
   if (keyboard_mic_streams_count_ == 1) {
-    base::PostTaskWithTraitsAndReply(
+    base::PostTaskAndReply(
         FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&SetKeyboardMicStreamActiveOnUIThread, true),
         base::BindOnce(std::move(callback),
@@ -187,8 +181,8 @@ void AudioInputDeviceManager::RegisterKeyboardMicStream(
 #endif
 
 void AudioInputDeviceManager::OpenedOnIOThread(
-    int session_id,
-    const MediaStreamDevice& device,
+    const base::UnguessableToken& session_id,
+    const blink::MediaStreamDevice& device,
     base::TimeTicks start_time,
     const base::Optional<media::AudioParameters>& input_params,
     const base::Optional<std::string>& matched_output_device_id) {
@@ -200,8 +194,9 @@ void AudioInputDeviceManager::OpenedOnIOThread(
   UMA_HISTOGRAM_TIMES("Media.AudioInputDeviceManager.OpenOnDeviceThreadTime",
                       base::TimeTicks::Now() - start_time);
 
-  MediaStreamDevice media_stream_device(device.type, device.id, device.name);
-  media_stream_device.session_id = session_id;
+  blink::MediaStreamDevice media_stream_device(device.type, device.id,
+                                               device.name);
+  media_stream_device.set_session_id(session_id);
   media_stream_device.input =
       input_params.value_or(media::AudioParameters::UnavailableDeviceParams());
   media_stream_device.matched_output_device_id = matched_output_device_id;
@@ -214,17 +209,18 @@ void AudioInputDeviceManager::OpenedOnIOThread(
     listener.Opened(media_stream_device.type, session_id);
 }
 
-void AudioInputDeviceManager::ClosedOnIOThread(MediaStreamType stream_type,
-                                               int session_id) {
+void AudioInputDeviceManager::ClosedOnIOThread(
+    blink::mojom::MediaStreamType stream_type,
+    const base::UnguessableToken& session_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   for (auto& listener : listeners_)
     listener.Closed(stream_type, session_id);
 }
 
-MediaStreamDevices::iterator AudioInputDeviceManager::GetDevice(
-    int session_id) {
+blink::MediaStreamDevices::iterator AudioInputDeviceManager::GetDevice(
+    const base::UnguessableToken& session_id) {
   for (auto it = devices_.begin(); it != devices_.end(); ++it) {
-    if (it->session_id == session_id)
+    if (it->session_id() == session_id)
       return it;
   }
 

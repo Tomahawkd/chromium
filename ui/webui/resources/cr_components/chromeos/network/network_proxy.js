@@ -6,23 +6,22 @@
  * @fileoverview Polymer element for displaying and editing network proxy
  * values.
  */
+(function() {
+'use strict';
+
 Polymer({
   is: 'network-proxy',
 
   behaviors: [
-    CrPolicyNetworkBehavior,
+    CrPolicyNetworkBehaviorMojo,
     I18nBehavior,
   ],
 
   properties: {
-    /**
-     * The network properties dictionary containing the proxy properties to
-     * display and modify.
-     * @type {!CrOnc.NetworkProperties|undefined}
-     */
-    networkProperties: {
+    /** @private {!chromeos.networkConfig.mojom.ManagedProperties|undefined} */
+    managedProperties: {
       type: Object,
-      observer: 'networkPropertiesChanged_',
+      observer: 'managedPropertiesChanged_',
     },
 
     /** Whether or not the proxy values can be edited. */
@@ -40,7 +39,7 @@ Polymer({
 
     /**
      * UI visible / edited proxy configuration.
-     * @private {!CrOnc.ProxySettings}
+     * @private {!chromeos.networkConfig.mojom.ManagedProxySettings}
      */
     proxy_: {
       type: Object,
@@ -50,10 +49,10 @@ Polymer({
     },
 
     /**
-     * The Web Proxy Auto Discovery URL extracted from networkProperties.
+     * The Web Proxy Auto Discovery URL extracted from managedProperties.
      * @private
      */
-    WPAD_: {
+    wpad_: {
       type: String,
       value: '',
     },
@@ -75,43 +74,23 @@ Polymer({
      */
     proxyTypes_: {
       type: Array,
-      value: [
-        CrOnc.ProxySettingsType.DIRECT,
-        CrOnc.ProxySettingsType.PAC,
-        CrOnc.ProxySettingsType.WPAD,
-        CrOnc.ProxySettingsType.MANUAL,
-      ],
+      value: ['Direct', 'PAC', 'WPAD', 'Manual'],
       readOnly: true
-    },
-
-    /**
-     * Object providing proxy type values for data binding.
-     * @private {!Object}
-     * @const
-     */
-    ProxySettingsType_: {
-      type: Object,
-      value: {
-        DIRECT: CrOnc.ProxySettingsType.DIRECT,
-        PAC: CrOnc.ProxySettingsType.PAC,
-        MANUAL: CrOnc.ProxySettingsType.MANUAL,
-        WPAD: CrOnc.ProxySettingsType.WPAD,
-      },
-      readOnly: true,
     },
   },
 
   /**
    * Saved Manual properties so that switching to another type does not loose
    * any set properties while the UI is open.
-   * @private {!CrOnc.ManualProxySettings|undefined}
+   * @private {!chromeos.networkConfig.mojom.ManagedManualProxySettings|
+   *           undefined}
    */
   savedManual_: undefined,
 
   /**
    * Saved ExcludeDomains properties so that switching to a non-Manual type does
    * not loose any set exclusions while the UI is open.
-   * @private {!Array<string>|undefined}
+   * @private {!chromeos.networkConfig.mojom.ManagedStringList|undefined}
    */
   savedExcludeDomains_: undefined,
 
@@ -133,97 +112,143 @@ Polymer({
    */
   reset: function() {
     this.proxyIsUserModified_ = false;
-    this.proxy_ = this.createDefaultProxySettings_();
     this.updateProxy_();
   },
 
-  /** @private */
-  networkPropertiesChanged_: function() {
-    if (this.proxyIsUserModified_)
-      return;  // Ignore update.
+  /**
+   * @param {!chromeos.networkConfig.mojom.ManagedProperties|undefined} newValue
+   * @param {!chromeos.networkConfig.mojom.ManagedProperties|undefined} oldValue
+   * @private
+   */
+  managedPropertiesChanged_: function(newValue, oldValue) {
+    if ((newValue && newValue.guid) != (oldValue && oldValue.guid)) {
+      // Clear saved manual properties and exclude domains if we're updating
+      // to show a different network.
+      this.savedManual_ = undefined;
+      this.savedExcludeDomains_ = undefined;
+    }
+
+    if (this.proxyIsUserModified_) {
+      return;  // Ignore update
+    }
     this.updateProxy_();
+  },
+
+  /**
+   * @param {!chromeos.networkConfig.mojom.ManagedProxyLocation|undefined} a
+   * @param {!chromeos.networkConfig.mojom.ManagedProxyLocation|undefined} b
+   * @return {boolean}
+   * @private
+   */
+  proxyMatches_: function(a, b) {
+    return !!a && !!b && a.host.activeValue === b.host.activeValue &&
+        a.port.activeValue === b.port.activeValue;
+  },
+
+  /**
+   * @param {number} port
+   * @return {!chromeos.networkConfig.mojom.ManagedProxyLocation}
+   * @private
+   */
+  createDefaultProxyLocation_: function(port) {
+    return {
+      host: OncMojo.createManagedString(''),
+      port: OncMojo.createManagedInt(port),
+    };
+  },
+
+  /**
+   * Returns a copy of |inputProxy| with all required properties set correctly.
+   * @param {!chromeos.networkConfig.mojom.ManagedProxySettings} inputProxy
+   * @return {!chromeos.networkConfig.mojom.ManagedProxySettings}
+   * @private
+   */
+  validateProxy_: function(inputProxy) {
+    const proxy =
+        /** @type {!chromeos.networkConfig.mojom.ManagedProxySettings} */ (
+            Object.assign({}, inputProxy));
+    const type = proxy.type.activeValue;
+    if (type == 'PAC') {
+      if (!proxy.pac) {
+        proxy.pac = OncMojo.createManagedString('');
+      }
+    } else if (type == 'Manual') {
+      proxy.manual = proxy.manual || this.savedManual_ || {};
+      if (!proxy.manual.httpProxy) {
+        proxy.manual.httpProxy = this.createDefaultProxyLocation_(80);
+      }
+      if (!proxy.manual.secureHttpProxy) {
+        proxy.manual.secureHttpProxy = this.createDefaultProxyLocation_(80);
+      }
+      if (!proxy.manual.ftpProxy) {
+        proxy.manual.ftpProxy = this.createDefaultProxyLocation_(80);
+      }
+      if (!proxy.manual.socks) {
+        proxy.manual.socks = this.createDefaultProxyLocation_(1080);
+      }
+      proxy.excludeDomains =
+          proxy.excludeDomains || this.savedExcludeDomains_ || {
+            activeValue: [],
+            policySource: chromeos.networkConfig.mojom.PolicySource.kNone
+          };
+    }
+    return proxy;
   },
 
   /** @private */
   updateProxy_: function() {
-    if (!this.networkProperties)
+    if (!this.managedProperties) {
       return;
-
-    /** @type {!CrOnc.ProxySettings} */
-    const proxy = this.createDefaultProxySettings_();
-
-    // For shared networks with unmanaged proxy settings, ignore any saved
-    // proxy settings (use the default values).
-    if (this.isShared_()) {
-      const property = this.getProxySettingsTypeProperty_();
-      if (!this.isControlled(property) && !this.useSharedProxies) {
-        this.setProxyAsync_(proxy);
-        return;  // Proxy settings will be ignored.
-      }
     }
 
-    /** @type {!chrome.networkingPrivate.ManagedProxySettings|undefined} */
-    const proxySettings = this.networkProperties.ProxySettings;
-    if (proxySettings) {
-      proxy.Type = /** @type {!CrOnc.ProxySettingsType} */ (
-          CrOnc.getActiveValue(proxySettings.Type));
-      if (proxySettings.Manual) {
-        proxy.Manual.HTTPProxy =
-            /** @type {!CrOnc.ProxyLocation|undefined} */ (
-                CrOnc.getActiveProperties(proxySettings.Manual.HTTPProxy)) ||
-            {Host: '', Port: 80};
-        proxy.Manual.SecureHTTPProxy =
-            /** @type {!CrOnc.ProxyLocation|undefined} */ (
-                CrOnc.getActiveProperties(
-                    proxySettings.Manual.SecureHTTPProxy)) ||
-            {Host: '', Port: 80};
-        proxy.Manual.FTPProxy =
-            /** @type {!CrOnc.ProxyLocation|undefined} */ (
-                CrOnc.getActiveProperties(proxySettings.Manual.FTPProxy)) ||
-            {Host: '', Port: 80};
-        proxy.Manual.SOCKS =
-            /** @type {!CrOnc.ProxyLocation|undefined} */ (
-                CrOnc.getActiveProperties(proxySettings.Manual.SOCKS)) ||
-            {Host: '', Port: 80};
-        const jsonHttp = proxy.Manual.HTTPProxy;
-        this.useSameProxy_ =
-            (CrOnc.proxyMatches(jsonHttp, proxy.Manual.SecureHTTPProxy) &&
-             CrOnc.proxyMatches(jsonHttp, proxy.Manual.FTPProxy) &&
-             CrOnc.proxyMatches(jsonHttp, proxy.Manual.SOCKS)) ||
-            (!proxy.Manual.HTTPProxy.Host &&
-             !proxy.Manual.SecureHTTPProxy.Host &&
-             !proxy.Manual.FTPProxy.Host && !proxy.Manual.SOCKS.Host);
-      }
-      if (proxySettings.ExcludeDomains) {
-        proxy.ExcludeDomains = /** @type {!Array<string>|undefined} */ (
-            CrOnc.getActiveValue(proxySettings.ExcludeDomains));
-      }
-      proxy.PAC = /** @type {string|undefined} */ (
-          CrOnc.getActiveValue(proxySettings.PAC));
+    let proxySettings = this.managedProperties.proxySettings;
+
+    // For shared networks with unmanaged proxy settings, ignore any saved proxy
+    // settings and use the default value.
+    if (this.isShared_() && proxySettings &&
+        !this.isControlled(proxySettings.type) && !this.useSharedProxies) {
+      proxySettings = null;  // Ignore proxy settings.
     }
-    // Use saved ExcludeDomains and Manual if not defined.
-    proxy.ExcludeDomains = proxy.ExcludeDomains || this.savedExcludeDomains_;
-    proxy.Manual = proxy.Manual || this.savedManual_;
 
-    // Set the Web Proxy Auto Discovery URL.
-    const ipv4 =
-        CrOnc.getIPConfigForType(this.networkProperties, CrOnc.IPType.IPV4);
-    this.WPAD_ = (ipv4 && ipv4.WebProxyAutoDiscoveryUrl) ||
-        this.i18n('networkProxyWpadNone');
+    const proxy = proxySettings ? this.validateProxy_(proxySettings) :
+                                  this.createDefaultProxySettings_();
 
-    this.setProxyAsync_(proxy);
+    if (proxy.type.activeValue == 'WPAD') {
+      // Set the Web Proxy Auto Discovery URL for display purposes.
+      const ipv4 = this.managedProperties ?
+          OncMojo.getIPConfigForType(this.managedProperties, 'IPv4') :
+          null;
+      this.wpad_ = (ipv4 && ipv4.webProxyAutoDiscoveryUrl) ||
+          this.i18n('networkProxyWpadNone');
+    }
+
+    // Set this.proxy_ after dom-repeat has been stamped.
+    this.async(() => this.setProxy_(proxy));
   },
 
   /**
-   * @param {!CrOnc.ProxySettings} proxy
+   * @param {!chromeos.networkConfig.mojom.ManagedProxySettings} proxy
    * @private
    */
-  setProxyAsync_: function(proxy) {
-    // Set this.proxy_ after dom-repeat has been stamped.
-    this.async(() => {
-      this.proxy_ = proxy;
-      this.proxyIsUserModified_ = false;
-    });
+  setProxy_: function(proxy) {
+    this.proxy_ = proxy;
+    if (proxy.manual) {
+      const manual = proxy.manual;
+      const httpProxy = manual.httpProxy;
+      if (this.proxyMatches_(httpProxy, manual.secureHttpProxy) &&
+          this.proxyMatches_(httpProxy, manual.ftpProxy) &&
+          this.proxyMatches_(httpProxy, manual.socks)) {
+        // If all four proxies match, enable the 'use same proxy' toggle.
+        this.useSameProxy_ = true;
+      } else if (
+          !manual.secureHttpProxy.host.activeValue &&
+          !manual.ftpProxy.host.activeValue && !manual.socks.host.activeValue) {
+        // Otherwise if no proxies other than http have a host value, also
+        // enable the 'use same proxy' toggle.
+        this.useSameProxy_ = true;
+      }
+    }
+    this.proxyIsUserModified_ = false;
   },
 
   /** @private */
@@ -232,20 +257,28 @@ Polymer({
   },
 
   /**
-   * @return {CrOnc.ProxySettings} An empty/default proxy settings object.
+   * @return {!chromeos.networkConfig.mojom.ManagedProxySettings}
    * @private
    */
   createDefaultProxySettings_: function() {
     return {
-      Type: CrOnc.ProxySettingsType.DIRECT,
-      ExcludeDomains: [],
-      Manual: {
-        HTTPProxy: {Host: '', Port: 80},
-        SecureHTTPProxy: {Host: '', Port: 80},
-        FTPProxy: {Host: '', Port: 80},
-        SOCKS: {Host: '', Port: 1080}
-      },
-      PAC: ''
+      type: OncMojo.createManagedString('Direct'),
+    };
+  },
+
+  /**
+   * @param {!chromeos.networkConfig.mojom.ManagedProxyLocation|undefined}
+   *     location
+   * @return {!chromeos.networkConfig.mojom.ProxyLocation|undefined}
+   * @private
+   */
+  getProxyLocation_: function(location) {
+    if (!location) {
+      return undefined;
+    }
+    return {
+      host: location.host.activeValue,
+      port: location.port.activeValue,
     };
   },
 
@@ -254,36 +287,64 @@ Polymer({
    * @private
    */
   sendProxyChange_: function() {
-    const proxy =
-        /** @type {!CrOnc.ProxySettings} */ (Object.assign({}, this.proxy_));
-    if (proxy.Type == CrOnc.ProxySettingsType.MANUAL) {
-      const manual = proxy.Manual;
-      const defaultProxy = manual.HTTPProxy || {Host: '', Port: 80};
+    const mojom = chromeos.networkConfig.mojom;
+    const proxyType = OncMojo.getActiveString(this.proxy_.type);
+    if (!proxyType || (proxyType == 'PAC' && !this.proxy_.pac)) {
+      return;
+    }
+
+    const proxy = /** @type {!mojom.ProxySettings} */ ({
+      type: proxyType,
+      excludeDomains: OncMojo.getActiveValue(this.proxy_.excludeDomains),
+    });
+
+    if (proxyType == 'Manual') {
+      let manual = {};
+      if (this.proxy_.manual) {
+        this.savedManual_ =
+            /** @type{!mojom.ManagedManualProxySettings}*/ (
+                Object.assign({}, this.proxy_.manual));
+        manual = {
+          httpProxy: this.getProxyLocation_(this.proxy_.manual.httpProxy),
+          secureHttpProxy:
+              this.getProxyLocation_(this.proxy_.manual.secureHttpProxy),
+          ftpProxy: this.getProxyLocation_(this.proxy_.manual.ftpProxy),
+          socks: this.getProxyLocation_(this.proxy_.manual.socks),
+        };
+      }
+      if (this.proxy_.excludeDomains) {
+        this.savedExcludeDomains_ =
+            /** @type{!mojom.ManagedStringList}*/ (
+                Object.assign({}, this.proxy_.excludeDomains));
+      }
+      const defaultProxy = manual.httpProxy || {host: '', port: 80};
       if (this.useSameProxy_) {
-        proxy.Manual.SecureHTTPProxy = /** @type {!CrOnc.ProxyLocation} */ (
+        manual.secureHttpProxy = /** @type {!mojom.ProxyLocation} */ (
             Object.assign({}, defaultProxy));
-        proxy.Manual.FTPProxy = /** @type {!CrOnc.ProxyLocation} */ (
+        manual.ftpProxy = /** @type {!mojom.ProxyLocation} */ (
             Object.assign({}, defaultProxy));
-        proxy.Manual.SOCKS = /** @type {!CrOnc.ProxyLocation} */ (
+        manual.socks = /** @type {!mojom.ProxyLocation} */ (
             Object.assign({}, defaultProxy));
       } else {
         // Remove properties with empty hosts to unset them.
-        if (manual.HTTPProxy && !manual.HTTPProxy.Host)
-          delete manual.HTTPProxy;
-        if (manual.SecureHTTPProxy && !manual.SecureHTTPProxy.Host)
-          delete manual.SecureHTTPProxy;
-        if (manual.FTPProxy && !manual.FTPProxy.Host)
-          delete manual.FTPProxy;
-        if (manual.SOCKS && !manual.SOCKS.Host)
-          delete manual.SOCKS;
+        if (manual.httpProxy && !manual.httpProxy.host) {
+          delete manual.httpProxy;
+        }
+        if (manual.secureHttpProxy && !manual.secureHttpProxy.host) {
+          delete manual.secureHttpProxy;
+        }
+        if (manual.ftpProxy && !manual.ftpProxy.host) {
+          delete manual.ftpProxy;
+        }
+        if (manual.socks && !manual.socks.host) {
+          delete manual.socks;
+        }
       }
-      this.savedManual_ = Object.assign({}, manual);
-      this.savedExcludeDomains_ = proxy.ExcludeDomains;
-    } else if (proxy.Type == CrOnc.ProxySettingsType.PAC) {
-      if (!proxy.PAC)
-        return;
+      proxy.manual = manual;
+    } else if (proxyType == 'PAC') {
+      proxy.pac = OncMojo.getActiveString(this.proxy_.pac);
     }
-    this.fire('proxy-change', {field: 'ProxySettings', value: proxy});
+    this.fire('proxy-change', proxy);
     this.proxyIsUserModified_ = false;
   },
 
@@ -293,25 +354,28 @@ Polymer({
    * @private
    */
   onTypeChange_: function(event) {
+    if (!this.proxy_ || !this.proxy_.type) {
+      return;
+    }
     const target = /** @type {!HTMLSelectElement} */ (event.target);
-    const type = /** @type {chrome.networkingPrivate.ProxySettingsType} */ (
-        target.value);
-    this.set('proxy_.Type', type);
+    const type = target.value;
+    this.proxy_.type.activeValue = type;
+    this.set('proxy_', this.validateProxy_(this.proxy_));
     let proxyTypeChangeIsReady;
     let elementToFocus;
     switch (type) {
-      case CrOnc.ProxySettingsType.DIRECT:
-      case CrOnc.ProxySettingsType.WPAD:
+      case 'Direct':
+      case 'WPAD':
         // No addtional values are required, send the type change.
         proxyTypeChangeIsReady = true;
         break;
-      case CrOnc.ProxySettingsType.PAC:
+      case 'PAC':
         elementToFocus = this.$$('#pacInput');
         // If a PAC is already defined, send the type change now, otherwise wait
         // until the user provides a PAC value.
-        proxyTypeChangeIsReady = !!this.proxy_.PAC;
+        proxyTypeChangeIsReady = !!this.proxy_.pac;
         break;
-      case CrOnc.ProxySettingsType.MANUAL:
+      case 'Manual':
         // Manual proxy configuration includes multiple input fields, so wait
         // until the 'send' button is clicked.
         proxyTypeChangeIsReady = false;
@@ -322,10 +386,11 @@ Polymer({
     // If the new proxy type is fully configured, send it, otherwise set
     // |proxyIsUserModified_| to true so that property updates do not
     // overwrite user changes.
-    if (proxyTypeChangeIsReady)
+    if (proxyTypeChangeIsReady) {
       this.sendProxyChange_();
-    else
+    } else {
       this.proxyIsUserModified_ = true;
+    }
 
     if (elementToFocus) {
       this.async(() => {
@@ -347,9 +412,10 @@ Polymer({
   /** @private */
   onAddProxyExclusionTap_: function() {
     const value = this.$.proxyExclusion.value;
-    if (!value)
+    if (!value) {
       return;
-    this.push('proxy_.ExcludeDomains', value);
+    }
+    this.push('proxy_.excludeDomains.activeValue', value);
     // Clear input.
     this.$.proxyExclusion.value = '';
     this.proxyIsUserModified_ = true;
@@ -360,8 +426,9 @@ Polymer({
    * @private
    */
   onAddProxyExclusionKeypress_: function(event) {
-    if (event.key != 'Enter')
+    if (event.key != 'Enter') {
       return;
+    }
     event.stopPropagation();
     this.onAddProxyExclusionTap_();
   },
@@ -386,22 +453,16 @@ Polymer({
    * @private
    */
   getProxyTypeDesc_: function(proxyType) {
-    if (proxyType == CrOnc.ProxySettingsType.MANUAL)
+    if (proxyType == 'Manual') {
       return this.i18n('networkProxyTypeManual');
-    if (proxyType == CrOnc.ProxySettingsType.PAC)
+    }
+    if (proxyType == 'PAC') {
       return this.i18n('networkProxyTypePac');
-    if (proxyType == CrOnc.ProxySettingsType.WPAD)
+    }
+    if (proxyType == 'WPAD') {
       return this.i18n('networkProxyTypeWpad');
+    }
     return this.i18n('networkProxyTypeDirect');
-  },
-
-  /**
-   * @return {!CrOnc.ManagedProperty|undefined}
-   * @private
-   */
-  getProxySettingsTypeProperty_: function() {
-    return /** @type {!CrOnc.ManagedProperty|undefined} */ (
-        this.get('ProxySettings.Type', this.networkProperties));
   },
 
   /**
@@ -410,24 +471,24 @@ Polymer({
    * @private
    */
   isEditable_: function(propertyName) {
-    if (!this.editable || (this.isShared_() && !this.useSharedProxies))
+    if (!this.editable || (this.isShared_() && !this.useSharedProxies)) {
       return false;
-    if (!this.networkProperties.hasOwnProperty('ProxySettings'))
-      return true;  // No proxy settings defined, so not enforced.
-    const property = /** @type {!CrOnc.ManagedProperty|undefined} */ (
-        this.get('ProxySettings.' + propertyName, this.networkProperties));
-    if (!property)
-      return true;
+    }
+    const property = /** @type {!OncMojo.ManagedProperty|undefined} */ (
+        this.get('proxySettings.' + propertyName, this.managedProperties));
+    if (!property) {
+      return true;  // Default to editable if property is not defined.
+    }
     return this.isPropertyEditable_(property);
   },
 
   /**
-   * @param {!CrOnc.ManagedProperty|undefined} property
+   * @param {!OncMojo.ManagedProperty|undefined} property
    * @return {boolean} Whether |property| is editable.
    * @private
    */
   isPropertyEditable_: function(property) {
-    return !this.isNetworkPolicyEnforced(property) &&
+    return !!property && !this.isNetworkPolicyEnforced(property) &&
         !this.isExtensionControlled(property);
   },
 
@@ -436,8 +497,11 @@ Polymer({
    * @private
    */
   isShared_: function() {
-    return this.networkProperties.Source == 'Device' ||
-        this.networkProperties.Source == 'DevicePolicy';
+    if (!this.managedProperties) {
+      return false;
+    }
+    const source = this.managedProperties.source;
+    return source == 'Device' || source == 'DevicePolicy';
   },
 
   /**
@@ -445,14 +509,18 @@ Polymer({
    * @private
    */
   isSaveManualProxyEnabled_: function() {
-    if (!this.proxyIsUserModified_)
+    if (!this.proxyIsUserModified_) {
       return false;
-    const manual = this.proxy_.Manual;
-    const httpHost = this.get('HTTPProxy.Host', manual);
-    if (this.useSameProxy_)
+    }
+    const manual = this.proxy_.manual;
+    const httpHost = this.get('httpProxy.host.activeValue', manual);
+    if (this.useSameProxy_) {
       return !!httpHost;
-    return !!httpHost || !!this.get('SecureHTTPProxy.Host', manual) ||
-        !!this.get('FTPProxy.Host', manual) || !!this.get('SOCKS.Host', manual);
+    }
+    return !!httpHost ||
+        !!this.get('secureHttpProxy.host.activeValue', manual) ||
+        !!this.get('ftpProxy.host.activeValue', manual) ||
+        !!this.get('socks.host.activeValue', manual);
   },
 
   /**
@@ -465,3 +533,4 @@ Polymer({
     return property == value;
   },
 });
+})();

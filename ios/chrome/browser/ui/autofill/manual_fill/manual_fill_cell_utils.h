@@ -9,60 +9,80 @@
 
 namespace {
 
-// The multiplier for the base system spacing at the top margin.
-static const CGFloat TopSystemSpacingMultiplier = 1.58;
+// Left and right margins of the cell content and buttons.
+static const CGFloat kButtonHorizontalMargin = 16;
 
-// The multiplier for the base system spacing between elements (vertical).
-static const CGFloat MiddleSystemSpacingMultiplier = 1.83;
+// Left and right margins for the chips.
+static const CGFloat kChipsHorizontalMargin = -1;
+
+// The multiplier for the base system spacing at the top margin.
+static const CGFloat TopSystemSpacingMultiplier = 2;
 
 // The multiplier for the base system spacing at the bottom margin.
 static const CGFloat BottomSystemSpacingMultiplier = 2.26;
 
-// Top and bottom margins for buttons.
-static const CGFloat ButtonVerticalMargin = 12;
-
-// Left and right margins of the cell content and buttons.
-static const CGFloat ButtonHorizontalMargin = 16;
+// Options for |AppendHorizontalConstraintsForViews|.
+typedef NS_OPTIONS(NSUInteger, AppendConstraints) {
+  AppendConstraintsNone = 0,
+  // Add an equal constraint to the baselines.
+  AppendConstraintsHorizontalSyncBaselines = 1 << 0,
+  // The views can be constraint smaller than the guide.
+  AppendConstraintsHorizontalEqualOrSmallerThanGuide = 1 << 1,
+};
 
 }  // namespace
 
-// Creates a blank button in fallback style, for the given |action| and
-// |target|.
-UIButton* CreateButtonWithSelectorAndTarget(SEL action, id target);
+// Creates a blank button in chip style, for the given |action| and |target|.
+UIButton* CreateChipWithSelectorAndTarget(SEL action, id target);
 
-// Sets vertical constraints on firstBaselineAnchor for the button or label rows
-// in |views| inside |container| starting at its topAnchor. Returns the applied
-// constrainst to allow caller to deactivate them later.  Defaults multipliers
-// are applied.
-NSArray<NSLayoutConstraint*>* VerticalConstraintsSpacingForViewsInContainer(
+// Adds vertical constraints to given list, laying |views| vertically (based on
+// firstBaselineAnchor for the buttons or labels) inside |container|, starting
+// at its topAnchor. Constrainst are not activated.  Default multipliers are
+// applied.
+void AppendVerticalConstraintsSpacingForViews(
+    NSMutableArray<NSLayoutConstraint*>* constraints,
     NSArray<UIView*>* views,
     UIView* container);
 
-// Sets vertical constraints on firstBaselineAnchor for the button or label rows
-// in |views| inside |container| starting at its topAnchor. Returns the applied
-// constrainst to allow caller to deactivate them later.
-NSArray<NSLayoutConstraint*>*
-VerticalConstraintsSpacingForViewsInContainerWithMultipliers(
+// Adds vertical constraints like |AppendVerticalConstraintsSpacingForViews|
+// above but using given mutipliers at top, bottom and in-between rows.
+void AppendVerticalConstraintsSpacingForViews(
+    NSMutableArray<NSLayoutConstraint*>* constraints,
     NSArray<UIView*>* views,
     UIView* container,
     CGFloat topSystemSpacingMultiplier,
-    CGFloat middleSystemSpacingMultiplier,
     CGFloat BottomSystemSpacingMultiplier);
 
-// Sets constraints for the given |views|, so as to lay them out horizontally,
-// parallel to the given |guide| view, and applying the given constant |shift|
-// to the whole row. Returns the applied constraints to allow caller to
-// deactivate them later.
-NSArray<NSLayoutConstraint*>* HorizontalConstraintsForViewsOnGuideWithShift(
+// Adds constraints to the given list, for the given |views|, so as to lay them
+// out horizontally, parallel to the |guide| view. Constraints are not
+// activated.
+void AppendHorizontalConstraintsForViews(
+    NSMutableArray<NSLayoutConstraint*>* constraints,
+    NSArray<UIView*>* views,
+    UIView* guide);
+
+// Adds constraints like |AppendHorizontalConstraintsForViews| above but also
+// applies the given constant |margin| at both ends of the whole row.
+void AppendHorizontalConstraintsForViews(
+    NSMutableArray<NSLayoutConstraint*>* constraints,
     NSArray<UIView*>* views,
     UIView* guide,
-    CGFloat shift);
+    CGFloat margin);
 
-// Sets all baseline anchors for the gievn |views| to match the one on |onView|.
-// Returns the applied constrainst to allow caller to deactivate them later.
-NSArray<NSLayoutConstraint*>* SyncBaselinesForViewsOnView(
+// Adds constraints like |AppendHorizontalConstraintsForViews| above
+// but with given |options|.
+void AppendHorizontalConstraintsForViews(
+    NSMutableArray<NSLayoutConstraint*>* constraints,
     NSArray<UIView*>* views,
-    UIView* onView);
+    UIView* guide,
+    CGFloat margin,
+    AppendConstraints options);
+
+// Adds all baseline anchor constraints for the given |views| to match the first
+// one. Constrainst are not activated.
+void AppendEqualBaselinesConstraints(
+    NSMutableArray<NSLayoutConstraint*>* constraints,
+    NSArray<UIView*>* views);
 
 // Creates a blank label with autoresize mask off and adjustable font size.
 UILabel* CreateLabel();

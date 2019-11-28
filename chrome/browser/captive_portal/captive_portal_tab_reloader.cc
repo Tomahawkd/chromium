@@ -38,7 +38,7 @@ bool SslNetErrorMayImplyCaptivePortal(int error) {
   if (error == net::ERR_SSL_PROTOCOL_ERROR)
     return true;
 
-  return false;
+  return net::IsCertificateError(error);
 }
 
 }  // namespace
@@ -54,9 +54,7 @@ CaptivePortalTabReloader::CaptivePortalTabReloader(
       ssl_url_in_redirect_chain_(false),
       slow_ssl_load_time_(
           base::TimeDelta::FromSeconds(kDefaultSlowSSLTimeSeconds)),
-      open_login_tab_callback_(open_login_tab_callback),
-      weak_factory_(this) {
-}
+      open_login_tab_callback_(open_login_tab_callback) {}
 
 CaptivePortalTabReloader::~CaptivePortalTabReloader() {
 }

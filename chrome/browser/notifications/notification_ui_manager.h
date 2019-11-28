@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_NOTIFICATIONS_NOTIFICATION_UI_MANAGER_H_
 #define CHROME_BROWSER_NOTIFICATIONS_NOTIFICATION_UI_MANAGER_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -45,7 +46,7 @@ class NotificationUIManager {
   virtual ~NotificationUIManager() {}
 
   // Creates an initialized UI manager.
-  static NotificationUIManager* Create();
+  static std::unique_ptr<NotificationUIManager> Create();
 
   // Adds a notification to be displayed.
   virtual void Add(const message_center::Notification& notification,
@@ -79,10 +80,6 @@ class NotificationUIManager {
   // Removes notifications matching the |source_origin| (which could be an
   // extension ID). Returns true if anything was removed.
   virtual bool CancelAllBySourceOrigin(const GURL& source_origin) = 0;
-
-  // Removes notifications matching |profile_id|. Returns true if any were
-  // removed.
-  virtual bool CancelAllByProfile(ProfileID profile_id) = 0;
 
   // Cancels all pending notifications and closes anything currently showing.
   // Used when the app is terminating.

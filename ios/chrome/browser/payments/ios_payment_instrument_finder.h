@@ -38,10 +38,10 @@ namespace payments {
 // class validates the requested url payment methods by filtering out methods
 // that cannot be handled by an installed app on the user's device. This filter
 // is done by using the payment method's corresponding URL scheme and the
-// canOpenUrl function of UIApplication. This check also serves as a whitelist
-// for allowed payment method identifiers such that only the URL schemes of
+// canOpenUrl function of UIApplication. This check also serves as a list
+// of allowed payment method identifiers such that only the URL schemes of
 // listed payment method identifiers can be queried. If the identifier is not on
-// this whitelist the validation check fails for that payment method.
+// this list the validation check fails for that payment method.
 //
 // After validating the requested payment methods, the class downloads the
 // payment method's manifest and web app manifest in order to collect the
@@ -107,7 +107,9 @@ class IOSPaymentInstrumentFinder {
   // and |method| is the url payment method identifier that corresponds with
   // this manifest.
   void OnPaymentManifestDownloaded(const GURL& method,
-                                   const std::string& content);
+                                   const GURL& method_url_after_redirects,
+                                   const std::string& content,
+                                   const std::string& error_message);
 
   // Parses a payment method manifest for its default applications and gets all
   // the valid ones. |input| is the json encoded payment method manifest to
@@ -122,9 +124,12 @@ class IOSPaymentInstrumentFinder {
   // the url payment method that corresponds with this manifest.
   // |web_app_manifest_url| is the web app manifest url. This is passed to
   // GetPaymentAppDetailsFromWebAppManifest for validating an icon source path.
-  void OnWebAppManifestDownloaded(const GURL& method,
-                                  const GURL& web_app_manifest_url,
-                                  const std::string& content);
+  void OnWebAppManifestDownloaded(
+      const GURL& method,
+      const GURL& web_app_manifest_url,
+      const GURL& web_app_manifest_url_after_redirects,
+      const std::string& content,
+      const std::string& error_message);
 
   // Parses a web app manifest for its name, icon, and universal link. |input|
   // is the json encoded web app manifest to parse. |web_app_manifest_url|

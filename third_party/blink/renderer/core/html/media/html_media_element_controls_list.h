@@ -13,18 +13,14 @@ namespace blink {
 
 class HTMLMediaElement;
 
-class HTMLMediaElementControlsList final : public DOMTokenList {
+class CORE_EXPORT HTMLMediaElementControlsList final : public DOMTokenList {
  public:
-  static HTMLMediaElementControlsList* Create(HTMLMediaElement* element) {
-    return MakeGarbageCollected<HTMLMediaElementControlsList>(element);
-  }
-
   explicit HTMLMediaElementControlsList(HTMLMediaElement*);
 
   // Whether the list dictates to hide a certain control.
-  CORE_EXPORT bool ShouldHideDownload() const;
-  CORE_EXPORT bool ShouldHideFullscreen() const;
-  CORE_EXPORT bool ShouldHideRemotePlayback() const;
+  bool ShouldHideDownload() const;
+  bool ShouldHideFullscreen() const;
+  bool ShouldHideRemotePlayback() const;
 
  private:
   bool ValidateTokenValue(const AtomicString&, ExceptionState&) const override;

@@ -71,7 +71,7 @@ static bool CheckReadOnlySharedMemoryFdPosix(int fd) {
 #if defined(OS_FUCHSIA)
 // Fuchsia specific implementation.
 bool CheckReadOnlySharedMemoryFuchsiaHandle(zx::unowned_vmo handle) {
-  const uint32_t flags = ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE;
+  const uint32_t flags = ZX_VM_PERM_READ | ZX_VM_PERM_WRITE;
   uintptr_t addr;
   const zx_status_t status =
       zx::vmar::root_self()->map(0, *handle, 0U, kDataSize, flags, &addr);
@@ -115,19 +115,6 @@ bool CheckReadOnlySharedMemoryWindowsHandle(HANDLE handle) {
   return true;
 }
 #endif
-
-bool CheckReadOnlySharedMemoryHandleForTesting(SharedMemoryHandle handle) {
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  return CheckReadOnlySharedMemoryMachPort(handle.memory_object_);
-#elif defined(OS_FUCHSIA)
-  return CheckReadOnlySharedMemoryFuchsiaHandle(
-      zx::unowned_vmo(handle.GetHandle()));
-#elif defined(OS_WIN)
-  return CheckReadOnlySharedMemoryWindowsHandle(handle.GetHandle());
-#else
-  return CheckReadOnlySharedMemoryFdPosix(handle.GetHandle());
-#endif
-}
 
 bool CheckReadOnlyPlatformSharedMemoryRegionForTesting(
     subtle::PlatformSharedMemoryRegion region) {

@@ -8,15 +8,8 @@
 #include <stdint.h>
 
 #include "mojo/public/cpp/bindings/map_traits_wtf_hash_map.h"
-#include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
-#include "third_party/blink/public/common/indexeddb/indexeddb_key_range.h"
-#include "third_party/blink/public/common/indexeddb/indexeddb_metadata.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_metadata.h"
-#include "third_party/blink/renderer/modules/indexeddb/indexed_db_key_builder.h"
-#include "third_party/blink/renderer/modules/indexeddb/web_idb_key.h"
-#include "third_party/blink/renderer/modules/indexeddb/web_idb_key_range.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -44,22 +37,25 @@ struct MODULES_EXPORT StructTraits<blink::mojom::IDBDatabaseMetadataDataView,
   object_stores(const blink::IDBDatabaseMetadata& metadata) {
     return metadata.object_stores;
   }
+  static bool was_cold_open(const blink::IDBDatabaseMetadata& metadata) {
+    return metadata.was_cold_open;
+  }
   static bool Read(blink::mojom::IDBDatabaseMetadataDataView data,
                    blink::IDBDatabaseMetadata* out);
 };
 
 template <>
 struct MODULES_EXPORT
-    StructTraits<blink::mojom::IDBIndexKeysDataView, blink::WebIDBIndexKeys> {
-  static int64_t index_id(const blink::WebIDBIndexKeys& index_keys) {
-    return index_keys.first;
+    StructTraits<blink::mojom::IDBIndexKeysDataView, blink::IDBIndexKeys> {
+  static int64_t index_id(const blink::IDBIndexKeys& index_keys) {
+    return index_keys.id;
   }
-  static const blink::WebVector<blink::WebIDBKey>& index_keys(
-      const blink::WebIDBIndexKeys& index_keys) {
-    return index_keys.second;
+  static const Vector<std::unique_ptr<blink::IDBKey>>& index_keys(
+      const blink::IDBIndexKeys& index_keys) {
+    return index_keys.keys;
   }
   static bool Read(blink::mojom::IDBIndexKeysDataView data,
-                   blink::WebIDBIndexKeys* out);
+                   blink::IDBIndexKeys* out);
 };
 
 template <>
@@ -90,38 +86,52 @@ struct MODULES_EXPORT StructTraits<blink::mojom::IDBIndexMetadataDataView,
 };
 
 template <>
-struct MODULES_EXPORT
-    UnionTraits<blink::mojom::IDBKeyDataDataView, blink::WebIDBKey> {
+struct MODULES_EXPORT UnionTraits<blink::mojom::IDBKeyDataDataView,
+                                  std::unique_ptr<blink::IDBKey>> {
   static blink::mojom::IDBKeyDataDataView::Tag GetTag(
-      const blink::WebIDBKey& key);
+      const std::unique_ptr<blink::IDBKey>& key);
   static bool Read(blink::mojom::IDBKeyDataDataView data,
-                   blink::WebIDBKey* out);
-  static const blink::WebVector<blink::WebIDBKey> key_array(
-      const blink::WebIDBKey& key);
-  static const Vector<uint8_t> binary(const blink::WebIDBKey& key);
-  static const WTF::String string(const blink::WebIDBKey& key) {
-    String key_string = key.View().String();
+                   std::unique_ptr<blink::IDBKey>* out);
+  static const Vector<std::unique_ptr<blink::IDBKey>>& key_array(
+      const std::unique_ptr<blink::IDBKey>& key);
+  static Vector<uint8_t> binary(const std::unique_ptr<blink::IDBKey>& key);
+  static const WTF::String string(const std::unique_ptr<blink::IDBKey>& key) {
+    String key_string = key->GetString();
     if (key_string.IsNull())
       key_string = g_empty_string;
     return key_string;
   }
-  static double date(const blink::WebIDBKey& key) { return key.View().Date(); }
-  static double number(const blink::WebIDBKey& key) {
-    return key.View().Number();
+  static double date(const std::unique_ptr<blink::IDBKey>& key) {
+    return key->Date();
   }
-  static bool other_invalid(const blink::WebIDBKey& key) {
-    return key.View().KeyType() == blink::mojom::IDBKeyType::Invalid;
+  static double number(const std::unique_ptr<blink::IDBKey>& key) {
+    return key->Number();
   }
-  static bool other_null(const blink::WebIDBKey& key) {
-    return key.View().KeyType() == blink::mojom::IDBKeyType::Null;
+  static bool other_invalid(const std::unique_ptr<blink::IDBKey>& key) {
+    return key->GetType() == blink::mojom::IDBKeyType::Invalid;
+  }
+  static bool other_none(const std::unique_ptr<blink::IDBKey>& key) {
+    return key->GetType() == blink::mojom::IDBKeyType::None;
   }
 };
 
 template <>
 struct MODULES_EXPORT
-    StructTraits<blink::mojom::IDBKeyDataView, blink::WebIDBKey> {
-  static const blink::WebIDBKey& data(const blink::WebIDBKey& key);
-  static bool Read(blink::mojom::IDBKeyDataView data, blink::WebIDBKey* out);
+    StructTraits<blink::mojom::IDBKeyDataView, std::unique_ptr<blink::IDBKey>> {
+  static const std::unique_ptr<blink::IDBKey>& data(
+      const std::unique_ptr<blink::IDBKey>& key);
+  static bool Read(blink::mojom::IDBKeyDataView data,
+                   std::unique_ptr<blink::IDBKey>* out);
+};
+
+template <>
+struct MODULES_EXPORT StructTraits<blink::mojom::IDBValueDataView,
+                                   std::unique_ptr<blink::IDBValue>> {
+  static Vector<uint8_t> bits(const std::unique_ptr<blink::IDBValue>& input);
+  static Vector<blink::mojom::blink::IDBBlobInfoPtr> blob_or_file_info(
+      const std::unique_ptr<blink::IDBValue>& input);
+  static bool Read(blink::mojom::IDBValueDataView data,
+                   std::unique_ptr<blink::IDBValue>* out);
 };
 
 template <>
@@ -131,25 +141,6 @@ struct MODULES_EXPORT
       const blink::IDBKeyPath& key_path);
   static bool Read(blink::mojom::IDBKeyPathDataView data,
                    blink::IDBKeyPath* out);
-};
-
-template <>
-struct MODULES_EXPORT
-    StructTraits<blink::mojom::IDBKeyRangeDataView, blink::WebIDBKeyRange> {
-  static blink::WebIDBKey lower(const blink::WebIDBKeyRange& key_range) {
-    return blink::WebIDBKeyBuilder::Build(key_range.Lower());
-  }
-  static blink::WebIDBKey upper(const blink::WebIDBKeyRange& key_range) {
-    return blink::WebIDBKeyBuilder::Build(key_range.Upper());
-  }
-  static bool lower_open(const blink::WebIDBKeyRange& key_range) {
-    return key_range.LowerOpen();
-  }
-  static bool upper_open(const blink::WebIDBKeyRange& key_range) {
-    return key_range.UpperOpen();
-  }
-  static bool Read(blink::mojom::IDBKeyRangeDataView data,
-                   blink::WebIDBKeyRange* out);
 };
 
 template <>
@@ -184,6 +175,24 @@ struct MODULES_EXPORT
   }
   static bool Read(blink::mojom::IDBObjectStoreMetadataDataView data,
                    scoped_refptr<blink::IDBObjectStoreMetadata>* out);
+};
+
+template <>
+struct TypeConverter<blink::mojom::blink::IDBKeyRangePtr,
+                     const blink::IDBKeyRange*> {
+  static blink::mojom::blink::IDBKeyRangePtr Convert(
+      const blink::IDBKeyRange* input);
+};
+
+template <>
+struct TypeConverter<blink::mojom::blink::IDBKeyRangePtr, blink::IDBKeyRange*> {
+  static blink::mojom::blink::IDBKeyRangePtr Convert(blink::IDBKeyRange* input);
+};
+
+template <>
+struct TypeConverter<blink::IDBKeyRange*, blink::mojom::blink::IDBKeyRangePtr> {
+  static blink::IDBKeyRange* Convert(
+      const blink::mojom::blink::IDBKeyRangePtr& input);
 };
 
 }  // namespace mojo

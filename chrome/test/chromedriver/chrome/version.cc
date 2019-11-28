@@ -5,21 +5,12 @@
 #include "chrome/test/chromedriver/chrome/version.h"
 
 #include "base/strings/stringprintf.h"
+#include "chrome/common/chrome_version.h"
 
 namespace {
 
-// This variable must be able to be found and parsed by the upload script.
-const int kMinimumSupportedChromeVersion[] = {70, 0, 3538, 0};
+const int kSupportedBrowserVersion[] = {CHROME_VERSION};
 
 }  // namespace
 
-const int kMinimumSupportedChromeBuildNo = kMinimumSupportedChromeVersion[2];
-
-std::string GetMinimumSupportedChromeVersion() {
-  return base::StringPrintf(
-      "%d.%d.%d.%d",
-      kMinimumSupportedChromeVersion[0],
-      kMinimumSupportedChromeVersion[1],
-      kMinimumSupportedChromeVersion[2],
-      kMinimumSupportedChromeVersion[3]);
-}
+const int kSupportedBrowserMajorVersion = kSupportedBrowserVersion[0];

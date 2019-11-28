@@ -6,10 +6,12 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/media/router/discovery/dial/dial_device_data.h"
 #include "net/base/ip_address.h"
 #include "net/http/http_response_headers.h"
+#include "services/network/public/cpp/resource_response.h"
 
 constexpr char kApplicationUrlHeaderName[] = "Application-URL";
 
@@ -46,7 +48,7 @@ void DeviceDescriptionFetcher::ProcessResponse(const std::string& response) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(fetcher_);
 
-  const network::ResourceResponseHead* response_info =
+  const network::mojom::URLResponseHead* response_info =
       fetcher_->GetResponseHead();
   DCHECK(response_info);
 

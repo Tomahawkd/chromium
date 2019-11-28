@@ -13,19 +13,23 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <iomanip>
 #include <memory>
-#include <vector>
 
 #include "base/command_line.h"
+#include "base/files/dir_reader_posix.h"
 #include "base/files/file_util.h"
 #include "base/memory/singleton.h"
 #include "base/process/launch.h"
+#include "base/strings/safe_sprintf.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
+
+namespace base {
 
 namespace {
 
@@ -42,7 +46,7 @@ class LinuxDistroHelper {
  public:
   // Retrieves the Singleton.
   static LinuxDistroHelper* GetInstance() {
-    return base::Singleton<LinuxDistroHelper>::get();
+    return Singleton<LinuxDistroHelper>::get();
   }
 
   // The simple state machine goes from:
@@ -54,7 +58,7 @@ class LinuxDistroHelper {
   // we automatically move to STATE_CHECK_STARTED so nobody else will
   // do the check.
   LinuxDistroState State() {
-    base::AutoLock scoped_lock(lock_);
+    AutoLock scoped_lock(lock_);
     if (STATE_DID_NOT_CHECK == state_) {
       state_ = STATE_CHECK_STARTED;
       return STATE_DID_NOT_CHECK;
@@ -64,42 +68,71 @@ class LinuxDistroHelper {
 
   // Indicate the check finished, move to STATE_CHECK_FINISHED.
   void CheckFinished() {
-    base::AutoLock scoped_lock(lock_);
+    AutoLock scoped_lock(lock_);
     DCHECK_EQ(STATE_CHECK_STARTED, state_);
     state_ = STATE_CHECK_FINISHED;
   }
 
  private:
-  base::Lock lock_;
+  Lock lock_;
   LinuxDistroState state_;
 };
-#endif  // if defined(OS_LINUX)
 
-bool GetTasksForProcess(pid_t pid, std::vector<pid_t>* tids) {
-  char buf[256];
-  snprintf(buf, sizeof(buf), "/proc/%d/task", pid);
+#if !defined(OS_CHROMEOS)
+std::string GetKeyValueFromOSReleaseFile(const std::string& input,
+                                         const char* key) {
+  StringPairs key_value_pairs;
+  SplitStringIntoKeyValuePairs(input, '=', '\n', &key_value_pairs);
+  for (const auto& pair : key_value_pairs) {
+    const std::string& key_str = pair.first;
+    const std::string& value_str = pair.second;
+    if (key_str == key) {
+      // It can contain quoted characters.
+      std::stringstream ss;
+      std::string pretty_name;
+      ss << value_str;
+      // Quoted with a single tick?
+      if (value_str[0] == '\'')
+        ss >> std::quoted(pretty_name, '\'');
+      else
+        ss >> std::quoted(pretty_name);
 
-  DIR* task = opendir(buf);
-  if (!task) {
-    DLOG(WARNING) << "Cannot open " << buf;
+      return pretty_name;
+    }
+  }
+
+  return "";
+}
+
+bool ReadDistroFromOSReleaseFile(const char* file) {
+  static const char kPrettyName[] = "PRETTY_NAME";
+
+  std::string os_release_content;
+  if (!ReadFileToString(FilePath(file), &os_release_content))
     return false;
-  }
 
-  struct dirent* dent;
-  while ((dent = readdir(task))) {
-    char* endptr;
-    const unsigned long int tid_ul = strtoul(dent->d_name, &endptr, 10);
-    if (tid_ul == ULONG_MAX || *endptr)
-      continue;
-    tids->push_back(tid_ul);
-  }
-  closedir(task);
+  std::string pretty_name =
+      GetKeyValueFromOSReleaseFile(os_release_content, kPrettyName);
+  if (pretty_name.empty())
+    return false;
+
+  SetLinuxDistro(pretty_name);
   return true;
 }
 
-}  // namespace
+// https://www.freedesktop.org/software/systemd/man/os-release.html
+void GetDistroNameFromOSRelease() {
+  static const char* const kFilesToCheck[] = {"/etc/os-release",
+                                              "/usr/lib/os-release"};
+  for (const char* file : kFilesToCheck) {
+    if (ReadDistroFromOSReleaseFile(file))
+      return;
+  }
+}
+#endif  // if !defined(OS_CHROMEOS)
+#endif  // if defined(OS_LINUX)
 
-namespace base {
+}  // namespace
 
 // Account for the terminating null character.
 static const int kDistroSize = 128 + 1;
@@ -115,6 +148,21 @@ char g_linux_distro[kDistroSize] =
     "Unknown";
 #endif
 
+// This function is only supposed to be used in tests. The declaration in the
+// header file is guarded by "#if defined(UNIT_TEST)" so that they can be used
+// by tests but not non-test code. However, this .cc file is compiled as part
+// of "base" where "UNIT_TEST" is not defined. So we need to specify
+// "BASE_EXPORT" here again so that they are visible to tests.
+BASE_EXPORT std::string GetKeyValueFromOSReleaseFileForTesting(
+    const std::string& input,
+    const char* key) {
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  return GetKeyValueFromOSReleaseFile(input, key);
+#else
+  return "";
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
+}
+
 std::string GetLinuxDistro() {
 #if defined(OS_CHROMEOS) || defined(OS_ANDROID)
   return g_linux_distro;
@@ -127,20 +175,8 @@ std::string GetLinuxDistro() {
     return "Unknown"; // Don't wait for other thread to finish.
   DCHECK_EQ(state, STATE_DID_NOT_CHECK);
   // We do this check only once per process. If it fails, there's
-  // little reason to believe it will work if we attempt to run
-  // lsb_release again.
-  std::vector<std::string> argv;
-  argv.push_back("lsb_release");
-  argv.push_back("-d");
-  std::string output;
-  GetAppOutput(CommandLine(argv), &output);
-  if (output.length() > 0) {
-    // lsb_release -d should return: Description:<tab>Distro Info
-    const char field[] = "Description:\t";
-    if (output.compare(0, strlen(field), field) == 0) {
-      SetLinuxDistro(output.substr(strlen(field)));
-    }
-  }
+  // little reason to believe it will work if we attempt to run it again.
+  GetDistroNameFromOSRelease();
   distro_state_singleton->CheckFinished();
   return g_linux_distro;
 #else
@@ -155,13 +191,35 @@ void SetLinuxDistro(const std::string& distro) {
   strlcpy(g_linux_distro, trimmed_distro.c_str(), kDistroSize);
 }
 
+bool GetThreadsForProcess(pid_t pid, std::vector<pid_t>* tids) {
+  // 25 > strlen("/proc//task") + strlen(std::to_string(INT_MAX)) + 1 = 22
+  char buf[25];
+  strings::SafeSPrintf(buf, "/proc/%d/task", pid);
+  DirReaderPosix dir_reader(buf);
+
+  if (!dir_reader.IsValid()) {
+    DLOG(WARNING) << "Cannot open " << buf;
+    return false;
+  }
+
+  while (dir_reader.Next()) {
+    char* endptr;
+    const unsigned long int tid_ul = strtoul(dir_reader.name(), &endptr, 10);
+    if (tid_ul == ULONG_MAX || *endptr)
+      continue;
+    tids->push_back(tid_ul);
+  }
+
+  return true;
+}
+
 pid_t FindThreadIDWithSyscall(pid_t pid, const std::string& expected_data,
                               bool* syscall_supported) {
   if (syscall_supported != nullptr)
     *syscall_supported = false;
 
   std::vector<pid_t> tids;
-  if (!GetTasksForProcess(pid, &tids))
+  if (!GetThreadsForProcess(pid, &tids))
     return -1;
 
   std::unique_ptr<char[]> syscall_data(new char[expected_data.length()]);
@@ -191,7 +249,7 @@ pid_t FindThreadID(pid_t pid, pid_t ns_tid, bool* ns_pid_supported) {
     *ns_pid_supported = false;
 
   std::vector<pid_t> tids;
-  if (!GetTasksForProcess(pid, &tids))
+  if (!GetThreadsForProcess(pid, &tids))
     return -1;
 
   for (pid_t tid : tids) {

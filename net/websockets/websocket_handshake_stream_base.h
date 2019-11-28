@@ -119,6 +119,10 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
   static std::string MultipleHeaderValuesMessage(
       const std::string& header_name);
 
+  // Subclasses need to implement this method so that the resulting weak
+  // pointers are invalidated as soon as the derived class is destroyed.
+  virtual base::WeakPtr<WebSocketHandshakeStreamBase> GetWeakPtr() = 0;
+
  protected:
   // TODO(ricea): If more extensions are added, replace this with a more general
   // mechanism.
@@ -143,8 +147,6 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
                                  WebSocketExtensionParams* params);
 
   void RecordHandshakeResult(HandshakeResult result);
-  void RecordDeflateMode(
-      WebSocketDeflateParameters::ContextTakeOverMode deflate_mode);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WebSocketHandshakeStreamBase);

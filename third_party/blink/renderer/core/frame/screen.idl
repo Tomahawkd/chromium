@@ -31,14 +31,23 @@
 [
     Exposed=Window
 ] interface Screen {
-    readonly attribute long availWidth;
-    readonly attribute long availHeight;
-    readonly attribute long width;
-    readonly attribute long height;
-    readonly attribute unsigned long colorDepth;
-    readonly attribute unsigned long pixelDepth;
+    [HighEntropy, Measure] readonly attribute long availWidth;
+    [HighEntropy, Measure] readonly attribute long availHeight;
+    [HighEntropy, Measure] readonly attribute long width;
+    [HighEntropy, Measure] readonly attribute long height;
+    [HighEntropy, Measure] readonly attribute unsigned long colorDepth;
+    [HighEntropy, Measure] readonly attribute unsigned long pixelDepth;
 
     // Non-standard
-    [Measure] readonly attribute long availLeft;
-    [Measure] readonly attribute long availTop;
+    [HighEntropy, Measure] readonly attribute long availLeft;
+    [HighEntropy, Measure] readonly attribute long availTop;
+
+    // Proposed
+    // https://github.com/spark008/screen-enumeration/blob/master/EXPLAINER.md
+    [RuntimeEnabled=ScreenEnumeration] readonly attribute long left;
+    [RuntimeEnabled=ScreenEnumeration] readonly attribute long top;
+    [RuntimeEnabled=ScreenEnumeration] readonly attribute boolean internal;
+    [RuntimeEnabled=ScreenEnumeration] readonly attribute boolean primary;
+    [RuntimeEnabled=ScreenEnumeration] readonly attribute float scaleFactor;
+    [RuntimeEnabled=ScreenEnumeration] readonly attribute DOMString name;
 };

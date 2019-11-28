@@ -4,14 +4,8 @@
 
 package org.chromium.chrome.browser.feed;
 
-import static org.mockito.Mockito.mock;
-
 import android.support.test.filters.SmallTest;
 import android.support.test.rule.UiThreadTestRule;
-
-import com.google.android.libraries.feed.api.requestmanager.RequestManager;
-import com.google.android.libraries.feed.api.sessionmanager.SessionManager;
-import com.google.android.libraries.feed.testing.conformance.scheduler.SchedulerConformanceTest;
 
 import org.junit.After;
 import org.junit.Before;
@@ -19,13 +13,16 @@ import org.junit.Rule;
 import org.junit.rules.RuleChain;
 import org.junit.runner.Description;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 
 import org.chromium.base.test.params.ParameterAnnotations.ClassParameter;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
+import org.chromium.chrome.browser.feed.library.api.client.requestmanager.RequestManager;
+import org.chromium.chrome.browser.feed.library.testing.conformance.scheduler.SchedulerConformanceTest;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 
 import java.util.Arrays;
@@ -57,6 +54,8 @@ public final class FeedSchedulerBridgeConformanceTest extends SchedulerConforman
                 }
             });
 
+    @Mock
+    private RequestManager mRequestManager;
     private boolean mUseRequestManager;
 
     public FeedSchedulerBridgeConformanceTest(boolean useRequestManager) {
@@ -64,19 +63,17 @@ public final class FeedSchedulerBridgeConformanceTest extends SchedulerConforman
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         // The scheduler is declared and tested in SchedulerConformanceTest.
-        scheduler = new FeedSchedulerBridge(Profile.getLastUsedProfile());
+        mScheduler = new FeedSchedulerBridge(Profile.getLastUsedProfile());
         if (mUseRequestManager) {
-            ((FeedSchedulerBridge) scheduler)
-                    .initializeFeedDependencies(
-                            mock(RequestManager.class), mock(SessionManager.class));
+            ((FeedSchedulerBridge) mScheduler).initializeFeedDependencies(mRequestManager);
         }
     }
 
     @After
     public void tearDown() {
-        ((FeedSchedulerBridge) scheduler).destroy();
-        scheduler = null;
+        ((FeedSchedulerBridge) mScheduler).destroy();
+        mScheduler = null;
     }
 }

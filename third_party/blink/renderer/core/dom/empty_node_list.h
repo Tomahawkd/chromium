@@ -33,21 +33,18 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_EMPTY_NODE_LIST_H_
 
 #include "third_party/blink/renderer/core/dom/node_list.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
 class EmptyNodeList final : public NodeList {
  public:
-  static EmptyNodeList* Create(Node& root_node) {
-    return MakeGarbageCollected<EmptyNodeList>(root_node);
-  }
-
   explicit EmptyNodeList(Node& root_node) : owner_(root_node) {}
   ~EmptyNodeList() override;
 
   Node& OwnerNode() const { return *owner_; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   unsigned length() const override { return 0; }
@@ -59,11 +56,15 @@ class EmptyNodeList final : public NodeList {
   Member<Node> owner_;
 };
 
-DEFINE_TYPE_CASTS(EmptyNodeList,
-                  NodeList,
-                  nodeList,
-                  nodeList->IsEmptyNodeList(),
-                  nodeList.IsEmptyNodeList());
+template <>
+struct DowncastTraits<EmptyNodeList> {
+  static bool AllowFrom(const NodeList& nodeList) {
+    return nodeList.IsEmptyNodeList();
+  }
+  static bool AllowFrom(const NodeList* nodeList) {
+    return nodeList->IsEmptyNodeList();
+  }
+};
 
 }  // namespace blink
 

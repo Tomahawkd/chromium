@@ -12,7 +12,7 @@
 #include "base/json/json_reader.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -35,6 +35,22 @@ namespace {
 base::LazyInstance<BrowserContextKeyedAPIFactory<StorageFrontend>>::
     DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
 
+events::HistogramValue NamespaceToEventHistogram(
+    settings_namespace::Namespace settings_namespace) {
+  switch (settings_namespace) {
+    case settings_namespace::LOCAL:
+      return events::STORAGE_LOCAL_ON_CHANGE;
+    case settings_namespace::SYNC:
+      return events::STORAGE_SYNC_ON_CHANGE;
+    case settings_namespace::MANAGED:
+      return events::STORAGE_MANAGED_ON_CHANGE;
+    case settings_namespace::INVALID:
+      break;
+  }
+  NOTREACHED();
+  return events::UNKNOWN;
+}
+
 // Settings change Observer which forwards changes on to the extension
 // processes for |context| and its incognito partner if it exists.
 class DefaultObserver : public SettingsObserver {
@@ -46,23 +62,42 @@ class DefaultObserver : public SettingsObserver {
   void OnSettingsChanged(const std::string& extension_id,
                          settings_namespace::Namespace settings_namespace,
                          const std::string& change_json) override {
-    // TODO(gdk): This is a temporary hack while the refactoring for
-    // string-based event payloads is removed. http://crbug.com/136045
-    std::unique_ptr<base::ListValue> args(new base::ListValue());
-    std::unique_ptr<base::Value> changes = base::JSONReader::Read(change_json);
+    std::unique_ptr<base::Value> changes =
+        base::JSONReader::ReadDeprecated(change_json);
     DCHECK(changes);
     // TODO(devlin): crbug.com/645500 implies this can sometimes fail. If this
     // safeguard fixes it, that means there's an underlying problem (why are we
     // passing invalid json here?).
     if (!changes)
       changes = std::make_unique<base::DictionaryValue>();
-    args->Append(std::move(changes));
-    args->AppendString(settings_namespace::ToString(settings_namespace));
-    std::unique_ptr<Event> event(new Event(events::STORAGE_ON_CHANGED,
-                                           api::storage::OnChanged::kEventName,
-                                           std::move(args)));
-    EventRouter::Get(browser_context_)
-        ->DispatchEventToExtension(extension_id, std::move(event));
+
+    const std::string namespace_string =
+        settings_namespace::ToString(settings_namespace);
+    EventRouter* event_router = EventRouter::Get(browser_context_);
+
+    // Event for each storage(sync, local, managed).
+    {
+      // TODO(gdk): This is a temporary hack while the refactoring for
+      // string-based event payloads is removed. http://crbug.com/136045
+      std::unique_ptr<base::ListValue> args(new base::ListValue());
+      args->Append(std::make_unique<base::Value>(changes->Clone()));
+      args->AppendString(namespace_string);
+      std::unique_ptr<Event> event(
+          new Event(events::STORAGE_ON_CHANGED,
+                    api::storage::OnChanged::kEventName, std::move(args)));
+      event_router->DispatchEventToExtension(extension_id, std::move(event));
+    }
+
+    // Event for StorageArea.
+    {
+      auto args = std::make_unique<base::ListValue>();
+      args->Append(changes->Clone());
+      auto event = std::make_unique<Event>(
+          NamespaceToEventHistogram(settings_namespace),
+          base::StringPrintf("storage.%s.onChanged", namespace_string.c_str()),
+          std::move(args));
+      event_router->DispatchEventToExtension(extension_id, std::move(event));
+    }
   }
 
  private:
@@ -96,7 +131,6 @@ StorageFrontend::StorageFrontend(scoped_refptr<ValueStoreFactory> factory,
 
 void StorageFrontend::Init(scoped_refptr<ValueStoreFactory> factory) {
   TRACE_EVENT0("browser,startup", "StorageFrontend::Init")
-  SCOPED_UMA_HISTOGRAM_TIMER("Extensions.StorageFrontendInitTime");
 
   observers_ = new SettingsObserverList();
   browser_context_observer_.reset(new DefaultObserver(browser_context_));
@@ -125,6 +159,9 @@ StorageFrontend::~StorageFrontend() {
 
 ValueStoreCache* StorageFrontend::GetValueStoreCache(
     settings_namespace::Namespace settings_namespace) const {
+  // TODO(crbug.com/933874): We should DCHECK for BrowserThread::UI here, but
+  // currently that breaks ExtensionSettingsSyncTest which calls this on the
+  // backend sequence.
   auto it = caches_.find(settings_namespace);
   if (it != caches_.end())
     return it->second;
@@ -147,8 +184,8 @@ void StorageFrontend::RunWithStorage(
   CHECK(cache);
 
   GetBackendTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&ValueStoreCache::RunWithValueStoreForExtension,
-                            base::Unretained(cache), callback, extension));
+      FROM_HERE, base::BindOnce(&ValueStoreCache::RunWithValueStoreForExtension,
+                                base::Unretained(cache), callback, extension));
 }
 
 void StorageFrontend::DeleteStorageSoon(const std::string& extension_id) {
@@ -156,8 +193,8 @@ void StorageFrontend::DeleteStorageSoon(const std::string& extension_id) {
   for (auto it = caches_.begin(); it != caches_.end(); ++it) {
     ValueStoreCache* cache = it->second;
     GetBackendTaskRunner()->PostTask(
-        FROM_HERE, base::Bind(&ValueStoreCache::DeleteStorageSoon,
-                              base::Unretained(cache), extension_id));
+        FROM_HERE, base::BindOnce(&ValueStoreCache::DeleteStorageSoon,
+                                  base::Unretained(cache), extension_id));
   }
 }
 

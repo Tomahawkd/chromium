@@ -34,7 +34,9 @@ namespace blink {
 
 class ContainerNode;
 class Document;
+class Element;
 class FormAttributeTargetObserver;
+class FormControlState;
 class FormData;
 class HTMLElement;
 class HTMLFormElement;
@@ -42,15 +44,19 @@ class Node;
 class ValidationMessageClient;
 class ValidityState;
 
-enum CheckValidityEventBehavior {
-  kCheckValidityDispatchNoEvent,
-  kCheckValidityDispatchInvalidEvent
-};
-
-// https://html.spec.whatwg.org/multipage/forms.html#category-listed
+// https://html.spec.whatwg.org/C/#category-listed
 class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
  public:
   virtual ~ListedElement();
+  // Returns a valid ListedElement pointer if the specified element is an
+  // instance of a ListedElement subclass, or a form-associated custom element.
+  // Returns nullptr otherwise.
+  static ListedElement* From(Element& element);
+
+  // Cast |this| to HTMLElement, or return the target element associated
+  // to ElementInternals.
+  const HTMLElement& ToHTMLElement() const;
+  HTMLElement& ToHTMLElement();
 
   static HTMLFormElement* FindAssociatedForm(const HTMLElement*,
                                              const AtomicString& form_id,
@@ -103,9 +109,7 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   virtual void setCustomValidity(const String&);
   void UpdateVisibleValidationMessage();
   void HideVisibleValidationMessage();
-  bool checkValidity(
-      List* unhandled_invalid_controls = nullptr,
-      CheckValidityEventBehavior = kCheckValidityDispatchInvalidEvent);
+  bool checkValidity(List* unhandled_invalid_controls = nullptr);
   bool reportValidity();
   // This must be called only after the caller check the element is focusable.
   void ShowValidationMessage();
@@ -114,9 +118,17 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
                                                 TextDirection& message_dir,
                                                 String& sub_message,
                                                 TextDirection& sub_message_dir);
+  virtual Element& ValidationAnchor() const;
+  bool ValidationAnchorOrHostIsFocusable() const;
 
   // For Element::IsValidElement(), which is for :valid :invalid selectors.
   bool IsValidElement();
+  // Returns true if
+  //  - this is not a candidate for constraint validation, or
+  //    https://html.spec.whatwg.org/C/#candidate-for-constraint-validation
+  //  - this satisfies its constraints
+  //    https://html.spec.whatwg.org/C/#concept-fv-valid
+  bool IsNotCandidateOrValid();
 
   // This must be called when a validation constraint or control value is
   // changed.
@@ -139,10 +151,26 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   // This is for HTMLFieldSetElement class.
   void AncestorDisabledStateWasChanged();
 
-  // https://html.spec.whatwg.org/multipage/semantics-other.html#concept-element-disabled
+  // https://html.spec.whatwg.org/C/#concept-element-disabled
   bool IsActuallyDisabled() const;
 
-  void Trace(blink::Visitor*) override;
+  // Returns a static value of class-level support of the state restore
+  // feature.  If a sub-class of ListedElement supports the state restore
+  // feature, this function should return true.
+  virtual bool ClassSupportsStateRestore() const;
+  // Returns a flag to represent support of the state restore feature per
+  // instances.
+  virtual bool ShouldSaveAndRestoreFormControlState() const;
+  virtual FormControlState SaveFormControlState() const;
+  // The specified FormControlState must have at least one string value.
+  virtual void RestoreFormControlState(const FormControlState& state);
+  // This should be called whenever an element supports state restore changes
+  // its state.
+  void NotifyFormStateChanged();
+  // This should be called in Element::FinishParsingChildren() override.
+  void TakeStateAndRestore();
+
+  void Trace(Visitor*) override;
 
  protected:
   ListedElement();
@@ -212,11 +240,6 @@ class CORE_EXPORT ListedElement : public GarbageCollectedMixin {
   mutable enum DataListAncestorState data_list_ancestor_state_ =
       DataListAncestorState::kUnknown;
 };
-
-CORE_EXPORT HTMLElement* ToHTMLElement(ListedElement*);
-CORE_EXPORT HTMLElement& ToHTMLElement(ListedElement&);
-CORE_EXPORT const HTMLElement* ToHTMLElement(const ListedElement*);
-CORE_EXPORT const HTMLElement& ToHTMLElement(const ListedElement&);
 
 }  // namespace blink
 

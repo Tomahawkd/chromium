@@ -76,8 +76,7 @@ void NotificationList::SetNotificationsShown(
   for (Notification* notification : notifications) {
     NotificationState* state = &GetNotification(notification->id())->second;
     const NotificationState original_state = *state;
-    if (notification->priority() < SYSTEM_PRIORITY)
-      state->shown_as_popup = true;
+    state->shown_as_popup = true;
     state->is_read = true;
     if (updated_ids && (original_state != *state))
       updated_ids->insert(notification->id());
@@ -154,16 +153,6 @@ bool NotificationList::SetNotificationImage(const std::string& notification_id,
   if (iter == notifications_.end())
     return false;
   iter->first->set_image(image);
-  return true;
-}
-
-bool NotificationList::SetNotificationButtonIcon(
-    const std::string& notification_id, int button_index,
-    const gfx::Image& image) {
-  auto iter = GetNotification(notification_id);
-  if (iter == notifications_.end())
-    return false;
-  iter->first->SetButtonIcon(button_index, image);
   return true;
 }
 

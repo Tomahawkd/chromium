@@ -21,12 +21,7 @@ namespace blink {
 
 namespace {
 
-// Web platform tests test WritableStream more thoroughly from scripts.
-class WritableStreamTest : public testing::Test {
- public:
-};
-
-TEST_F(WritableStreamTest, CreateWithoutArguments) {
+TEST(WritableStreamTest, CreateWithoutArguments) {
   V8TestingScope scope;
 
   WritableStream* stream =
@@ -36,7 +31,7 @@ TEST_F(WritableStreamTest, CreateWithoutArguments) {
 }
 
 // Testing getWriter, locked and IsLocked.
-TEST_F(WritableStreamTest, GetWriter) {
+TEST(WritableStreamTest, GetWriter) {
   V8TestingScope scope;
   ScriptState* script_state = scope.GetScriptState();
 
@@ -48,14 +43,14 @@ TEST_F(WritableStreamTest, GetWriter) {
   EXPECT_EQ(stream->IsLocked(script_state, ASSERT_NO_EXCEPTION),
             base::make_optional(false));
 
-  ScriptValue writer = stream->getWriter(script_state, ASSERT_NO_EXCEPTION);
+  stream->getWriter(script_state, ASSERT_NO_EXCEPTION);
 
   EXPECT_TRUE(stream->locked(script_state, ASSERT_NO_EXCEPTION));
   EXPECT_EQ(stream->IsLocked(script_state, ASSERT_NO_EXCEPTION),
             base::make_optional(true));
 }
 
-TEST_F(WritableStreamTest, Serialize) {
+TEST(WritableStreamTest, Serialize) {
   ScopedTransferableStreamsForTest enable_transferable_streams(true);
 
   V8TestingScope scope;
@@ -76,7 +71,8 @@ underlying_sink)JS";
                                         ASSERT_NO_EXCEPTION);
   ASSERT_TRUE(stream);
 
-  MessageChannel* channel = MessageChannel::Create(scope.GetExecutionContext());
+  auto* channel =
+      MakeGarbageCollected<MessageChannel>(scope.GetExecutionContext());
 
   stream->Serialize(script_state, channel->port1(), ASSERT_NO_EXCEPTION);
   EXPECT_TRUE(stream->locked(script_state, ASSERT_NO_EXCEPTION));

@@ -7,16 +7,14 @@
 #include "base/strings/string_number_conversions.h"
 #import "base/test/ios/wait_util.h"
 #include "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/find_in_page/find_in_page_controller.h"
 #import "ios/chrome/browser/ui/find_bar/find_bar_constants.h"
-#import "ios/chrome/browser/ui/find_bar/find_bar_controller_ios.h"
+#import "ios/chrome/browser/ui/find_bar/find_in_page_controller_app_interface.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
-#import "ios/chrome/test/app/tab_test_util.h"
-#import "ios/chrome/test/earl_grey/accessibility_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #include "ios/web/public/test/http_server/http_server_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -24,6 +22,15 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+#if defined(CHROME_EARL_GREY_2)
+// TODO(crbug.com/1015113): The EG2 macro is breaking indexing for some reason
+// without the trailing semicolon.  For now, disable the extra semi warning
+// so Xcode indexing works for the egtest.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++98-compat-extra-semi"
+GREY_STUB_CLASS_IN_APP_MAIN_QUEUE(FindInPageControllerAppInterface);
+#endif  // defined(CHROME_EARL_GREY_2)
 
 namespace {
 
@@ -67,8 +74,9 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
 // bar is opened.
 - (void)setUp {
   [super setUp];
-  // Clear saved search term
-  [FindInPageController setSearchTerm:nil];
+
+  // Clear saved search term.
+  [FindInPageControllerAppInterface clearSearchTerm];
 
   // Setup find in page test URL.
   std::map<GURL, std::string> responses;
@@ -93,7 +101,13 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
 
 // Tests that find in page allows iteration between search results and displays
 // correct number of results.
+#if defined(CHROME_EARL_GREY_2)
+// TODO(crbug.com/1026579): Enable the tests once the bug is fixed
+- (void)FLAKY_testFindInPage {
+#else
 - (void)testFindInPage {
+#endif
+
   // Type "find".
   [self typeFindInPageText:@"find"];
   // Should be highlighting result 1 of 2.
@@ -110,7 +124,12 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
 // Tests that Find In Page search term retention is working as expected, e.g.
 // the search term is persisted between FIP runs, but in incognito search term
 // is not retained and not autofilled.
+#if defined(CHROME_EARL_GREY_2)
+// TODO(crbug.com/1026579): Enable the tests once the bug is fixed
+- (void)FLAKY_testFindInPageRetainsSearchTerm {
+#else
 - (void)testFindInPageRetainsSearchTerm {
+#endif
   // Type "find".
   [self typeFindInPageText:@"find"];
   [self assertResultStringIsResult:1 outOfTotal:2];
@@ -150,13 +169,18 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
 }
 
 // Tests accessibility of the Find in Page screen.
+#if defined(CHROME_EARL_GREY_2)
+// TODO(crbug.com/1026579): Enable the tests once the bug is fixed
+- (void)FLAKY_testAccessibilityOnFindInPage {
+#else
 - (void)testAccessibilityOnFindInPage {
+#endif
   [self typeFindInPageText:@"find"];
 
   // Wait for UI to finish loading screen, before programatically verifying
   // accessibility.
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-  chrome_test_util::VerifyAccessibilityForCurrentScreen();
+  [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
 }
 
 #pragma mark - Steps.
@@ -179,8 +203,21 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
 }
 
 - (void)typeFindInPageText:(NSString*)text {
+#if defined(CHROME_EARL_GREY_1)
   [[EarlGrey selectElementWithMatcher:[self findInPageInputField]]
       performAction:grey_replaceText(text)];
+#elif defined(CHROME_EARL_GREY_2)
+  // There are two elements in the DOM (UITextField and
+  // UIAccessibilityTextFieldElement) that match the acessibilityID of
+  // kFindInPageInputFieldId. Choose the accessibility element.
+  [[EarlGrey
+      selectElementWithMatcher:grey_allOf(grey_accessibilityID(
+                                              kFindInPageInputFieldId),
+                                          grey_accessibilityElement(), nil)]
+      performAction:grey_replaceText(text)];
+#else
+#error Must define either CHROME_EARL_GREY_1 or CHROME_EARL_GREY_2.
+#endif
 }
 
 - (id<GREYMatcher>)findInPageInputField {
@@ -191,8 +228,8 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
                         outOfTotal:(int)resultCount {
   // Returns "<current> of <total>" search results label (e.g "1 of 5").
   NSString* expectedResultsString = l10n_util::GetNSStringF(
-      IDS_FIND_IN_PAGE_COUNT, base::IntToString16(resultIndex),
-      base::IntToString16(resultCount));
+      IDS_FIND_IN_PAGE_COUNT, base::NumberToString16(resultIndex),
+      base::NumberToString16(resultCount));
 
   ConditionBlock condition = ^{
     NSError* error = nil;
@@ -224,7 +261,7 @@ const std::string kFindInPageResponse = "Find in page. Find in page.";
   [ChromeEarlGrey loadURL:self.testURL];
 
   // Verify web page finished loading.
-  [ChromeEarlGrey waitForWebViewContainingText:kFindInPageResponse];
+  [ChromeEarlGrey waitForWebStateContainingText:kFindInPageResponse];
 }
 
 @end

@@ -9,13 +9,13 @@
 #include <vector>
 
 #include "base/i18n/time_formatting.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/upload_list/upload_list.h"
 
-namespace crash {
+namespace crash_reporter {
 
 const CrashesUILocalizedString kCrashesUILocalizedStrings[] = {
     {"bugLinkText", IDS_CRASH_BUG_LINK_LABEL},
@@ -38,7 +38,7 @@ const CrashesUILocalizedString kCrashesUILocalizedStrings[] = {
 };
 
 const size_t kCrashesUILocalizedStringsCount =
-    arraysize(kCrashesUILocalizedStrings);
+    base::size(kCrashesUILocalizedStrings);
 
 const char kCrashesUICrashesJS[] = "crashes.js";
 const char kCrashesUIRequestCrashList[] = "requestCrashList";
@@ -85,4 +85,4 @@ void UploadListToValue(UploadList* upload_list, base::ListValue* out_value) {
   }
 }
 
-}  // namespace crash
+}  // namespace crash_reporter

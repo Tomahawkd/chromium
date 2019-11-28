@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/onc/onc_mapper.h"
 #include "components/onc/onc_constants.h"
 
@@ -56,7 +56,7 @@ struct OncValueSignature;
 //
 // If no error occurred, |result| is set to VALID and an exact DeepCopy is
 // returned.
-class CHROMEOS_EXPORT Validator : public Mapper {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) Validator : public Mapper {
  public:
   enum Result {
     VALID,
@@ -191,6 +191,7 @@ class CHROMEOS_EXPORT Validator : public Mapper {
   bool ValidateProxyLocation(base::DictionaryValue* result);
   bool ValidateEAP(base::DictionaryValue* result);
   bool ValidateCertificate(base::DictionaryValue* result);
+  bool ValidateScope(base::DictionaryValue* result);
   bool ValidateTether(base::DictionaryValue* result);
 
   bool IsValidValue(const std::string& field_value,

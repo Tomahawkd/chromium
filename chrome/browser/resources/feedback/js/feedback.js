@@ -2,12 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * @type {string}
- * @const
- */
-const SRT_DOWNLOAD_PAGE = 'https://www.google.com/chrome/cleanup-tool/';
-
 /** @type {number}
  * @const
  */
@@ -46,16 +40,6 @@ const MAX_SCREENSHOT_WIDTH = 100;
  */
 const SYSINFO_WINDOW_ID = 'sysinfo_window';
 
-/**
- * SRT Prompt Result defined in feedback_private.idl.
- * @enum {string}
- */
-const SrtPromptResult = {
-  ACCEPTED: 'accepted',  // User accepted prompt.
-  DECLINED: 'declined',  // User declined prompt.
-  CLOSED: 'closed',      // User closed window without responding to prompt.
-};
-
 let attachedFileBlob = null;
 const lastReader = null;
 
@@ -67,18 +51,13 @@ const lastReader = null;
 let isSystemInfoReady = false;
 
 /**
- * Indicates whether the SRT Prompt is currently being displayed.
- * @type {boolean}
- */
-let isShowingSrtPrompt = false;
-
-/**
- * Regular expression to check for all variants of bluetooth, blutooth, with or
- * without space between the words and for BT when used as an individual word,
- * or as two individual characters. Case insensitive matching.
+ * Regular expression to check for all variants of blu[e]toot[h] with or without
+ * space between the words; for BT when used as an individual word, or as two
+ * individual characters, and for BLE when used as an individual word. Case
+ * insensitive matching.
  * @type {RegExp}
  */
-const btRegEx = new RegExp('[b]lu[e]?[ ]?tooth|\b[b][ ]?[t]\b', 'i');
+const btRegEx = new RegExp('blu[e]?[ ]?toot[h]?|\\bb[ ]?t\\b|\\bble\\b', 'i');
 
 /**
  * Regular expression to check for all strings indicating that a user can't
@@ -156,11 +135,17 @@ function clearAttachedFile() {
  * Sets up the event handlers for the given |anchorElement|.
  * @param {HTMLElement} anchorElement The <a> html element.
  * @param {string} url The destination URL for the link.
+ * @param {boolean} useAppWindow true if the URL should be opened inside a new
+ *                  App Window, false if it should be opened in a new tab.
  */
-function setupLinkHandlers(anchorElement, url) {
+function setupLinkHandlers(anchorElement, url, useAppWindow) {
   anchorElement.onclick = function(e) {
     e.preventDefault();
-    openUrlInAppWindow(url);
+    if (useAppWindow) {
+      openUrlInAppWindow(url);
+    } else {
+      window.open(url, '_blank');
+    }
   };
 
   anchorElement.onauxclick = function(e) {
@@ -198,7 +183,7 @@ function checkForBluetoothKeywords(inputEvent) {
 function sendReport() {
   if ($('description-text').value.length == 0) {
     const description = $('description-text');
-    description.placeholder = loadTimeData.getString('no-description');
+    description.placeholder = loadTimeData.getString('noDescription');
     description.focus();
     return false;
   }
@@ -223,6 +208,16 @@ function sendReport() {
     // Send histograms along with system info.
     useSystemInfo = useHistograms = true;
   }
+
+  // <if expr="chromeos">
+  if ($('assistant-info-checkbox') != null &&
+      $('assistant-info-checkbox').checked &&
+      !$('assistant-checkbox-container').hidden) {
+    // User consent to link Assistant debug info on Assistant server.
+    feedbackInfo.assistantDebugInfoAllowed = true;
+  }
+  // </if>
+
   // <if expr="chromeos">
   if ($('bluetooth-logs-checkbox') != null &&
       $('bluetooth-logs-checkbox').checked &&
@@ -239,8 +234,9 @@ function sendReport() {
   feedbackInfo.sendHistograms = useHistograms;
 
   // If the user doesn't want to send the screenshot.
-  if (!$('screenshot-checkbox').checked)
+  if (!$('screenshot-checkbox').checked) {
     feedbackInfo.screenshot = null;
+  }
 
   let productId = parseInt('' + feedbackInfo.productId);
   if (isNaN(productId)) {
@@ -266,6 +262,9 @@ function sendReport() {
 function cancel(e) {
   e.preventDefault();
   scheduleWindowClose();
+  if (feedbackInfo.flow == chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
+    chrome.feedbackPrivate.loginFeedbackComplete();
+  }
 }
 
 // <if expr="chromeos">
@@ -289,8 +288,9 @@ function performanceFeedbackChanged() {
 function resizeAppWindow() {
   // We pick the width from the titlebar, which has no margins.
   let width = $('title-bar').scrollWidth;
-  if (width < FEEDBACK_MIN_WIDTH)
+  if (width < FEEDBACK_MIN_WIDTH) {
     width = FEEDBACK_MIN_WIDTH;
+  }
 
   // We get the height by adding the titlebar height and the content height +
   // margins. We can't get the margins for the content-pane here by using
@@ -299,8 +299,9 @@ function resizeAppWindow() {
       CONTENT_MARGIN_HEIGHT;
 
   let minHeight = FEEDBACK_MIN_HEIGHT;
-  if (feedbackInfo.flow == chrome.feedbackPrivate.FeedbackFlow.LOGIN)
+  if (feedbackInfo.flow == chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
     minHeight = FEEDBACK_MIN_HEIGHT_LOGIN;
+  }
   height = Math.max(height, minHeight);
 
   chrome.app.window.current().resizeTo(width, height);
@@ -343,52 +344,37 @@ function initialize() {
   // Add listener to receive the feedback info object.
   chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     if (request.sentFromEventPage) {
-      if (!feedbackInfo.flow)
+      if (!feedbackInfo.flow) {
         feedbackInfo.flow = chrome.feedbackPrivate.FeedbackFlow.REGULAR;
+      }
 
-      if (feedbackInfo.flow ==
-          chrome.feedbackPrivate.FeedbackFlow.SHOW_SRT_PROMPT) {
-        isShowingSrtPrompt = true;
-        $('content-pane').hidden = true;
-
-        $('srt-decline-button').onclick = function() {
-          isShowingSrtPrompt = false;
-          chrome.feedbackPrivate.logSrtPromptResult(SrtPromptResult.DECLINED);
-          $('srt-prompt').hidden = true;
-          $('content-pane').hidden = false;
-        };
-
-        $('srt-accept-button').onclick = function() {
-          chrome.feedbackPrivate.logSrtPromptResult(SrtPromptResult.ACCEPTED);
-          openUrlInAppWindow(SRT_DOWNLOAD_PAGE);
-          scheduleWindowClose();
-        };
-
-        $('close-button').addEventListener('click', function() {
-          if (isShowingSrtPrompt) {
-            chrome.feedbackPrivate.logSrtPromptResult(SrtPromptResult.CLOSED);
-          }
-        });
-      } else if (
-          feedbackInfo.flow ==
-          chrome.feedbackPrivate.FeedbackFlow.GOOGLE_INTERNAL) {
+      if (feedbackInfo.includeBluetoothLogs) {
+        assert(
+            feedbackInfo.flow ==
+            chrome.feedbackPrivate.FeedbackFlow.GOOGLE_INTERNAL);
         $('description-text')
             .addEventListener('input', checkForBluetoothKeywords);
-        $('srt-prompt').hidden = true;
-      } else {
-        $('srt-prompt').hidden = true;
+      }
+
+      if ($('assistant-checkbox-container') != null &&
+          feedbackInfo.flow ==
+              chrome.feedbackPrivate.FeedbackFlow.GOOGLE_INTERNAL &&
+          feedbackInfo.fromAssistant) {
+        $('assistant-checkbox-container').hidden = false;
       }
 
       $('description-text').textContent = feedbackInfo.description;
-      if (feedbackInfo.descriptionPlaceholder)
+      if (feedbackInfo.descriptionPlaceholder) {
         $('description-text').placeholder = feedbackInfo.descriptionPlaceholder;
-      if (feedbackInfo.pageUrl)
+      }
+      if (feedbackInfo.pageUrl) {
         $('page-url-text').value = feedbackInfo.pageUrl;
+      }
 
       takeScreenshot(function(screenshotCanvas) {
         // We've taken our screenshot, show the feedback page without any
         // further delay.
-        window.webkitRequestAnimationFrame(function() {
+        window.requestAnimationFrame(function() {
           resizeAppWindow();
         });
         chrome.app.window.current().show();
@@ -415,8 +401,9 @@ function initialize() {
 
       chrome.feedbackPrivate.getUserEmail(function(email) {
         // Never add an empty option.
-        if (!email)
+        if (!email) {
           return;
+        }
         const optionElement = document.createElement('option');
         optionElement.value = email;
         optionElement.text = email;
@@ -510,23 +497,30 @@ function initialize() {
         const histogramUrlElement = $('histograms-url');
         if (histogramUrlElement) {
           // Opens a new window showing the histogram metrics.
-          setupLinkHandlers(histogramUrlElement, 'chrome://histograms');
+          setupLinkHandlers(
+              histogramUrlElement, 'chrome://histograms',
+              true /* useAppWindow */);
         }
 
         const legalHelpPageUrlElement = $('legal-help-page-url');
-        if (legalHelpPageUrlElement)
-          setupLinkHandlers(legalHelpPageUrlElement, FEEDBACK_LEGAL_HELP_URL);
+        if (legalHelpPageUrlElement) {
+          setupLinkHandlers(
+              legalHelpPageUrlElement, FEEDBACK_LEGAL_HELP_URL,
+              false /* useAppWindow */);
+        }
 
         const privacyPolicyUrlElement = $('privacy-policy-url');
         if (privacyPolicyUrlElement) {
           setupLinkHandlers(
-              privacyPolicyUrlElement, FEEDBACK_PRIVACY_POLICY_URL);
+              privacyPolicyUrlElement, FEEDBACK_PRIVACY_POLICY_URL,
+              false /* useAppWindow */);
         }
 
         const termsOfServiceUrlElement = $('terms-of-service-url');
         if (termsOfServiceUrlElement) {
           setupLinkHandlers(
-              termsOfServiceUrlElement, FEEDBACK_TERM_OF_SERVICE_URL);
+              termsOfServiceUrlElement, FEEDBACK_TERM_OF_SERVICE_URL,
+              false /* useAppWindow */);
         }
 
         const bluetoothLogsInfoLinkElement = $('bluetooth-logs-info-link');
@@ -545,6 +539,27 @@ function initialize() {
                 });
 
             bluetoothLogsInfoLinkElement.onauxclick = function(e) {
+              e.preventDefault();
+            };
+          };
+        }
+
+        const assistantLogsInfoLinkElement = $('assistant-logs-info-link');
+        if (assistantLogsInfoLinkElement) {
+          assistantLogsInfoLinkElement.onclick = function(e) {
+            e.preventDefault();
+
+            chrome.app.window.create(
+                '/html/assistant_logs_info.html',
+                {width: 400, height: 120, resizable: false, frame: 'none'},
+                function(appWindow) {
+                  appWindow.contentWindow.onload = function() {
+                    i18nTemplate.process(
+                        appWindow.contentWindow.document, loadTimeData);
+                  };
+                });
+
+            assistantLogsInfoLinkElement.onauxclick = function(e) {
               e.preventDefault();
             };
           };

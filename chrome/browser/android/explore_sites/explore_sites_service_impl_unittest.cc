@@ -4,12 +4,12 @@
 
 #include "chrome/browser/android/explore_sites/explore_sites_service_impl.h"
 
-#include "base/feature_list.h"
-#include "base/message_loop/message_loop.h"
+#include "base/bind.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/mock_entropy_provider.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/test_mock_time_task_runner.h"
+#include "base/test/task_environment.h"
 #include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/android/explore_sites/catalog.pb.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -22,6 +22,7 @@ namespace {
 const char kTechnologyCategoryName[] = "Technology";
 const char kScienceCategoryName[] = "Science";
 const char kBooksCategoryName[] = "Books";
+const char kCountryCode[] = "zz";
 const char kSite1UrlNoTrailingSlash[] = "https://example.com";
 const char kSite1Url[] = "https://example.com/";
 const char kSite2Url[] = "https://sample.com/";
@@ -44,9 +45,10 @@ class ExploreSitesServiceImplTest : public testing::Test {
 
   void SetUp() override {
     std::unique_ptr<ExploreSitesStore> store =
-        std::make_unique<ExploreSitesStore>(task_runner_);
+        std::make_unique<ExploreSitesStore>(
+            task_environment_.GetMainThreadTaskRunner());
     auto history_stats_reporter =
-        std::make_unique<HistoryStatisticsReporter>(nullptr, nullptr, nullptr);
+        std::make_unique<HistoryStatisticsReporter>(nullptr, nullptr);
     service_ = std::make_unique<ExploreSitesServiceImpl>(
         std::move(store),
         std::make_unique<TestURLLoaderFactoryGetter>(
@@ -72,6 +74,18 @@ class ExploreSitesServiceImplTest : public testing::Test {
       database_categories_ = std::move(categories);
     }
   }
+  void OverrideFinchCountry(std::string country_code) {
+    const char kCountryOverride[] = "country_override";
+    SetUpExperimentOption(kCountryOverride, country_code);
+  }
+
+  void EnableFeatureWithNoOptions() { SetUpExperimentOption("", ""); }
+
+  void SetUpExperimentOption(std::string option, std::string data) {
+    base::FieldTrialParams params = {{option, data}};
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        chrome::android::kExploreSites, params);
+  }
 
   bool success() const { return success_; }
   int callback_count() const { return callback_count_; }
@@ -89,13 +103,14 @@ class ExploreSitesServiceImplTest : public testing::Test {
 
   std::string bad_test_data() { return bad_test_data_; }
 
-  void PumpLoop() { task_runner_->RunUntilIdle(); }
+  void PumpLoop() { task_environment_.RunUntilIdle(); }
 
   std::string CreateTestDataProto();
   std::string CreateMostlyValidTestDataProto();
   std::string CreateBadTestDataProto();
 
   void SimulateFetcherData(const std::string& response_data);
+  void SimulateFetchFailure();
 
   const base::HistogramTester* histograms() const {
     return histogram_tester_.get();
@@ -121,6 +136,8 @@ class ExploreSitesServiceImplTest : public testing::Test {
     DISALLOW_COPY_AND_ASSIGN(TestURLLoaderFactoryGetter);
   };
 
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   std::unique_ptr<explore_sites::ExploreSitesServiceImpl> service_;
   bool success_;
   int callback_count_;
@@ -134,8 +151,9 @@ class ExploreSitesServiceImplTest : public testing::Test {
       test_shared_url_loader_factory_;
   network::ResourceRequest last_resource_request_;
   std::unique_ptr<base::HistogramTester> histogram_tester_;
-  base::MessageLoopForIO message_loop_;
-  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::IO,
+      base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME};
 
   DISALLOW_COPY_AND_ASSIGN(ExploreSitesServiceImplTest);
 };
@@ -145,10 +163,7 @@ ExploreSitesServiceImplTest::ExploreSitesServiceImplTest()
       callback_count_(0),
       test_shared_url_loader_factory_(
           base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-              &test_url_loader_factory_)),
-      task_runner_(new base::TestMockTimeTaskRunner) {
-  message_loop_.SetTaskRunner(task_runner_);
-}
+              &test_url_loader_factory_)) {}
 
 // Called by tests - response_data is the data we want to go back as the
 // response from the network.
@@ -162,9 +177,21 @@ void ExploreSitesServiceImplTest::SimulateFetcherData(
       network::TestURLLoaderFactory::kMostRecentMatch);
 }
 
+// Called by tests - Will return a http failure.
+void ExploreSitesServiceImplTest::SimulateFetchFailure() {
+  PumpLoop();
+
+  DCHECK(test_url_loader_factory_.pending_requests()->size() > 0);
+  test_url_loader_factory_.SimulateResponseForPendingRequest(
+      GetLastPendingRequest()->request.url.spec(), "", net::HTTP_BAD_REQUEST,
+      network::TestURLLoaderFactory::kMostRecentMatch);
+}
+
 // Helper to check the next request for the network.
 network::TestURLLoaderFactory::PendingRequest*
 ExploreSitesServiceImplTest::GetLastPendingRequest() {
+  EXPECT_GT(test_url_loader_factory_.pending_requests()->size(), 0U)
+      << "No pending request!";
   network::TestURLLoaderFactory::PendingRequest* request =
       &(test_url_loader_factory_.pending_requests()->back());
   return request;
@@ -355,6 +382,10 @@ TEST_F(ExploreSitesServiceImplTest, UpdateCatalogFromNetwork) {
   PumpLoop();
 
   ValidateTestCatalog();
+
+  histograms()->ExpectBucketCount(
+      "ExploreSites.CatalogRequestResult",
+      ExploreSitesCatalogUpdateRequestResult::kNewCatalog, 1);
 }
 
 TEST_F(ExploreSitesServiceImplTest, MultipleUpdateCatalogFromNetwork) {
@@ -430,6 +461,40 @@ TEST_F(ExploreSitesServiceImplTest, GetCachedCatalogFromNetwork) {
   PumpLoop();
 
   ValidateTestCatalog();
+}
+
+TEST_F(ExploreSitesServiceImplTest, UpdateCatalogReturnsNoProtobuf) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(chrome::android::kExploreSites);
+
+  // Pretend that a catalog has been fetched and returns with an empty protobuf.
+  std::unique_ptr<std::string> empty_serialized_protobuf;
+  service()->OnCatalogFetchedForTest(ExploreSitesRequestStatus::kSuccess,
+                                     std::move(empty_serialized_protobuf));
+
+  histograms()->ExpectBucketCount(
+      "ExploreSites.CatalogRequestResult",
+      ExploreSitesCatalogUpdateRequestResult::kExistingCatalogIsCurrent, 1);
+}
+
+TEST_F(ExploreSitesServiceImplTest, FailedCatalogFetch) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(chrome::android::kExploreSites);
+
+  service()->UpdateCatalogFromNetwork(
+      true /*is_immediate_fetch*/, kAcceptLanguages,
+      base::BindOnce(&ExploreSitesServiceImplTest::UpdateCatalogDoneCallback,
+                     base::Unretained(this)));
+
+  // Simulate fetching using the test loader factory and test data.
+  SimulateFetchFailure();
+
+  // Wait for callback to get called.
+  PumpLoop();
+
+  histograms()->ExpectBucketCount(
+      "ExploreSites.CatalogRequestResult",
+      ExploreSitesCatalogUpdateRequestResult::kFailure, 1);
 }
 
 TEST_F(ExploreSitesServiceImplTest, BadCatalogHistograms) {
@@ -539,7 +604,49 @@ TEST_F(ExploreSitesServiceImplTest, BlacklistNonCanonicalUrls) {
       &ExploreSitesServiceImplTest::CatalogCallback, base::Unretained(this)));
   PumpLoop();
 
-  EXPECT_EQ(1U, database_categories()->at(0).sites.size());
+  EXPECT_EQ(2U, database_categories()->at(0).sites.size());
+  EXPECT_TRUE(database_categories()->at(0).sites.at(0).is_blacklisted);
+  EXPECT_FALSE(database_categories()->at(0).sites.at(1).is_blacklisted);
+}
+
+TEST_F(ExploreSitesServiceImplTest, CountryCodeDefault) {
+  EnableFeatureWithNoOptions();
+
+  ASSERT_EQ("DEFAULT", service()->GetCountryCode());
+  service()->UpdateCatalogFromNetwork(
+      false, kAcceptLanguages,
+      base::BindOnce(&ExploreSitesServiceImplTest::UpdateCatalogDoneCallback,
+                     base::Unretained(this)));
+  PumpLoop();
+  EXPECT_THAT(GetLastPendingRequest()->request.url.query(),
+              HasSubstr("country_code=DEFAULT"));
+}
+
+TEST_F(ExploreSitesServiceImplTest, CountryCodeFinch) {
+  OverrideFinchCountry(kCountryCode);
+
+  EXPECT_EQ(kCountryCode, service()->GetCountryCode());
+  service()->UpdateCatalogFromNetwork(
+      false, kAcceptLanguages,
+      base::BindOnce(&ExploreSitesServiceImplTest::UpdateCatalogDoneCallback,
+                     base::Unretained(this)));
+  PumpLoop();
+  EXPECT_THAT(GetLastPendingRequest()->request.url.query(),
+              HasSubstr("country_code=zz"));
+}
+
+TEST_F(ExploreSitesServiceImplTest, CountryCodeOverride) {
+  OverrideFinchCountry("should_not_appear_country_code");
+  service()->OverrideCountryCodeForDebugging(kCountryCode);
+
+  EXPECT_EQ(kCountryCode, service()->GetCountryCode());
+  service()->UpdateCatalogFromNetwork(
+      false, kAcceptLanguages,
+      base::BindOnce(&ExploreSitesServiceImplTest::UpdateCatalogDoneCallback,
+                     base::Unretained(this)));
+  PumpLoop();
+  EXPECT_THAT(GetLastPendingRequest()->request.url.query(),
+              HasSubstr("country_code=zz"));
 }
 
 }  // namespace explore_sites

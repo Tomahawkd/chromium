@@ -7,7 +7,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/default_clock.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/message_wrapper.h"
 #include "chromeos/components/tether/proto/tether.pb.h"
 #include "chromeos/components/tether/tether_host_response_recorder.h"
@@ -148,7 +148,7 @@ void ConnectTetheringOperation::OnMessageReceived(
     }
   } else {
     PA_LOG(WARNING)
-        << "Received ConnectTetheringResponse from unexpected device with ID "
+        << "Received failing ConnectTetheringResponse from device with ID "
         << remote_device.GetTruncatedDeviceIdForLogs() << " and "
         << "response_code == " << response->response_code() << ".";
     error_code_to_return_ = ConnectTetheringResponseCodeToHostResponseErrorCode(
@@ -246,7 +246,7 @@ ConnectTetheringOperation::ConnectTetheringResponseCodeToHostResponseErrorCode(
       break;
   }
 
-  return HostResponseErrorCode::NO_RESPONSE;
+  return HostResponseErrorCode::UNRECOGNIZED_RESPONSE_ERROR;
 }
 
 void ConnectTetheringOperation::SetClockForTest(base::Clock* clock_for_test) {

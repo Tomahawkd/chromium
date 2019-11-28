@@ -70,8 +70,9 @@ Polymer({
   },
 
   close: function() {
-    if (this.$.dialog.open)
+    if (this.$.dialog.open) {
       this.$.dialog.close();
+    }
 
     this.$.pinKeyboard.resetState();
   },
@@ -91,8 +92,9 @@ Polymer({
 
   /** @private */
   onSetPinDone_: function() {
-    if (this.$.dialog.open)
+    if (this.$.dialog.open) {
       this.$.dialog.close();
+    }
   },
 
   /**
@@ -112,7 +114,7 @@ Polymer({
    * @return {string}
    */
   getContinueMessage_: function(isConfirmStep) {
-    return this.i18n(isConfirmStep ? 'confirm' : 'configurePinContinueButton');
+    return this.i18n(isConfirmStep ? 'confirm' : 'continue');
   },
 });
 

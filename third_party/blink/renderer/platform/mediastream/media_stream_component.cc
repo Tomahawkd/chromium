@@ -34,9 +34,9 @@
 #include "third_party/blink/public/platform/web_audio_source_provider.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
-#include "third_party/blink/renderer/platform/mediastream/media_stream_center.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
-#include "third_party/blink/renderer/platform/uuid.h"
+#include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
 
@@ -51,26 +51,17 @@ int MediaStreamComponent::GenerateUniqueId() {
   return ++g_unique_media_stream_component_id;
 }
 
-MediaStreamComponent* MediaStreamComponent::Create(MediaStreamSource* source) {
-  return MakeGarbageCollected<MediaStreamComponent>(CreateCanonicalUUIDString(),
-                                                    source);
-}
-
-MediaStreamComponent* MediaStreamComponent::Create(const String& id,
-                                                   MediaStreamSource* source) {
-  return MakeGarbageCollected<MediaStreamComponent>(id, source);
-}
-
+MediaStreamComponent::MediaStreamComponent(MediaStreamSource* source)
+    : MediaStreamComponent(WTF::CreateCanonicalUUIDString(), source) {}
 MediaStreamComponent::MediaStreamComponent(const String& id,
                                            MediaStreamSource* source)
     : source_(source), id_(id), unique_id_(GenerateUniqueId()) {
   DCHECK(id_.length());
+  DCHECK(source_);
 }
 
 MediaStreamComponent* MediaStreamComponent::Clone() const {
-  MediaStreamComponent* cloned_component =
-      MakeGarbageCollected<MediaStreamComponent>(CreateCanonicalUUIDString(),
-                                                 Source());
+  auto* cloned_component = MakeGarbageCollected<MediaStreamComponent>(Source());
   cloned_component->SetEnabled(enabled_);
   cloned_component->SetMuted(muted_);
   cloned_component->SetContentHint(content_hint_);
@@ -79,7 +70,7 @@ MediaStreamComponent* MediaStreamComponent::Clone() const {
 }
 
 void MediaStreamComponent::Dispose() {
-  track_data_.reset();
+  platform_track_.reset();
 }
 
 void MediaStreamComponent::AudioSourceProviderImpl::Wrap(
@@ -90,9 +81,9 @@ void MediaStreamComponent::AudioSourceProviderImpl::Wrap(
 
 void MediaStreamComponent::GetSettings(
     WebMediaStreamTrack::Settings& settings) {
-  DCHECK(track_data_);
+  DCHECK(platform_track_);
   source_->GetSettings(settings);
-  track_data_->GetSettings(settings);
+  platform_track_->GetSettings(settings);
 }
 
 void MediaStreamComponent::SetContentHint(
@@ -114,7 +105,9 @@ void MediaStreamComponent::SetContentHint(
     return;
   content_hint_ = hint;
 
-  MediaStreamCenter::Instance().DidSetContentHint(this);
+  WebPlatformMediaStreamTrack* native_track = GetPlatformTrack();
+  if (native_track)
+    native_track->SetContentHint(ContentHint());
 }
 
 void MediaStreamComponent::AudioSourceProviderImpl::ProvideInput(

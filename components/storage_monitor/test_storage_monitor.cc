@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "build/build_config.h"
@@ -21,8 +22,8 @@ TestStorageMonitor::TestStorageMonitor() : init_called_(false) {
 #if defined(OS_CHROMEOS)
   auto* fake_mtp_manager =
       TestMediaTransferProtocolManagerChromeOS::GetFakeMtpManager();
-  fake_mtp_manager->AddBinding(
-      mojo::MakeRequest(&media_transfer_protocol_manager_));
+  fake_mtp_manager->AddReceiver(
+      media_transfer_protocol_manager_.BindNewPipeAndPassReceiver());
 #endif
 }
 

@@ -10,6 +10,7 @@
 
 #include <list>
 
+#include "base/optional.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -34,30 +35,36 @@ namespace {
 // Extracts the type and descriptor (referenced GUID or client cert pattern) of
 // a ONC-specified client certificate specification for a network
 // (|dict_with_client_cert|) and stores it in |cert_config|.
-void GetClientCertTypeAndDescriptor(
-    onc::ONCSource onc_source,
-    const base::DictionaryValue& dict_with_client_cert,
-    ClientCertConfig* cert_config) {
+void GetClientCertTypeAndDescriptor(onc::ONCSource onc_source,
+                                    const base::Value& dict_with_client_cert,
+                                    ClientCertConfig* cert_config) {
   cert_config->onc_source = onc_source;
 
-  dict_with_client_cert.GetStringWithoutPathExpansion(
-      ::onc::eap::kIdentity, &cert_config->policy_identity);
+  const std::string* identity =
+      dict_with_client_cert.FindStringKey(::onc::eap::kIdentity);
+  if (identity)
+    cert_config->policy_identity = *identity;
 
-  using namespace ::onc::client_cert;
-  dict_with_client_cert.GetStringWithoutPathExpansion(
-      kClientCertType, &cert_config->client_cert_type);
+  const std::string* client_cert_type =
+      dict_with_client_cert.FindStringKey(::onc::client_cert::kClientCertType);
+  if (client_cert_type)
+    cert_config->client_cert_type = *client_cert_type;
 
-  if (cert_config->client_cert_type == kPattern) {
-    const base::DictionaryValue* pattern = NULL;
-    dict_with_client_cert.GetDictionaryWithoutPathExpansion(kClientCertPattern,
-                                                            &pattern);
-    if (pattern) {
-      bool success = cert_config->pattern.ReadFromONCDictionary(*pattern);
-      DCHECK(success);
+  if (cert_config->client_cert_type == ::onc::client_cert::kPattern) {
+    const base::Value* pattern_value = dict_with_client_cert.FindKeyOfType(
+        ::onc::client_cert::kClientCertPattern, base::Value::Type::DICTIONARY);
+    if (pattern_value) {
+      base::Optional<OncCertificatePattern> pattern =
+          OncCertificatePattern::ReadFromONCDictionary(*pattern_value);
+      if (!pattern.has_value()) {
+        LOG(ERROR) << "ClientCertPattern invalid";
+        return;
+      }
+      cert_config->pattern = pattern.value();
     }
-  } else if (cert_config->client_cert_type == kRef) {
+  } else if (cert_config->client_cert_type == ::onc::client_cert::kRef) {
     const base::Value* client_cert_ref_key =
-        dict_with_client_cert.FindKeyOfType(kClientCertRef,
+        dict_with_client_cert.FindKeyOfType(::onc::client_cert::kClientCertRef,
                                             base::Value::Type::STRING);
     if (client_cert_ref_key)
       cert_config->guid = client_cert_ref_key->GetString();
@@ -65,43 +72,6 @@ void GetClientCertTypeAndDescriptor(
 }
 
 }  // namespace
-
-// Returns true only if any fields set in this pattern match exactly with
-// similar fields in the principal.  If organization_ or organizational_unit_
-// are set, then at least one of the organizations or units in the principal
-// must match.
-bool CertPrincipalMatches(const IssuerSubjectPattern& pattern,
-                          const net::CertPrincipal& principal) {
-  if (!pattern.common_name().empty() &&
-      pattern.common_name() != principal.common_name) {
-    return false;
-  }
-
-  if (!pattern.locality().empty() &&
-      pattern.locality() != principal.locality_name) {
-    return false;
-  }
-
-  if (!pattern.organization().empty()) {
-    if (std::find(principal.organization_names.begin(),
-                  principal.organization_names.end(),
-                  pattern.organization()) ==
-        principal.organization_names.end()) {
-      return false;
-    }
-  }
-
-  if (!pattern.organizational_unit().empty()) {
-    if (std::find(principal.organization_unit_names.begin(),
-                  principal.organization_unit_names.end(),
-                  pattern.organizational_unit()) ==
-        principal.organization_unit_names.end()) {
-      return false;
-    }
-  }
-
-  return true;
-}
 
 std::string GetPkcs11AndSlotIdFromEapCertId(const std::string& cert_id,
                                             int* slot_id) {
@@ -205,7 +175,7 @@ void SetShillProperties(const ConfigType cert_config_type,
       properties->SetKey(shill::kL2tpIpsecPinProperty,
                          base::Value(kDefaultTPMPin));
       properties->SetKey(shill::kL2tpIpsecClientCertSlotProperty,
-                         base::Value(base::IntToString(tpm_slot)));
+                         base::Value(base::NumberToString(tpm_slot)));
       properties->SetKey(shill::kL2tpIpsecClientCertIdProperty,
                          base::Value(pkcs11_id));
       break;
@@ -271,18 +241,16 @@ ClientCertConfig::~ClientCertConfig() = default;
 void OncToClientCertConfig(::onc::ONCSource onc_source,
                            const base::DictionaryValue& network_config,
                            ClientCertConfig* cert_config) {
-  using namespace ::onc;
-
   *cert_config = ClientCertConfig();
 
   const base::DictionaryValue* dict_with_client_cert = NULL;
 
   const base::DictionaryValue* wifi = NULL;
-  network_config.GetDictionaryWithoutPathExpansion(network_config::kWiFi,
+  network_config.GetDictionaryWithoutPathExpansion(::onc::network_config::kWiFi,
                                                    &wifi);
   if (wifi) {
     const base::DictionaryValue* eap = NULL;
-    wifi->GetDictionaryWithoutPathExpansion(wifi::kEAP, &eap);
+    wifi->GetDictionaryWithoutPathExpansion(::onc::wifi::kEAP, &eap);
     if (!eap)
       return;
 
@@ -291,12 +259,13 @@ void OncToClientCertConfig(::onc::ONCSource onc_source,
   }
 
   const base::DictionaryValue* vpn = NULL;
-  network_config.GetDictionaryWithoutPathExpansion(network_config::kVPN, &vpn);
+  network_config.GetDictionaryWithoutPathExpansion(::onc::network_config::kVPN,
+                                                   &vpn);
   if (vpn) {
     const base::DictionaryValue* openvpn = NULL;
-    vpn->GetDictionaryWithoutPathExpansion(vpn::kOpenVPN, &openvpn);
+    vpn->GetDictionaryWithoutPathExpansion(::onc::vpn::kOpenVPN, &openvpn);
     const base::DictionaryValue* ipsec = NULL;
-    vpn->GetDictionaryWithoutPathExpansion(vpn::kIPsec, &ipsec);
+    vpn->GetDictionaryWithoutPathExpansion(::onc::vpn::kIPsec, &ipsec);
     if (openvpn) {
       dict_with_client_cert = openvpn;
       cert_config->location = CONFIG_TYPE_OPENVPN;
@@ -309,11 +278,11 @@ void OncToClientCertConfig(::onc::ONCSource onc_source,
   }
 
   const base::DictionaryValue* ethernet = NULL;
-  network_config.GetDictionaryWithoutPathExpansion(network_config::kEthernet,
-                                                   &ethernet);
+  network_config.GetDictionaryWithoutPathExpansion(
+      ::onc::network_config::kEthernet, &ethernet);
   if (ethernet) {
     const base::DictionaryValue* eap = NULL;
-    ethernet->GetDictionaryWithoutPathExpansion(wifi::kEAP, &eap);
+    ethernet->GetDictionaryWithoutPathExpansion(::onc::wifi::kEAP, &eap);
     if (!eap)
       return;
     dict_with_client_cert = eap;

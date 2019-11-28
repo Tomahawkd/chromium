@@ -39,7 +39,31 @@ enum class DownloadMimeTypeResult {
   // text/calendar MIME type.
   iCalendar = 7,
   // model/usd MIME type.
-  UniversalSceneDescription = 8,
+  LegacyUniversalSceneDescription = 8,
+  // application/x-apple-diskimage MIME type.
+  AppleDiskImage = 9,
+  // application/vnd.apple.installer+xml MIME type.
+  AppleInstallerPackage = 10,
+  // application/x-7z-compressed MIME type.
+  SevenZipArchive = 11,
+  // application/x-rar-compressed MIME type.
+  RARArchive = 12,
+  // application/x-tar MIME type.
+  TarArchive = 13,
+  // application/x-shockwave-flash MIME type.
+  AdobeFlash = 14,
+  // application/vnd.amazon.ebook MIME type.
+  AmazonKindleBook = 15,
+  // application/octet-stream MIME type.
+  BinaryData = 16,
+  // application/x-bittorrent MIME type.
+  BitTorrent = 17,
+  // application/java-archive MIME type.
+  JavaArchive = 18,
+  // model/vnd.pixar.usd MIME type.
+  LegacyPixarUniversalSceneDescription = 19,
+  // model/vnd.usdz+zip MIME type.
+  UniversalSceneDescription = 20,
   kMaxValue = UniversalSceneDescription,
 };
 

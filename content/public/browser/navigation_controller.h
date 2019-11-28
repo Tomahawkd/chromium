@@ -13,20 +13,24 @@
 #include <vector>
 
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/navigation_ui_data.h"
 #include "content/public/browser/reload_type.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/restore_type.h"
 #include "content/public/browser/session_storage_namespace.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/was_activated_option.mojom.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace base {
 
@@ -36,10 +40,12 @@ class RefCountedString;
 
 namespace content {
 
-enum class WasActivatedOption;
+class BackForwardCache;
 class BrowserContext;
 class NavigationEntry;
+class RenderFrameHost;
 class WebContents;
+struct OpenURLParams;
 
 // A NavigationController maintains the back-forward list for a WebContents and
 // manages all navigation within that list.
@@ -48,8 +54,8 @@ class WebContents;
 // exactly one NavigationController.
 class NavigationController {
  public:
-  typedef base::RepeatingCallback<bool(const content::NavigationEntry& entry)>
-      DeletionPredicate;
+  using DeletionPredicate =
+      base::RepeatingCallback<bool(content::NavigationEntry* entry)>;
 
   // Load type used in LoadURLParams.
   //
@@ -99,7 +105,8 @@ class NavigationController {
   // Extra headers are separated by \n.
   CONTENT_EXPORT static std::unique_ptr<NavigationEntry> CreateNavigationEntry(
       const GURL& url,
-      const Referrer& referrer,
+      Referrer referrer,
+      base::Optional<url::Origin> initiator_origin,
       ui::PageTransition transition,
       bool is_renderer_initiated,
       const std::string& extra_headers,
@@ -111,20 +118,31 @@ class NavigationController {
     // The url to load. This field is required.
     GURL url;
 
+    // The origin of the initiator of the navigation or base::nullopt if the
+    // navigation was initiated through through trusted, non-web-influenced UI
+    // (e.g. via omnibox, the bookmarks bar, local NTP, etc.).
+    //
+    // All renderer-initiated navigations must have a non-null
+    // |initiator_origin|, but it is theoretically possible that some
+    // browser-initiated navigations may also use a non-null |initiator_origin|
+    // (if these navigations can be somehow triggered or influenced by web
+    // content).
+    base::Optional<url::Origin> initiator_origin;
+
     // SiteInstance of the frame that initiated the navigation or null if we
     // don't know it.
     scoped_refptr<SiteInstance> source_site_instance;
 
     // See LoadURLType comments above.
-    LoadURLType load_type;
+    LoadURLType load_type = LOAD_TYPE_DEFAULT;
 
     // PageTransition for this load. See PageTransition for details.
     // Note the default value in constructor below.
-    ui::PageTransition transition_type;
+    ui::PageTransition transition_type = ui::PAGE_TRANSITION_LINK;
 
     // The browser-global FrameTreeNode ID for the frame to navigate, or
     // RenderFrameHost::kNoFrameTreeNodeId for the main frame.
-    int frame_tree_node_id;
+    int frame_tree_node_id = RenderFrameHost::kNoFrameTreeNodeId;
 
     // Referrer for this load. Empty if none.
     Referrer referrer;
@@ -142,7 +160,7 @@ class NavigationController {
 
     // User agent override for this load. See comments in
     // UserAgentOverrideOption definition.
-    UserAgentOverrideOption override_user_agent;
+    UserAgentOverrideOption override_user_agent = UA_OVERRIDE_INHERIT;
 
     // Used in LOAD_TYPE_DATA loads only. Used for specifying a base URL
     // for pages loaded via data URLs.
@@ -166,18 +184,18 @@ class NavigationController {
     scoped_refptr<network::ResourceRequestBody> post_data;
 
     // True if this URL should be able to access local resources.
-    bool can_load_local_resources;
+    bool can_load_local_resources = false;
 
     // Indicates whether this navigation should replace the current
     // navigation entry.
-    bool should_replace_current_entry;
+    bool should_replace_current_entry = false;
 
     // Used to specify which frame to navigate. If empty, the main frame is
     // navigated. This is currently only used in tests.
     std::string frame_name;
 
     // Indicates that the navigation was triggered by a user gesture.
-    bool has_user_gesture;
+    bool has_user_gesture = false;
 
     // Indicates that during this navigation, the session history should be
     // cleared such that the resulting page is the first and only entry of the
@@ -185,10 +203,10 @@ class NavigationController {
     //
     // The clearing is done asynchronously, and completes when this navigation
     // commits.
-    bool should_clear_history_list;
+    bool should_clear_history_list = false;
 
     // Indicates whether or not this navigation was initiated via context menu.
-    bool started_from_context_menu;
+    bool started_from_context_menu = false;
 
     // Optional URLLoaderFactory to facilitate navigation to a blob URL.
     scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
@@ -198,6 +216,10 @@ class NavigationController {
     // ContentBrowserClient::GetNavigationUIData.
     std::unique_ptr<NavigationUIData> navigation_ui_data;
 
+    // Whether this navigation was triggered by a x-origin redirect following a
+    // prior (most likely <a download>) download attempt.
+    bool from_download_cross_origin_redirect = false;
+
     // Time at which the input leading to this navigation occurred. This field
     // is set for links clicked by the user; the embedder is recommended to set
     // it for navigations it initiates.
@@ -205,14 +227,24 @@ class NavigationController {
 
     // Set to |kYes| if the navigation should propagate user activation. This
     // is used by embedders where the activation has occurred outside the page.
-    WasActivatedOption was_activated;
+    mojom::WasActivatedOption was_activated =
+        mojom::WasActivatedOption::kUnknown;
 
     // If this navigation was initiated from a link that specified the
     // hrefTranslate attribute, this contains the attribute's value (a BCP47
     // language code). Empty otherwise.
     std::string href_translate;
 
+    // Indicates the reload type of this navigation.
+    ReloadType reload_type = ReloadType::NONE;
+
     explicit LoadURLParams(const GURL& url);
+
+    // Copies |open_url_params| into LoadURLParams, attempting to copy all
+    // fields that are present in both structs (some properties are ignored
+    // because they are unique to LoadURLParams or OpenURLParams).
+    explicit LoadURLParams(const OpenURLParams& open_url_params);
+
     ~LoadURLParams();
 
     DISALLOW_COPY_AND_ASSIGN(LoadURLParams);
@@ -226,10 +258,10 @@ class NavigationController {
 
   // Returns the web contents associated with this controller. It can never be
   // nullptr.
-  virtual WebContents* GetWebContents() const = 0;
+  virtual WebContents* GetWebContents() = 0;
 
   // Get the browser context for this controller. It can never be nullptr.
-  virtual BrowserContext* GetBrowserContext() const = 0;
+  virtual BrowserContext* GetBrowserContext() = 0;
 
   // Initializes this NavigationController with the given saved navigations,
   // using |selected_navigation| as the currently loaded entry. Before this call
@@ -261,7 +293,7 @@ class NavigationController {
   // Returns the active entry, which is the transient entry if any, the pending
   // entry if a navigation is in progress or the last committed entry otherwise.
   // NOTE: This can be nullptr!!
-  virtual NavigationEntry* GetActiveEntry() const = 0;
+  virtual NavigationEntry* GetActiveEntry() = 0;
 
   // Returns the entry that should be displayed to the user in the address bar.
   // This is the transient entry if any, the pending entry if a navigation is
@@ -272,37 +304,37 @@ class NavigationController {
   // A pending entry is safe to display if it started in the browser process or
   // if it's a renderer-initiated navigation in a new tab which hasn't been
   // accessed by another tab.  (If it has been accessed, it risks a URL spoof.)
-  virtual NavigationEntry* GetVisibleEntry() const = 0;
+  virtual NavigationEntry* GetVisibleEntry() = 0;
 
   // Returns the index from which we would go back/forward or reload.  This is
   // the last_committed_entry_index_ if pending_entry_index_ is -1.  Otherwise,
   // it is the pending_entry_index_.
-  virtual int GetCurrentEntryIndex() const = 0;
+  virtual int GetCurrentEntryIndex() = 0;
 
   // Returns the last committed entry, which may be null if there are no
   // committed entries.
-  virtual NavigationEntry* GetLastCommittedEntry() const = 0;
+  virtual NavigationEntry* GetLastCommittedEntry() = 0;
 
   // Returns the index of the last committed entry.  It will be -1 if there are
   // no entries, or if there is a transient entry before the first entry
   // commits.
-  virtual int GetLastCommittedEntryIndex() const = 0;
+  virtual int GetLastCommittedEntryIndex() = 0;
 
   // Returns true if the source for the current entry can be viewed.
-  virtual bool CanViewSource() const = 0;
+  virtual bool CanViewSource() = 0;
 
   // Navigation list -----------------------------------------------------------
 
   // Returns the number of entries in the NavigationController, excluding
   // the pending entry if there is one, but including the transient entry if
   // any.
-  virtual int GetEntryCount() const = 0;
+  virtual int GetEntryCount() = 0;
 
-  virtual NavigationEntry* GetEntryAtIndex(int index) const = 0;
+  virtual NavigationEntry* GetEntryAtIndex(int index) = 0;
 
   // Returns the entry at the specified offset from current.  Returns nullptr
   // if out of bounds.
-  virtual NavigationEntry* GetEntryAtOffset(int offset) const = 0;
+  virtual NavigationEntry* GetEntryAtOffset(int offset) = 0;
 
   // Pending entry -------------------------------------------------------------
 
@@ -311,18 +343,18 @@ class NavigationController {
 
   // Returns the pending entry corresponding to the navigation that is
   // currently in progress, or null if there is none.
-  virtual NavigationEntry* GetPendingEntry() const = 0;
+  virtual NavigationEntry* GetPendingEntry() = 0;
 
   // Returns the index of the pending entry or -1 if the pending entry
   // corresponds to a new navigation (created via LoadURL).
-  virtual int GetPendingEntryIndex() const = 0;
+  virtual int GetPendingEntryIndex() = 0;
 
   // Transient entry -----------------------------------------------------------
 
   // Returns the transient entry if any. This is an entry which is removed and
   // discarded if any navigation occurs. Note that the returned entry is owned
   // by the navigation controller and may be deleted at any time.
-  virtual NavigationEntry* GetTransientEntry() const = 0;
+  virtual NavigationEntry* GetTransientEntry() = 0;
 
   // Adds an entry that is returned by GetActiveEntry(). The entry is
   // transient: any navigation causes it to be removed and discarded.  The
@@ -351,12 +383,24 @@ class NavigationController {
   // explicitly requested using SetNeedsReload().
   virtual void LoadIfNecessary() = 0;
 
+  // Navigates directly to an error page in response to an event on the last
+  // committed page (e.g., triggered by a subresource), with |error_page_html|
+  // as the contents and |url| as the URL.
+
+  // The error page will create a NavigationEntry that temporarily replaces the
+  // original page's entry. The original entry will be put back into the entry
+  // list after any other navigation.
+  virtual void LoadPostCommitErrorPage(RenderFrameHost* render_frame_host,
+                                       const GURL& url,
+                                       const std::string& error_page_html,
+                                       net::Error error) = 0;
+
   // Renavigation --------------------------------------------------------------
 
   // Navigation relative to the "current entry"
-  virtual bool CanGoBack() const = 0;
-  virtual bool CanGoForward() const = 0;
-  virtual bool CanGoToOffset(int offset) const = 0;
+  virtual bool CanGoBack() = 0;
+  virtual bool CanGoForward() = 0;
+  virtual bool CanGoToOffset(int offset) = 0;
   virtual void GoBack() = 0;
   virtual void GoForward() = 0;
 
@@ -383,13 +427,16 @@ class NavigationController {
   // Otherwise this call discards any transient or pending entries.
   virtual bool RemoveEntryAtIndex(int index) = 0;
 
+  // Discards any transient or pending entries, then discards all entries after
+  // the current entry index.
+  virtual void PruneForwardEntries() = 0;
+
   // Random --------------------------------------------------------------------
 
   // Session storage depends on dom_storage that depends on blink::WebString.
   // Returns all the SessionStorageNamespace objects that this
   // NavigationController knows about, the map key is a StoragePartition id.
-  virtual const SessionStorageNamespaceMap&
-      GetSessionStorageNamespaceMap() const = 0;
+  virtual const SessionStorageNamespaceMap& GetSessionStorageNamespaceMap() = 0;
 
   // TODO(ajwong): Remove this once prerendering, instant, and session restore
   // are migrated.
@@ -399,7 +446,7 @@ class NavigationController {
   // invoked). This is true for session/tab restore, cloned tabs and tabs that
   // requested a reload (using SetNeedsReload()) after their renderer was
   // killed.
-  virtual bool NeedsReload() const = 0;
+  virtual bool NeedsReload() = 0;
 
   // Request a reload to happen when activated. This can be used when a renderer
   // backing a background tab is killed by the system on Android or ChromeOS.
@@ -413,22 +460,22 @@ class NavigationController {
   // Returns true if this is a newly created tab or a cloned tab, which has not
   // yet committed a real page. Returns false after the initial navigation has
   // committed.
-  virtual bool IsInitialNavigation() const = 0;
+  virtual bool IsInitialNavigation() = 0;
 
   // Returns true if this is a newly created tab (not a clone) that has not yet
   // committed a real page.
-  virtual bool IsInitialBlankNavigation() const = 0;
+  virtual bool IsInitialBlankNavigation() = 0;
 
   // Broadcasts the NOTIFICATION_NAV_ENTRY_CHANGED notification for the given
   // entry. This will keep things in sync like the saved session.
-  virtual void NotifyEntryChanged(const NavigationEntry* entry) = 0;
+  virtual void NotifyEntryChanged(NavigationEntry* entry) = 0;
 
   // Copies the navigation state from the given controller to this one. This one
   // should be empty (just created). |needs_reload| indicates whether a reload
   // needs to happen when activated. If false, the WebContents remains unloaded
   // and is painted as a plain grey rectangle when activated. To force a reload,
   // call SetNeedsReload() followed by LoadIfNecessary().
-  virtual void CopyStateFrom(const NavigationController& source,
+  virtual void CopyStateFrom(NavigationController* source,
                              bool needs_reload) = 0;
 
   // A variant of CopyStateFrom. Removes all entries from this except the last
@@ -477,9 +524,15 @@ class NavigationController {
   virtual void DeleteNavigationEntries(
       const DeletionPredicate& deletionPredicate) = 0;
 
-  // Clears all screenshots associated with navigation entries in this
-  // controller. Useful to reduce memory consumption in low-memory situations.
-  virtual void ClearAllScreenshots() = 0;
+  // Returns whether entry at the given index is marked to be skipped on
+  // back/forward UI. The history manipulation intervention marks entries to be
+  // skipped in order to intervene against pages that manipulate browser history
+  // such that the user is not able to use the back button to go to the previous
+  // page they interacted with.
+  virtual bool IsEntryMarkedToBeSkipped(int index) = 0;
+
+  // Gets the BackForwardCache for this NavigationController.
+  virtual BackForwardCache& GetBackForwardCache() = 0;
 
  private:
   // This interface should only be implemented inside content.

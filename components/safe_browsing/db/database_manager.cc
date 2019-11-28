@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/post_task.h"
 #include "components/safe_browsing/db/v4_get_hash_protocol_manager.h"
@@ -22,8 +23,7 @@ namespace safe_browsing {
 
 SafeBrowsingDatabaseManager::SafeBrowsingDatabaseManager()
     : base::RefCountedDeleteOnSequence<SafeBrowsingDatabaseManager>(
-          base::CreateSingleThreadTaskRunnerWithTraits(
-              {content::BrowserThread::IO})),
+          base::CreateSingleThreadTaskRunner({content::BrowserThread::IO})),
       enabled_(false) {}
 
 SafeBrowsingDatabaseManager::~SafeBrowsingDatabaseManager() {
@@ -141,6 +141,11 @@ void SafeBrowsingDatabaseManager::StopOnIOThread(bool shutdown) {
   v4_get_hash_protocol_manager_.reset();
 }
 
+RealTimeUrlLookupService*
+SafeBrowsingDatabaseManager::GetRealTimeUrlLookupService() {
+  return nullptr;
+}
+
 std::unique_ptr<base::CallbackList<void()>::Subscription>
 SafeBrowsingDatabaseManager::RegisterDatabaseUpdatedCallback(
     const OnDatabaseUpdated& cb) {
@@ -150,6 +155,11 @@ SafeBrowsingDatabaseManager::RegisterDatabaseUpdatedCallback(
 void SafeBrowsingDatabaseManager::NotifyDatabaseUpdateFinished() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   update_complete_callback_list_.Notify();
+}
+
+std::string SafeBrowsingDatabaseManager::GetSafetyNetId() const {
+  NOTREACHED() << "Only implemented on Android";
+  return "";
 }
 
 SafeBrowsingDatabaseManager::SafeBrowsingApiCheck::SafeBrowsingApiCheck(

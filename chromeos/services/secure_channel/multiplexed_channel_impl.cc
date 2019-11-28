@@ -7,7 +7,7 @@
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/services/secure_channel/single_client_message_proxy_impl.h"
 
 namespace chromeos {
@@ -89,7 +89,7 @@ void MultiplexedChannelImpl::PerformAddClientToChannel(
 
   auto proxy = SingleClientMessageProxyImpl::Factory::Get()->BuildInstance(
       this /* delegate */, std::move(client_connection_parameters));
-  DCHECK(!base::ContainsKey(id_to_proxy_map_, proxy->GetProxyId()));
+  DCHECK(!base::Contains(id_to_proxy_map_, proxy->GetProxyId()));
   id_to_proxy_map_[proxy->GetProxyId()] = std::move(proxy);
 }
 

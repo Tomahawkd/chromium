@@ -47,31 +47,6 @@
   return self;
 }
 
-// TODO(crbug.com/163201):Remove this when kCopyImage flag is removed.
-- (void)saveImageData:(NSData*)data
-         withMetadata:(const image_fetcher::RequestMetadata&)metadata {
-  DCHECK(data);
-
-  if ([data length] == 0) {
-    [self
-        displayPrivacyErrorAlertOnMainQueue:
-            l10n_util::GetNSString(IDS_IOS_SAVE_IMAGE_NO_INTERNET_CONNECTION)];
-    return;
-  }
-
-  base::FilePath::StringType extension;
-
-  bool extensionSuccess =
-      net::GetPreferredExtensionForMimeType(metadata.mime_type, &extension);
-  if (!extensionSuccess || extension.length() == 0) {
-    extension = "png";
-  }
-
-  NSString* fileExtension =
-      [@"." stringByAppendingString:base::SysUTF8ToNSString(extension)];
-  [self managePermissionAndSaveImage:data withFileExtension:fileExtension];
-}
-
 - (void)saveImageAtURL:(const GURL&)url
               referrer:(const web::Referrer&)referrer
               webState:(web::WebState*)webState {
@@ -149,13 +124,13 @@
 - (void)saveImage:(NSData*)data
     withFileExtension:(NSString*)fileExtension
            completion:(void (^)(BOOL, NSError*))completion {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(^{
         base::ScopedBlockingCall scoped_blocking_call(
-            base::BlockingType::MAY_BLOCK);
+            FROM_HERE, base::BlockingType::MAY_BLOCK);
 
         NSString* fileName = [[[NSProcessInfo processInfo] globallyUniqueString]
             stringByAppendingString:fileExtension];
@@ -170,18 +145,20 @@
           return;
         }
 
-        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-          [PHAssetChangeRequest
-              creationRequestForAssetFromImageAtFileURL:fileURL];
-        }
+        [[PHPhotoLibrary sharedPhotoLibrary]
+            performChanges:^{
+              [PHAssetChangeRequest
+                  creationRequestForAssetFromImageAtFileURL:fileURL];
+            }
             completionHandler:^(BOOL success, NSError* error) {
-              base::PostTaskWithTraits(
+              base::PostTask(
                   FROM_HERE,
-                  {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+                  {base::ThreadPool(), base::MayBlock(),
+                   base::TaskPriority::BEST_EFFORT,
                    base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
                   base::BindOnce(^{
                     base::ScopedBlockingCall scoped_blocking_call(
-                        base::BlockingType::MAY_BLOCK);
+                        FROM_HERE, base::BlockingType::MAY_BLOCK);
                     if (completion)
                       completion(success, error);
 

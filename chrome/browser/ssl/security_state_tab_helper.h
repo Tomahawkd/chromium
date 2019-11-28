@@ -7,11 +7,11 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/optional.h"
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "third_party/blink/public/platform/web_security_style.h"
+#include "third_party/blink/public/common/security/security_style.h"
 
 namespace content {
 class NavigationHandle;
@@ -26,9 +26,10 @@ class SecurityStateTabHelper
  public:
   ~SecurityStateTabHelper() override;
 
-  // See security_state::GetSecurityInfo.
-  void GetSecurityInfo(
-      security_state::SecurityInfo* result) const;
+  // See security_state::GetSecurityLevel.
+  security_state::SecurityLevel GetSecurityLevel();
+  std::unique_ptr<security_state::VisibleSecurityState>
+  GetVisibleSecurityState();
 
   // content::WebContentsObserver:
   void DidStartNavigation(
@@ -36,7 +37,6 @@ class SecurityStateTabHelper
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
   void DidChangeVisibleSecurityState() override;
-  void WebContentsDestroyed() override;
 
  private:
   explicit SecurityStateTabHelper(content::WebContents* web_contents);
@@ -44,24 +44,15 @@ class SecurityStateTabHelper
 
   bool UsedPolicyInstalledCertificate() const;
   security_state::MaliciousContentStatus GetMaliciousContentStatus() const;
-  std::unique_ptr<security_state::VisibleSecurityState>
-  GetVisibleSecurityState() const;
-  std::vector<std::string> GetSecureOriginsAndPatterns() const;
 
-  // True if a console message has been logged about an omnibox warning shown
-  // when sensitive input fields are shown on insecure HTTP pages. This message
-  // should only be logged once per main-frame navigation.
-  bool logged_http_warning_on_current_navigation_;
-
-  // The time that a console or omnibox warning was shown for insecure
-  // HTTP pages that contain password or credit card fields. This is set
-  // at most once per main-frame navigation (the first time that an HTTP
-  // warning triggers on that navigation) and is used for UMA
-  // histogramming.
-  base::Time time_of_http_warning_on_current_navigation_;
-
-  // True if this browser tab is in non-guest Incognito mode.
-  bool is_incognito_;
+  // Caches the legacy TLS warning suppression status for the duration of a page
+  // load (bound to a specific navigation ID) to ensure that we show consistent
+  // security UI (e.g., security indicator and page info). This is because the
+  // status depends on external state (a component loading from disk), which can
+  // cause inconsistent state across a page load if it isn't cached.
+  base::Optional<std::pair<int /* navigation entry ID */,
+                           bool /* should_suppress_legacy_tls_warning */>>
+      cached_should_suppress_legacy_tls_warning_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

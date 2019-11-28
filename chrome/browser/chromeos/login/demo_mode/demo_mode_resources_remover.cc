@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -32,7 +33,6 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_type.h"
 #include "third_party/re2/src/re2/re2.h"
-#include "ui/base/user_activity/user_activity_detector.h"
 
 namespace chromeos {
 
@@ -144,8 +144,7 @@ void DemoModeResourcesRemover::LowDiskSpace(uint64_t free_disk_space) {
   AttemptRemoval(RemovalReason::kLowDiskSpace, RemovalCallback());
 }
 
-void DemoModeResourcesRemover::ActiveUserChanged(
-    const user_manager::User* user) {
+void DemoModeResourcesRemover::ActiveUserChanged(user_manager::User* user) {
   // Ignore user activity in guest sessions.
   if (user->GetType() == user_manager::USER_TYPE_GUEST)
     return;
@@ -228,16 +227,13 @@ void DemoModeResourcesRemover::AttemptRemoval(RemovalReason reason,
     return;
   removal_in_progress_ = true;
 
-  // Report this metric only once per resources directory removal task.
-  // Concurrent removal requests should not be reported multiple times.
-  UMA_HISTOGRAM_ENUMERATION("DemoMode.ResourcesRemoval.Reason", reason);
-
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      {base::ThreadPool(), base::MayBlock(),
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&RemoveDirectory, DemoResources::GetPreInstalledPath()),
       base::BindOnce(&DemoModeResourcesRemover::OnRemovalDone,
-                     weak_ptr_factory_.GetWeakPtr()));
+                     weak_ptr_factory_.GetWeakPtr(), reason));
 }
 
 void DemoModeResourcesRemover::OverrideTimeForTesting(
@@ -253,14 +249,11 @@ void DemoModeResourcesRemover::OverrideTimeForTesting(
 
 DemoModeResourcesRemover::DemoModeResourcesRemover(PrefService* local_state)
     : local_state_(local_state),
-      tick_clock_(base::DefaultTickClock::GetInstance()),
-      cryptohome_observer_(this),
-      user_activity_observer_(this),
-      weak_ptr_factory_(this) {
+      tick_clock_(base::DefaultTickClock::GetInstance()) {
   CHECK(!g_instance);
   g_instance = this;
 
-  cryptohome_observer_.Add(DBusThreadManager::Get()->GetCryptohomeClient());
+  cryptohome_observer_.Add(CryptohomeClient::Get());
   ChromeUserManager::Get()->AddSessionStateObserver(this);
 }
 
@@ -292,7 +285,8 @@ bool DemoModeResourcesRemover::AttemptRemovalIfUsageOverThreshold() {
   return true;
 }
 
-void DemoModeResourcesRemover::OnRemovalDone(RemovalResult result) {
+void DemoModeResourcesRemover::OnRemovalDone(RemovalReason reason,
+                                             RemovalResult result) {
   DCHECK(removal_in_progress_);
   removal_in_progress_ = false;
 
@@ -308,7 +302,14 @@ void DemoModeResourcesRemover::OnRemovalDone(RemovalResult result) {
     usage_end_ = base::nullopt;
   }
 
-  UMA_HISTOGRAM_ENUMERATION("DemoMode.ResourcesRemoval.Result", result);
+  // Only report metrics when the resources were found; otherwise this is
+  // reported on almost every sign-in.
+  // Only report metrics once per resources directory removal task.
+  // Concurrent removal requests should not be reported multiple times.
+  if (result == RemovalResult::kSuccess || result == RemovalResult::kFailed) {
+    UMA_HISTOGRAM_ENUMERATION("DemoMode.ResourcesRemoval.Reason", reason);
+    UMA_HISTOGRAM_ENUMERATION("DemoMode.ResourcesRemoval.Result", result);
+  }
 
   std::vector<RemovalCallback> callbacks;
   callbacks.swap(removal_callbacks_);

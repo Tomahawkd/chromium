@@ -8,7 +8,9 @@
 #include "base/numerics/math_constants.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
+#import "ios/chrome/browser/ui/util/rtl_geometry.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
@@ -19,8 +21,6 @@
 namespace {
 // Identity rotation angle that positions disclosure pointing down.
 constexpr float kRotationNinetyCW = (90 / 180.0) * M_PI;
-// Identity rotation angle that positions disclosure pointing up.
-constexpr float kRotationNinetyCCW = -(90 / 180.0) * M_PI;
 }
 
 @implementation TableViewDisclosureHeaderFooterItem
@@ -47,10 +47,12 @@ constexpr float kRotationNinetyCCW = -(90 / 180.0) * M_PI;
   header.isAccessibilityElement = YES;
   header.accessibilityTraits |= UIAccessibilityTraitButton;
   DisclosureDirection direction =
-      self.collapsed ? DisclosureDirectionUp : DisclosureDirectionDown;
+      self.collapsed ? DisclosureDirectionTrailing : DisclosureDirectionDown;
   [header setInitialDirection:direction];
   if (styler.headerFooterTitleColor)
     header.titleLabel.textColor = styler.headerFooterTitleColor;
+  if (styler.headerFooterDetailColor)
+    header.subtitleLabel.textColor = styler.headerFooterDetailColor;
   if (styler.cellHighlightColor)
     header.highlightColor = styler.cellHighlightColor;
 }
@@ -96,7 +98,7 @@ constexpr float kRotationNinetyCCW = -(90 / 180.0) * M_PI;
     _subtitleLabel = [[UILabel alloc] init];
     _subtitleLabel.font =
         [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    _subtitleLabel.textColor = [UIColor lightGrayColor];
+    _subtitleLabel.textColor = UIColor.cr_secondaryLabelColor;
     [_subtitleLabel
         setContentCompressionResistancePriority:UILayoutPriorityRequired
                                         forAxis:UILayoutConstraintAxisVertical];
@@ -166,6 +168,7 @@ constexpr float kRotationNinetyCCW = -(90 / 180.0) * M_PI;
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
   if (previousTraitCollection.preferredContentSizeCategory !=
       self.traitCollection.preferredContentSizeCategory) {
     UIFontDescriptor* baseDescriptor = [UIFontDescriptor
@@ -215,10 +218,17 @@ constexpr float kRotationNinetyCCW = -(90 / 180.0) * M_PI;
 // needed.
 - (void)rotateToDirection:(DisclosureDirection)direction animate:(BOOL)animate {
   DisclosureDirection originalDirection = self.disclosureDirection;
+
+  // Default trailing rotation is 0 (no rotation), rotate 180 degrees if RTL.
+  float trailingRotation = 0;
+  if (base::i18n::IsRTL()) {
+    trailingRotation = (-180 / 180.0) * M_PI;
+  }
+
   if (originalDirection != direction) {
     self.disclosureDirection = direction;
     CGFloat angle = direction == DisclosureDirectionDown ? kRotationNinetyCW
-                                                         : kRotationNinetyCCW;
+                                                         : trailingRotation;
 
     // Update the accessibility hint to match the new direction.
     self.accessibilityHint =
@@ -245,7 +255,7 @@ constexpr float kRotationNinetyCCW = -(90 / 180.0) * M_PI;
   if (!_cellDefaultBackgroundColor) {
     _cellDefaultBackgroundColor = self.contentView.backgroundColor
                                       ? self.contentView.backgroundColor
-                                      : [UIColor clearColor];
+                                      : UIColor.clearColor;
   }
   return _cellDefaultBackgroundColor;
 }

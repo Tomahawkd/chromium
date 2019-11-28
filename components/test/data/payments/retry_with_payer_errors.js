@@ -9,7 +9,7 @@ var gPaymentResponse = null;
 /**
  * Launches the PaymentRequest UI
  */
-function buy() {  // eslint-disable-line no-unused-vars
+function buy() { // eslint-disable-line no-unused-vars
   var options = {
     requestPayerEmail: true,
     requestPayerName: true,
@@ -18,6 +18,7 @@ function buy() {  // eslint-disable-line no-unused-vars
   getPaymentResponse(options)
       .then(function(response) {
         gPaymentResponse = response;
+        print(JSON.stringify(gPaymentResponse, undefined, 2));
       });
 }
 
@@ -26,10 +27,14 @@ function buy() {  // eslint-disable-line no-unused-vars
  *
  * @param {PaymentValidationErrors} validationErrors Represent validation errors
  */
-function retry(validationErrors) {  // eslint-disable-line no-unused-vars
+function retry(validationErrors) { // eslint-disable-line no-unused-vars
   if (gPaymentResponse == null) {
     return;
   }
+
+  gPaymentResponse.addEventListener('payerdetailchange', function(e) {
+    print(JSON.stringify(gPaymentResponse, undefined, 2));
+  });
 
   gPaymentResponse.retry(validationErrors);
 }

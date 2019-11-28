@@ -6,13 +6,16 @@
 
 #include <va/va.h>
 
+#include <type_traits>
+#include <utility>
+
 #include "base/logging.h"
 #include "base/numerics/ranges.h"
+#include "base/synchronization/lock.h"
 #include "media/gpu/vaapi/vaapi_common.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
 #include "media/gpu/vp8_picture.h"
 #include "media/gpu/vp8_reference_frame_vector.h"
-#include "ui/gfx/geometry/size.h"
 
 namespace media {
 
@@ -51,9 +54,10 @@ ScopedVABufferMapping::ScopedVABufferMapping(
 }
 
 ScopedVABufferMapping::~ScopedVABufferMapping() {
-  lock_->AssertAcquired();
-  if (va_buffer_data_)
+  if (va_buffer_data_) {
+    lock_->AssertAcquired();
     Unmap();
+  }
 }
 
 VAStatus ScopedVABufferMapping::Unmap() {
@@ -81,6 +85,7 @@ ScopedVAImage::ScopedVAImage(base::Lock* lock,
     LOG(ERROR) << "vaCreateImage failed: " << vaErrorStr(result);
     return;
   }
+  DCHECK_NE(image_->image_id, VA_INVALID_ID);
 
   result = vaGetImage(va_display_, va_surface_id, 0, 0, size.width(),
                       size.height(), image_->image_id);
@@ -94,18 +99,40 @@ ScopedVAImage::ScopedVAImage(base::Lock* lock,
 }
 
 ScopedVAImage::~ScopedVAImage() {
-  base::AutoLock auto_lock(*lock_);
+  if (image_->image_id != VA_INVALID_ID) {
+    base::AutoLock auto_lock(*lock_);
 
-  // |va_buffer_| has to be deleted before vaDestroyImage().
-  va_buffer_.release();
-  vaDestroyImage(va_display_, image_->image_id);
+    // |va_buffer_| has to be deleted before vaDestroyImage().
+    va_buffer_.reset();
+    vaDestroyImage(va_display_, image_->image_id);
+  }
 }
 
-bool FillVP8DataStructuresAndPassToVaapiWrapper(
-    const scoped_refptr<VaapiWrapper>& vaapi_wrapper,
-    VASurfaceID va_surface_id,
-    const Vp8FrameHeader& frame_header,
-    const Vp8ReferenceFrameVector& reference_frames) {
+ScopedVASurface::ScopedVASurface(scoped_refptr<VaapiWrapper> vaapi_wrapper,
+                                 VASurfaceID va_surface_id,
+                                 const gfx::Size& size,
+                                 unsigned int va_rt_format)
+    : vaapi_wrapper_(std::move(vaapi_wrapper)),
+      va_surface_id_(va_surface_id),
+      size_(size),
+      va_rt_format_(va_rt_format) {
+  DCHECK(vaapi_wrapper_);
+}
+
+ScopedVASurface::~ScopedVASurface() {
+  if (va_surface_id_ != VA_INVALID_ID)
+    vaapi_wrapper_->DestroySurface(va_surface_id_);
+}
+
+bool ScopedVASurface::IsValid() const {
+  return va_surface_id_ != VA_INVALID_ID && !size_.IsEmpty() &&
+         va_rt_format_ != kInvalidVaRtFormat;
+}
+
+bool FillVP8DataStructures(const scoped_refptr<VaapiWrapper>& vaapi_wrapper,
+                           VASurfaceID va_surface_id,
+                           const Vp8FrameHeader& frame_header,
+                           const Vp8ReferenceFrameVector& reference_frames) {
   DCHECK_NE(va_surface_id, VA_INVALID_SURFACE);
   DCHECK(vaapi_wrapper);
 
@@ -200,8 +227,8 @@ bool FillVP8DataStructuresAndPassToVaapiWrapper(
 
   CheckedMemcpy(pic_param.mb_segment_tree_probs, sgmnt_hdr.segment_prob);
 
-  static_assert(base::size(decltype(sgmnt_hdr.lf_update_value){}) ==
-                    base::size(decltype(pic_param.loop_filter_level){}),
+  static_assert(std::extent<decltype(sgmnt_hdr.lf_update_value)>() ==
+                    std::extent<decltype(pic_param.loop_filter_level)>(),
                 "loop filter level arrays mismatch");
   for (size_t i = 0; i < base::size(sgmnt_hdr.lf_update_value); ++i) {
     int lf_level = lf_hdr.level;
@@ -214,20 +241,18 @@ bool FillVP8DataStructuresAndPassToVaapiWrapper(
       }
     }
 
-    // Clamp to [0..63] range.
-    lf_level = std::min(std::max(lf_level, 0), 63);
-    pic_param.loop_filter_level[i] = lf_level;
+    pic_param.loop_filter_level[i] = base::ClampToRange(lf_level, 0, 63);
   }
 
   static_assert(
-      base::size(decltype(lf_hdr.ref_frame_delta){}) ==
-          base::size(decltype(pic_param.loop_filter_deltas_ref_frame){}),
+      std::extent<decltype(lf_hdr.ref_frame_delta)>() ==
+          std::extent<decltype(pic_param.loop_filter_deltas_ref_frame)>(),
       "loop filter deltas arrays size mismatch");
-  static_assert(base::size(decltype(lf_hdr.mb_mode_delta){}) ==
-                    base::size(decltype(pic_param.loop_filter_deltas_mode){}),
+  static_assert(std::extent<decltype(lf_hdr.mb_mode_delta)>() ==
+                    std::extent<decltype(pic_param.loop_filter_deltas_mode)>(),
                 "loop filter deltas arrays size mismatch");
-  static_assert(base::size(decltype(lf_hdr.ref_frame_delta){}) ==
-                    base::size(decltype(lf_hdr.mb_mode_delta){}),
+  static_assert(std::extent<decltype(lf_hdr.ref_frame_delta)>() ==
+                    std::extent<decltype(lf_hdr.mb_mode_delta)>(),
                 "loop filter deltas arrays size mismatch");
   for (size_t i = 0; i < base::size(lf_hdr.ref_frame_delta); ++i) {
     pic_param.loop_filter_deltas_ref_frame[i] = lf_hdr.ref_frame_delta[i];
@@ -272,12 +297,7 @@ bool FillVP8DataStructuresAndPassToVaapiWrapper(
   if (!vaapi_wrapper->SubmitBuffer(VASliceParameterBufferType, &slice_param))
     return false;
 
-  if (!vaapi_wrapper->SubmitBuffer(
-          VASliceDataBufferType, frame_header.frame_size, frame_header.data)) {
-    return false;
-  }
-
-  return vaapi_wrapper->ExecuteAndDestroyPendingBuffers(va_surface_id);
+  return vaapi_wrapper->SubmitBuffer(
+      VASliceDataBufferType, frame_header.frame_size, frame_header.data);
 }
-
 }  // namespace media

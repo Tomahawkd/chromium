@@ -8,12 +8,15 @@ import android.annotation.SuppressLint;
 import android.os.Handler;
 import android.os.Message;
 
-import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.device.DeviceClassManager;
+import org.chromium.chrome.browser.modaldialog.TabModalPresenter;
 import org.chromium.chrome.browser.tab.Tab.TabHidingType;
 import org.chromium.chrome.browser.util.AccessibilityUtil;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
+import org.chromium.content_public.browser.NavigationHandle;
 import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
 
@@ -29,7 +32,7 @@ public class TabStateBrowserControlsVisibilityDelegate
 
     private static boolean sDisableLoadingCheck;
 
-    protected final Tab mTab;
+    protected final TabImpl mTab;
 
     private boolean mIsFullscreenWaitingForLoad;
 
@@ -38,7 +41,7 @@ public class TabStateBrowserControlsVisibilityDelegate
      * @param tab The associated {@link Tab}.
      */
     public TabStateBrowserControlsVisibilityDelegate(Tab tab) {
-        mTab = tab;
+        mTab = (TabImpl) tab;
 
         mTab.addObserver(new EmptyTabObserver() {
             @SuppressLint("HandlerLeak")
@@ -60,7 +63,7 @@ public class TabStateBrowserControlsVisibilityDelegate
                 if (!mIsFullscreenWaitingForLoad) return;
 
                 mIsFullscreenWaitingForLoad = false;
-                mTab.updateFullscreenEnabledState();
+                TabBrowserControlsConstraintsHelper.updateEnabledState(mTab);
             }
 
             private void cancelEnableFullscreenLoadDelay() {
@@ -86,21 +89,18 @@ public class TabStateBrowserControlsVisibilityDelegate
             }
 
             @Override
-            public void onDidFinishNavigation(Tab tab, String url, boolean isInMainFrame,
-                    boolean isErrorPage, boolean hasCommitted, boolean isSameDocument,
-                    boolean isFragmentNavigation, Integer pageTransition, int errorCode,
-                    int httpStatusCode) {
-                if (!hasCommitted || !isInMainFrame) return;
+            public void onDidFinishNavigation(Tab tab, NavigationHandle navigation) {
+                if (!navigation.hasCommitted() || !navigation.isInMainFrame()) return;
                 mHandler.removeMessages(MSG_ID_ENABLE_FULLSCREEN_AFTER_LOAD);
                 mHandler.sendEmptyMessageDelayed(
                         MSG_ID_ENABLE_FULLSCREEN_AFTER_LOAD, getLoadDelayMs());
-                mTab.updateFullscreenEnabledState();
+                TabBrowserControlsConstraintsHelper.updateEnabledState(mTab);
             }
 
             @Override
             public void onPageLoadStarted(Tab tab, String url) {
                 mIsFullscreenWaitingForLoad = !DomDistillerUrlUtils.isDistilledPage(url);
-                mTab.updateFullscreenEnabledState();
+                TabBrowserControlsConstraintsHelper.updateEnabledState(mTab);
             }
 
             @Override
@@ -108,12 +108,13 @@ public class TabStateBrowserControlsVisibilityDelegate
                 // Handle the case where a commit or prerender swap notification failed to arrive
                 // and the enable fullscreen message was never enqueued.
                 scheduleEnableFullscreenLoadDelayIfNecessary();
+                TabBrowserControlsConstraintsHelper.updateEnabledState(mTab);
             }
 
             @Override
             public void onPageLoadFailed(Tab tab, int errorCode) {
                 cancelEnableFullscreenLoadDelay();
-                mTab.updateFullscreenEnabledState();
+                TabBrowserControlsConstraintsHelper.updateEnabledState(mTab);
             }
 
             @Override
@@ -132,7 +133,18 @@ public class TabStateBrowserControlsVisibilityDelegate
     }
 
     @Override
+    public boolean canShowBrowserControls() {
+        return true;
+    }
+
+    @Override
     public boolean canAutoHideBrowserControls() {
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.DONT_AUTO_HIDE_BROWSER_CONTROLS)
+                && mTab.getActivity() != null && mTab.getActivity().getToolbarManager() != null
+                && mTab.getActivity().getToolbarManager().getBottomToolbarCoordinator() != null) {
+            return false;
+        }
+
         WebContents webContents = mTab.getWebContents();
         if (webContents == null || webContents.isDestroyed()) return false;
 
@@ -151,18 +163,12 @@ public class TabStateBrowserControlsVisibilityDelegate
         enableHidingBrowserControls &= !mTab.isShowingErrorPage();
         enableHidingBrowserControls &= !webContents.isShowingInterstitialPage();
         enableHidingBrowserControls &= !mTab.isRendererUnresponsive();
-        enableHidingBrowserControls &= (mTab.getFullscreenManager() != null);
+        enableHidingBrowserControls &= !mTab.isHidden();
         enableHidingBrowserControls &= DeviceClassManager.enableFullscreen();
         enableHidingBrowserControls &= !mIsFullscreenWaitingForLoad;
-        enableHidingBrowserControls &= !mTab.isShowingTabModalDialog();
+        enableHidingBrowserControls &= !TabModalPresenter.isDialogShowing(mTab);
 
         return enableHidingBrowserControls;
-    }
-
-    @Override
-    public boolean canShowBrowserControls() {
-        if (mTab.getFullscreenManager() == null) return true;
-        return !mTab.getFullscreenManager().getPersistentFullscreenMode();
     }
 
     /**

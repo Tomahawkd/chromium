@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string16.h"
@@ -18,12 +19,12 @@
 
 namespace content {
 
-WebSandboxSupportMac::WebSandboxSupportMac(
-    service_manager::Connector* connector) {
-  connector->BindInterface(content::mojom::kBrowserServiceName,
-                           mojo::MakeRequest(&sandbox_support_));
-  sandbox_support_->GetSystemColors(base::BindOnce(
-      &WebSandboxSupportMac::OnGotSystemColors, base::Unretained(this)));
+WebSandboxSupportMac::WebSandboxSupportMac() {
+  if (auto* thread = ChildThread::Get()) {
+    thread->BindHostReceiver(sandbox_support_.BindNewPipeAndPassReceiver());
+    sandbox_support_->GetSystemColors(base::BindOnce(
+        &WebSandboxSupportMac::OnGotSystemColors, base::Unretained(this)));
+  }
 }
 
 WebSandboxSupportMac::~WebSandboxSupportMac() = default;
@@ -31,6 +32,8 @@ WebSandboxSupportMac::~WebSandboxSupportMac() = default;
 bool WebSandboxSupportMac::LoadFont(CTFontRef font,
                                     CGFontRef* out,
                                     uint32_t* font_id) {
+  if (!sandbox_support_)
+    return false;
   base::ScopedCFTypeRef<CFStringRef> name_ref(CTFontCopyPostScriptName(font));
   base::string16 font_name = SysCFStringRefToUTF16(name_ref);
   float font_point_size = CTFontGetSize(font);

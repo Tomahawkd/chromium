@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/help/version_updater_win.h"
 
+#include "base/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/post_task.h"
 #include "base/win/win_util.h"
@@ -39,8 +40,10 @@ void VersionUpdaterWin::OnUpdateCheckComplete(
   if (new_version.empty()) {
     // Google Update says that no new version is available. Check to see if a
     // restart is needed for a previously-applied update to take effect.
-    base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+    base::PostTaskAndReplyWithResult(
+        FROM_HERE,
+        {base::ThreadPool(), base::MayBlock(),
+         base::TaskPriority::USER_VISIBLE},
         base::Bind(&upgrade_util::IsUpdatePendingRestart),
         base::Bind(&VersionUpdaterWin::OnPendingRestartCheck,
                    weak_factory_.GetWeakPtr()));

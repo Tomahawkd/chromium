@@ -4,8 +4,10 @@
 
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
 
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_node.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/window.h"
@@ -13,11 +15,13 @@
 #include "ui/views/accessibility/ax_view_obj_wrapper.h"
 #include "ui/views/accessibility/ax_widget_obj_wrapper.h"
 #include "ui/views/accessibility/ax_window_obj_wrapper.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
 namespace views {
+namespace {
 
 aura::client::FocusClient* GetFocusClient(aura::Window* root_window) {
   if (!root_window)
@@ -25,10 +29,7 @@ aura::client::FocusClient* GetFocusClient(aura::Window* root_window) {
   return aura::client::GetFocusClient(root_window);
 }
 
-// static
-AXAuraObjCache* AXAuraObjCache::GetInstance() {
-  return base::Singleton<AXAuraObjCache>::get();
-}
+}  // namespace
 
 AXAuraObjWrapper* AXAuraObjCache::GetOrCreate(View* view) {
   // Avoid problems with transient focus events. https://crbug.com/729449
@@ -63,8 +64,8 @@ void AXAuraObjCache::Remove(View* view) {
 
 void AXAuraObjCache::RemoveViewSubtree(View* view) {
   Remove(view);
-  for (int i = 0; i < view->child_count(); ++i)
-    RemoveViewSubtree(view->child_at(i));
+  for (View* child : view->children())
+    RemoveViewSubtree(child);
 }
 
 void AXAuraObjCache::Remove(Widget* widget) {
@@ -92,16 +93,20 @@ AXAuraObjWrapper* AXAuraObjCache::Get(int32_t id) {
 
 void AXAuraObjCache::GetTopLevelWindows(
     std::vector<AXAuraObjWrapper*>* children) {
-  for (const auto& it : window_to_id_map_) {
-    if (!it.first->parent())
-      children->push_back(GetOrCreate(it.first));
-  }
+  for (aura::Window* root : root_windows_)
+    children->push_back(GetOrCreate(root));
 }
 
 AXAuraObjWrapper* AXAuraObjCache::GetFocus() {
   View* focused_view = GetFocusedView();
-  if (focused_view)
+  if (focused_view) {
+    const ViewAccessibility& view_accessibility =
+        focused_view->GetViewAccessibility();
+    if (view_accessibility.FocusedVirtualChild())
+      return view_accessibility.FocusedVirtualChild()->GetOrCreateWrapper(this);
+
     return GetOrCreate(focused_view);
+  }
   return nullptr;
 }
 
@@ -119,9 +124,10 @@ void AXAuraObjCache::FireEvent(AXAuraObjWrapper* aura_obj,
 
 AXAuraObjCache::AXAuraObjCache() = default;
 
+// Never runs because object is leaked.
 AXAuraObjCache::~AXAuraObjCache() {
-  is_destroying_ = true;
-  cache_.clear();
+  if (!root_windows_.empty() && GetFocusClient(*root_windows_.begin()))
+    GetFocusClient(*root_windows_.begin())->RemoveObserver(this);
 }
 
 View* AXAuraObjCache::GetFocusedView() {
@@ -166,13 +172,11 @@ View* AXAuraObjCache::GetFocusedView() {
     // If focused widget has non client view, falls back to first child view of
     // its client view. We don't expect that non client view gets keyboard
     // focus.
-    if (focused_widget->non_client_view() &&
-        focused_widget->non_client_view()->client_view() &&
-        focused_widget->non_client_view()->client_view()->has_children()) {
-      return focused_widget->non_client_view()->client_view()->child_at(0);
-    }
-
-    return focused_widget->GetRootView();
+    auto* non_client = focused_widget->non_client_view();
+    auto* client = non_client ? non_client->client_view() : nullptr;
+    return (client && !client->children().empty())
+               ? client->children().front()
+               : focused_widget->GetRootView();
   }
 
   return nullptr;
@@ -207,7 +211,7 @@ AXAuraObjWrapper* AXAuraObjCache::CreateInternal(
   if (it != aura_view_to_id_map.end())
     return Get(it->second);
 
-  auto wrapper = std::make_unique<AuraViewWrapper>(aura_view);
+  auto wrapper = std::make_unique<AuraViewWrapper>(this, aura_view);
   int32_t id = wrapper->GetUniqueId();
   aura_view_to_id_map[aura_view] = id;
   cache_[id] = std::move(wrapper);
@@ -219,10 +223,11 @@ int32_t AXAuraObjCache::GetIDInternal(
     AuraView* aura_view,
     const std::map<AuraView*, int32_t>& aura_view_to_id_map) const {
   if (!aura_view)
-    return -1;
+    return ui::AXNode::kInvalidAXID;
 
   auto it = aura_view_to_id_map.find(aura_view);
-  return it != aura_view_to_id_map.end() ? it->second : -1;
+  return it != aura_view_to_id_map.end() ? it->second
+                                         : ui::AXNode::kInvalidAXID;
 }
 
 template <typename AuraView>
@@ -230,7 +235,7 @@ void AXAuraObjCache::RemoveInternal(
     AuraView* aura_view,
     std::map<AuraView*, int32_t>& aura_view_to_id_map) {
   int32_t id = GetID(aura_view);
-  if (id == -1)
+  if (id == ui::AXNode::kInvalidAXID)
     return;
   aura_view_to_id_map.erase(aura_view);
   cache_.erase(id);

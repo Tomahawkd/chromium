@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "components/open_from_clipboard/clipboard_recent_content.h"
+#include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
 // An implementation of ClipboardRecentContent that uses
@@ -19,12 +20,15 @@
 // anything.
 class ClipboardRecentContentGeneric : public ClipboardRecentContent {
  public:
-  explicit ClipboardRecentContentGeneric();
+  ClipboardRecentContentGeneric();
 
   // ClipboardRecentContent implementation.
-  bool GetRecentURLFromClipboard(GURL* url) override;
+  base::Optional<GURL> GetRecentURLFromClipboard() override;
+  base::Optional<base::string16> GetRecentTextFromClipboard() override;
+  base::Optional<gfx::Image> GetRecentImageFromClipboard() override;
   base::TimeDelta GetClipboardContentAge() const override;
   void SuppressClipboardContent() override;
+  void ClearClipboardContent() override;
 
  private:
   // Returns true if the URL is appropriate to be suggested.

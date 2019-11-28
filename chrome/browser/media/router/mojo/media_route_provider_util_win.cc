@@ -4,6 +4,7 @@
 
 #include "chrome/browser/media/router/mojo/media_route_provider_util_win.h"
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -34,8 +35,9 @@ bool DoCanFirewallUseLocalPorts() {
 }  // namespace
 
 void CanFirewallUseLocalPorts(base::OnceCallback<void(bool)> callback) {
-  auto task_runner = base::CreateCOMSTATaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN});
+  auto task_runner = base::CreateCOMSTATaskRunner(
+      {base::ThreadPool(), base::MayBlock(),
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN});
   base::PostTaskAndReplyWithResult(task_runner.get(), FROM_HERE,
                                    base::BindOnce(&DoCanFirewallUseLocalPorts),
                                    std::move(callback));

@@ -5,11 +5,16 @@
 /**
  * @fileoverview
  * 'I18nBehavior' is a behavior to mix in loading of internationalization
- * strings.
+ * strings. Typically it is used as [[i18n('someString')]] computed bindings or
+ * for this.i18n('foo'). It is not needed for HTML $i18n{otherString}, which is
+ * handled by a C++ templatizer.
  */
 
+// #import {parseHtmlSubset} from './parse_html_subset.m.js';
+// #import {loadTimeData, SanitizeInnerHtmlOpts} from './load_time_data.m.js';
+
 /** @polymerBehavior */
-var I18nBehavior = {
+/* #export */ const I18nBehavior = {
   properties: {
     /**
      * The language the UI is presented in. Used to signal dynamic language
@@ -40,13 +45,14 @@ var I18nBehavior = {
    * Returns a translated string where $1 to $9 are replaced by the given
    * values. Also sanitizes the output to filter out dangerous HTML/JS.
    * Use with Polymer bindings that are *not* inner-h-t-m-l.
+   * NOTE: This is not related to $i18n{foo} in HTML, see file overview.
    * @param {string} id The ID of the string to translate.
-   * @param {...string} var_args Values to replace the placeholders $1 to $9
-   *     in the string.
+   * @param {...string|number} var_args Values to replace the placeholders $1
+   *     to $9 in the string.
    * @return {string} A translated, sanitized, substituted string.
    */
   i18n: function(id, var_args) {
-    var rawString = this.i18nRaw_.apply(this, arguments);
+    const rawString = this.i18nRaw_.apply(this, arguments);
     return parseHtmlSubset('<b>' + rawString + '</b>').firstChild.textContent;
   },
 
@@ -61,8 +67,8 @@ var I18nBehavior = {
    */
   i18nAdvanced: function(id, opts) {
     opts = opts || {};
-    var args = [id].concat(opts.substitutions || []);
-    var rawString = this.i18nRaw_.apply(this, args);
+    const args = [id].concat(opts.substitutions || []);
+    const rawString = this.i18nRaw_.apply(this, args);
     return loadTimeData.sanitizeInnerHtml(rawString, opts);
   },
 
@@ -91,10 +97,10 @@ var I18nBehavior = {
    * @return {string} A translated, sanitized, substituted string.
    */
   i18nRecursive: function(locale, id, var_args) {
-    var args = Array.prototype.slice.call(arguments, 2);
+    let args = Array.prototype.slice.call(arguments, 2);
     if (args.length > 0) {
       // Try to replace IDs with localized values.
-      var self = this;
+      const self = this;
       args = args.map(function(str) {
         return self.i18nExists(str) ? loadTimeData.getString(str) : str;
       });

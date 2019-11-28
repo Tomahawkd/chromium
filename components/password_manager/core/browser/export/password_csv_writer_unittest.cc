@@ -9,27 +9,34 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/common/password_form.h"
-#include "components/password_manager/core/browser/import/csv_reader.h"
+#include "components/password_manager/core/browser/import/csv_password.h"
+#include "components/password_manager/core/browser/import/csv_password_sequence.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 using autofill::PasswordForm;
-using testing::AllOf;
-using testing::Contains;
+using testing::ElementsAre;
 
 namespace password_manager {
+
+namespace {
+
+MATCHER_P3(FormHasOriginUsernamePassword, origin, username, password, "") {
+  return arg.signon_realm == origin && arg.origin == GURL(origin) &&
+         arg.username_value == base::UTF8ToUTF16(username) &&
+         arg.password_value == base::UTF8ToUTF16(password);
+}
+
+}  // namespace
 
 TEST(PasswordCSVWriterTest, SerializePasswords_ZeroPasswords) {
   std::vector<std::unique_ptr<PasswordForm>> passwords;
 
-  std::vector<std::string> column_names;
-  std::vector<std::map<std::string, std::string>> records;
-  ASSERT_TRUE(ReadCSV(PasswordCSVWriter::SerializePasswords(passwords),
-                      &column_names, &records));
+  CSVPasswordSequence seq(PasswordCSVWriter::SerializePasswords(passwords));
+  ASSERT_EQ(CSVPassword::Status::kOK, seq.result());
 
-  EXPECT_THAT(column_names, AllOf(Contains("url"), Contains("username"),
-                                  Contains("password")));
-  EXPECT_EQ(0u, records.size());
+  EXPECT_EQ(seq.begin(), seq.end());
 }
 
 TEST(PasswordCSVWriterTest, SerializePasswords_SinglePassword) {
@@ -40,17 +47,15 @@ TEST(PasswordCSVWriterTest, SerializePasswords_SinglePassword) {
   form.password_value = base::UTF8ToUTF16("Secret");
   passwords.push_back(std::make_unique<PasswordForm>(form));
 
-  std::vector<std::string> column_names;
-  std::vector<std::map<std::string, std::string>> records;
-  ASSERT_TRUE(ReadCSV(PasswordCSVWriter::SerializePasswords(passwords),
-                      &column_names, &records));
+  CSVPasswordSequence seq(PasswordCSVWriter::SerializePasswords(passwords));
+  ASSERT_EQ(CSVPassword::Status::kOK, seq.result());
 
-  EXPECT_THAT(column_names, AllOf(Contains("url"), Contains("username"),
-                                  Contains("password")));
-  EXPECT_EQ(1u, records.size());
-  EXPECT_EQ(records[0]["url"], "http://example.com/");
-  EXPECT_EQ(records[0]["username"], "Someone");
-  EXPECT_EQ(records[0]["password"], "Secret");
+  std::vector<PasswordForm> pwds;
+  for (const auto& pwd : seq) {
+    pwds.push_back(pwd.ParseValid());
+  }
+  EXPECT_THAT(pwds, ElementsAre(FormHasOriginUsernamePassword(
+                        "http://example.com/", "Someone", "Secret")));
 }
 
 TEST(PasswordCSVWriterTest, SerializePasswords_TwoPasswords) {
@@ -65,20 +70,17 @@ TEST(PasswordCSVWriterTest, SerializePasswords_TwoPasswords) {
   form.password_value = base::UTF8ToUTF16("None");
   passwords.push_back(std::make_unique<PasswordForm>(form));
 
-  std::vector<std::string> column_names;
-  std::vector<std::map<std::string, std::string>> records;
-  ASSERT_TRUE(ReadCSV(PasswordCSVWriter::SerializePasswords(passwords),
-                      &column_names, &records));
+  CSVPasswordSequence seq(PasswordCSVWriter::SerializePasswords(passwords));
+  ASSERT_EQ(CSVPassword::Status::kOK, seq.result());
 
-  EXPECT_THAT(column_names, AllOf(Contains("url"), Contains("username"),
-                                  Contains("password")));
-  EXPECT_EQ(2u, records.size());
-  EXPECT_EQ(records[0]["url"], "http://example.com/");
-  EXPECT_EQ(records[0]["username"], "Someone");
-  EXPECT_EQ(records[0]["password"], "Secret");
-  EXPECT_EQ(records[1]["url"], "http://other.org/");
-  EXPECT_EQ(records[1]["username"], "Anyone");
-  EXPECT_EQ(records[1]["password"], "None");
+  std::vector<PasswordForm> pwds;
+  for (const auto& pwd : seq) {
+    pwds.push_back(pwd.ParseValid());
+  }
+  EXPECT_THAT(pwds, ElementsAre(FormHasOriginUsernamePassword(
+                                    "http://example.com/", "Someone", "Secret"),
+                                FormHasOriginUsernamePassword(
+                                    "http://other.org/", "Anyone", "None")));
 }
 
 }  // namespace password_manager

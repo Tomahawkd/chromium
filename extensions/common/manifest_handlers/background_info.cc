@@ -25,7 +25,6 @@
 #include "ui/base/l10n/l10n_util.h"
 
 using base::ASCIIToUTF16;
-using base::DictionaryValue;
 
 namespace extensions {
 
@@ -46,6 +45,37 @@ const BackgroundInfo& GetBackgroundInfo(const Extension* extension) {
   if (!info)
     return g_empty_background_info.Get();
   return *info;
+}
+
+// Checks features that are restricted to manifest v2, populating |error| if
+// the |extension|'s manifest version is too high.
+// TODO(devlin): It's unfortunate that the features system doesn't handle this
+// automatically, but it only adds a warning (rather than an error). Depending
+// on how many keys we want to error on, it may make sense to change that.
+bool CheckManifestV2RestrictedFeatures(const Extension* extension,
+                                       base::string16* error) {
+  if (extension->manifest_version() < 3) {
+    // No special restrictions for manifest v2 extensions (or v1, if the legacy
+    // commandline flag is being used).
+    return true;
+  }
+
+  auto check_path = [error, extension](const char* path) {
+    if (extension->manifest()->HasPath(path)) {
+      *error = base::UTF8ToUTF16(ErrorUtils::FormatErrorMessage(
+          errors::kBackgroundSpecificationInvalidForManifestV3, path));
+      return false;
+    }
+    return true;
+  };
+
+  if (!check_path(keys::kBackgroundPage) ||
+      !check_path(keys::kBackgroundScripts) ||
+      !check_path(keys::kBackgroundPersistent)) {
+    return false;
+  }
+
+  return true;
 }
 
 }  // namespace
@@ -115,7 +145,8 @@ bool BackgroundInfo::IsServiceWorkerBased(const Extension* extension) {
 bool BackgroundInfo::Parse(const Extension* extension, base::string16* error) {
   const std::string& bg_scripts_key = extension->is_platform_app() ?
       keys::kPlatformAppBackgroundScripts : keys::kBackgroundScripts;
-  if (!LoadBackgroundScripts(extension, bg_scripts_key, error) ||
+  if (!CheckManifestV2RestrictedFeatures(extension, error) ||
+      !LoadBackgroundScripts(extension, bg_scripts_key, error) ||
       !LoadBackgroundPage(extension, error) ||
       !LoadBackgroundServiceWorkerScript(extension, error) ||
       !LoadBackgroundPersistent(extension, error) ||
@@ -138,26 +169,25 @@ bool BackgroundInfo::Parse(const Extension* extension, base::string16* error) {
 bool BackgroundInfo::LoadBackgroundScripts(const Extension* extension,
                                            const std::string& key,
                                            base::string16* error) {
-  const base::Value* background_scripts_value = NULL;
+  const base::Value* background_scripts_value = nullptr;
   if (!extension->manifest()->Get(key, &background_scripts_value))
     return true;
 
   CHECK(background_scripts_value);
-  if (background_scripts_value->type() != base::Value::Type::LIST) {
+  if (!background_scripts_value->is_list()) {
     *error = ASCIIToUTF16(errors::kInvalidBackgroundScripts);
     return false;
   }
 
-  const base::ListValue* background_scripts = NULL;
-  background_scripts_value->GetAsList(&background_scripts);
-  for (size_t i = 0; i < background_scripts->GetSize(); ++i) {
-    std::string script;
-    if (!background_scripts->GetString(i, &script)) {
+  base::span<const base::Value> background_scripts =
+      background_scripts_value->GetList();
+  for (size_t i = 0; i < background_scripts.size(); ++i) {
+    if (!background_scripts[i].is_string()) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
           errors::kInvalidBackgroundScript, base::NumberToString(i));
       return false;
     }
-    background_scripts_.push_back(script);
+    background_scripts_.push_back(background_scripts[i].GetString());
   }
 
   return true;
@@ -166,15 +196,15 @@ bool BackgroundInfo::LoadBackgroundScripts(const Extension* extension,
 bool BackgroundInfo::LoadBackgroundPage(const Extension* extension,
                                         const std::string& key,
                                         base::string16* error) {
-  const base::Value* background_page_value = NULL;
+  const base::Value* background_page_value = nullptr;
   if (!extension->manifest()->Get(key, &background_page_value))
     return true;
 
-  std::string background_str;
-  if (!background_page_value->GetAsString(&background_str)) {
+  if (!background_page_value->is_string()) {
     *error = ASCIIToUTF16(errors::kInvalidBackground);
     return false;
   }
+  const std::string& background_str = background_page_value->GetString();
 
   if (extension->is_hosted_app()) {
     background_url_ = GURL(background_str);
@@ -241,8 +271,9 @@ bool BackgroundInfo::LoadBackgroundPersistent(const Extension* extension,
 
   const base::Value* background_persistent = NULL;
   if (!extension->manifest()->Get(keys::kBackgroundPersistent,
-                                  &background_persistent))
+                                  &background_persistent)) {
     return true;
+  }
 
   if (!background_persistent->GetAsBoolean(&is_persistent_)) {
     *error = ASCIIToUTF16(errors::kInvalidBackgroundPersistent);
@@ -295,6 +326,14 @@ bool BackgroundManifestHandler::Parse(Extension* extension,
       PermissionsParser::HasAPIPermission(extension,
                                           APIPermission::kWebRequest)) {
     *error = ASCIIToUTF16(errors::kWebRequestConflictsWithLazyBackground);
+    return false;
+  }
+
+  if (!info->has_lazy_background_page() &&
+      PermissionsParser::HasAPIPermission(
+          extension, APIPermission::kTransientBackground)) {
+    *error = ASCIIToUTF16(
+        errors::kTransientBackgroundConflictsWithPersistentBackground);
     return false;
   }
 

@@ -47,13 +47,13 @@ class EnrollmentScreenView {
                                            const std::string& location) = 0;
   };
 
-  constexpr static OobeScreen kScreenId = OobeScreen::SCREEN_OOBE_ENROLLMENT;
+  constexpr static StaticOobeScreenId kScreenId{"oauth-enrollment"};
 
   virtual ~EnrollmentScreenView() {}
 
   // Initializes the view with parameters.
-  virtual void SetParameters(Controller* controller,
-                             const policy::EnrollmentConfig& config) = 0;
+  virtual void SetEnrollmentConfig(Controller* controller,
+                                   const policy::EnrollmentConfig& config) = 0;
 
   // Shows the contents of the screen.
   virtual void Show() = 0;

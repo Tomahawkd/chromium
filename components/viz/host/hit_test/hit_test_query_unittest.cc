@@ -6,13 +6,16 @@
 
 #include <cstdint>
 
+#include "base/feature_list.h"
+#include "base/test/scoped_feature_list.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/hit_test/hit_test_region_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace viz {
 namespace test {
 
-class HitTestQueryTest : public testing::Test {
+class HitTestQueryTest : public testing::TestWithParam<bool> {
  public:
   HitTestQueryTest() = default;
   ~HitTestQueryTest() override = default;
@@ -23,7 +26,22 @@ class HitTestQueryTest : public testing::Test {
 
  protected:
   HitTestQuery& hit_test_query() { return hit_test_query_; }
+  void SetUp() override {
+    if (GetParam()) {
+      feature_list_.InitAndEnableFeature(
+          features::kEnableVizHitTestSurfaceLayer);
+    }
 
+    if (!features::IsVizHitTestingSurfaceLayerEnabled()) {
+      // kHitTestIgnore has different meanings in v1 and v2. Some tests set
+      // kHitTestIgnore for certain regions which works for v1 but fails v2.
+      test_flags_ |= HitTestRegionFlags::kHitTestIgnore;
+      return;
+    }
+  }
+
+  base::test::ScopedFeatureList feature_list_;
+  uint32_t test_flags_ = HitTestRegionFlags::kHitTestChildSurface;
   std::vector<AggregatedHitTestRegion> active_data_;
 
  private:
@@ -31,6 +49,8 @@ class HitTestQueryTest : public testing::Test {
 
   DISALLOW_COPY_AND_ASSIGN(HitTestQueryTest);
 };
+
+INSTANTIATE_TEST_SUITE_P(/* no prefix */, HitTestQueryTest, testing::Bool());
 
 // One surface.
 //
@@ -40,7 +60,7 @@ class HitTestQueryTest : public testing::Test {
 //  |          |
 //  +----------+
 //
-TEST_F(HitTestQueryTest, OneSurface) {
+TEST_P(HitTestQueryTest, OneSurface) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   gfx::Rect e_bounds = gfx::Rect(0, 0, 600, 600);
   gfx::Transform transform_e_to_e;
@@ -87,7 +107,7 @@ TEST_F(HitTestQueryTest, OneSurface) {
 //  | +---+ |     |      3        c2
 //  +-------------+      4        none
 //
-TEST_F(HitTestQueryTest, OneEmbedderTwoChildren) {
+TEST_P(HitTestQueryTest, OneEmbedderTwoChildren) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId c2_id = FrameSinkId(3, 3);
@@ -146,7 +166,7 @@ TEST_F(HitTestQueryTest, OneEmbedderTwoChildren) {
 }
 
 // One embedder with a rotated child.
-TEST_F(HitTestQueryTest, OneEmbedderRotatedChild) {
+TEST_P(HitTestQueryTest, OneEmbedderRotatedChild) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c_id = FrameSinkId(2, 2);
   gfx::Rect e_bounds_in_e = gfx::Rect(0, 0, 600, 600);
@@ -196,7 +216,7 @@ TEST_F(HitTestQueryTest, OneEmbedderRotatedChild) {
 //  |   ||   4     |       4        b
 //  +--------------+
 //
-TEST_F(HitTestQueryTest, ClippedChildWithTabAndTransparentBackground) {
+TEST_P(HitTestQueryTest, ClippedChildWithTabAndTransparentBackground) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -213,11 +233,8 @@ TEST_F(HitTestQueryTest, ClippedChildWithTabAndTransparentBackground) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 3));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c_bounds_in_e, transform_e_to_c, 2));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, 2));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -276,7 +293,7 @@ TEST_F(HitTestQueryTest, ClippedChildWithTabAndTransparentBackground) {
 //  |   || | 4     |       4        b
 //  +--------------+
 //
-TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneath) {
+TEST_P(HitTestQueryTest, ClippedChildWithChildUnderneath) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -296,11 +313,8 @@ TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneath) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 4));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c_bounds_in_e, transform_e_to_c, 2));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, 2));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -352,7 +366,7 @@ TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneath) {
 
 // Tests transforming location to be in target's coordinate system given the
 // target's ancestor list, in the case of ClippedChildWithChildUnderneath test.
-TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneathTransform) {
+TEST_P(HitTestQueryTest, ClippedChildWithChildUnderneathTransform) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -361,21 +375,19 @@ TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneathTransform) {
   gfx::Rect e_bounds_in_e = gfx::Rect(0, 0, 600, 600);
   gfx::Rect c_bounds_in_e = gfx::Rect(0, 0, 800, 800);
   gfx::Rect a_bounds_in_c = gfx::Rect(0, 0, 200, 100);
-  gfx::Rect b_bounds_in_c = gfx::Rect(0, 100, 800, 600);
+  gfx::Rect b_bounds_in_c = gfx::Rect(0, 0, 800, 600);
   gfx::Rect d_bounds_in_e = gfx::Rect(0, 0, 800, 800);
   gfx::Transform transform_e_to_e, transform_e_to_c, transform_c_to_a,
       transform_c_to_b, transform_e_to_d;
   transform_e_to_c.Translate(-200, -100);
   transform_e_to_d.Translate(-400, -50);
+  transform_c_to_b.Translate(0, -100);
   active_data_.push_back(AggregatedHitTestRegion(
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 4));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c_bounds_in_e, transform_e_to_c, 2));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, 2));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -399,19 +411,19 @@ TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneathTransform) {
   std::vector<FrameSinkId> target_ancestors1{e_id};
   gfx::PointF transformed_point;
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors1, point1, &transformed_point));
+      target_ancestors1, point1, &transformed_point));
   EXPECT_EQ(transformed_point, point1);
   std::vector<FrameSinkId> target_ancestors2{a_id, c_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors2, point2, &transformed_point));
+      target_ancestors2, point2, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(2, 2));
   std::vector<FrameSinkId> target_ancestors3{d_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors3, point3, &transformed_point));
+      target_ancestors3, point3, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(50, 100));
   std::vector<FrameSinkId> target_ancestors4{b_id, c_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors4, point4, &transformed_point));
+      target_ancestors4, point4, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(2, 2));
 }
 
@@ -433,7 +445,7 @@ TEST_F(HitTestQueryTest, ClippedChildWithChildUnderneathTransform) {
 //  |   ||   7     |
 //  +--------------+
 //
-TEST_F(HitTestQueryTest, ClippedChildrenWithTabAndTransparentBackground) {
+TEST_P(HitTestQueryTest, ClippedChildrenWithTabAndTransparentBackground) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -459,11 +471,8 @@ TEST_F(HitTestQueryTest, ClippedChildrenWithTabAndTransparentBackground) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 6));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c1_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c1_bounds_in_e, transform_e_to_c1, 2));  // c1
+  active_data_.push_back(AggregatedHitTestRegion(
+      c1_id, test_flags_, c1_bounds_in_e, transform_e_to_c1, 2));  // c1
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -472,11 +481,8 @@ TEST_F(HitTestQueryTest, ClippedChildrenWithTabAndTransparentBackground) {
       b_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       b_bounds_in_c1, transform_c1_to_b, 0));  // b
-  active_data_.push_back(
-      AggregatedHitTestRegion(c2_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c2_bounds_in_e, transform_e_to_c2, 2));  // c2
+  active_data_.push_back(AggregatedHitTestRegion(
+      c2_id, test_flags_, c2_bounds_in_e, transform_e_to_c2, 2));  // c2
   active_data_.push_back(AggregatedHitTestRegion(
       g_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -549,7 +555,7 @@ TEST_F(HitTestQueryTest, ClippedChildrenWithTabAndTransparentBackground) {
 // Tests transforming location to be in target's coordinate system given the
 // target's ancestor list, in the case of
 // ClippedChildrenWithTabAndTransparentBackground test.
-TEST_F(HitTestQueryTest,
+TEST_P(HitTestQueryTest,
        ClippedChildrenWithTabAndTransparentBackgroundTransform) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
@@ -576,11 +582,8 @@ TEST_F(HitTestQueryTest,
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 6));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c1_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c1_bounds_in_e, transform_e_to_c1, 2));  // c1
+  active_data_.push_back(AggregatedHitTestRegion(
+      c1_id, test_flags_, c1_bounds_in_e, transform_e_to_c1, 2));  // c1
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -589,11 +592,8 @@ TEST_F(HitTestQueryTest,
       b_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       b_bounds_in_c1, transform_c1_to_b, 0));  // b
-  active_data_.push_back(
-      AggregatedHitTestRegion(c2_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c2_bounds_in_e, transform_e_to_c2, 2));  // c2
+  active_data_.push_back(AggregatedHitTestRegion(
+      c2_id, test_flags_, c2_bounds_in_e, transform_e_to_c2, 2));  // c2
   active_data_.push_back(AggregatedHitTestRegion(
       g_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -616,29 +616,29 @@ TEST_F(HitTestQueryTest,
   std::vector<FrameSinkId> target_ancestors1{e_id};
   gfx::PointF transformed_point;
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors1, point1, &transformed_point));
+      target_ancestors1, point1, &transformed_point));
   EXPECT_EQ(transformed_point, point1);
   std::vector<FrameSinkId> target_ancestors2{a_id, c1_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors2, point2, &transformed_point));
+      target_ancestors2, point2, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(2, 2));
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors1, point3, &transformed_point));
+      target_ancestors1, point3, &transformed_point));
   EXPECT_EQ(transformed_point, point3);
   std::vector<FrameSinkId> target_ancestors3{b_id, c1_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors3, point4, &transformed_point));
+      target_ancestors3, point4, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(2, 2));
   std::vector<FrameSinkId> target_ancestors4{g_id, c2_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors4, point5, &transformed_point));
+      target_ancestors4, point5, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(50, 50));
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors1, point6, &transformed_point));
+      target_ancestors1, point6, &transformed_point));
   EXPECT_EQ(transformed_point, point6);
   std::vector<FrameSinkId> target_ancestors5{h_id, c2_id, e_id};
   EXPECT_TRUE(hit_test_query().TransformLocationForTarget(
-      EventSource::MOUSE, target_ancestors5, point7, &transformed_point));
+      target_ancestors5, point7, &transformed_point));
   EXPECT_EQ(transformed_point, gfx::PointF(150, 300));
 }
 
@@ -657,7 +657,7 @@ TEST_F(HitTestQueryTest,
 //  | +--------|----+     |
 //  +---------------------+
 //
-TEST_F(HitTestQueryTest, MultipleLayerChild) {
+TEST_P(HitTestQueryTest, MultipleLayerChild) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -680,11 +680,8 @@ TEST_F(HitTestQueryTest, MultipleLayerChild) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 5));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c1_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c1_bounds_in_e, transform_e_to_c1, 3));  // c1
+  active_data_.push_back(AggregatedHitTestRegion(
+      c1_id, test_flags_, c1_bounds_in_e, transform_e_to_c1, 3));  // c1
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -753,7 +750,7 @@ TEST_F(HitTestQueryTest, MultipleLayerChild) {
 //  | +--------|----+     |
 //  +---------------------+
 //
-TEST_F(HitTestQueryTest, MultipleLayerTransparentChild) {
+TEST_P(HitTestQueryTest, MultipleLayerTransparentChild) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -776,26 +773,14 @@ TEST_F(HitTestQueryTest, MultipleLayerTransparentChild) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 5));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c1_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c1_bounds_in_e, transform_e_to_c1, 3));  // c1
-  active_data_.push_back(
-      AggregatedHitTestRegion(a_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              a_bounds_in_c1, transform_c1_to_a, 2));  // a
-  active_data_.push_back(
-      AggregatedHitTestRegion(b_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              b_bounds_in_a, transform_a_to_b, 1));  // b
-  active_data_.push_back(
-      AggregatedHitTestRegion(g_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              g_bounds_in_b, transform_b_to_g, 0));  // g
+  active_data_.push_back(AggregatedHitTestRegion(
+      c1_id, test_flags_, c1_bounds_in_e, transform_e_to_c1, 3));  // c1
+  active_data_.push_back(AggregatedHitTestRegion(
+      a_id, test_flags_, a_bounds_in_c1, transform_c1_to_a, 2));  // a
+  active_data_.push_back(AggregatedHitTestRegion(
+      b_id, test_flags_, b_bounds_in_a, transform_a_to_b, 1));  // b
+  active_data_.push_back(AggregatedHitTestRegion(
+      g_id, test_flags_, g_bounds_in_b, transform_b_to_g, 0));  // g
   active_data_.push_back(AggregatedHitTestRegion(
       c2_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -833,7 +818,7 @@ TEST_F(HitTestQueryTest, MultipleLayerTransparentChild) {
   EXPECT_TRUE(target4.flags);
 }
 
-TEST_F(HitTestQueryTest, InvalidAggregatedHitTestRegionData) {
+TEST_P(HitTestQueryTest, InvalidAggregatedHitTestRegionData) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
@@ -851,10 +836,7 @@ TEST_F(HitTestQueryTest, InvalidAggregatedHitTestRegionData) {
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 3));  // e
   active_data_.push_back(AggregatedHitTestRegion(
-      c_id,
-      HitTestRegionFlags::kHitTestChildSurface |
-          HitTestRegionFlags::kHitTestIgnore,
-      c_bounds_in_e, transform_e_to_c, INT32_MIN));  // c
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, INT32_MIN));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -888,11 +870,8 @@ TEST_F(HitTestQueryTest, InvalidAggregatedHitTestRegionData) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, INT32_MAX));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c_bounds_in_e, transform_e_to_c, 2));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, 2));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -914,11 +893,8 @@ TEST_F(HitTestQueryTest, InvalidAggregatedHitTestRegionData) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 3));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c_bounds_in_e, transform_e_to_c, 3));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, 3));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -937,7 +913,7 @@ TEST_F(HitTestQueryTest, InvalidAggregatedHitTestRegionData) {
 }
 
 // Tests flags kHitTestMouse and kHitTestTouch.
-TEST_F(HitTestQueryTest, MouseTouchFlags) {
+TEST_P(HitTestQueryTest, MouseTouchFlags) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId c2_id = FrameSinkId(3, 3);
@@ -996,14 +972,14 @@ TEST_F(HitTestQueryTest, MouseTouchFlags) {
                                HitTestRegionFlags::kHitTestTouch);
 }
 
-TEST_F(HitTestQueryTest, RootHitTestAskFlag) {
+TEST_P(HitTestQueryTest, RootHitTestAskFlag) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   gfx::Rect e_bounds = gfx::Rect(0, 0, 600, 600);
   gfx::Transform transform_e_to_e;
   active_data_.push_back(AggregatedHitTestRegion(
       e_id, HitTestRegionFlags::kHitTestAsk | HitTestRegionFlags::kHitTestMouse,
       e_bounds, transform_e_to_e, 0,
-      AsyncHitTestReasons::kOverlappedRegion));  // e
+      AsyncHitTestReasons::kUseDrawQuadData));  // e
   SendHitTestData();
 
   // All points are in e's coordinate system when we reach this case.
@@ -1035,7 +1011,7 @@ TEST_F(HitTestQueryTest, RootHitTestAskFlag) {
 //  | +---+ |     |      3        c2
 //  +-------------+
 //
-TEST_F(HitTestQueryTest, ChildHitTestAskFlag) {
+TEST_P(HitTestQueryTest, ChildHitTestAskFlag) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId c2_id = FrameSinkId(3, 3);
@@ -1089,33 +1065,103 @@ TEST_F(HitTestQueryTest, ChildHitTestAskFlag) {
                                HitTestRegionFlags::kHitTestMouse);
 }
 
+// One embedder with nested OOPIFs. When the mid-level iframe has kHitTestAsk
+// flag we should do async hit test and skip checking its descendants.
+//
+//  +e-------------+
+//  |   +c---------|     Point   maps to
+//  | 1 |    2     |     -----   -------
+//  |   |          |       1        e
+//  |   |+b--------|       2        c
+//  |   ||         |       3        c
+//  |   ||   3     |
+//  +--------------+
+//
+TEST_P(HitTestQueryTest, NestedOOPIFs) {
+  FrameSinkId e_id = FrameSinkId(1, 1);
+  FrameSinkId c_id = FrameSinkId(2, 2);
+  FrameSinkId b_id = FrameSinkId(3, 3);
+  gfx::Rect e_bounds_in_e = gfx::Rect(0, 0, 600, 600);
+  gfx::Rect c_bounds_in_e = gfx::Rect(0, 0, 800, 800);
+  gfx::Rect b_bounds_in_c = gfx::Rect(0, 0, 800, 600);
+  gfx::Transform transform_e_to_e, transform_e_to_c, transform_c_to_b;
+  transform_e_to_c.Translate(-200, -100);
+  transform_c_to_b.Translate(0, -100);
+  active_data_.push_back(AggregatedHitTestRegion(
+      e_id,
+      HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
+      e_bounds_in_e, transform_e_to_e, 2));  // e
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id,
+      HitTestRegionFlags::kHitTestChildSurface |
+          HitTestRegionFlags::kHitTestAsk | HitTestRegionFlags::kHitTestMouse,
+      c_bounds_in_e, transform_e_to_c, 1,
+      AsyncHitTestReasons::kOverlappedRegion));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      b_id, HitTestRegionFlags::kHitTestAsk | HitTestRegionFlags::kHitTestMouse,
+      b_bounds_in_c, transform_c_to_b, 0,
+      AsyncHitTestReasons::kOverlappedRegion));  // b
+  SendHitTestData();
+
+  // All points are in e's coordinate system when we reach this case.
+  gfx::PointF point1(1, 1);
+  gfx::PointF point2(202, 102);
+  gfx::PointF point3(202, 202);
+
+  Target target1 =
+      hit_test_query().FindTargetForLocation(EventSource::MOUSE, point1);
+  EXPECT_EQ(target1.frame_sink_id, e_id);
+  EXPECT_EQ(target1.location_in_target, point1);
+  EXPECT_EQ(target1.flags, HitTestRegionFlags::kHitTestMine |
+                               HitTestRegionFlags::kHitTestMouse);
+
+  // c is the deepest OOPIF for point2, return c with ask flag.
+  Target target2 =
+      hit_test_query().FindTargetForLocation(EventSource::MOUSE, point2);
+  EXPECT_EQ(target2.frame_sink_id, c_id);
+  // point2 + transform_e_to_c  = (2, 2).
+  EXPECT_EQ(target2.location_in_target, gfx::PointF(2, 2));
+  EXPECT_EQ(target2.flags, HitTestRegionFlags::kHitTestChildSurface |
+                               HitTestRegionFlags::kHitTestAsk |
+                               HitTestRegionFlags::kHitTestMouse);
+
+  // b is the deepest OOPIF for point3, but c has the ask flag. Return c
+  // accordingly.
+  Target target3 =
+      hit_test_query().FindTargetForLocation(EventSource::MOUSE, point3);
+  EXPECT_EQ(target3.frame_sink_id, c_id);
+  // point3 + transform_e_to_c  = (2, 102).
+  EXPECT_EQ(target3.location_in_target, gfx::PointF(2, 102));
+  EXPECT_EQ(target3.flags, HitTestRegionFlags::kHitTestChildSurface |
+                               HitTestRegionFlags::kHitTestAsk |
+                               HitTestRegionFlags::kHitTestMouse);
+}
+
 // Tests getting the transform from root to a given target.
-TEST_F(HitTestQueryTest, GetTransformToTarget) {
+TEST_P(HitTestQueryTest, GetTransformToTarget) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c_id = FrameSinkId(2, 2);
   FrameSinkId a_id = FrameSinkId(3, 3);
   FrameSinkId b_id = FrameSinkId(4, 4);
   FrameSinkId d_id = FrameSinkId(5, 5);
   gfx::Rect e_bounds_in_e = gfx::Rect(0, 0, 600, 600);
-  gfx::Rect c_bounds_in_e = gfx::Rect(0, 50, 800, 800);
+  gfx::Rect c_bounds_in_e = gfx::Rect(0, 0, 800, 800);
   gfx::Rect a_bounds_in_c = gfx::Rect(0, 0, 200, 100);
-  gfx::Rect b_bounds_in_c = gfx::Rect(0, 100, 800, 600);
+  gfx::Rect b_bounds_in_c = gfx::Rect(0, 0, 800, 600);
   gfx::Rect d_bounds_in_e = gfx::Rect(0, 0, 800, 800);
   gfx::Transform transform_e_to_e, transform_e_to_c, transform_c_to_a,
       transform_c_to_b, transform_e_to_d;
-  transform_e_to_c.Translate(-200, -100);
+  transform_e_to_c.Translate(-200, -150);
   transform_e_to_d.Translate(-400, -50);
+  transform_c_to_b.Translate(0, -100);
   transform_c_to_b.Skew(2, 3);
   transform_c_to_b.Scale(.5f, .7f);
   active_data_.push_back(AggregatedHitTestRegion(
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 4));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore,
-                              c_bounds_in_e, transform_e_to_c, 2));  // c
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id, test_flags_, c_bounds_in_e, transform_e_to_c, 2));  // c
   active_data_.push_back(AggregatedHitTestRegion(
       a_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -1150,7 +1196,6 @@ TEST_F(HitTestQueryTest, GetTransformToTarget) {
   gfx::Transform transform_to_b;
   gfx::Transform expected_transform_to_b;
   expected_transform_to_b.Translate(-200, -150);
-  expected_transform_to_b.Translate(0, -100);
   expected_transform_to_b.ConcatTransform(transform_c_to_b);
   EXPECT_TRUE(hit_test_query().GetTransformToTarget(b_id, &transform_to_b));
   // Use ToString so that we can compare float.
@@ -1176,7 +1221,7 @@ TEST_F(HitTestQueryTest, GetTransformToTarget) {
 //  |   |          |
 //  +--------------+
 //
-TEST_F(HitTestQueryTest, TransparentOverlayRegions) {
+TEST_P(HitTestQueryTest, TransparentOverlayRegions) {
   FrameSinkId e_id = FrameSinkId(1, 1);
   FrameSinkId c1_id = FrameSinkId(2, 2);
   FrameSinkId c2_id = FrameSinkId(3, 3);
@@ -1193,12 +1238,9 @@ TEST_F(HitTestQueryTest, TransparentOverlayRegions) {
       e_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
       e_bounds_in_e, transform_e_to_e, 3));  // e
-  active_data_.push_back(
-      AggregatedHitTestRegion(c1_id,
-                              HitTestRegionFlags::kHitTestChildSurface |
-                                  HitTestRegionFlags::kHitTestIgnore |
-                                  HitTestRegionFlags::kHitTestMouse,
-                              c1_bounds_in_e, transform_e_to_c1, 1));  // c1
+  active_data_.push_back(AggregatedHitTestRegion(
+      c1_id, test_flags_ | HitTestRegionFlags::kHitTestMouse, c1_bounds_in_e,
+      transform_e_to_c1, 1));  // c1
   active_data_.push_back(AggregatedHitTestRegion(
       d1_id,
       HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
@@ -1225,6 +1267,107 @@ TEST_F(HitTestQueryTest, TransparentOverlayRegions) {
   EXPECT_EQ(target2.frame_sink_id, d1_id);
   EXPECT_EQ(target2.location_in_target, gfx::PointF(2, 2));
   EXPECT_EQ(target2.flags, HitTestRegionFlags::kHitTestMine |
+                               HitTestRegionFlags::kHitTestMouse);
+}
+
+TEST_P(HitTestQueryTest, FindTargetForLocationStartingFrom) {
+  FrameSinkId e_id = FrameSinkId(1, 1);
+  FrameSinkId c_id = FrameSinkId(2, 2);
+  gfx::Rect e_bounds_in_e = gfx::Rect(0, 0, 600, 600);
+  gfx::Rect c_bounds_in_e = gfx::Rect(0, 0, 200, 200);
+  gfx::Transform transform_e_to_e, transform_e_to_c;
+  transform_e_to_c.Translate(-100, -100);
+  active_data_.push_back(AggregatedHitTestRegion(
+      e_id,
+      HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
+      e_bounds_in_e, transform_e_to_e, 1));  // e
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id,
+      HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse,
+      c_bounds_in_e, transform_e_to_c, 0));  // c
+  SendHitTestData();
+
+  // Test a point in the embedder with the embedder as the initial frame sink.
+  gfx::PointF point1(99, 200);
+  Target target1 = hit_test_query().FindTargetForLocationStartingFrom(
+      EventSource::MOUSE, point1, e_id);
+  EXPECT_EQ(target1.frame_sink_id, e_id);
+  EXPECT_EQ(target1.location_in_target, point1);
+  EXPECT_EQ(target1.flags, HitTestRegionFlags::kHitTestMine |
+                               HitTestRegionFlags::kHitTestMouse);
+
+  // Test a point in the child with the embedder as the initial frame sink. The
+  // point is still specified in the coordinate space of the embedder.
+  gfx::PointF point2(150, 150);
+  Target target2 = hit_test_query().FindTargetForLocationStartingFrom(
+      EventSource::MOUSE, point2, e_id);
+  EXPECT_EQ(target2.frame_sink_id, c_id);
+  EXPECT_EQ(target2.location_in_target, gfx::PointF(50, 50));
+  EXPECT_EQ(target2.flags, HitTestRegionFlags::kHitTestMine |
+                               HitTestRegionFlags::kHitTestMouse);
+
+  // Test a point in the child with the child as the initial frame sink. The
+  // point is specified in the coordinate space of the child.
+  gfx::PointF point3(40, 40);
+  Target target3 = hit_test_query().FindTargetForLocationStartingFrom(
+      EventSource::MOUSE, point3, c_id);
+  EXPECT_EQ(target3.frame_sink_id, c_id);
+  EXPECT_EQ(target3.location_in_target, point3);
+  EXPECT_EQ(target3.flags, HitTestRegionFlags::kHitTestMine |
+                               HitTestRegionFlags::kHitTestMouse);
+}
+
+// One embedder with nested OOPIFs. When the root view is overlapped we should
+// continue checking its descendants rather than doing async hit test.
+//
+//  +e-------------+
+//  |   +c---------|     Point   maps to
+//  | 1 |    2     |     -----   -------
+//  |   |          |       1        e
+//  |   |          |       2        c
+//  |   |          |
+//  |   |          |
+//  +--------------+
+//
+TEST_P(HitTestQueryTest, OverlappedRootView) {
+  FrameSinkId e_id = FrameSinkId(1, 1);
+  FrameSinkId c_id = FrameSinkId(2, 2);
+  gfx::Rect e_bounds_in_e = gfx::Rect(0, 0, 600, 600);
+  gfx::Rect c_bounds_in_e = gfx::Rect(0, 0, 800, 800);
+  gfx::Transform transform_e_to_e, transform_e_to_c;
+  transform_e_to_c.Translate(-200, -100);
+  active_data_.push_back(AggregatedHitTestRegion(
+      e_id,
+      HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestMouse |
+          HitTestRegionFlags::kHitTestAsk,
+      e_bounds_in_e, transform_e_to_e, 1,
+      AsyncHitTestReasons::kOverlappedRegion));  // e
+  active_data_.push_back(AggregatedHitTestRegion(
+      c_id,
+      HitTestRegionFlags::kHitTestChildSurface | kHitTestMine |
+          HitTestRegionFlags::kHitTestMouse,
+      c_bounds_in_e, transform_e_to_c, 0));  // c
+  SendHitTestData();
+
+  // All points are in e's coordinate system when we reach this case.
+  gfx::PointF point1(1, 1);
+  gfx::PointF point2(202, 102);
+
+  Target target1 =
+      hit_test_query().FindTargetForLocation(EventSource::MOUSE, point1);
+  EXPECT_EQ(target1.frame_sink_id, e_id);
+  EXPECT_EQ(target1.location_in_target, point1);
+  // kHitTestAsk should be dropped for overlapped root view.
+  EXPECT_EQ(target1.flags, HitTestRegionFlags::kHitTestMine |
+                               HitTestRegionFlags::kHitTestMouse);
+
+  Target target2 =
+      hit_test_query().FindTargetForLocation(EventSource::MOUSE, point2);
+  EXPECT_EQ(target2.frame_sink_id, c_id);
+  // point2 + transform_e_to_c  = (2, 2).
+  EXPECT_EQ(target2.location_in_target, gfx::PointF(2, 2));
+  EXPECT_EQ(target2.flags, HitTestRegionFlags::kHitTestChildSurface |
+                               HitTestRegionFlags::kHitTestMine |
                                HitTestRegionFlags::kHitTestMouse);
 }
 

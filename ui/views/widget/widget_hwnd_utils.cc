@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "build/build_config.h"
 #include "ui/base/l10n/l10n_util_win.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/win/hwnd_message_handler.h"
@@ -45,22 +46,15 @@ void CalculateWindowStylesFromInitParams(
   DCHECK_NE(Widget::InitParams::ACTIVATABLE_DEFAULT, params.activatable);
   if (params.activatable == Widget::InitParams::ACTIVATABLE_NO)
     *ex_style |= WS_EX_NOACTIVATE;
-  if (params.keep_on_top)
+  if (params.EffectiveZOrderLevel() != ui::ZOrderLevel::kNormal)
     *ex_style |= WS_EX_TOPMOST;
   if (params.mirror_origin_in_rtl)
     *ex_style |= l10n_util::GetExtendedTooltipStyles();
-  if (params.shadow_type == Widget::InitParams::SHADOW_TYPE_DROP)
+  if (params.shadow_type == Widget::InitParams::ShadowType::kDrop)
     *class_style |= CS_DROPSHADOW;
 
   // Set type-dependent style attributes.
   switch (params.type) {
-    case Widget::InitParams::TYPE_PANEL:
-      *ex_style |= WS_EX_TOPMOST;
-      if (params.remove_standard_frame) {
-        *style |= WS_POPUP;
-        break;
-      }
-      FALLTHROUGH;
     case Widget::InitParams::TYPE_WINDOW: {
       // WS_OVERLAPPEDWINDOW is equivalent to:
       //   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
@@ -115,6 +109,18 @@ void CalculateWindowStylesFromInitParams(
       break;
     case Widget::InitParams::TYPE_MENU:
       *style |= WS_POPUP;
+      if (::features::IsFormControlsRefreshEnabled() &&
+          params.remove_standard_frame) {
+        // If the platform doesn't support drop shadow, decorate the Window
+        // with just a border.
+        if (ui::win::IsAeroGlassEnabled())
+          *style |= WS_THICKFRAME;
+        else
+          *style |= WS_BORDER;
+      }
+      break;
+    case Widget::InitParams::TYPE_TOOLTIP:
+      *style |= WS_POPUP;
       break;
     default:
       NOTREACHED();
@@ -126,6 +132,12 @@ void CalculateWindowStylesFromInitParams(
 bool DidClientAreaSizeChange(const WINDOWPOS* window_pos) {
   return !(window_pos->flags & SWP_NOSIZE) ||
          window_pos->flags & SWP_FRAMECHANGED;
+}
+
+bool DidMinimizedChange(UINT old_size_param, UINT new_size_param) {
+  return (
+      (old_size_param == SIZE_MINIMIZED && new_size_param != SIZE_MINIMIZED) ||
+      (old_size_param != SIZE_MINIMIZED && new_size_param == SIZE_MINIMIZED));
 }
 
 void ConfigureWindowStyles(
@@ -154,7 +166,7 @@ void ConfigureWindowStyles(
   // This doesn't work when Aero is disabled, so disable it in that case.
   // Software composited windows can continue to use WS_EX_LAYERED.
   bool is_translucent =
-      (params.opacity == Widget::InitParams::TRANSLUCENT_WINDOW &&
+      (params.opacity == Widget::InitParams::WindowOpacity::kTranslucent &&
        (ui::win::IsAeroGlassEnabled() || params.force_software_compositing));
 
   CalculateWindowStylesFromInitParams(params, widget_delegate,

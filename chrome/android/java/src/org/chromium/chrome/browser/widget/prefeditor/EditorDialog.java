@@ -15,10 +15,7 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
-import android.support.annotation.Nullable;
 import android.support.v4.view.MarginLayoutParamsCompat;
-import android.support.v4.view.animation.FastOutLinearInInterpolator;
-import android.support.v4.view.animation.LinearOutSlowInInterpolator;
 import android.support.v7.widget.Toolbar.OnMenuItemClickListener;
 import android.text.InputFilter;
 import android.text.Spanned;
@@ -40,16 +37,19 @@ import android.widget.RelativeLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
-import org.chromium.chrome.browser.preferences.PreferenceUtils;
-import org.chromium.chrome.browser.preferences.autofill.CreditCardNumberFormattingTextWatcher;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.widget.AlwaysDismissedDialog;
-import org.chromium.chrome.browser.widget.FadingEdgeScrollView;
-import org.chromium.chrome.browser.widget.TintedDrawable;
+import org.chromium.chrome.browser.settings.PreferenceUtils;
+import org.chromium.chrome.browser.settings.autofill.CreditCardNumberFormattingTextWatcher;
+import org.chromium.chrome.browser.ui.widget.AlwaysDismissedDialog;
+import org.chromium.chrome.browser.ui.widget.FadingEdgeScrollView;
+import org.chromium.chrome.browser.ui.widget.TintedDrawable;
+import org.chromium.chrome.browser.ui.widget.animation.Interpolators;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 
 import java.util.ArrayList;
@@ -91,6 +91,7 @@ public class EditorDialog
     private View mLayout;
     private EditorModel mEditorModel;
     private Button mDoneButton;
+    private boolean mFormWasValid;
     private ViewGroup mDataView;
     private View mFooter;
     @Nullable
@@ -111,7 +112,7 @@ public class EditorDialog
      */
     public EditorDialog(
             Activity activity, EditorObserverForTest observerForTest, Runnable deleteRunnable) {
-        super(activity, R.style.FullscreenWhite);
+        super(activity, R.style.Theme_Chromium_Fullscreen);
         // Sets transparent background for animating content view.
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         mContext = activity;
@@ -174,7 +175,7 @@ public class EditorDialog
 
     /** Launches the Autofill help page on top of the current Context. */
     public static void launchAutofillHelpPage(Context context) {
-        HelpAndFeedback.getInstance(context).show((Activity) context,
+        HelpAndFeedback.getInstance().show((Activity) context,
                 context.getString(R.string.help_context_autofill), Profile.getLastUsedProfile(),
                 null);
     }
@@ -189,7 +190,7 @@ public class EditorDialog
         EditorDialogToolbar toolbar = (EditorDialogToolbar) mLayout.findViewById(R.id.action_bar);
         toolbar.setBackgroundColor(ApiCompatibilityUtils.getColor(
                 toolbar.getResources(), R.color.modern_primary_color));
-        toolbar.setTitleTextAppearance(toolbar.getContext(), R.style.BlackHeadline);
+        toolbar.setTitleTextAppearance(toolbar.getContext(), R.style.TextAppearance_BlackHeadline);
         toolbar.setTitle(mEditorModel.getTitle());
         toolbar.setShowDeleteMenuItem(mDeleteRunnable != null);
 
@@ -210,7 +211,7 @@ public class EditorDialog
 
         // Cancel editing when the user hits the back arrow.
         toolbar.setNavigationContentDescription(R.string.cancel);
-        toolbar.setNavigationIcon(getBlackTintedBackIcon());
+        toolbar.setNavigationIcon(getTintedBackIcon());
         toolbar.setNavigationOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -239,7 +240,7 @@ public class EditorDialog
      *
      * @return Whether all fields contain valid information.
      */
-    private boolean validateForm() {
+    public boolean validateForm() {
         final List<EditorFieldView> invalidViews = getViewsWithInvalidInformation(true);
 
         // Iterate over all the fields to update what errors are displayed, which is necessary to
@@ -260,6 +261,10 @@ public class EditorDialog
                 // field and focus it.
                 invalidViews.get(0).scrollToAndFocus();
             }
+        }
+
+        if (!invalidViews.isEmpty() && mObserverForTest != null) {
+            mObserverForTest.onEditorValidationError();
         }
 
         return invalidViews.isEmpty();
@@ -284,13 +289,10 @@ public class EditorDialog
 
         if (view.getId() == R.id.editor_dialog_done_button) {
             if (validateForm()) {
-                if (mEditorModel != null) mEditorModel.done();
-                mEditorModel = null;
+                mFormWasValid = true;
                 animateOutDialog();
                 return;
             }
-
-            if (mObserverForTest != null) mObserverForTest.onEditorValidationError();
         } else if (view.getId() == R.id.payments_edit_cancel_button) {
             animateOutDialog();
         }
@@ -307,7 +309,7 @@ public class EditorDialog
 
         mDialogInOutAnimator = animatorSet;
         mDialogInOutAnimator.setDuration(DIALOG_EXIT_ANIMATION_MS);
-        mDialogInOutAnimator.setInterpolator(new FastOutLinearInInterpolator());
+        mDialogInOutAnimator.setInterpolator(Interpolators.FAST_OUT_LINEAR_IN_INTERPOLATOR);
         mDialogInOutAnimator.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
@@ -330,7 +332,15 @@ public class EditorDialog
     @Override
     public void onDismiss(DialogInterface dialog) {
         mIsDismissed = true;
-        if (mEditorModel != null) mEditorModel.cancel();
+        if (mEditorModel != null) {
+            if (mFormWasValid) {
+                mEditorModel.done();
+                mFormWasValid = false;
+            } else {
+                mEditorModel.cancel();
+            }
+            mEditorModel = null;
+        }
         removeTextChangedListenersAndInputFilters();
     }
 
@@ -551,7 +561,7 @@ public class EditorDialog
 
         mDialogInOutAnimator = animatorSet;
         mDialogInOutAnimator.setDuration(DIALOG_ENTER_ANIMATION_MS);
-        mDialogInOutAnimator.setInterpolator(new LinearOutSlowInInterpolator());
+        mDialogInOutAnimator.setInterpolator(Interpolators.LINEAR_OUT_SLOW_IN_INTERPOLATOR);
         mDialogInOutAnimator.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
@@ -612,8 +622,8 @@ public class EditorDialog
         return mDropdownFields;
     }
 
-    private Drawable getBlackTintedBackIcon() {
+    private Drawable getTintedBackIcon() {
         return TintedDrawable.constructTintedDrawable(
-                getContext(), R.drawable.ic_arrow_back_white_24dp, android.R.color.black);
+                getContext(), R.drawable.ic_arrow_back_white_24dp, R.color.default_icon_color);
     }
 }

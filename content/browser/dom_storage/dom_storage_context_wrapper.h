@@ -8,27 +8,24 @@
 #include <map>
 #include <string>
 
+#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
-#include "components/services/leveldb/public/interfaces/leveldb.mojom.h"
-#include "content/browser/dom_storage/dom_storage_context_impl.h"
+#include "components/services/storage/public/mojom/local_storage_control.mojom.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/dom_storage_context.h"
 #include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/dom_storage/session_storage_namespace.mojom.h"
 #include "third_party/blink/public/mojom/dom_storage/storage_area.mojom.h"
-#include "url/origin.h"
 
 namespace base {
 class FilePath;
-}
-
-namespace service_manager {
-class Connector;
 }
 
 namespace storage {
@@ -37,34 +34,52 @@ class SpecialStoragePolicy;
 
 namespace content {
 
-class DOMStorageContextImpl;
-class LocalStorageContextMojo;
 class SessionStorageContextMojo;
 class SessionStorageNamespaceImpl;
 
 // This is owned by Storage Partition and encapsulates all its dom storage
 // state.
+// Can only be accessed on the UI thread, except for the AddNamespace and
+// RemoveNamespace methods.
 class CONTENT_EXPORT DOMStorageContextWrapper
     : public DOMStorageContext,
       public base::RefCountedThreadSafe<DOMStorageContextWrapper> {
  public:
-  // If |data_path| is empty, nothing will be saved to disk.
-  DOMStorageContextWrapper(
-      service_manager::Connector* connector,
-      const base::FilePath& data_path,
+  // Option for PurgeMemory.
+  enum PurgeOption {
+    // Determines if purging is required based on the usage and the platform.
+    PURGE_IF_NEEDED,
+
+    // Purge unopened areas only.
+    PURGE_UNOPENED,
+
+    // Purge aggressively, i.e. discard cache even for areas that have
+    // non-zero open count.
+    PURGE_AGGRESSIVE,
+  };
+
+  // If |profile_path| is empty, nothing will be saved to disk.
+  static scoped_refptr<DOMStorageContextWrapper> Create(
+      const base::FilePath& profile_path,
       const base::FilePath& local_partition_path,
       storage::SpecialStoragePolicy* special_storage_policy);
+
+  DOMStorageContextWrapper(
+      scoped_refptr<base::SequencedTaskRunner> mojo_task_runner,
+      SessionStorageContextMojo* mojo_session_storage_context,
+      mojo::Remote<storage::mojom::LocalStorageControl> local_storage_control);
+
+  storage::mojom::LocalStorageControl* GetLocalStorageControl();
 
   // DOMStorageContext implementation.
   void GetLocalStorageUsage(GetLocalStorageUsageCallback callback) override;
   void GetSessionStorageUsage(GetSessionStorageUsageCallback callback) override;
-  void DeleteLocalStorage(const GURL& origin,
+  void DeleteLocalStorage(const url::Origin& origin,
                           base::OnceClosure callback) override;
   void PerformLocalStorageCleanup(base::OnceClosure callback) override;
   void DeleteSessionStorage(const SessionStorageUsageInfo& usage_info,
                             base::OnceClosure callback) override;
   void PerformSessionStorageCleanup(base::OnceClosure callback) override;
-  void SetSaveSessionStorageOnDisk() override;
   scoped_refptr<SessionStorageNamespace> RecreateSessionStorage(
       const std::string& namespace_id) override;
   void StartScavengingUnusedSessionStorage() override;
@@ -80,16 +95,14 @@ class CONTENT_EXPORT DOMStorageContextWrapper
 
   void Flush();
 
-  // See mojom::StoragePartitionService interface.
-  void OpenLocalStorage(const url::Origin& origin,
-                        blink::mojom::StorageAreaRequest request);
-  void OpenSessionStorage(int process_id,
-                          const std::string& namespace_id,
-                          mojo::ReportBadMessageCallback bad_message_callback,
-                          blink::mojom::SessionStorageNamespaceRequest request);
-
-  void SetLocalStorageDatabaseForTesting(
-      leveldb::mojom::LevelDBDatabaseAssociatedPtr database);
+  void OpenLocalStorage(
+      const url::Origin& origin,
+      mojo::PendingReceiver<blink::mojom::StorageArea> receiver);
+  void OpenSessionStorage(
+      int process_id,
+      const std::string& namespace_id,
+      mojo::ReportBadMessageCallback bad_message_callback,
+      mojo::PendingReceiver<blink::mojom::SessionStorageNamespace> receiver);
 
   SessionStorageContextMojo* mojo_session_state() {
     return mojo_session_state_;
@@ -102,7 +115,6 @@ class CONTENT_EXPORT DOMStorageContextWrapper
   friend class DOMStorageBrowserTest;
 
   ~DOMStorageContextWrapper() override;
-  DOMStorageContextImpl* context() const { return context_.get(); }
 
   base::SequencedTaskRunner* mojo_task_runner() {
     return mojo_task_runner_.get();
@@ -122,12 +134,11 @@ class CONTENT_EXPORT DOMStorageContextWrapper
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
-  void PurgeMemory(DOMStorageContextImpl::PurgeOption purge_option);
+  void PurgeMemory(PurgeOption purge_option);
 
   // Keep all mojo-ish details together and not bleed them through the public
-  // interface. The |mojo_state_| object is owned by this object, but destroyed
-  // asynchronously on the |mojo_task_runner_|.
-  LocalStorageContextMojo* mojo_state_ = nullptr;
+  // interface. The |mojo_session_state_| object is owned by this object, but
+  // destroyed asynchronously on the |mojo_task_runner_|.
   SessionStorageContextMojo* mojo_session_state_ = nullptr;
   scoped_refptr<base::SequencedTaskRunner> mojo_task_runner_;
 
@@ -145,12 +156,12 @@ class CONTENT_EXPORT DOMStorageContextWrapper
       GUARDED_BY(alive_namespaces_lock_);
   mutable base::Lock alive_namespaces_lock_;
 
-  base::FilePath legacy_localstorage_path_;
-
   // To receive memory pressure signals.
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
-  scoped_refptr<DOMStorageContextImpl> context_;
+  // Connection to the partition's LocalStorageControl interface within the
+  // Storage Service.
+  mojo::Remote<storage::mojom::LocalStorageControl> local_storage_control_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(DOMStorageContextWrapper);
 };

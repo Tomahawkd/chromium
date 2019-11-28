@@ -11,7 +11,7 @@
 
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -47,7 +47,7 @@ char kInterruptReasonCounter[] = {
 #include "components/download/public/common/download_interrupt_reason_values.h"
 #undef INTERRUPT_REASON
 };
-const size_t kInterruptReasonCount = arraysize(kInterruptReasonCounter);
+const size_t kInterruptReasonCount = base::size(kInterruptReasonCounter);
 
 // Default target path for a mock download item in DownloadItemModelTest.
 const base::FilePath::CharType kDefaultTargetFilePath[] =
@@ -178,11 +178,11 @@ TEST_F(DownloadItemModelTest, InterruptedStatus) {
       {download::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN, "Failed - Shutdown"},
       {download::DOWNLOAD_INTERRUPT_REASON_CRASH, "Failed - Crash"},
   };
-  static_assert(kInterruptReasonCount == arraysize(kTestCases),
+  static_assert(kInterruptReasonCount == base::size(kTestCases),
                 "interrupt reason mismatch");
 
   SetupDownloadItemDefaults();
-  for (unsigned i = 0; i < arraysize(kTestCases); ++i) {
+  for (unsigned i = 0; i < base::size(kTestCases); ++i) {
     const TestCase& test_case = kTestCases[i];
     SetupInterruptedDownloadItem(test_case.reason);
     EXPECT_STREQ(test_case.expected_status,
@@ -258,7 +258,7 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
       {download::DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN, "foo.bar\nShutdown"},
       {download::DOWNLOAD_INTERRUPT_REASON_CRASH, "foo.bar\nCrash"},
   };
-  static_assert(kInterruptReasonCount == arraysize(kTestCases),
+  static_assert(kInterruptReasonCount == base::size(kTestCases),
                 "interrupt reason mismatch");
 
   // Large tooltip width. Should be large enough to accommodate the entire
@@ -273,13 +273,13 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
       ui::ResourceBundle::GetSharedInstance().GetFontList(
           ui::ResourceBundle::BaseFont);
   SetupDownloadItemDefaults();
-  for (unsigned i = 0; i < arraysize(kTestCases); ++i) {
+  for (unsigned i = 0; i < base::size(kTestCases); ++i) {
     const TestCase& test_case = kTestCases[i];
     SetupInterruptedDownloadItem(test_case.reason);
 
     // GetTooltipText() elides the tooltip so that the text would fit within a
     // given width. The following test would fail if kLargeTooltipWidth isn't
-    // large enough to accomodate all the strings.
+    // large enough to accommodate all the strings.
     EXPECT_STREQ(
         test_case.expected_tooltip,
         base::UTF16ToUTF8(model().GetTooltipText(font_list,
@@ -291,10 +291,9 @@ TEST_F(DownloadItemModelTest, InterruptTooltip) {
         model().GetTooltipText(font_list, kSmallTooltipWidth);
     for (const base::string16& line :
          base::SplitString(truncated_tooltip, base::ASCIIToUTF16("\n"),
-                           base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY))
-      // Tooltips are always typeset with the native typesetter.
-      EXPECT_GE(kSmallTooltipWidth,
-                gfx::GetStringWidth(line, font_list, gfx::Typesetter::NATIVE));
+                           base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      EXPECT_GE(kSmallTooltipWidth, gfx::GetStringWidth(line, font_list));
+    }
   }
 }
 
@@ -348,7 +347,7 @@ TEST_F(DownloadItemModelTest, InProgressStatus) {
 
   SetupDownloadItemDefaults();
 
-  for (unsigned i = 0; i < arraysize(kTestCases); i++) {
+  for (unsigned i = 0; i < base::size(kTestCases); i++) {
     const TestCase& test_case = kTestCases[i];
     Mock::VerifyAndClearExpectations(&item());
     Mock::VerifyAndClearExpectations(&model());
@@ -466,7 +465,7 @@ TEST_F(DownloadItemModelTest, ShouldRemoveFromShelfWhenComplete) {
 
   SetupDownloadItemDefaults();
 
-  for (unsigned i = 0; i < arraysize(kTestCases); i++) {
+  for (unsigned i = 0; i < base::size(kTestCases); i++) {
     const TestCase& test_case = kTestCases[i];
     EXPECT_CALL(item(), GetOpenWhenComplete())
         .WillRepeatedly(Return(test_case.is_auto_open));

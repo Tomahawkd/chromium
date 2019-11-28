@@ -13,8 +13,6 @@ import android.content.res.Resources;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemClock;
-import android.support.annotation.Nullable;
-import android.support.annotation.StringRes;
 import android.text.TextUtils;
 import android.view.MotionEvent;
 import android.view.View;
@@ -24,9 +22,11 @@ import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ArrayAdapter;
 import android.widget.ListPopupWindow;
 
-import org.chromium.base.VisibleForTesting;
+import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.animation.CompositorAnimator;
 import org.chromium.chrome.browser.compositor.layouts.LayoutRenderHost;
 import org.chromium.chrome.browser.compositor.layouts.LayoutUpdateHost;
@@ -36,6 +36,7 @@ import org.chromium.chrome.browser.compositor.layouts.components.VirtualView;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackScroller;
 import org.chromium.chrome.browser.compositor.overlays.strip.TabLoadTracker.TabLoadTrackerCallback;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabImpl;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
@@ -197,14 +198,10 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
 
         // Create tab menu
         mTabMenu = new ListPopupWindow(mContext);
-        boolean userAlternativeIncognitoStrings = ChromeFeatureList.isInitialized()
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS);
         mTabMenu.setAdapter(new ArrayAdapter<String>(mContext, R.layout.list_menu_item,
-                new String[] {mContext.getString(!mIncognito
-                                ? R.string.menu_close_all_tabs
-                                : (userAlternativeIncognitoStrings
-                                                  ? R.string.menu_close_all_private_tabs
-                                                  : R.string.menu_close_all_incognito_tabs))}));
+                new String[] {
+                        mContext.getString(!mIncognito ? R.string.menu_close_all_tabs
+                                                       : R.string.menu_close_all_incognito_tabs)}));
         mTabMenu.setOnItemClickListener(new OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
@@ -420,7 +417,7 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
      * @param title     The new title.
      */
     public void tabTitleChanged(int tabId, String title) {
-        Tab tab = TabModelUtils.getTabById(mModel, tabId);
+        TabImpl tab = (TabImpl) TabModelUtils.getTabById(mModel, tabId);
         if (tab != null) setAccessibilityDescription(findTabById(tabId), title, tab.isHidden());
     }
 
@@ -1745,7 +1742,9 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
     }
 
     private void setAccessibilityDescription(StripLayoutTab stripTab, Tab tab) {
-        if (tab != null) setAccessibilityDescription(stripTab, tab.getTitle(), tab.isHidden());
+        if (tab != null) {
+            setAccessibilityDescription(stripTab, tab.getTitle(), ((TabImpl) tab).isHidden());
+        }
     }
 
     /**
@@ -1770,14 +1769,8 @@ public class StripLayoutHelper implements StripLayoutTab.StripLayoutTabDelegate 
 
         @StringRes int resId;
         if (mIncognito) {
-            if (ChromeFeatureList.isInitialized()
-                    && ChromeFeatureList.isEnabled(ChromeFeatureList.INCOGNITO_STRINGS)) {
-                resId = isHidden ? R.string.accessibility_tabstrip_private_identifier
-                                 : R.string.accessibility_tabstrip_private_identifier_selected;
-            } else {
-                resId = isHidden ? R.string.accessibility_tabstrip_incognito_identifier
-                                 : R.string.accessibility_tabstrip_incognito_identifier_selected;
-            }
+            resId = isHidden ? R.string.accessibility_tabstrip_incognito_identifier
+                             : R.string.accessibility_tabstrip_incognito_identifier_selected;
         } else {
             resId = isHidden
                         ? R.string.accessibility_tabstrip_identifier

@@ -5,7 +5,7 @@
 module content.mojom;
 
 import "services/content/public/mojom/navigable_contents.mojom";
-import "ui/gfx/geometry/mojo/geometry.mojom";
+import "ui/gfx/geometry/mojom/geometry.mojom";
 
 // Parameters used to configure a newly created NavigableContents.
 struct NavigableContentsParams {
@@ -30,17 +30,23 @@ struct NavigableContentsParams {
   // |DidSuppressNavigation()| message being sent to the corresponding
   // NavigableContentsClient.
   bool suppress_navigations = false;
+
+  // Background color of the content. Effective when |override_background_color|
+  // is true.
+  // TODO(https://crbug.com/657632): Numeric types are not nullable.
+  bool override_background_color = false;
+  uint32 background_color = 0xFFFFFFFF;  // Opaque white.
 };
 
 // NavigableContentsFactory is the primary interface through which a new
 // NavigableContents interface is bound to a new concrete navigable contents
 // within the Content Service.
 interface NavigableContentsFactory {
-  // Creates a new NavigableContents configured according to |params|. |request|
-  // is bound to the contents implementation, and |client| is used to push
-  // notifications of events relevant to the state of that context throughout
-  // its lifetime.
+  // Creates a new NavigableContents configured according to |params|.
+  // |receiver| is bound to a NavigableContents implementation, and |client| is
+  // used to push event notifications relevant to the state of that
+  // implementation throughout its lifetime.
   CreateContents(NavigableContentsParams params,
-                 NavigableContents& request,
-                 NavigableContentsClient client);
+                 pending_receiver<NavigableContents> receiver,
+                 pending_remote<NavigableContentsClient> client);
 };

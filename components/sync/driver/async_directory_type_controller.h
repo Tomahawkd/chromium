@@ -29,6 +29,7 @@ class AsyncDirectoryTypeController : public DirectoryDataTypeController {
   AsyncDirectoryTypeController(
       ModelType type,
       const base::Closure& dump_stack,
+      SyncService* sync_service,
       SyncClient* sync_client,
       ModelSafeGroup model_safe_group,
       scoped_refptr<base::SequencedTaskRunner> model_thread);
@@ -95,10 +96,6 @@ class AsyncDirectoryTypeController : public DirectoryDataTypeController {
   std::unique_ptr<DataTypeErrorHandler> CreateErrorHandler() override;
 
  private:
-  // Posted on the backend thread by StartAssociationAsync().
-  void StartAssociationWithSharedChangeProcessor(
-      const scoped_refptr<SharedChangeProcessor>& shared_change_processor);
-
   // Calls Disconnect() on |shared_change_processor_|, then sets it to
   // null.  Must be called only by StartDoneImpl() or Stop() (on the
   // UI thread) and only after a call to Start() (i.e.,
@@ -112,6 +109,8 @@ class AsyncDirectoryTypeController : public DirectoryDataTypeController {
   // an unrecoverable error.
   // Note: this is performed on the UI thread.
   void DisableImpl(const SyncError& error);
+
+  SyncClient* const sync_client_;
 
   // UserShare is stored in StartAssociating while on UI thread and
   // passed to SharedChangeProcessor::Connect on the model thread.
@@ -135,9 +134,7 @@ class AsyncDirectoryTypeController : public DirectoryDataTypeController {
   // The shared change processor is the thread-safe interface to the
   // datatype.  We hold a reference to it from the UI thread so that
   // we can call Disconnect() on it from Stop()/StartDoneImpl().  Most
-  // of the work is done on the backend thread, and in
-  // StartAssociationWithSharedChangeProcessor() for this class in
-  // particular.
+  // of the work is done on the backend thread.
   //
   // Lifetime: The SharedChangeProcessor object is created on the UI
   // thread and passed on to the backend thread.  This reference is

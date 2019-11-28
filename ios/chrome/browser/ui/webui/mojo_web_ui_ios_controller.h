@@ -5,7 +5,8 @@
 #ifndef IOS_CHROME_BROWSER_UI_WEBUI_MOJO_WEB_UI_IOS_CONTROLLER_H_
 #define IOS_CHROME_BROWSER_UI_WEBUI_MOJO_WEB_UI_IOS_CONTROLLER_H_
 
-#import "ios/web/public/web_state/web_state.h"
+#include "base/bind.h"
+#import "ios/web/public/web_state.h"
 #include "ios/web/public/webui/web_ui_ios.h"
 #include "ios/web/public/webui/web_ui_ios_controller.h"
 

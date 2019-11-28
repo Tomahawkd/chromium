@@ -13,7 +13,8 @@ PromoData& PromoData::operator=(const PromoData&) = default;
 PromoData& PromoData::operator=(PromoData&&) = default;
 
 bool operator==(const PromoData& lhs, const PromoData& rhs) {
-  return lhs.promo_html == rhs.promo_html;
+  return lhs.promo_html == rhs.promo_html &&
+         lhs.promo_log_url == rhs.promo_log_url && lhs.promo_id == rhs.promo_id;
 }
 
 bool operator!=(const PromoData& lhs, const PromoData& rhs) {

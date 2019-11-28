@@ -18,13 +18,13 @@
 #include "components/translate/core/common/translate_util.h"
 #import "components/translate/ios/browser/js_translate_manager.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/web_state/navigation_context.h"
-#include "ios/web/public/web_state/web_state.h"
+#include "ios/web/public/js_messaging/web_frame.h"
+#include "ios/web/public/navigation/navigation_context.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
-#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -48,9 +48,15 @@ TranslateController::TranslateController(web::WebState* web_state,
   DCHECK(js_manager_);
   DCHECK(web_state_);
   web_state_->AddObserver(this);
-  web_state_->AddScriptCommandCallback(
-      base::Bind(&TranslateController::OnJavascriptCommandReceived,
-                 base::Unretained(this)),
+  subscription_ = web_state_->AddScriptCommandCallback(
+      base::Bind(
+          [](TranslateController* ptr, const base::DictionaryValue& command,
+             const GURL& page_url, bool user_is_interacting,
+             web::WebFrame* sender_frame) {
+            ptr->OnJavascriptCommandReceived(command, page_url,
+                                             user_is_interacting, sender_frame);
+          },
+          base::Unretained(this)),
       kCommandPrefix);
 }
 
@@ -83,11 +89,10 @@ void TranslateController::SetJsTranslateManagerForTesting(
 
 bool TranslateController::OnJavascriptCommandReceived(
     const base::DictionaryValue& command,
-    const GURL& url,
-    bool interacting,
-    bool is_main_frame,
+    const GURL& page_url,
+    bool user_is_interacting,
     web::WebFrame* sender_frame) {
-  if (!is_main_frame) {
+  if (!sender_frame->IsMainFrame()) {
     // Translate is only supported on main frame.
     return false;
   }
@@ -221,8 +226,7 @@ bool TranslateController::OnTranslateSendRequest(
   auto request = std::make_unique<network::ResourceRequest>();
   request->method = method;
   request->url = GURL(url);
-  request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   auto fetcher = network::SimpleURLLoader::Create(std::move(request),
                                                   NO_TRAFFIC_ANNOTATION_YET);
   fetcher->AttachStringForUpload(body, "application/x-www-form-urlencoded");
@@ -251,10 +255,16 @@ void TranslateController::OnRequestFetchComplete(
     std::unique_ptr<std::string> response_body) {
   const std::unique_ptr<network::SimpleURLLoader>& url_loader = *it;
 
-  std::string response_url = url_loader->GetFinalURL().spec();
-  net::HttpResponseHeaders* headers = url_loader->ResponseInfo()->headers.get();
-  int response_code = headers->response_code();
-  const std::string& status_text = headers->GetStatusText();
+  // |ResponseInfo()| may be a nullptr if response is incomplete.
+  int response_code = 0;
+  std::string status_text;
+  const network::mojom::URLResponseHead* response_head =
+      url_loader->ResponseInfo();
+  if (response_head && response_head->headers) {
+    net::HttpResponseHeaders* headers = response_head->headers.get();
+    response_code = headers->response_code();
+    status_text = headers->GetStatusText();
+  }
 
   // Escape the returned string so it can be parsed by JSON.parse.
   std::string response_text = response_body ? *response_body : "";
@@ -266,7 +276,7 @@ void TranslateController::OnRequestFetchComplete(
   std::string script = base::StringPrintf(
       "__gCrWeb.translate.handleResponse('%s', %d, %d, '%s', '%s', '%s')",
       url.c_str(), request_id, response_code, status_text.c_str(),
-      response_url.c_str(), escaped_response_text.c_str());
+      url_loader->GetFinalURL().spec().c_str(), escaped_response_text.c_str());
   web_state_->ExecuteJavaScript(base::UTF8ToUTF16(script));
 
   request_fetchers_.erase(it);
@@ -276,7 +286,6 @@ void TranslateController::OnRequestFetchComplete(
 
 void TranslateController::WebStateDestroyed(web::WebState* web_state) {
   DCHECK_EQ(web_state_, web_state);
-  web_state_->RemoveScriptCommandCallback(kCommandPrefix);
   web_state_->RemoveObserver(this);
   web_state_ = nullptr;
 

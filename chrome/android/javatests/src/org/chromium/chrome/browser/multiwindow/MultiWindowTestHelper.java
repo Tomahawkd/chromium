@@ -11,22 +11,22 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
-import android.support.annotation.Nullable;
+
+import androidx.annotation.Nullable;
 
 import org.junit.Assert;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.ChromeTabbedActivity2;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
-import java.lang.ref.WeakReference;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
@@ -78,7 +78,7 @@ public class MultiWindowTestHelper {
         }
 
         MultiWindowUtils.setOpenInOtherWindowIntentExtras(intent, activity, secondActivityClass);
-        MultiWindowUtils.onMultiInstanceModeStarted();
+        MultiInstanceManager.onMultiInstanceModeStarted();
         activity.startActivity(intent);
 
         // Wait for ChromeTabbedActivity2 to be created.
@@ -101,9 +101,7 @@ public class MultiWindowTestHelper {
                 "Couldn't find instance of ChromeTabbedActivity2") {
             @Override
             public boolean isSatisfied() {
-                for (WeakReference<Activity> reference : ApplicationStatus.getRunningActivities()) {
-                    Activity runningActivity = reference.get();
-                    if (runningActivity == null) continue;
+                for (Activity runningActivity : ApplicationStatus.getRunningActivities()) {
                     if (runningActivity.getClass().equals(ChromeTabbedActivity2.class)) {
                         returnActivity.set((ChromeTabbedActivity2) runningActivity);
                         return true;
@@ -119,7 +117,7 @@ public class MultiWindowTestHelper {
     private static void waitUntilActivityResumed(final Activity activity) {
         CriteriaHelper.pollUiThread(Criteria.equals(ActivityState.RESUMED, new Callable<Integer>() {
             @Override
-            public Integer call() throws Exception {
+            public Integer call() {
                 return ApplicationStatus.getStateForActivity(activity);
             }
         }));
@@ -130,17 +128,14 @@ public class MultiWindowTestHelper {
      */
     @TargetApi(Build.VERSION_CODES.N)
     public static void moveActivityToFront(final Activity activity) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Context context = ContextUtils.getApplicationContext();
-                ActivityManager activityManager =
-                        (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-                for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
-                    if (activity.getTaskId() == task.getTaskInfo().id) {
-                        task.moveToFront();
-                        break;
-                    }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Context context = ContextUtils.getApplicationContext();
+            ActivityManager activityManager =
+                    (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
+                if (activity.getTaskId() == task.getTaskInfo().id) {
+                    task.moveToFront();
+                    break;
                 }
             }
         });

@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/resources/keyboard_resource_util.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
@@ -19,20 +23,17 @@
 #include "extensions/common/value_builder.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/dummy_text_input_client.h"
+#include "ui/base/ime/init/input_method_factory.h"
 #include "ui/base/ime/input_method.h"
-#include "ui/base/ime/input_method_factory.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/public/keyboard_switches.h"
-#include "ui/keyboard/resources/keyboard_resource_util.h"
 
 namespace {
 
 const int kKeyboardHeightForTest = 100;
 
+// TODO(shend): Remove this since all calls are synchronous now.
 class KeyboardVisibleWaiter : public ChromeKeyboardControllerClient::Observer {
  public:
   explicit KeyboardVisibleWaiter(bool visible) : visible_(visible) {
@@ -42,7 +43,13 @@ class KeyboardVisibleWaiter : public ChromeKeyboardControllerClient::Observer {
     ChromeKeyboardControllerClient::Get()->RemoveObserver(this);
   }
 
-  void Wait() { run_loop_.Run(); }
+  void Wait() {
+    if (ChromeKeyboardControllerClient::Get()->is_keyboard_visible() ==
+        visible_) {
+      return;
+    }
+    run_loop_.Run();
+  }
 
   // ChromeKeyboardControllerClient::Observer
   void OnKeyboardVisibilityChanged(bool visible) override {
@@ -81,6 +88,29 @@ class KeyboardLoadedWaiter : public ChromeKeyboardControllerClient::Observer {
   DISALLOW_COPY_AND_ASSIGN(KeyboardLoadedWaiter);
 };
 
+class KeyboardOccludedBoundsChangeWaiter
+    : public ChromeKeyboardControllerClient::Observer {
+ public:
+  KeyboardOccludedBoundsChangeWaiter() {
+    ChromeKeyboardControllerClient::Get()->AddObserver(this);
+  }
+  ~KeyboardOccludedBoundsChangeWaiter() override {
+    ChromeKeyboardControllerClient::Get()->RemoveObserver(this);
+  }
+
+  void Wait() { run_loop_.Run(); }
+
+  // ChromeKeyboardControllerClient::Observer
+  void OnKeyboardOccludedBoundsChanged(const gfx::Rect& bounds) override {
+    run_loop_.QuitWhenIdle();
+  }
+
+ private:
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(KeyboardOccludedBoundsChangeWaiter);
+};
+
 ui::InputMethod* GetInputMethod() {
   aura::Window* root_window = ChromeKeyboardControllerClient::Get()
                                   ->GetKeyboardWindow()
@@ -96,7 +126,6 @@ class KeyboardControllerWebContentTest : public InProcessBrowserTest {
   ~KeyboardControllerWebContentTest() override {}
 
   void SetUp() override {
-    ui::SetUpInputMethodFactoryForTesting();
     InProcessBrowserTest::SetUp();
   }
 
@@ -109,7 +138,8 @@ class KeyboardControllerWebContentTest : public InProcessBrowserTest {
 
  protected:
   void FocusEditableNodeAndShowKeyboard(const gfx::Rect& init_bounds) {
-    client.reset(new ui::DummyTextInputClient(ui::TEXT_INPUT_TYPE_TEXT));
+    client =
+        std::make_unique<ui::DummyTextInputClient>(ui::TEXT_INPUT_TYPE_TEXT);
     ui::InputMethod* input_method = GetInputMethod();
     ASSERT_TRUE(input_method);
     input_method->SetFocusedTextInputClient(client.get());
@@ -121,16 +151,16 @@ class KeyboardControllerWebContentTest : public InProcessBrowserTest {
   }
 
   void FocusNonEditableNode() {
-    client.reset(new ui::DummyTextInputClient(ui::TEXT_INPUT_TYPE_NONE));
+    client =
+        std::make_unique<ui::DummyTextInputClient>(ui::TEXT_INPUT_TYPE_NONE);
     GetInputMethod()->SetFocusedTextInputClient(client.get());
   }
 
   void MockEnableIMEInDifferentExtension(const std::string& url,
                                          const gfx::Rect& init_bounds) {
     DCHECK(!url.empty());
-    ChromeKeyboardControllerClient::Get()->set_virtual_keyboard_url_for_test(
-        GURL(url));
     auto* keyboard_controller = ChromeKeyboardControllerClient::Get();
+    keyboard_controller->set_virtual_keyboard_url_for_test(GURL(url));
     keyboard_controller->ReloadKeyboardIfNeeded();
     // Mock window.resizeTo that is expected to be called after navigate to a
     // new virtual keyboard.
@@ -139,6 +169,7 @@ class KeyboardControllerWebContentTest : public InProcessBrowserTest {
 
  private:
   std::unique_ptr<ui::DummyTextInputClient> client;
+  ui::ScopedTestInputMethodFactory scoped_test_input_method_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(KeyboardControllerWebContentTest);
 };
@@ -165,8 +196,7 @@ IN_PROC_BROWSER_TEST_F(KeyboardControllerWebContentTest,
   KeyboardVisibleWaiter(true).Wait();
 
   // Simulate hide keyboard by pressing hide key on the virtual keyboard.
-  ChromeKeyboardControllerClient::Get()->HideKeyboard(
-      ash::mojom::HideReason::kUser);
+  ChromeKeyboardControllerClient::Get()->HideKeyboard(ash::HideReason::kUser);
   KeyboardVisibleWaiter(false).Wait();
 
   MockEnableIMEInDifferentExtension("chrome-extension://domain-2", test_bounds);
@@ -175,32 +205,32 @@ IN_PROC_BROWSER_TEST_F(KeyboardControllerWebContentTest,
   EXPECT_FALSE(ChromeKeyboardControllerClient::Get()->is_keyboard_visible());
 }
 
+// This test requires using the Ash keyboard window for EventGenerator to work.
+// TODO(stevenjb/shend): Investigate/fix.
 IN_PROC_BROWSER_TEST_F(KeyboardControllerWebContentTest,
                        CanDragFloatingKeyboardWithMouse) {
   ChromeKeyboardControllerClient::Get()->SetContainerType(
-      keyboard::mojom::ContainerType::kFloating, base::nullopt,
-      base::DoNothing());
+      keyboard::ContainerType::kFloating, base::nullopt, base::DoNothing());
 
-  auto* controller = ChromeKeyboardControllerClient::Get();
-  controller->ShowKeyboard();
+  auto* controller = keyboard::KeyboardUIController::Get();
+  controller->ShowKeyboard(false);
   KeyboardVisibleWaiter(true).Wait();
 
-  aura::Window* contents_window = controller->GetKeyboardWindow();
-  contents_window->SetBounds(gfx::Rect(0, 0, 100, 100));
-  EXPECT_EQ(gfx::Point(0, 0), contents_window->bounds().origin());
+  aura::Window* keyboard_window = controller->GetKeyboardWindow();
+  keyboard_window->SetBounds(gfx::Rect(0, 0, 100, 100));
+  EXPECT_EQ(gfx::Point(0, 0), keyboard_window->bounds().origin());
 
-  controller->SetDraggableArea(contents_window->bounds());
-  controller->FlushForTesting();
+  controller->SetDraggableArea(keyboard_window->bounds());
 
   // Drag the top left corner of the keyboard to move it.
-  ui::test::EventGenerator event_generator(contents_window->GetRootWindow());
+  ui::test::EventGenerator event_generator(keyboard_window->GetRootWindow());
   event_generator.MoveMouseTo(gfx::Point(0, 0));
   event_generator.PressLeftButton();
   event_generator.MoveMouseTo(gfx::Point(50, 50));
   event_generator.ReleaseLeftButton();
   event_generator.MoveMouseTo(gfx::Point(100, 100));
 
-  EXPECT_EQ(gfx::Point(50, 50), contents_window->bounds().origin());
+  EXPECT_EQ(gfx::Point(50, 50), keyboard_window->bounds().origin());
 }
 
 class KeyboardControllerAppWindowTest
@@ -274,9 +304,14 @@ IN_PROC_BROWSER_TEST_F(KeyboardControllerAppWindowTest,
   ASSERT_GT(keyboard_height, 0);
   gfx::Rect test_bounds = controller->GetKeyboardWindow()->bounds();
   test_bounds.set_height(keyboard_height);
-  controller->GetKeyboardWindow()->SetBounds(test_bounds);
-  // Allow actions triggered by window bounds observers to complete.
-  base::RunLoop().RunUntilIdle();
+  {
+    // Waiter needs to be created before SetBounds() is invoked so that it can
+    // catch OnOccludedBoundsChanged event even before it starts waiting.
+    KeyboardOccludedBoundsChangeWaiter waiter;
+    controller->GetKeyboardWindow()->SetBounds(test_bounds);
+    // Wait for the keyboard bounds change has been processed.
+    waiter.Wait();
+  }
 
   // Non ime window should have smaller visible view port due to overlap with
   // virtual keyboard.
@@ -330,7 +365,7 @@ IN_PROC_BROWSER_TEST_F(KeyboardControllerStateTest, OpenAndCloseAndOpen) {
   controller->ShowKeyboard();
   KeyboardVisibleWaiter(true).Wait();
 
-  controller->HideKeyboard(ash::mojom::HideReason::kSystem);
+  controller->HideKeyboard(ash::HideReason::kSystem);
   KeyboardVisibleWaiter(false).Wait();
 
   controller->ShowKeyboard();
@@ -342,70 +377,35 @@ IN_PROC_BROWSER_TEST_F(KeyboardControllerStateTest, OpenAndCloseAndOpen) {
 // whether this needs to be tested in a keyboard::KeyboardController unit test.
 
 IN_PROC_BROWSER_TEST_F(KeyboardControllerStateTest, StateResolvesAfterPreload) {
-  if (::features::IsMultiProcessMash())
-    return;
-
-  auto* controller = keyboard::KeyboardController::Get();
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::LOADING_EXTENSION);
+  auto* controller = keyboard::KeyboardUIController::Get();
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kLoading);
   KeyboardLoadedWaiter().Wait();
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::HIDDEN);
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kHidden);
 }
 
 IN_PROC_BROWSER_TEST_F(KeyboardControllerStateTest,
                        OpenAndCloseAndOpenInternal) {
-  if (::features::IsMultiProcessMash())
-    return;
-
-  auto* controller = keyboard::KeyboardController::Get();
+  auto* controller = keyboard::KeyboardUIController::Get();
   controller->ShowKeyboard(false);
   // Need to wait the extension to be loaded. Hence LOADING_EXTENSION.
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::LOADING_EXTENSION);
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kLoading);
   KeyboardVisibleWaiter(true).Wait();
 
   controller->HideKeyboardExplicitlyBySystem();
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::HIDDEN);
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kHidden);
 
   controller->ShowKeyboard(false);
   // The extension already has been loaded. Hence SHOWING.
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::SHOWN);
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kShown);
 }
 
 // See crbug.com/755354.
 IN_PROC_BROWSER_TEST_F(KeyboardControllerStateTest,
                        DisablingKeyboardGoesToInitialState) {
-  auto* controller = keyboard::KeyboardController::Get();
+  auto* controller = keyboard::KeyboardUIController::Get();
 
-  controller->LoadKeyboardWindowInBackground();
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::LOADING_EXTENSION);
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kLoading);
 
-  controller->DisableKeyboard();
-  EXPECT_EQ(controller->GetStateForTest(),
-            keyboard::KeyboardControllerState::INITIAL);
-}
-
-// A test for crbug.com/734534. Only for classic Ash.
-IN_PROC_BROWSER_TEST_F(KeyboardControllerWebContentTest,
-                       DoesNotCrashWhenParentDoesNotExist) {
-  if (::features::IsUsingWindowService())
-    return;
-  auto* controller = keyboard::KeyboardController::Get();
-
-  controller->LoadKeyboardWindowInBackground();
-
-  aura::Window* view = controller->GetKeyboardWindow();
-  EXPECT_TRUE(view);
-
-  // Remove the keyboard window parent.
-  EXPECT_TRUE(view->parent());
-  controller->DeactivateKeyboard();
-  EXPECT_FALSE(view->parent());
-
-  // Change window size to trigger OnWindowBoundsChanged.
-  view->SetBounds(gfx::Rect(0, 0, 1200, 800));
+  controller->Shutdown();
+  EXPECT_EQ(controller->GetStateForTest(), keyboard::KeyboardUIState::kInitial);
 }

@@ -11,6 +11,8 @@ import static org.mockito.Mockito.verify;
 
 import static org.chromium.chrome.browser.fullscreen.BrowserStateBrowserControlsVisibilityDelegate.MINIMUM_SHOW_DURATION_MS;
 
+import android.os.SystemClock;
+
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -18,7 +20,6 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
-import org.robolectric.shadows.ShadowSystemClock;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
@@ -37,11 +38,11 @@ public class BrowserStateBrowserControlsVisibilityDelegateTest {
     public void beforeTest() {
         MockitoAnnotations.initMocks(this);
 
-        mDelegate = new BrowserStateBrowserControlsVisibilityDelegate(mCallback);
+        mDelegate = new BrowserStateBrowserControlsVisibilityDelegate(mCallback, () -> true);
     }
 
     private void advanceTime(long amount) {
-        ShadowSystemClock.setCurrentTimeMillis(ShadowSystemClock.elapsedRealtime() + amount);
+        SystemClock.setCurrentTimeMillis(SystemClock.elapsedRealtime() + amount);
     }
 
     @Test

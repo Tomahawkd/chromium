@@ -2,6 +2,7 @@
   "use strict";
 
   let gAsyncTest;
+  let gPostAssertsFunc;
 
   // TODO: Use WebDriver's API instead of eventSender.
   //       Hopefully something like:
@@ -58,8 +59,13 @@
     return elem;
   }
 
+  let step = 0;
+  let failureTimer = 0;
   function stepAndAssertMoves(expectedMoves) {
+    step++;
     if (expectedMoves.length == 0) {
+      if (gPostAssertsFunc)
+        gAsyncTest.step(gPostAssertsFunc);
       gAsyncTest.done();
       return;
     }
@@ -70,8 +76,10 @@
     let wanted = findElement(expectedId);
     let receivingDoc = wanted.ownerDocument;
     let verifyAndAdvance = gAsyncTest.step_func(function() {
-      let focused = focusedDocument().activeElement;
-      assert_equals(focused, wanted);
+      clearTimeout(failureTimer);
+      let focused = window.internals.interestedElement;
+      assert_equals(focused, wanted,
+                    'step ' + step + ': expected focus ' + expectedId + ', actual focus ' + focused.id);
       // Kick off another async test step.
       stepAndAssertMoves(expectedMoves);
     });
@@ -82,22 +90,39 @@
     // the succeeding keyup-event, it's safe to assert activeElement.
     // The keyup-event targets the, perhaps newly, focused document.
     receivingDoc.addEventListener('keyup', verifyAndAdvance, {once: true});
+    // Start a timer to catch the failure of missing keyup event.
+    failureTimer = setTimeout(gAsyncTest.step_func(function() {
+      assert_unreached('step ' + step + ': timeout when waiting for focus on ' + expectedId +
+                       ', actual focus on ' + window.internals.interestedElement.id);
+      gAsyncTest.done();
+    }), 1000);
     triggerMove(direction);
   }
 
   // TODO: Port all old spatial navigation layout tests to this method.
   window.snav = {
-    assertSnavEnabledAndTestable: function() {
+    assertSnavEnabledAndTestable: function(focuslessSpatNav) {
       test(() => {
         assert_true(!!window.testRunner);
-        testRunner.overridePreference("WebKitTabToLinksPreferenceKey", 1);
-        testRunner.overridePreference('WebKitSpatialNavigationEnabled', 1);
+        window.snav.enableSnav(focuslessSpatNav);
       }, 'window.testRunner is present.');
     },
 
-    assertFocusMoves: function(expectedMoves, enableSpatnav=true) {
+    enableSnav: function(focuslessSpatNav) {
+      if (focuslessSpatNav)
+        internals.runtimeFlags.focuslessSpatialNavigationEnabled = true;
+
+      testRunner.overridePreference("WebKitTabToLinksPreferenceKey", 1);
+      testRunner.overridePreference('WebKitSpatialNavigationEnabled', 1);
+    },
+
+    triggerMove: triggerMove,
+
+    assertFocusMoves: function(expectedMoves, enableSpatnav=true, postAssertsFunc=null, focuslessSpatNav=false) {
       if (enableSpatnav)
-        snav.assertSnavEnabledAndTestable();
+        snav.assertSnavEnabledAndTestable(focuslessSpatNav);
+      if (postAssertsFunc)
+        gPostAssertsFunc = postAssertsFunc;
       gAsyncTest = async_test("Focus movements:\n" +
           JSON.stringify(expectedMoves).replace(/],/g, ']\n') + '\n');
 
@@ -105,6 +130,12 @@
       window.addEventListener('load', gAsyncTest.step_func(() => {
         stepAndAssertMoves(expectedMoves);
       }));
+    },
+
+    rAF: function() {
+      return new Promise((resolve) => {
+        window.requestAnimationFrame(resolve);
+      });
     }
   }
 })();

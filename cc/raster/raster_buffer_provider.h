@@ -50,7 +50,8 @@ class CC_EXPORT RasterBufferProvider {
   virtual std::unique_ptr<RasterBuffer> AcquireBufferForRaster(
       const ResourcePool::InUsePoolResource& resource,
       uint64_t resource_content_id,
-      uint64_t previous_content_id) = 0;
+      uint64_t previous_content_id,
+      bool depends_on_at_raster_decodes) = 0;
 
   // Flush pending work from writing the content of the RasterBuffer, so that
   // queries to tell if the backing is ready to draw from will get the right
@@ -60,9 +61,6 @@ class CC_EXPORT RasterBufferProvider {
 
   // Returns the format to use for the tiles.
   virtual viz::ResourceFormat GetResourceFormat() const = 0;
-
-  // Determine if the resource requires swizzling.
-  virtual bool IsResourceSwizzleRequired() const = 0;
 
   // Determines if the resource is premultiplied.
   virtual bool IsResourcePremultiplied() const = 0;
@@ -83,7 +81,7 @@ class CC_EXPORT RasterBufferProvider {
   // have a pending callback, 0 should be passed for |pending_callback_id|.
   virtual uint64_t SetReadyToDrawCallback(
       const std::vector<const ResourcePool::InUsePoolResource*>& resources,
-      const base::Callback<void()>& callback,
+      base::OnceClosure callback,
       uint64_t pending_callback_id) const = 0;
 
   // Shutdown for doing cleanup.

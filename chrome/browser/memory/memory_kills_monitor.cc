@@ -116,9 +116,11 @@ void MemoryKillsMonitor::TryMatchOomKillLine(const std::string& line) {
   // 3,1362,97646497541,-;Out of memory: Kill process 29582 (android.vending)
   // score 961 or sacrifice child.
   int oom_badness;
-  if (RE2::PartialMatch(line,
-                        "Out of memory: Kill process .* score (\\d+)",
-                        &oom_badness)) {
+
+  // Precompile the regex object since the pattern is constant.
+  static const LazyRE2 kOomKillPattern = {
+      R"(Out of memory: Kill process .* score (\d+))"};
+  if (RE2::PartialMatch(line, *kOomKillPattern, &oom_badness)) {
     int64_t time_stamp = GetTimestamp(line);
     g_memory_kills_monitor_instance.Get().LogOOMKill(time_stamp, oom_badness);
   }
@@ -184,7 +186,7 @@ void MemoryKillsMonitor::StartMonitoring() {
   non_joinable_options.joinable = false;
   non_joinable_worker_thread_ = std::make_unique<base::DelegateSimpleThread>(
       this, "memory_kills_monitor", non_joinable_options);
-  non_joinable_worker_thread_->Start();
+  non_joinable_worker_thread_->StartAsync();
   monitoring_started_.Set();
 }
 

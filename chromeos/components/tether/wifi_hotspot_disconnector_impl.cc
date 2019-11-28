@@ -5,7 +5,7 @@
 #include "chromeos/components/tether/wifi_hotspot_disconnector_impl.h"
 
 #include "base/bind.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/network_configuration_remover.h"
 #include "chromeos/components/tether/pref_names.h"
 #include "chromeos/network/network_connection_handler.h"
@@ -32,8 +32,7 @@ WifiHotspotDisconnectorImpl::WifiHotspotDisconnectorImpl(
     : network_connection_handler_(network_connection_handler),
       network_state_handler_(network_state_handler),
       pref_service_(pref_service),
-      network_configuration_remover_(network_configuration_remover),
-      weak_ptr_factory_(this) {
+      network_configuration_remover_(network_configuration_remover) {
   std::string disconnecting_wifi_path_from_previous_session =
       pref_service_->GetString(prefs::kDisconnectingWifiNetworkPath);
   if (disconnecting_wifi_path_from_previous_session.empty())

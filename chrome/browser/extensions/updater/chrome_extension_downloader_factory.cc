@@ -8,17 +8,18 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/extensions/updater/extension_updater_switches.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
+#include "components/crx_file/crx_verifier.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/service_manager_connection.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/updater/extension_downloader.h"
+#include "extensions/common/verifier_formats.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 using extensions::ExtensionDownloader;
@@ -29,16 +30,17 @@ std::unique_ptr<ExtensionDownloader>
 ChromeExtensionDownloaderFactory::CreateForURLLoaderFactory(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     ExtensionDownloaderDelegate* delegate,
-    service_manager::Connector* connector,
+    crx_file::VerifierFormat required_verifier_format,
     const base::FilePath& profile_path) {
-  std::unique_ptr<ExtensionDownloader> downloader(new ExtensionDownloader(
-      delegate, std::move(url_loader_factory), connector, profile_path));
-#if defined(GOOGLE_CHROME_BUILD)
+  std::unique_ptr<ExtensionDownloader> downloader(
+      new ExtensionDownloader(delegate, std::move(url_loader_factory),
+                              required_verifier_format, profile_path));
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   std::string brand;
   google_brand::GetBrand(&brand);
-  if (!brand.empty() && !google_brand::IsOrganic(brand))
+  if (!google_brand::IsOrganic(brand))
     downloader->set_brand_code(brand);
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
   std::string manifest_query_params =
       UpdateQueryParams::Get(UpdateQueryParams::CRX);
   base::CommandLine* command_line =
@@ -55,28 +57,22 @@ std::unique_ptr<ExtensionDownloader>
 ChromeExtensionDownloaderFactory::CreateForProfile(
     Profile* profile,
     ExtensionDownloaderDelegate* delegate) {
-  service_manager::Connector* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
   std::unique_ptr<ExtensionDownloader> downloader = CreateForURLLoaderFactory(
       content::BrowserContext::GetDefaultStoragePartition(profile)
           ->GetURLLoaderFactoryForBrowserProcess(),
-      delegate, connector, profile->GetPath());
+      delegate, extensions::GetPolicyVerifierFormat(), profile->GetPath());
 
   // NOTE: It is not obvious why it is OK to pass raw pointers to the token
-  // service and signin manager here. The logic is as follows:
+  // service and identity manager here. The logic is as follows:
   // ExtensionDownloader is owned by ExtensionUpdater.
   // ExtensionUpdater is owned by ExtensionService.
   // ExtensionService is owned by ExtensionSystemImpl::Shared.
   // ExtensionSystemImpl::Shared is a KeyedService. Its factory
-  // (ExtensionSystemSharedFactory) specifies that it depends on SigninManager
-  // and ProfileOAuth2TokenService.
-  // Hence, the SigninManager and ProfileOAuth2TokenService instances are
-  // guaranteed to outlive |downloader|.
+  // (ExtensionSystemSharedFactory) specifies that it depends on
+  // IdentityManager. Hence, the IdentityManager instance is guaranteed to
+  // outlive |downloader|.
   // TODO(843519): Make this lifetime relationship more explicit/cleaner.
-  downloader->SetWebstoreAuthenticationCapabilities(
-      base::BindRepeating(
-          &SigninManagerBase::GetAuthenticatedAccountId,
-          base::Unretained(SigninManagerFactory::GetForProfile(profile))),
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile));
+  downloader->SetIdentityManager(
+      IdentityManagerFactory::GetForProfile(profile));
   return downloader;
 }

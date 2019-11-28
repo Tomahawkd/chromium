@@ -28,7 +28,6 @@
 [
     Constructor(sequence<BlobPart> fileBits, USVString fileName, optional FilePropertyBag options),
     ConstructorCallWith=ExecutionContext,
-    RaisesException=Constructor,
     Exposed=(Window,Worker),
     Serializable
 ] interface File : Blob {
@@ -36,6 +35,6 @@
     readonly attribute long long lastModified;
 
     // Non-standard APIs
-    [MeasureAs=FileGetLastModifiedDate] readonly attribute Date lastModifiedDate;
+    [MeasureAs=FileGetLastModifiedDate, CallWith=ScriptState] readonly attribute object lastModifiedDate;
     [MeasureAs=PrefixedFileRelativePath] readonly attribute DOMString webkitRelativePath;
 };

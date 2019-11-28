@@ -2,14 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://github.com/beverloo/contact-api
+// https://wicg.github.io/contact-api/spec/#contacts-manager
 
-[
-    SecureContext,
-    Exposed=Window,
-    RuntimeEnabled=ContactsManager
-] interface ContactInfo {
-    readonly attribute FrozenArray<DOMString>? name;
-    readonly attribute FrozenArray<DOMString>? email;
-    readonly attribute FrozenArray<DOMString>? tel;
+dictionary ContactInfo {
+    sequence<USVString> name;
+    sequence<USVString> email;
+    sequence<USVString> tel;
+    sequence<ContactAddress> address;
+    sequence<Blob> icon;
 };

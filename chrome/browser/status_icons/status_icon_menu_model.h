@@ -28,10 +28,6 @@ class StatusIconMenuModel
  public:
   class Delegate {
    public:
-    // Notifies the delegate that the item with the specified command id was
-    // visually highlighted within the menu.
-    virtual void CommandIdHighlighted(int command_id);
-
     // Performs the action associates with the specified command id.
     // The passed |event_flags| are the flags from the event which issued this
     // command and they can be examined to find modifier keys.
@@ -65,11 +61,9 @@ class StatusIconMenuModel
 
   // Calling any of these "change" methods will mark the menu item as "dynamic"
   // (see menu_model.h:IsItemDynamicAt) which many platforms take as a cue to
-  // refresh the label, sublabel and icon of the menu item each time the menu is
+  // refresh the label and icon of the menu item each time the menu is
   // shown.
   void ChangeLabelForCommandId(int command_id, const base::string16& label);
-  void ChangeSublabelForCommandId(
-      int command_id, const base::string16& sublabel);
   void ChangeIconForCommandId(int command_id, const gfx::Image& icon);
 
   void AddObserver(Observer* observer);
@@ -83,7 +77,6 @@ class StatusIconMenuModel
                                   ui::Accelerator* accelerator) const override;
   bool IsItemForCommandIdDynamic(int command_id) const override;
   base::string16 GetLabelForCommandId(int command_id) const override;
-  base::string16 GetSublabelForCommandId(int command_id) const override;
   bool GetIconForCommandId(int command_id, gfx::Image* icon) const override;
 
  protected:
@@ -97,7 +90,6 @@ class StatusIconMenuModel
 
  private:
   // Overridden from ui::SimpleMenuModel::Delegate:
-  void CommandIdHighlighted(int command_id) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
   struct ItemState;

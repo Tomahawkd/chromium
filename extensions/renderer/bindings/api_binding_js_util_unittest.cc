@@ -5,7 +5,9 @@
 #include "extensions/renderer/bindings/api_binding_js_util.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/optional.h"
+#include "base/stl_util.h"
 #include "extensions/renderer/bindings/api_binding_test_util.h"
 #include "extensions/renderer/bindings/api_bindings_system.h"
 #include "extensions/renderer/bindings/api_bindings_system_unittest.h"
@@ -167,40 +169,27 @@ TEST_F(APIBindingJSUtilUnittest, TestSendRequestWithOptions) {
 
   const char kSendRequestWithNoOptions[] =
       "obj.sendRequest('alpha.functionWithCallback',\n"
-      "                ['someString', function() {}], undefined, undefined);";
+      "                ['someString', function() {}], undefined);";
   CallFunctionOnObject(context, v8_util, kSendRequestWithNoOptions);
   ASSERT_TRUE(last_request());
   EXPECT_EQ("alpha.functionWithCallback", last_request()->method_name);
   EXPECT_EQ("[\"someString\"]", ValueToString(*last_request()->arguments));
-  EXPECT_EQ(binding::RequestThread::UI, last_request()->thread);
-  reset_last_request();
-
-  const char kSendRequestForIOThread[] =
-      "obj.sendRequest('alpha.functionWithCallback',\n"
-      "                ['someOtherString', function() {}], undefined,\n"
-      "                {__proto__: null, forIOThread: true});";
-  CallFunctionOnObject(context, v8_util, kSendRequestForIOThread);
-  ASSERT_TRUE(last_request());
-  EXPECT_EQ("alpha.functionWithCallback", last_request()->method_name);
-  EXPECT_EQ("[\"someOtherString\"]", ValueToString(*last_request()->arguments));
-  EXPECT_EQ(binding::RequestThread::IO, last_request()->thread);
   reset_last_request();
 
   const char kSendRequestForUIThread[] =
       "obj.sendRequest('alpha.functionWithCallback',\n"
-      "                ['someOtherString', function() {}], undefined,\n"
-      "                {__proto__: null, forIOThread: false});";
+      "                ['someOtherString', function() {}],\n"
+      "                {__proto__: null});";
   CallFunctionOnObject(context, v8_util, kSendRequestForUIThread);
   ASSERT_TRUE(last_request());
   EXPECT_EQ("alpha.functionWithCallback", last_request()->method_name);
   EXPECT_EQ("[\"someOtherString\"]", ValueToString(*last_request()->arguments));
-  EXPECT_EQ(binding::RequestThread::UI, last_request()->thread);
   reset_last_request();
 
   const char kSendRequestWithCustomCallback[] =
       R"(obj.sendRequest(
              'alpha.functionWithCallback',
-             ['stringy', function() {}], undefined,
+             ['stringy', function() {}],
              {
                __proto__: null,
                customCallback: function() {
@@ -211,11 +200,32 @@ TEST_F(APIBindingJSUtilUnittest, TestSendRequestWithOptions) {
   ASSERT_TRUE(last_request());
   EXPECT_EQ("alpha.functionWithCallback", last_request()->method_name);
   EXPECT_EQ("[\"stringy\"]", ValueToString(*last_request()->arguments));
-  EXPECT_EQ(binding::RequestThread::UI, last_request()->thread);
   bindings_system()->CompleteRequest(last_request()->request_id,
                                      base::ListValue(), std::string());
   EXPECT_EQ("true", GetStringPropertyFromObject(context->Global(), context,
                                                 "callbackCalled"));
+}
+
+// Tests that arguments passed to sendRequest that won't serialize are
+// replaced with null. Regression test for https://crbug.com/924045.
+TEST_F(APIBindingJSUtilUnittest, TestSendRequestSerializationFailure) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  gin::Handle<APIBindingJSUtil> util = CreateUtil();
+  v8::Local<v8::Object> v8_util = util.ToV8().As<v8::Object>();
+
+  // Note: `undefined` and `1/0` fail to serialize with V8ValueConverter; they
+  // should instead be serialized to null values.
+  const char kSendRequest[] =
+      R"(obj.sendRequest('alpha.functionWithCallback',
+                         [undefined, 1/0, function() {}],
+                         undefined);)";
+  CallFunctionOnObject(context, v8_util, kSendRequest);
+  ASSERT_TRUE(last_request());
+  EXPECT_EQ("alpha.functionWithCallback", last_request()->method_name);
+  EXPECT_EQ("[null,null]", ValueToString(*last_request()->arguments));
+  reset_last_request();
 }
 
 TEST_F(APIBindingJSUtilUnittest, TestCallHandleException) {
@@ -279,7 +289,7 @@ TEST_F(APIBindingJSUtilUnittest, TestSetExceptionHandler) {
       context,
       "(function(util, handler) { util.setExceptionHandler(handler); })");
   v8::Local<v8::Value> args[] = {v8_util, v8_handler};
-  RunFunction(add_handler, context, arraysize(args), args);
+  RunFunction(add_handler, context, base::size(args), args);
 
   CallFunctionOnObject(context, v8_util, kHandleException);
   // The error should not have been reported to the console since we have a
@@ -302,10 +312,10 @@ TEST_F(APIBindingJSUtilUnittest, TestValidateType) {
     v8::Local<v8::Function> v8_function = FunctionFromString(context, function);
     v8::Local<v8::Value> args[] = {v8_util};
     if (expected_error) {
-      RunFunctionAndExpectError(v8_function, context, arraysize(args), args,
+      RunFunctionAndExpectError(v8_function, context, base::size(args), args,
                                 *expected_error);
     } else {
-      RunFunction(v8_function, context, arraysize(args), args);
+      RunFunction(v8_function, context, base::size(args), args);
     }
   };
 
@@ -350,7 +360,7 @@ TEST_F(APIBindingJSUtilUnittest, TestValidateCustomSignature) {
     v8::Local<v8::Function> add_signature =
         FunctionFromString(context, kAddSignature);
     v8::Local<v8::Value> args[] = {v8_util};
-    RunFunction(add_signature, context, arraysize(args), args);
+    RunFunction(add_signature, context, base::size(args), args);
   }
 
   EXPECT_TRUE(bindings_system()->type_reference_map()->GetCustomSignature(
@@ -363,10 +373,10 @@ TEST_F(APIBindingJSUtilUnittest, TestValidateCustomSignature) {
             FunctionFromString(context, function);
         v8::Local<v8::Value> args[] = {v8_util};
         if (expected_error) {
-          RunFunctionAndExpectError(v8_function, context, arraysize(args), args,
-                                    *expected_error);
+          RunFunctionAndExpectError(v8_function, context, base::size(args),
+                                    args, *expected_error);
         } else {
-          RunFunction(v8_function, context, arraysize(args), args);
+          RunFunction(v8_function, context, base::size(args), args);
         }
       };
 

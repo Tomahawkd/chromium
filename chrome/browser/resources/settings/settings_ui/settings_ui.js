@@ -23,7 +23,7 @@ Polymer({
   behaviors: [
     settings.RouteObserverBehavior,
     CrContainerShadowBehavior,
-    settings.FindShortcutBehavior,
+    FindShortcutBehavior,
   ],
 
   properties: {
@@ -33,10 +33,19 @@ Polymer({
     prefs: Object,
 
     /** @private */
-    advancedOpened_: {
+    advancedOpenedInMain_: {
       type: Boolean,
       value: false,
       notify: true,
+      observer: 'onAdvancedOpenedInMainChanged_',
+    },
+
+    /** @private */
+    advancedOpenedInMenu_: {
+      type: Boolean,
+      value: false,
+      notify: true,
+      observer: 'onAdvancedOpenedInMenuChanged_',
     },
 
     /** @private {boolean} */
@@ -45,8 +54,14 @@ Polymer({
       value: false,
     },
 
+    /** @private */
+    narrow_: {
+      type: Boolean,
+      observer: 'onNarrowChanged_',
+    },
+
     /**
-     * @private {!GuestModePageVisibility}
+     * @private {!PageVisibility}
      */
     pageVisibility_: {type: Object, value: settings.pageVisibility},
 
@@ -57,7 +72,10 @@ Polymer({
     showCrostini_: Boolean,
 
     /** @private */
-    showMultidevice_: Boolean,
+    showParentalControls_: Boolean,
+
+    /** @private */
+    showPluginVm_: Boolean,
 
     /** @private */
     havePlayStoreApp_: Boolean,
@@ -107,44 +125,34 @@ Polymer({
       // <if expr="chromeos">
       controlledSettingShared:
           loadTimeData.getString('controlledSettingShared'),
-      controlledSettingOwner: loadTimeData.getString('controlledSettingOwner'),
+      controlledSettingWithOwner:
+          loadTimeData.getString('controlledSettingWithOwner'),
+      controlledSettingNoOwner:
+          loadTimeData.getString('controlledSettingNoOwner'),
+      controlledSettingParent:
+          loadTimeData.getString('controlledSettingParent'),
+      controlledSettingChildRestriction:
+          loadTimeData.getString('controlledSettingChildRestriction'),
       // </if>
     };
 
-    // <if expr="chromeos">
-    CrOncStrings = {
-      OncTypeCellular: loadTimeData.getString('OncTypeCellular'),
-      OncTypeEthernet: loadTimeData.getString('OncTypeEthernet'),
-      OncTypeTether: loadTimeData.getString('OncTypeTether'),
-      OncTypeVPN: loadTimeData.getString('OncTypeVPN'),
-      OncTypeWiFi: loadTimeData.getString('OncTypeWiFi'),
-      OncTypeWiMAX: loadTimeData.getString('OncTypeWiMAX'),
-      networkListItemConnected:
-          loadTimeData.getString('networkListItemConnected'),
-      networkListItemConnecting:
-          loadTimeData.getString('networkListItemConnecting'),
-      networkListItemConnectingTo:
-          loadTimeData.getString('networkListItemConnectingTo'),
-      networkListItemInitializing:
-          loadTimeData.getString('networkListItemInitializing'),
-      networkListItemScanning:
-          loadTimeData.getString('networkListItemScanning'),
-      networkListItemNotConnected:
-          loadTimeData.getString('networkListItemNotConnected'),
-      networkListItemNoNetwork:
-          loadTimeData.getString('networkListItemNoNetwork'),
-      vpnNameTemplate: loadTimeData.getString('vpnNameTemplate'),
-    };
-    // </if>
-
-    this.showAndroidApps_ = loadTimeData.valueExists('androidAppsVisible') &&
+    // The SplitSettings feature hides OS settings in the browser settings page.
+    // https://crbug.com/950007
+    const showOSSettings = loadTimeData.getBoolean('showOSSettings');
+    this.showAndroidApps_ = showOSSettings &&
+        loadTimeData.valueExists('androidAppsVisible') &&
         loadTimeData.getBoolean('androidAppsVisible');
-    this.showCrostini_ = loadTimeData.valueExists('showCrostini') &&
+    this.showCrostini_ = showOSSettings &&
+        loadTimeData.valueExists('showCrostini') &&
         loadTimeData.getBoolean('showCrostini');
-    this.showMultidevice_ =
-        loadTimeData.valueExists('enableMultideviceSettings') &&
-        loadTimeData.getBoolean('enableMultideviceSettings');
-    this.havePlayStoreApp_ = loadTimeData.valueExists('havePlayStoreApp') &&
+    this.showParentalControls_ = showOSSettings &&
+        loadTimeData.valueExists('showParentalControls') &&
+        loadTimeData.getBoolean('showParentalControls');
+    this.showPluginVm_ = showOSSettings &&
+        loadTimeData.valueExists('showPluginVm') &&
+        loadTimeData.getBoolean('showPluginVm');
+    this.havePlayStoreApp_ = showOSSettings &&
+        loadTimeData.valueExists('havePlayStoreApp') &&
         loadTimeData.getBoolean('havePlayStoreApp');
 
     this.addEventListener('show-container', () => {
@@ -171,7 +179,17 @@ Polymer({
     settings.setGlobalScrollTarget(this.$.container);
 
     const scrollToTop = top => new Promise(resolve => {
-      this.$.container.scrollTo({top, behavior: 'smooth'});
+      if (this.$.container.scrollTop === top) {
+        resolve();
+        return;
+      }
+
+      // When transitioning  back to main page from a subpage on ChromeOS, using
+      // 'smooth' scroll here results in the scroll changing to whatever is last
+      // value of |top|. This happens even after setting the scroll position the
+      // UI or programmatically.
+      const behavior = cr.isChromeOS ? 'auto' : 'smooth';
+      this.$.container.scrollTo({top: top, behavior: behavior});
       const onScroll = () => {
         this.debounce('scrollEnd', () => {
           this.$.container.removeEventListener('scroll', onScroll);
@@ -187,8 +205,6 @@ Polymer({
       scrollToTop(e.detail.bottom - this.$.container.clientHeight)
           .then(e.detail.callback);
     });
-
-    this.becomeActiveFindShortcutListener();
   },
 
   /** @override */
@@ -199,8 +215,9 @@ Polymer({
   /** @param {!settings.Route} route */
   currentRouteChanged: function(route) {
     const urlSearchQuery = settings.getQueryParameters().get('search') || '';
-    if (urlSearchQuery == this.lastSearchQuery_)
+    if (urlSearchQuery == this.lastSearchQuery_) {
       return;
+    }
 
     this.lastSearchQuery_ = urlSearchQuery;
 
@@ -219,21 +236,26 @@ Polymer({
     this.$.main.searchContents(urlSearchQuery);
   },
 
-  // Override settings.FindShortcutBehavior methods.
+  // Override FindShortcutBehavior methods.
   handleFindShortcut: function(modalContextOpen) {
-    if (modalContextOpen)
+    if (modalContextOpen) {
       return false;
+    }
     this.$$('cr-toolbar').getSearchField().showAndFocus();
     return true;
   },
 
+  // Override FindShortcutBehavior methods.
+  searchInputHasFocus: function() {
+    return this.$$('cr-toolbar').getSearchField().isSearchFocused();
+  },
+
   /**
-   * @param {!CustomEvent} e
+   * @param {!CustomEvent<string>} e
    * @private
    */
   onRefreshPref_: function(e) {
-    const prefName = /** @type {string} */ (e.detail);
-    return /** @type {SettingsPrefsElement} */ (this.$.prefs).refresh(prefName);
+    return /** @type {SettingsPrefsElement} */ (this.$.prefs).refresh(e.detail);
   },
 
   /**
@@ -242,14 +264,7 @@ Polymer({
    * @private
    */
   onSearchChanged_: function(e) {
-    // Trim leading whitespace only, to prevent searching for empty string. This
-    // still allows the user to search for 'foo bar', while taking a long pause
-    // after typing 'foo '.
-    const query = e.detail.replace(/^\s+/, '');
-    // Prevent duplicate history entries.
-    if (query == this.lastSearchQuery_)
-      return;
-
+    const query = e.detail;
     settings.navigateTo(
         settings.routes.BASIC,
         query.length > 0 ?
@@ -280,16 +295,39 @@ Polymer({
    * @private
    */
   onMenuClose_: function() {
-    if (this.$.drawer.wasCanceled()) {
-      // Add tab index so that the container can be focused.
-      this.$.container.setAttribute('tabindex', '-1');
-      this.$.container.focus();
+    if (!this.$.drawer.wasCanceled()) {
+      // If a navigation happened, MainPageBehavior#currentRouteChanged handles
+      // focusing the corresponding section.
+      return;
+    }
 
-      listenOnce(this.$.container, ['blur', 'pointerdown'], () => {
-        this.$.container.removeAttribute('tabindex');
-      });
-    } else {
-      this.$.main.focusSection();
+    // Add tab index so that the container can be focused.
+    this.$.container.setAttribute('tabindex', '-1');
+    this.$.container.focus();
+
+    listenOnce(this.$.container, ['blur', 'pointerdown'], () => {
+      this.$.container.removeAttribute('tabindex');
+    });
+  },
+
+  /** @private */
+  onAdvancedOpenedInMainChanged_: function() {
+    if (this.advancedOpenedInMain_) {
+      this.advancedOpenedInMenu_ = true;
+    }
+  },
+
+  /** @private */
+  onAdvancedOpenedInMenuChanged_: function() {
+    if (this.advancedOpenedInMenu_) {
+      this.advancedOpenedInMain_ = true;
+    }
+  },
+
+  /** @private */
+  onNarrowChanged_: function() {
+    if (this.$.drawer.open && !this.narrow_) {
+      this.$.drawer.close();
     }
   },
 });

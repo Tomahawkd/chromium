@@ -4,16 +4,17 @@
 
 #include "headless/lib/browser/protocol/headless_devtools_session.h"
 
+#include "base/command_line.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "headless/lib/browser/protocol/browser_handler.h"
 #include "headless/lib/browser/protocol/headless_handler.h"
 #include "headless/lib/browser/protocol/page_handler.h"
 #include "headless/lib/browser/protocol/target_handler.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
 
 namespace headless {
 namespace protocol {
-
 HeadlessDevToolsSession::HeadlessDevToolsSession(
     base::WeakPtr<HeadlessBrowserImpl> browser,
     content::DevToolsAgentHost* agent_host,
@@ -26,8 +27,8 @@ HeadlessDevToolsSession::HeadlessDevToolsSession(
       agent_host->GetType() == content::DevToolsAgentHost::kTypePage) {
     AddHandler(std::make_unique<HeadlessHandler>(browser_,
                                                  agent_host->GetWebContents()));
-    AddHandler(
-        std::make_unique<PageHandler>(browser_, agent_host->GetWebContents()));
+    AddHandler(std::make_unique<PageHandler>(agent_host, browser_,
+                                             agent_host->GetWebContents()));
   }
   if (client->MayAttachToBrowser())
     AddHandler(std::make_unique<BrowserHandler>(browser_, agent_host->GetId()));
@@ -42,55 +43,69 @@ HeadlessDevToolsSession::~HeadlessDevToolsSession() {
 }
 
 void HeadlessDevToolsSession::HandleCommand(
-    std::unique_ptr<base::DictionaryValue> command,
+    const std::string& method,
     const std::string& message,
     content::DevToolsManagerDelegate::NotHandledCallback callback) {
-  if (!browser_) {
-    std::move(callback).Run(std::move(command), message);
+  if (!browser_ || !dispatcher_->canDispatch(method)) {
+    std::move(callback).Run(message);
     return;
   }
   int call_id;
-  std::string method;
-  std::unique_ptr<protocol::Value> protocolCommand =
-      protocol::toProtocolValue(command.get(), 1000);
-  if (!dispatcher_->parseCommand(protocolCommand.get(), &call_id, &method)) {
+  std::string unused;
+  std::unique_ptr<protocol::DictionaryValue> value =
+      protocol::DictionaryValue::cast(
+          protocol::StringUtil::parseMessage(message, /*binary=*/true));
+  if (!dispatcher_->parseCommand(value.get(), &call_id, &unused))
     return;
-  }
-  if (dispatcher_->canDispatch(method)) {
-    pending_commands_[call_id] =
-        std::make_pair(std::move(callback), std::move(command));
-    dispatcher_->dispatch(call_id, method, std::move(protocolCommand), message);
-    return;
-  }
-  std::move(callback).Run(std::move(command), message);
+  pending_commands_[call_id] = std::move(callback);
+  dispatcher_->dispatch(call_id, method, std::move(value), message);
 }
+
 void HeadlessDevToolsSession::AddHandler(
     std::unique_ptr<protocol::DomainHandler> handler) {
   handler->Wire(dispatcher_.get());
   handlers_[handler->name()] = std::move(handler);
 }
 
+// The following methods handle responses or notifications coming from
+// the browser to the client.
+static void SendProtocolResponseOrNotification(
+    content::DevToolsAgentHostClient* client,
+    content::DevToolsAgentHost* agent_host,
+    std::unique_ptr<protocol::Serializable> message) {
+  std::vector<uint8_t> cbor = std::move(*message).TakeSerialized();
+  if (client->UsesBinaryProtocol()) {
+    client->DispatchProtocolMessage(agent_host,
+                                    std::string(cbor.begin(), cbor.end()));
+    return;
+  }
+  std::string json;
+  crdtp::Status status =
+      crdtp::json::ConvertCBORToJSON(crdtp::SpanFrom(cbor), &json);
+  LOG_IF(ERROR, !status.ok()) << status.ToASCIIString();
+  client->DispatchProtocolMessage(agent_host, json);
+}
+
 void HeadlessDevToolsSession::sendProtocolResponse(
     int call_id,
     std::unique_ptr<Serializable> message) {
   pending_commands_.erase(call_id);
-  client_->DispatchProtocolMessage(agent_host_, message->serialize());
-}
-
-void HeadlessDevToolsSession::fallThrough(int call_id,
-                                          const std::string& method,
-                                          const std::string& message) {
-  PendingCommand command = std::move(pending_commands_[call_id]);
-  pending_commands_.erase(call_id);
-  std::move(command.first).Run(std::move(command.second), message);
+  SendProtocolResponseOrNotification(client_, agent_host_, std::move(message));
 }
 
 void HeadlessDevToolsSession::sendProtocolNotification(
     std::unique_ptr<Serializable> message) {
-  client_->DispatchProtocolMessage(agent_host_, message->serialize());
+  SendProtocolResponseOrNotification(client_, agent_host_, std::move(message));
 }
 
 void HeadlessDevToolsSession::flushProtocolNotifications() {}
 
+void HeadlessDevToolsSession::fallThrough(int call_id,
+                                          const std::string& method,
+                                          const std::string& message) {
+  auto callback = std::move(pending_commands_[call_id]);
+  pending_commands_.erase(call_id);
+  std::move(callback).Run(message);
+}
 }  // namespace protocol
 }  // namespace headless

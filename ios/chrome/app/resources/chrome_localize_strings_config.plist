@@ -32,13 +32,19 @@
 					<key>input</key>
 					<string>IDS_IOS_INTENTS_SEARCH_IN_CHROME_DESCRIPTION</string>
 					<key>output</key>
-					<string>SearchInChromeIntentDescription</string>
+					<string>4nGj7v</string>
+				</dict>
+				<dict>
+					<key>input</key>
+					<string>IDS_IOS_INTENTS_SEARCH_IN_CHROME_DESCRIPTION</string>
+					<key>output</key>
+					<string>k0Ho6W</string>
 				</dict>
 				<dict>
 					<key>input</key>
 					<string>IDS_IOS_INTENTS_SEARCH_IN_CHROME_TITLE</string>
 					<key>output</key>
-					<string>SearchInChromeIntentTitle</string>
+					<string>Z6KvRw</string>
 				</dict>
 			</array>
 		</dict>
@@ -89,8 +95,8 @@
 					<key>output</key>
 					<string>NSFaceIDUsageDescription</string>
 				</dict>
-				<string>IDS_IOS_APPLICATION_SHORTCUT_NEWTAB_TITLE</string>
-				<string>IDS_IOS_APPLICATION_SHORTCUT_NEWINCOGNITOTAB_TITLE</string>
+				<string>IDS_IOS_APPLICATION_SHORTCUT_NEWSEARCH_TITLE</string>
+				<string>IDS_IOS_APPLICATION_SHORTCUT_INCOGNITOSEARCH_TITLE</string>
 				<string>IDS_IOS_APPLICATION_SHORTCUT_VOICE_SEARCH_TITLE</string>
 				<string>IDS_IOS_APPLICATION_SHORTCUT_QR_SCANNER_TITLE</string>
 			</array>

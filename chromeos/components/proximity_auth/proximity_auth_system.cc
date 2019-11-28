@@ -4,7 +4,7 @@
 
 #include "chromeos/components/proximity_auth/proximity_auth_system.h"
 
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/proximity_auth/proximity_auth_client.h"
 #include "chromeos/components/proximity_auth/remote_device_life_cycle_impl.h"
 #include "chromeos/components/proximity_auth/unlock_manager_impl.h"
@@ -18,9 +18,8 @@ ProximityAuthSystem::ProximityAuthSystem(
     chromeos::secure_channel::SecureChannelClient* secure_channel_client)
     : secure_channel_client_(secure_channel_client),
       unlock_manager_(
-          new UnlockManagerImpl(screenlock_type,
-                                proximity_auth_client,
-                                proximity_auth_client->GetPrefManager())),
+          std::make_unique<UnlockManagerImpl>(screenlock_type,
+                                              proximity_auth_client)),
       suspended_(false),
       started_(false) {}
 
@@ -60,6 +59,11 @@ void ProximityAuthSystem::SetRemoteDevicesForUser(
     const AccountId& account_id,
     const chromeos::multidevice::RemoteDeviceRefList& remote_devices,
     base::Optional<chromeos::multidevice::RemoteDeviceRef> local_device) {
+  PA_LOG(VERBOSE) << "Setting devices for user " << account_id.Serialize()
+                  << ". Remote device count: " << remote_devices.size()
+                  << ", Local device: ["
+                  << (local_device.has_value() ? "present" : "absent") << "].";
+
   remote_devices_map_[account_id] = remote_devices;
   local_device_map_.emplace(account_id, *local_device);
 
@@ -79,8 +83,7 @@ ProximityAuthSystem::GetRemoteDevicesForUser(
   return remote_devices_map_.at(account_id);
 }
 
-void ProximityAuthSystem::OnAuthAttempted(const AccountId& /* account_id */) {
-  // TODO(tengs): There is no reason to pass the |account_id| argument anymore.
+void ProximityAuthSystem::OnAuthAttempted() {
   unlock_manager_->OnAuthAttempted(mojom::AuthType::USER_CLICK);
 }
 
@@ -116,12 +119,6 @@ ProximityAuthSystem::CreateRemoteDeviceLifeCycle(
     base::Optional<chromeos::multidevice::RemoteDeviceRef> local_device) {
   return std::make_unique<RemoteDeviceLifeCycleImpl>(
       remote_device, local_device, secure_channel_client_);
-}
-
-void ProximityAuthSystem::OnLifeCycleStateChanged(
-    RemoteDeviceLifeCycle::State old_state,
-    RemoteDeviceLifeCycle::State new_state) {
-  unlock_manager_->OnLifeCycleStateChanged();
 }
 
 void ProximityAuthSystem::OnScreenDidLock(
@@ -178,7 +175,6 @@ void ProximityAuthSystem::OnFocusedUserChanged(const AccountId& account_id) {
                  << account_id.Serialize();
     remote_device_life_cycle_ =
         CreateRemoteDeviceLifeCycle(remote_device, local_device);
-    remote_device_life_cycle_->AddObserver(this);
 
     // UnlockManager listens for Bluetooth power change events, and is therefore
     // responsible for starting RemoteDeviceLifeCycle when Bluetooth becomes

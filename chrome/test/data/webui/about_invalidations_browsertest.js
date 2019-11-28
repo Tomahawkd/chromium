@@ -16,8 +16,6 @@ InvalidationsWebUITest.prototype = {
    * Browse to the Invalidations page.
    */
   browsePreload: 'chrome://invalidations',
-  runAccessibilityChecks: false,
-  accessibilityIssuesAreErrors: false
 };
 
 // Test that registering an invalidations appears properly on the textarea.
@@ -87,15 +85,18 @@ TEST_F('InvalidationsWebUITest', 'testRegisteringNewIds', function() {
       pattern2Test = pattern2Test &&
           (pattern2[cell] == oidTable.rows[row].cells[cell].textContent);
     }
-    if (pattern1Test)
+    if (pattern1Test) {
       expectEquals('greyed', oidTable.rows[row].className);
-    if (pattern2Test)
+    }
+    if (pattern2Test) {
       expectEquals('content', oidTable.rows[row].className);
+    }
 
     foundPattern1 = foundPattern1 || pattern1Test;
     foundPattern2 = foundPattern2 || pattern2Test;
-    if (foundPattern2)
+    if (foundPattern2) {
       expectTrue(foundPattern1, 'The entries were not ordererd');
+    }
   }
   expectTrue(foundPattern1 && foundPattern2, 'couldn\'t find both objects ids');
 });

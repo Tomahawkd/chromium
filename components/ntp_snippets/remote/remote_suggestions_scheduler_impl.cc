@@ -14,8 +14,8 @@
 #include "base/location.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/clock.h"
 #include "components/ntp_snippets/features.h"
 #include "components/ntp_snippets/pref_names.h"
@@ -111,23 +111,24 @@ const char* kFetchingIntervalParamNameActiveSuggestionsConsumer[] = {
 
 static_assert(
     static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kDefaultFetchingIntervalHoursRareNtpUser) &&
+            base::size(kDefaultFetchingIntervalHoursRareNtpUser) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kDefaultFetchingIntervalHoursActiveNtpUser) &&
+            base::size(kDefaultFetchingIntervalHoursActiveNtpUser) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kDefaultFetchingIntervalHoursActiveSuggestionsConsumer) &&
+            base::size(
+                kDefaultFetchingIntervalHoursActiveSuggestionsConsumer) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kM58FetchingIntervalHoursRareNtpUser) &&
+            base::size(kM58FetchingIntervalHoursRareNtpUser) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kM58FetchingIntervalHoursActiveNtpUser) &&
+            base::size(kM58FetchingIntervalHoursActiveNtpUser) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kM58FetchingIntervalHoursActiveSuggestionsConsumer) &&
+            base::size(kM58FetchingIntervalHoursActiveSuggestionsConsumer) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kFetchingIntervalParamNameRareNtpUser) &&
+            base::size(kFetchingIntervalParamNameRareNtpUser) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kFetchingIntervalParamNameActiveNtpUser) &&
+            base::size(kFetchingIntervalParamNameActiveNtpUser) &&
         static_cast<unsigned int>(FetchingInterval::COUNT) ==
-            arraysize(kFetchingIntervalParamNameActiveSuggestionsConsumer),
+            base::size(kFetchingIntervalParamNameActiveSuggestionsConsumer),
     "Fill in all the info for fetching intervals.");
 
 // For backward compatibility "ntp_opened" value is kept and denotes the
@@ -152,7 +153,7 @@ base::TimeDelta GetDesiredFetchingInterval(
     UserClassifier::UserClass user_class) {
   DCHECK(interval != FetchingInterval::COUNT);
   const unsigned int index = static_cast<unsigned int>(interval);
-  DCHECK(index < arraysize(kDefaultFetchingIntervalHoursRareNtpUser));
+  DCHECK(index < base::size(kDefaultFetchingIntervalHoursRareNtpUser));
 
   bool emulateM58 = base::FeatureList::IsEnabled(
       kRemoteSuggestionsEmulateM58FetchingSchedule);
@@ -442,8 +443,7 @@ RemoteSuggestionsSchedulerImpl::RemoteSuggestionsSchedulerImpl(
     const UserClassifier* user_classifier,
     PrefService* profile_prefs,
     PrefService* local_state_prefs,
-    base::Clock* clock,
-    Logger* debug_logger)
+    base::Clock* clock)
     : persistent_scheduler_(persistent_scheduler),
       provider_(nullptr),
       background_fetch_in_progress_(false),
@@ -468,11 +468,9 @@ RemoteSuggestionsSchedulerImpl::RemoteSuggestionsSchedulerImpl(
                      base::Unretained(this)))),
       profile_prefs_(profile_prefs),
       clock_(clock),
-      enabled_triggers_(GetEnabledTriggerTypes()),
-      debug_logger_(debug_logger) {
+      enabled_triggers_(GetEnabledTriggerTypes()) {
   DCHECK(user_classifier);
   DCHECK(profile_prefs);
-  DCHECK(debug_logger_);
 }
 
 RemoteSuggestionsSchedulerImpl::~RemoteSuggestionsSchedulerImpl() = default;
@@ -525,7 +523,6 @@ void RemoteSuggestionsSchedulerImpl::OnProviderDeactivated() {
 }
 
 void RemoteSuggestionsSchedulerImpl::OnSuggestionsCleared() {
-  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   // This should be called by |provider_| so it should exist.
   DCHECK(provider_);
   // Some user action causes suggestions to be cleared, we need to fetch as soon
@@ -565,26 +562,22 @@ void RemoteSuggestionsSchedulerImpl::OnInteractiveFetchFinished(
 }
 
 void RemoteSuggestionsSchedulerImpl::OnPersistentSchedulerWakeUp() {
-  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   RefetchIfAppropriate(TriggerType::PERSISTENT_SCHEDULER_WAKE_UP);
 }
 
 void RemoteSuggestionsSchedulerImpl::OnBrowserForegrounded() {
-  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   // TODO(jkrcal): Consider that this is called whenever we open or return to an
   // Activity. Therefore, keep work light for fast start up calls.
   RefetchIfAppropriate(TriggerType::BROWSER_FOREGROUNDED);
 }
 
 void RemoteSuggestionsSchedulerImpl::OnBrowserColdStart() {
-  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   // TODO(jkrcal): Consider that work here must be kept light for fast
   // cold start ups.
   RefetchIfAppropriate(TriggerType::BROWSER_COLD_START);
 }
 
 void RemoteSuggestionsSchedulerImpl::OnSuggestionsSurfaceOpened() {
-  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
   // TODO(jkrcal): Consider that this is called whenever we open an NTP.
   // Therefore, keep work light for fast start up calls.
   RefetchIfAppropriate(TriggerType::SURFACE_OPENED);
@@ -693,15 +686,12 @@ bool RemoteSuggestionsSchedulerImpl::IsLastSuccessfulFetchStale() const {
 }
 
 void RemoteSuggestionsSchedulerImpl::RefetchIfAppropriate(TriggerType trigger) {
-  debug_logger_->Log(FROM_HERE, /*message=*/std::string());
 
   if (background_fetch_in_progress_) {
-    debug_logger_->Log(FROM_HERE, "stop due to ongoing fetch");
     return;
   }
 
   if (enabled_triggers_.count(trigger) == 0) {
-    debug_logger_->Log(FROM_HERE, "stop due to disabled trigger");
     return;
   }
 
@@ -709,12 +699,10 @@ void RemoteSuggestionsSchedulerImpl::RefetchIfAppropriate(TriggerType trigger) {
     // Do not let a request fail due to lack of internet connection. Then, such
     // a failure would get logged and further requests would be blocked for a
     // while (even after becoming online).
-    debug_logger_->Log(FROM_HERE, "stop due to being offline");
     return;
   }
 
   if (!IsReadyForBackgroundFetches()) {
-    debug_logger_->Log(FROM_HERE, "delay until ready");
     queued_triggers_.insert(trigger);
     return;
   }
@@ -739,12 +727,10 @@ void RemoteSuggestionsSchedulerImpl::RefetchIfAppropriate(TriggerType trigger) {
 
   if (trigger != TriggerType::PERSISTENT_SCHEDULER_WAKE_UP &&
       !ShouldRefetchNow(last_fetch_attempt_time, trigger)) {
-    debug_logger_->Log(FROM_HERE, "stop, because too soon");
     return;
   }
 
   if (!AcquireQuota(/*interactive_request=*/false)) {
-    debug_logger_->Log(FROM_HERE, "stop due to quota");
     return;
   }
 
@@ -768,7 +754,6 @@ void RemoteSuggestionsSchedulerImpl::RefetchIfAppropriate(TriggerType trigger) {
       "NewTabPage.ContentSuggestions.BackgroundFetchTrigger",
       static_cast<int>(trigger), static_cast<int>(TriggerType::COUNT));
 
-  debug_logger_->Log(FROM_HERE, "issuing a fetch");
   background_fetch_in_progress_ = true;
 
   if ((trigger == TriggerType::BROWSER_COLD_START ||
@@ -805,24 +790,6 @@ bool RemoteSuggestionsSchedulerImpl::ShouldRefetchNow(
   }
 
   base::Time now = clock_->Now();
-  if (Logger::IsLoggingEnabled()) {
-    if (background_fetches_allowed_after_ > now) {
-      debug_logger_->Log(
-          FROM_HERE,
-          base::StringPrintf(
-              "due to privacy, next fetch is allowed after %s",
-              Logger::TimeToString(background_fetches_allowed_after_).c_str()));
-    }
-    if (first_allowed_fetch_time > now) {
-      debug_logger_->Log(
-          FROM_HERE,
-          base::StringPrintf(
-              "next fetch is scheduled after %s (as last fetch "
-              "attempt occured at %s)",
-              Logger::TimeToString(first_allowed_fetch_time).c_str(),
-              Logger::TimeToString(last_fetch_attempt_time).c_str()));
-    }
-  }
 
   return background_fetches_allowed_after_ <= now &&
          first_allowed_fetch_time <= now;
@@ -885,6 +852,16 @@ void RemoteSuggestionsSchedulerImpl::OnFetchCompleted(Status fetch_status) {
 }
 
 void RemoteSuggestionsSchedulerImpl::ClearLastFetchAttemptTime() {
+  // Added during Feed rollout to help investigate https://crbug.com/908963.
+  base::TimeDelta attempt_age =
+      clock_->Now() -
+      profile_prefs_->GetTime(prefs::kSnippetLastFetchAttemptTime);
+  UMA_HISTOGRAM_CUSTOM_TIMES(
+      "ContentSuggestions.Feed.Scheduler.TimeSinceLastFetchOnClear",
+      attempt_age, base::TimeDelta::FromSeconds(1),
+      base::TimeDelta::FromDays(7),
+      /*bucket_count=*/50);
+
   profile_prefs_->ClearPref(prefs::kSnippetLastFetchAttemptTime);
   // To mark the last fetch as stale, we need to keep the time in prefs, only
   // making sure it is long ago.
@@ -894,7 +871,7 @@ void RemoteSuggestionsSchedulerImpl::ClearLastFetchAttemptTime() {
 std::set<RemoteSuggestionsSchedulerImpl::TriggerType>
 RemoteSuggestionsSchedulerImpl::GetEnabledTriggerTypes() {
   static_assert(static_cast<unsigned int>(TriggerType::COUNT) ==
-                    arraysize(kTriggerTypeNames),
+                    base::size(kTriggerTypeNames),
                 "Fill in names for trigger types.");
 
   std::string param_value = base::GetFieldTrialParamValueByFeature(

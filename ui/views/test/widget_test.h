@@ -6,7 +6,9 @@
 #define UI_VIEWS_TEST_WIDGET_TEST_H_
 
 #include <memory>
+#include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
@@ -44,7 +46,14 @@ class WidgetTest : public ViewsTestBase {
 
   using WidgetAutoclosePtr = std::unique_ptr<Widget, WidgetCloser>;
 
-  WidgetTest();
+  // Constructs an AshTestBase with |traits| being forwarded to its
+  // TaskEnvironment. |ViewsTestBase::SubclassManagesTaskEnvironment()|
+  // can also be passed as a sole trait to indicate that this WidgetTest's
+  // subclass will manage the task environment.
+  template <typename... TaskEnvironmentTraits>
+  NOINLINE explicit WidgetTest(TaskEnvironmentTraits&&... traits)
+      : ViewsTestBase(std::forward<TaskEnvironmentTraits>(traits)...) {}
+
   ~WidgetTest() override;
 
   // Create Widgets with |native_widget| in InitParams set to an instance of
@@ -59,11 +68,6 @@ class WidgetTest : public ViewsTestBase {
   Widget* CreateTopLevelNativeWidget();
   Widget* CreateChildNativeWidgetWithParent(Widget* parent);
   Widget* CreateChildNativeWidget();
-
-  // Create a top-level Widget with |native_widget| in InitParams set to an
-  // instance of the "native desktop" type. This is a PlatformNativeWidget on
-  // ChromeOS, and a PlatformDesktopNativeWidget everywhere else.
-  Widget* CreateNativeDesktopWidget();
 
   View* GetMousePressedHandler(internal::RootView* root_view);
 
@@ -108,8 +112,26 @@ class WidgetTest : public ViewsTestBase {
   // Returns the set of all Widgets that currently have a NativeWindow.
   static Widget::Widgets GetAllWidgets();
 
+  // Waits for system app activation events, if any, to have happened. This is
+  // necessary on macOS 10.15+, where the system will attempt to find and
+  // activate a window owned by the app shortly after app startup, if there is
+  // one. See https://crbug.com/998868 for details.
+  static void WaitForSystemAppActivation();
+
  private:
   DISALLOW_COPY_AND_ASSIGN(WidgetTest);
+};
+
+class DesktopWidgetTest : public WidgetTest {
+ public:
+  DesktopWidgetTest();
+  ~DesktopWidgetTest() override;
+
+  // WidgetTest:
+  void SetUp() override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(DesktopWidgetTest);
 };
 
 // A helper WidgetDelegate for tests that require hooks into WidgetDelegate
@@ -118,7 +140,7 @@ class WidgetTest : public ViewsTestBase {
 class TestDesktopWidgetDelegate : public WidgetDelegate {
  public:
   TestDesktopWidgetDelegate();
-  TestDesktopWidgetDelegate(Widget* widget);
+  explicit TestDesktopWidgetDelegate(Widget* widget);
   ~TestDesktopWidgetDelegate() override;
 
   // Initialize the Widget, adding some meaningful default InitParams.
@@ -132,9 +154,15 @@ class TestDesktopWidgetDelegate : public WidgetDelegate {
   void set_contents_view(View* contents_view) {
     contents_view_ = contents_view;
   }
+  // Sets the return value for CloseRequested().
+  void set_can_close(bool can_close) { can_close_ = can_close; }
 
   int window_closing_count() const { return window_closing_count_; }
   const gfx::Rect& initial_bounds() { return initial_bounds_; }
+  Widget::ClosedReason last_closed_reason() const {
+    return last_closed_reason_;
+  }
+  bool can_close() const { return can_close_; }
 
   // WidgetDelegate overrides:
   void WindowClosing() override;
@@ -142,12 +170,15 @@ class TestDesktopWidgetDelegate : public WidgetDelegate {
   const Widget* GetWidget() const override;
   View* GetContentsView() override;
   bool ShouldAdvanceFocusToTopLevelWidget() const override;
+  bool OnCloseRequested(Widget::ClosedReason close_reason) override;
 
  private:
   Widget* widget_;
   View* contents_view_ = nullptr;
   int window_closing_count_ = 0;
   gfx::Rect initial_bounds_ = gfx::Rect(100, 100, 200, 200);
+  bool can_close_ = true;
+  Widget::ClosedReason last_closed_reason_ = Widget::ClosedReason::kUnspecified;
 
   DISALLOW_COPY_AND_ASSIGN(TestDesktopWidgetDelegate);
 };

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/download/thumbnail_util.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_thread.h"
@@ -40,8 +41,9 @@ void ScaleDownBitmap(int icon_size,
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   // Scale down bitmap on another thread.
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_BLOCKING},
       base::BindOnce(&ScaleDownBitmapOnIOThread, icon_size, std::move(bitmap)),
       std::move(callback));
 }

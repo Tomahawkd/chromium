@@ -40,7 +40,7 @@ namespace blink {
 
 InputTypeView::~InputTypeView() = default;
 
-void InputTypeView::Trace(blink::Visitor* visitor) {
+void InputTypeView::Trace(Visitor* visitor) {
   visitor->Trace(element_);
 }
 
@@ -87,9 +87,9 @@ HTMLFormElement* InputTypeView::FormForSubmission() const {
   return GetElement().Form();
 }
 
-LayoutObject* InputTypeView::CreateLayoutObject(
-    const ComputedStyle& style) const {
-  return LayoutObject::CreateObject(&GetElement(), style);
+LayoutObject* InputTypeView::CreateLayoutObject(const ComputedStyle& style,
+                                                LegacyLayout legacy) const {
+  return LayoutObject::CreateObject(&GetElement(), style, legacy);
 }
 
 scoped_refptr<ComputedStyle> InputTypeView::CustomStyleForLayoutObject(
@@ -144,8 +144,6 @@ void InputTypeView::DidDispatchClick(Event&, const ClickHandlingState&) {}
 
 void InputTypeView::UpdateView() {}
 
-void InputTypeView::AttributeChanged() {}
-
 void InputTypeView::MultipleAttributeChanged() {}
 
 void InputTypeView::DisabledAttributeChanged() {}
@@ -187,7 +185,7 @@ bool InputTypeView::HasBadInput() const {
   return false;
 }
 
-void ClickHandlingState::Trace(blink::Visitor* visitor) {
+void ClickHandlingState::Trace(Visitor* visitor) {
   visitor->Trace(checked_radio_button);
   EventDispatchHandlingState::Trace(visitor);
 }

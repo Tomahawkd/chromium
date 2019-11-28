@@ -64,9 +64,8 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl
                                       int render_frame_id) override;
   void StopAudioCaptureForSession(int session_id) override;
   const SpeechRecognitionSessionConfig& GetSessionConfig(
-      int session_id) const override;
-  SpeechRecognitionSessionContext GetSessionContext(
-      int session_id) const override;
+      int session_id) override;
+  SpeechRecognitionSessionContext GetSessionContext(int session_id) override;
 
   // SpeechRecognitionEventListener methods.
   void OnRecognitionStart(int session_id) override;
@@ -146,7 +145,7 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl
   // users deny the request.
   void MediaRequestPermissionCallback(
       int session_id,
-      const MediaStreamDevices& devices,
+      const blink::MediaStreamDevices& devices,
       std::unique_ptr<MediaStreamUIProxy> stream_ui);
 
   // Entry point for pushing any external event into the session handling FSM.
@@ -175,6 +174,8 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl
   SpeechRecognitionEventListener* GetDelegateListener() const;
   int GetNextSessionID();
 
+  static int next_requester_id_;
+
   // This class lives on the UI thread; all access to it must be done on that
   // thread.
   std::unique_ptr<FrameDeletionObserver, BrowserThread::DeleteOnUIThread>
@@ -187,11 +188,12 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl
   int last_session_id_;
   bool is_dispatching_event_;
   std::unique_ptr<SpeechRecognitionManagerDelegate> delegate_;
+  const int requester_id_;
 
   // Used for posting asynchronous tasks (on the IO thread) without worrying
   // about this class being destroyed in the meanwhile (due to browser shutdown)
   // since tasks pending on a destroyed WeakPtr are automatically discarded.
-  base::WeakPtrFactory<SpeechRecognitionManagerImpl> weak_factory_;
+  base::WeakPtrFactory<SpeechRecognitionManagerImpl> weak_factory_{this};
 };
 
 }  // namespace content

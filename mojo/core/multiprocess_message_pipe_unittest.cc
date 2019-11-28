@@ -8,19 +8,20 @@
 #include <string.h>
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "mojo/core/handle_signals_state.h"
 #include "mojo/core/test/mojo_test_base.h"
@@ -270,7 +271,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckSharedBuffer,
   std::string read_buffer(100, '\0');
   uint32_t num_bytes = static_cast<uint32_t>(read_buffer.size());
   MojoHandle handles[10];
-  uint32_t num_handlers = arraysize(handles);  // Maximum number to receive
+  uint32_t num_handlers = base::size(handles);  // Maximum number to receive
   CHECK_EQ(MojoReadMessage(h, &read_buffer[0], &num_bytes, &handles[0],
                            &num_handlers, MOJO_READ_MESSAGE_FLAG_NONE),
            MOJO_RESULT_OK);
@@ -350,7 +351,7 @@ TEST_F(MultiprocessMessagePipeTest, SharedBufferPassing) {
     handles[0] = duplicated_shared_buffer;
     ASSERT_EQ(MOJO_RESULT_OK,
               MojoWriteMessage(h, &go1[0], static_cast<uint32_t>(go1.size()),
-                               &handles[0], arraysize(handles),
+                               &handles[0], base::size(handles),
                                MOJO_WRITE_MESSAGE_FLAG_NONE));
 
     // Wait for a message from the child.
@@ -407,7 +408,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckPlatformHandleFile,
   std::string read_buffer(100, '\0');
   uint32_t num_bytes = static_cast<uint32_t>(read_buffer.size());
   MojoHandle handles[255];  // Maximum number to receive.
-  uint32_t num_handlers = arraysize(handles);
+  uint32_t num_handlers = base::size(handles);
 
   CHECK_EQ(MojoReadMessage(h, &read_buffer[0], &num_bytes, &handles[0],
                            &num_handlers, MOJO_READ_MESSAGE_FLAG_NONE),
@@ -421,10 +422,11 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckPlatformHandleFile,
   CHECK_GT(num_handles, 0);
 
   for (int i = 0; i < num_handles; ++i) {
-    PlatformHandle h = UnwrapPlatformHandle(ScopedHandle(Handle(handles[i])));
-    CHECK(h.is_valid());
+    PlatformHandle handle =
+        UnwrapPlatformHandle(ScopedHandle(Handle(handles[i])));
+    CHECK(handle.is_valid());
 
-    base::ScopedFILE fp = test::FILEFromPlatformHandle(std::move(h), "r");
+    base::ScopedFILE fp = test::FILEFromPlatformHandle(std::move(handle), "r");
     CHECK(fp);
     std::string fread_buffer(100, '\0');
     size_t bytes_read =
@@ -482,13 +484,13 @@ TEST_P(MultiprocessMessagePipeTestWithPipeCount, PlatformHandlePassing) {
 
 // Android multi-process tests are not executing the new process. This is flaky.
 #if !defined(OS_ANDROID)
-INSTANTIATE_TEST_CASE_P(PipeCount,
-                        MultiprocessMessagePipeTestWithPipeCount,
-                        // TODO(rockot): Enable the 128 and 250 pipe cases when
-                        // ChannelPosix and ChannelFuchsia have support for
-                        // sending larger numbers of handles per-message. See
-                        // kMaxAttachedHandles in channel.cc for details.
-                        testing::Values(1u, 64u /*, 128u, 250u*/));
+INSTANTIATE_TEST_SUITE_P(PipeCount,
+                         MultiprocessMessagePipeTestWithPipeCount,
+                         // TODO(rockot): Enable the 128 and 250 pipe cases when
+                         // ChannelPosix and ChannelFuchsia have support for
+                         // sending larger numbers of handles per-message. See
+                         // kMaxAttachedHandles in channel.cc for details.
+                         testing::Values(1u, 64u /*, 128u, 250u*/));
 #endif
 
 DEFINE_TEST_CLIENT_WITH_PIPE(CheckMessagePipe, MultiprocessMessagePipeTest, h) {
@@ -503,7 +505,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(CheckMessagePipe, MultiprocessMessagePipeTest, h) {
 
   // It should have a message pipe.
   MojoHandle handles[10];
-  uint32_t num_handlers = arraysize(handles);
+  uint32_t num_handlers = base::size(handles);
   CHECK_EQ(MojoReadMessage(h, nullptr, nullptr, &handles[0], &num_handlers,
                            MOJO_READ_MESSAGE_FLAG_NONE),
            MOJO_RESULT_OK);
@@ -619,7 +621,7 @@ DEFINE_TEST_CLIENT_WITH_PIPE(DataPipeConsumer, MultiprocessMessagePipeTest, h) {
 
   // It should have a message pipe.
   MojoHandle handles[10];
-  uint32_t num_handlers = arraysize(handles);
+  uint32_t num_handlers = base::size(handles);
   CHECK_EQ(MojoReadMessage(h, nullptr, nullptr, &handles[0], &num_handlers,
                            MOJO_READ_MESSAGE_FLAG_NONE),
            MOJO_RESULT_OK);
@@ -936,7 +938,7 @@ TEST_P(MultiprocessMessagePipeTestWithPeerSupport, PingPongPipe) {
 DEFINE_TEST_CLIENT_WITH_PIPE(CommandDrivenClient,
                              MultiprocessMessagePipeTest,
                              h) {
-  base::hash_map<std::string, MojoHandle> named_pipes;
+  std::unordered_map<std::string, MojoHandle> named_pipes;
   for (;;) {
     MojoHandle p;
     auto parts = base::SplitString(ReadMessageWithOptionalHandle(h, &p), ":",
@@ -1273,7 +1275,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MessagePipeStatusChangeInTransitClient,
   EXPECT_EQ(MOJO_RESULT_OK,
             WaitForSignals(handles[0], MOJO_HANDLE_SIGNAL_PEER_CLOSED));
 
-  base::MessageLoop message_loop;
+  base::test::SingleThreadTaskEnvironment task_environment;
 
   // Wait on handle 1 using a SimpleWatcher.
   {
@@ -1281,7 +1283,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MessagePipeStatusChangeInTransitClient,
     SimpleWatcher watcher(FROM_HERE, SimpleWatcher::ArmingPolicy::AUTOMATIC,
                           base::SequencedTaskRunnerHandle::Get());
     watcher.Watch(Handle(handles[1]), MOJO_HANDLE_SIGNAL_PEER_CLOSED,
-                  base::Bind(
+                  base::BindRepeating(
                       [](base::RunLoop* loop, MojoResult result) {
                         EXPECT_EQ(MOJO_RESULT_OK, result);
                         loop->Quit();
@@ -1309,6 +1311,38 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MessagePipeStatusChangeInTransitClient,
     CloseHandle(handles[i]);
 }
 
+TEST_P(MultiprocessMessagePipeTestWithPeerSupport,
+       ReceiveMessagesSentJustBeforeProcessDeath) {
+  // Regression test for https://crbug.com/1005510. The client will write a
+  // message to the pipe it gives us and then it will die immediately. We should
+  // always be able to read the message received on that pipe.
+  RunTestClient("SpotaneouslyDyingProcess", [&](MojoHandle child) {
+    MojoHandle receiver;
+    EXPECT_EQ("receiver", ReadMessageWithHandles(child, &receiver, 1));
+    EXPECT_EQ("ok", ReadMessage(receiver));
+  });
+}
+
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(SpotaneouslyDyingProcess,
+                                  MultiprocessMessagePipeTest,
+                                  parent) {
+  MojoHandle sender;
+  MojoHandle receiver;
+  CreateMessagePipe(&sender, &receiver);
+
+  WriteMessageWithHandles(parent, "receiver", &receiver, 1);
+
+  // Wait for the pipe to actually appear as remote. Before this happens, it's
+  // possible for message transmission to be deferred to the IO thread, and
+  // sudden termination might preempt that work.
+  WaitForSignals(sender, MOJO_HANDLE_SIGNAL_PEER_REMOTE);
+
+  WriteMessage(sender, "ok");
+
+  // Here process termination is imminent. If the bug reappears this test will
+  // fail flakily.
+}
+
 TEST_F(MultiprocessMessagePipeTest, MessagePipeStatusChangeInTransit) {
   MojoHandle local_handles[4];
   MojoHandle sent_handles[4];
@@ -1334,11 +1368,12 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(BadMessageClient,
   EXPECT_EQ("bye", ReadMessage(parent));
 }
 
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     MultiprocessMessagePipeTestWithPeerSupport,
     testing::Values(test::MojoTestBase::LaunchType::CHILD,
-                    test::MojoTestBase::LaunchType::PEER
+                    test::MojoTestBase::LaunchType::PEER,
+                    test::MojoTestBase::LaunchType::ASYNC
 #if !defined(OS_FUCHSIA)
                     ,
                     test::MojoTestBase::LaunchType::NAMED_CHILD,

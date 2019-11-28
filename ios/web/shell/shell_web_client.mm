@@ -6,16 +6,13 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/json/json_reader.h"
-#include "ios/web/public/service_names.mojom.h"
-#include "ios/web/public/user_agent.h"
-#include "ios/web/public/web_state/web_state.h"
-#include "ios/web/shell/grit/shell_resources.h"
+#include "base/bind.h"
+#include "ios/web/common/user_agent.h"
+#import "ios/web/public/web_state.h"
 #include "ios/web/shell/shell_web_main_parts.h"
 #import "ios/web/shell/web_usage_controller.mojom.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
-#include "services/test/echo/echo_service.h"
-#include "services/test/echo/public/mojom/echo.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -32,12 +29,6 @@ class WebUsageController : public mojom::WebUsageController {
  public:
   explicit WebUsageController(WebState* web_state) : web_state_(web_state) {}
   ~WebUsageController() override {}
-
-  static void Create(mojo::InterfaceRequest<mojom::WebUsageController> request,
-                     WebState* web_state) {
-    mojo::MakeStrongBinding(std::make_unique<WebUsageController>(web_state),
-                            std::move(request));
-  }
 
  private:
   void SetWebUsageEnabled(bool enabled,
@@ -66,13 +57,8 @@ ShellBrowserState* ShellWebClient::browser_state() const {
   return web_main_parts_->browser_state();
 }
 
-std::string ShellWebClient::GetProduct() const {
-  return "CriOS/36.77.34.45";
-}
-
 std::string ShellWebClient::GetUserAgent(UserAgentType type) const {
-  std::string product = GetProduct();
-  return web::BuildUserAgentFromProduct(product);
+  return web::BuildUserAgentFromProduct("CriOS/36.77.34.45");
 }
 
 base::StringPiece ShellWebClient::GetDataResource(
@@ -88,44 +74,12 @@ base::RefCountedMemory* ShellWebClient::GetDataResourceBytes(
       resource_id);
 }
 
-std::unique_ptr<service_manager::Service> ShellWebClient::HandleServiceRequest(
-    const std::string& service_name,
-    service_manager::mojom::ServiceRequest request) {
-  if (service_name == echo::mojom::kServiceName)
-    return std::make_unique<echo::EchoService>(std::move(request));
-
-  return nullptr;
-}
-
-std::unique_ptr<base::Value> ShellWebClient::GetServiceManifestOverlay(
-    base::StringPiece name) {
-  int identifier = -1;
-  if (name == mojom::kBrowserServiceName)
-    identifier = IDR_WEB_SHELL_BROWSER_MANIFEST_OVERLAY;
-  else if (name == mojom::kPackagedServicesServiceName)
-    identifier = IDR_WEB_SHELL_PACKAGED_SERVICES_MANIFEST_OVERLAY;
-
-  if (identifier == -1)
-    return nullptr;
-
-  base::StringPiece manifest_contents =
-      ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
-          identifier, ui::ScaleFactor::SCALE_FACTOR_NONE);
-  return base::JSONReader::Read(manifest_contents);
-}
-
-void ShellWebClient::BindInterfaceRequestFromMainFrame(
+void ShellWebClient::BindInterfaceReceiverFromMainFrame(
     WebState* web_state,
-    const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle interface_pipe) {
-  if (!main_frame_interfaces_.get() &&
-      !main_frame_interfaces_parameterized_.get()) {
-    InitMainFrameInterfaces();
-  }
-
-  if (!main_frame_interfaces_parameterized_->TryBindInterface(
-          interface_name, &interface_pipe, web_state)) {
-    main_frame_interfaces_->TryBindInterface(interface_name, &interface_pipe);
+    mojo::GenericPendingReceiver receiver) {
+  if (auto web_usage_receiver = receiver.As<mojom::WebUsageController>()) {
+    mojo::MakeSelfOwnedReceiver(std::make_unique<WebUsageController>(web_state),
+                                std::move(web_usage_receiver));
   }
 }
 
@@ -135,6 +89,7 @@ void ShellWebClient::AllowCertificateError(
     const net::SSLInfo&,
     const GURL&,
     bool overridable,
+    int64_t /*navigation_id*/,
     const base::Callback<void(bool)>& callback) {
   base::Callback<void(bool)> block_callback(callback);
   UIAlertController* alert = [UIAlertController
@@ -158,14 +113,6 @@ void ShellWebClient::AllowCertificateError(
       presentViewController:alert
                    animated:YES
                  completion:nil];
-}
-
-void ShellWebClient::InitMainFrameInterfaces() {
-  main_frame_interfaces_ = std::make_unique<service_manager::BinderRegistry>();
-  main_frame_interfaces_parameterized_ =
-      std::make_unique<service_manager::BinderRegistryWithArgs<WebState*>>();
-  main_frame_interfaces_parameterized_->AddInterface(
-      base::Bind(WebUsageController::Create));
 }
 
 }  // namespace web

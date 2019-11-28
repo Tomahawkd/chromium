@@ -27,7 +27,7 @@ ImageCache.DB_NAME = 'image-loader';
  * @type {number}
  * @const
  */
-ImageCache.DB_VERSION = 12;
+ImageCache.DB_VERSION = 14;
 
 /**
  * Memory limit for images data in bytes.
@@ -67,12 +67,15 @@ ImageCache.prototype.initialize = function(callback) {
   openRequest.onupgradeneeded = function(e) {
     console.info('Cache database creating or upgrading.');
     var db = e.target.result;
-    if (db.objectStoreNames.contains('metadata'))
+    if (db.objectStoreNames.contains('metadata')) {
       db.deleteObjectStore('metadata');
-    if (db.objectStoreNames.contains('data'))
+    }
+    if (db.objectStoreNames.contains('data')) {
       db.deleteObjectStore('data');
-    if (db.objectStoreNames.contains('settings'))
+    }
+    if (db.objectStoreNames.contains('settings')) {
       db.deleteObjectStore('settings');
+    }
     db.createObjectStore('metadata', {keyPath: 'key'});
     db.createObjectStore('data', {keyPath: 'key'});
     db.createObjectStore('settings', {keyPath: 'key'});
@@ -112,10 +115,11 @@ ImageCache.prototype.fetchCacheSize_ = function(
   var sizeRequest = settingsStore.get('size');
 
   sizeRequest.onsuccess = function(e) {
-    if (e.target.result)
+    if (e.target.result) {
       onSuccess(e.target.result.value);
-    else
+    } else {
       onSuccess(0);
+    }
   };
 
   sizeRequest.onerror = function() {
@@ -196,13 +200,15 @@ ImageCache.prototype.evictCache_ = function(
  * Saves an image in the cache.
  *
  * @param {string} key Cache key.
- * @param {string} data Image data.
+ * @param {number} timestamp Last modification timestamp. Used to detect
+ *     if the image cache entry is out of date.
  * @param {number} width Image width.
  * @param {number} height Image height.
- * @param {number} timestamp Last modification timestamp. Used to detect
- *     if the cache entry becomes out of date.
+ * @param {?string} ifd Image ifd, null if none.
+ * @param {string} data Image data.
  */
-ImageCache.prototype.saveImage = function(key, data, width, height, timestamp) {
+ImageCache.prototype.saveImage = function(
+    key, timestamp, width, height, ifd, data) {
   if (!this.db_) {
     console.warn('Cache database not available.');
     return;
@@ -214,8 +220,11 @@ ImageCache.prototype.saveImage = function(key, data, width, height, timestamp) {
       timestamp: timestamp,
       width: width,
       height: height,
+      ifd: ifd,
       size: data.length,
-      lastLoadTimestamp: Date.now()};
+      lastLoadTimestamp: Date.now(),
+    };
+
     var dataEntry = {key: key, data: data};
 
     var transaction = this.db_.transaction(['settings', 'metadata', 'data'],
@@ -237,13 +246,13 @@ ImageCache.prototype.saveImage = function(key, data, width, height, timestamp) {
 };
 
 /**
- * Loads an image from the cache (if available) or returns null.
+ * Loads an image from the cache.
  *
  * @param {string} key Cache key.
  * @param {number} timestamp Last modification timestamp. If different
- *     that the one in cache, then the entry will be invalidated.
- * @param {function(string, number, number)} onSuccess Success callback with
- *     the image's data, width, height.
+ *     than the one in cache, then the entry will be invalidated.
+ * @param {function(number, number, ?string, string)} onSuccess Success
+ *     callback with the image width, height, ?ifd, and data.
  * @param {function()} onFailure Failure callback.
  */
 ImageCache.prototype.loadImage = function(
@@ -268,8 +277,9 @@ ImageCache.prototype.loadImage = function(
 
   var onPartialSuccess = function() {
     // Check if all sub-requests have finished.
-    if (!metadataReceived || !dataReceived)
+    if (!metadataReceived || !dataReceived) {
       return;
+    }
 
     // Check if both entries are available or both unavailable.
     if (!!metadataEntry != !!dataEntry) {
@@ -291,20 +301,24 @@ ImageCache.prototype.loadImage = function(
       // image data.
       metadataEntry.lastLoadTimestamp = Date.now();
       metadataStore.put(metadataEntry);  // Added asynchronously.
-      onSuccess(dataEntry.data, metadataEntry.width, metadataEntry.height);
+      onSuccess(
+          metadataEntry.width, metadataEntry.height, metadataEntry.ifd,
+          dataEntry.data);
     }
   }.bind(this);
 
   metadataRequest.onsuccess = function(e) {
-    if (e.target.result)
+    if (e.target.result) {
       metadataEntry = e.target.result;
+    }
     metadataReceived = true;
     onPartialSuccess();
   };
 
   dataRequest.onsuccess = function(e) {
-    if (e.target.result)
+    if (e.target.result) {
       dataEntry = e.target.result;
+    }
     dataReceived = true;
     onPartialSuccess();
   };
@@ -349,19 +363,22 @@ ImageCache.prototype.removeImage = function(
   var metadataReceived = false;
 
   var onPartialSuccess = function() {
-    if (!cacheSizeReceived || !metadataReceived)
+    if (!cacheSizeReceived || !metadataReceived) {
       return;
+    }
 
     // If either cache size or metadata entry is not available, then it is
     // an error.
     if (cacheSize === null || !metadataEntry) {
-      if (opt_onFailure)
+      if (opt_onFailure) {
         opt_onFailure();
+      }
       return;
     }
 
-    if (opt_onSuccess)
+    if (opt_onSuccess) {
       opt_onSuccess();
+    }
 
     this.setCacheSize_(cacheSize - metadataEntry.size, transaction);
     metadataStore.delete(key);  // Delete asynchronously.
@@ -385,8 +402,9 @@ ImageCache.prototype.removeImage = function(
   var metadataRequest = metadataStore.get(key);
 
   metadataRequest.onsuccess = function(e) {
-    if (e.target.result)
+    if (e.target.result) {
       metadataEntry = e.target.result;
+    }
     metadataReceived = true;
     onPartialSuccess();
   };

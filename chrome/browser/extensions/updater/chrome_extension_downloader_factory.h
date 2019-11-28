@@ -8,8 +8,13 @@
 #include <memory>
 #include "base/files/file_path.h"
 #include "base/memory/scoped_refptr.h"
+#include "extensions/common/verifier_formats.h"
 
 class Profile;
+
+namespace crx_file {
+enum class VerifierFormat;
+}
 
 namespace extensions {
 class ExtensionDownloader;
@@ -19,10 +24,6 @@ class ExtensionDownloaderDelegate;
 namespace network {
 class SharedURLLoaderFactory;
 }  // namespace network
-
-namespace service_manager {
-class Connector;
-}
 
 // This provides a simple static interface for constructing an
 // ExtensionDownloader suitable for use from within Chrome.
@@ -42,7 +43,7 @@ class ChromeExtensionDownloaderFactory {
   CreateForURLLoaderFactory(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       extensions::ExtensionDownloaderDelegate* delegate,
-      service_manager::Connector* connector,
+      crx_file::VerifierFormat required_verifier_format,
       const base::FilePath& profile_path = base::FilePath());
 
   // Creates a downloader for a given Profile. This downloader will be able

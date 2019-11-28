@@ -9,6 +9,7 @@
 #include <set>
 
 #include "base/containers/mru_cache.h"
+#include "base/containers/stack_container.h"
 #include "cc/paint/paint_export.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
@@ -36,13 +37,23 @@ namespace cc {
 using PaintCacheId = uint32_t;
 using PaintCacheIds = std::vector<PaintCacheId>;
 enum class PaintCacheDataType : uint32_t { kTextBlob, kPath, kLast = kPath };
+enum class PaintCacheEntryState : uint32_t {
+  kEmpty,
+  kCached,
+  kInlined,
+  kLast = kInlined
+};
+
 constexpr size_t PaintCacheDataTypeCount =
     static_cast<uint32_t>(PaintCacheDataType::kLast) + 1u;
 
 class CC_PAINT_EXPORT ClientPaintCache {
  public:
   explicit ClientPaintCache(size_t max_budget_bytes);
+  ClientPaintCache(const ClientPaintCache&) = delete;
   ~ClientPaintCache();
+
+  ClientPaintCache& operator=(const ClientPaintCache&) = delete;
 
   bool Get(PaintCacheDataType type, PaintCacheId id);
   void Put(PaintCacheDataType type, PaintCacheId id, size_t size);
@@ -52,18 +63,35 @@ class CC_PAINT_EXPORT ClientPaintCache {
   using PurgedData = PaintCacheIds[PaintCacheDataTypeCount];
   void Purge(PurgedData* purged_data);
 
+  // Finalize the state of pending entries, which were sent to the service-side
+  // cache.
+  void FinalizePendingEntries();
+
+  // Notifies that the pending entries were not sent to the service-side cache
+  // and should be discarded.
+  void AbortPendingEntries();
+
   // Notifies that all entries should be purged from the ServicePaintCache.
   // Returns true if any entries were evicted from this call.
   bool PurgeAll();
 
+  size_t bytes_used() const { return bytes_used_; }
+
  private:
-  using CacheMap =
-      base::MRUCache<std::pair<PaintCacheDataType, PaintCacheId>, size_t>;
+  using CacheKey = std::pair<PaintCacheDataType, PaintCacheId>;
+  using CacheMap = base::MRUCache<CacheKey, size_t>;
+
+  template <typename Iterator>
+  void EraseFromMap(Iterator it);
+
   CacheMap cache_map_;
   const size_t max_budget_;
   size_t bytes_used_ = 0u;
 
-  DISALLOW_COPY_AND_ASSIGN(ClientPaintCache);
+  // List of entries added to the map but not committed since we might fail to
+  // send them to the service-side cache. This is necessary to ensure we
+  // maintain an accurate mirror of the service-side state.
+  base::StackVector<CacheKey, 1> pending_entries_;
 };
 
 class CC_PAINT_EXPORT ServicePaintCache {
@@ -76,10 +104,14 @@ class CC_PAINT_EXPORT ServicePaintCache {
 
   // Retrieves an entry for |id| stored in the cache. Or nullptr if the entry
   // is not found.
-  sk_sp<SkTextBlob> GetTextBlob(PaintCacheId id);
+  sk_sp<SkTextBlob> GetTextBlob(PaintCacheId id) const;
 
+  // Stores |path| received from the client in the cache.
   void PutPath(PaintCacheId, SkPath path);
-  SkPath* GetPath(PaintCacheId id);
+
+  // Retrieves an entry for |id| stored in the cache. The path data is stored in
+  // |path| pointed memory. Returns false, if the entry is not found.
+  bool GetPath(PaintCacheId id, SkPath* path) const;
 
   void Purge(PaintCacheDataType type,
              size_t n,

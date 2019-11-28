@@ -4,6 +4,7 @@
 
 // This file deliberately has no header guard, as it's inlined in a number of
 // files.
+// no-include-guard-because-multiply-included
 
 // Disables the QUIC protocol.
 NETWORK_SWITCH(kDisableQuic, "disable-quic")
@@ -20,10 +21,6 @@ NETWORK_SWITCH(kEnableUserAlternateProtocolPorts,
 
 // Enables the QUIC protocol.  This is a temporary testing flag.
 NETWORK_SWITCH(kEnableQuic, "enable-quic")
-
-// Enable use of experimental TCP sockets API for sending data in the
-// SYN packet.
-NETWORK_SWITCH(kEnableTcpFastOpen, "enable-tcp-fastopen")
 
 // Ignores certificate-related errors.
 NETWORK_SWITCH(kIgnoreCertificateErrors, "ignore-certificate-errors")
@@ -65,6 +62,8 @@ NETWORK_SWITCH(kTestingFixedHttpsPort, "testing-fixed-https-port")
 // useful.
 NETWORK_SWITCH(kHostRules, "host-rules")
 
-// Uses experimental simple cache backend if possible when set to "on", and
-// blockfile backend when set to "off".
-NETWORK_SWITCH(kUseSimpleCacheBackend, "use-simple-cache-backend")
+// Enable "greasing" HTTP/2, that is, sending SETTINGS parameters with reserved
+// identifiers and sending frames of reserved types, respectively.  See
+// https://tools.ietf.org/html/draft-bishop-httpbis-grease-00 for more detail.
+NETWORK_SWITCH(kHttp2GreaseSettings, "http2-grease-settings")
+NETWORK_SWITCH(kHttp2GreaseFrameType, "http2-grease-frame-type")

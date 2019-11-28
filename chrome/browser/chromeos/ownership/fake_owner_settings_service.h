@@ -21,19 +21,17 @@ class StubCrosSettingsProvider;
 
 class FakeOwnerSettingsService : public OwnerSettingsServiceChromeOS {
  public:
-  explicit FakeOwnerSettingsService(Profile* profile);
+  FakeOwnerSettingsService(StubCrosSettingsProvider* provider,
+                           Profile* profile);
   FakeOwnerSettingsService(
+      StubCrosSettingsProvider* provider,
       Profile* profile,
-      const scoped_refptr<ownership::OwnerKeyUtil>& owner_key_util,
-      StubCrosSettingsProvider* provider);
+      const scoped_refptr<ownership::OwnerKeyUtil>& owner_key_util);
+
   ~FakeOwnerSettingsService() override;
 
   void set_set_management_settings_result(bool success) {
     set_management_settings_result_ = success;
-  }
-
-  void set_ignore_profile_creation_notification(bool ignore) {
-    ignore_profile_creation_notifications_ = ignore;
   }
 
   const ManagementSettings& last_settings() const {
@@ -44,19 +42,10 @@ class FakeOwnerSettingsService : public OwnerSettingsServiceChromeOS {
   bool IsOwner() override;
   bool Set(const std::string& setting, const base::Value& value) override;
 
-  // NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
-
  private:
   bool set_management_settings_result_ = true;
   ManagementSettings last_settings_;
   StubCrosSettingsProvider* settings_provider_;
-  // Creating TestingProfiles after constructing a FakeOwnerSettingsService
-  // causes the underlying OwnerSettingsServiceChromeOS::Observe to be called,
-  // which can be bad in tests.
-  bool ignore_profile_creation_notifications_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(FakeOwnerSettingsService);
 };

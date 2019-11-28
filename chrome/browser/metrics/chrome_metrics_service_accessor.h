@@ -11,10 +11,10 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string_piece.h"
+#include "chrome/browser/chrome_browser_field_trials_mobile.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "components/metrics/metrics_service_accessor.h"
 
-class BrowserProcessImpl;
 class ChromeMetricsServiceClient;
 class ChromePasswordManagerClient;
 class NavigationMetricsRecorder;
@@ -26,70 +26,46 @@ class CrashesDOMHandler;
 class FlashDOMHandler;
 }
 
-namespace android {
-class ExternalDataUseObserverBridge;
-}
-
-namespace chrome {
-void AttemptRestart();
-}
-
-namespace contextual_suggestions {
-struct ContextualSuggestionsResult;
-void RegisterSyntheticFieldTrials(const ContextualSuggestionsResult& result);
-}  // namespace contextual_suggestions
-
 namespace domain_reliability {
 class DomainReliabilityServiceFactory;
 }
 
 namespace extensions {
-class ChromeExtensionWebContentsObserver;
 class ChromeGuestViewManagerDelegate;
 class ChromeMetricsPrivateDelegate;
 class FileManagerPrivateIsUMAEnabledFunction;
+}
+
+namespace first_run {
+class FirstRunMasterPrefsVariationsSeedTest;
 }
 
 namespace metrics {
 class UkmConsentParamBrowserTest;
 }
 
-namespace options {
-class BrowserOptionsHandler;
-}
-
-namespace prerender {
-bool IsOmniboxEnabled(Profile* profile);
-}
-
 namespace heap_profiling {
 class BackgroundProfilingTriggers;
 }
 
-namespace nux {
-bool IsNuxOnboardingEnabled(Profile* profile);
+namespace welcome {
+void JoinOnboardingGroup(Profile* profile);
 }
 
 namespace safe_browsing {
 class ChromeCleanerControllerDelegate;
 class DownloadUrlSBClient;
 class IncidentReportingService;
-class ReporterRunner;
 class SafeBrowsingService;
 class SafeBrowsingUIManager;
-class SRTGlobalError;
-}
+
+namespace internal {
+class ReporterRunner;
+}  // namespace internal
+}  // namespace safe_browsing
 
 namespace settings {
 class MetricsReportingHandler;
-}
-
-namespace speech {
-class ChromeSpeechRecognitionManagerDelegate;
-}
-
-namespace system_logs {
-class ChromeInternalLogSource;
 }
 
 // This class limits and documents access to metrics service helper methods.
@@ -107,51 +83,44 @@ class ChromeMetricsServiceAccessor : public metrics::MetricsServiceAccessor {
  private:
   friend class ::CrashesDOMHandler;
   friend class ::FlashDOMHandler;
-  friend class BrowserProcessImpl;
-  friend void chrome::AttemptRestart();
-  friend class ::android::ExternalDataUseObserverBridge;
-  // For ChromeWinClang.
-  friend class ChromeBrowserMainExtraPartsMetrics;
+  friend class ChromeBrowserFieldTrials;
   // For StackSamplingConfiguration.
   friend class ChromeBrowserMainParts;
   friend class ChromeMetricsServicesManagerClient;
   friend class ChromeRenderMessageFilter;
-  friend void contextual_suggestions::RegisterSyntheticFieldTrials(
-      const contextual_suggestions::ContextualSuggestionsResult& result);
   friend class DataReductionProxyChromeSettings;
   friend class domain_reliability::DomainReliabilityServiceFactory;
-  friend class extensions::ChromeExtensionWebContentsObserver;
   friend class extensions::ChromeGuestViewManagerDelegate;
   friend class extensions::ChromeMetricsPrivateDelegate;
   friend class extensions::FileManagerPrivateIsUMAEnabledFunction;
   friend void ChangeMetricsReportingStateWithReply(
       bool,
       const OnMetricsReportingCallbackType&);
-  friend class options::BrowserOptionsHandler;
-  friend bool prerender::IsOmniboxEnabled(Profile* profile);
+  friend void ApplyMetricsReportingPolicy();
   friend class heap_profiling::BackgroundProfilingTriggers;
   friend class settings::MetricsReportingHandler;
-  friend class speech::ChromeSpeechRecognitionManagerDelegate;
-  friend class system_logs::ChromeInternalLogSource;
   friend class UmaSessionStats;
   friend class safe_browsing::ChromeCleanerControllerDelegate;
   friend class safe_browsing::DownloadUrlSBClient;
   friend class safe_browsing::IncidentReportingService;
-  friend class safe_browsing::ReporterRunner;
-  friend class safe_browsing::SRTGlobalError;
+  friend class safe_browsing::internal::ReporterRunner;
   friend class safe_browsing::SafeBrowsingService;
   friend class safe_browsing::SafeBrowsingUIManager;
   friend class ChromeMetricsServiceClient;
   friend class ChromePasswordManagerClient;
+  friend void welcome::JoinOnboardingGroup(Profile* profile);
   friend class NavigationMetricsRecorder;
-  friend class ChromeUnifiedConsentServiceClient;
-  friend bool nux::IsNuxOnboardingEnabled(Profile* profile);
+  friend class ChromeBrowserMainExtraPartsGpu;
 
   // Testing related friends.
+  friend class first_run::FirstRunMasterPrefsVariationsSeedTest;
+  friend class ForceFieldTrialsBrowserTest;
   friend class MetricsReportingStateTest;
   friend class metrics::UkmConsentParamBrowserTest;
   FRIEND_TEST_ALL_PREFIXES(ChromeMetricsServiceAccessorTest,
                            MetricsReportingEnabled);
+  FRIEND_TEST_ALL_PREFIXES(ChromeMetricsServicesManagerClientTest,
+                           ForceTrialsDisablesReporting);
 
   // Returns true if metrics reporting is enabled. This does NOT necessary mean
   // that it is active as configuration may prevent it on some devices (i.e.

@@ -14,6 +14,7 @@ Polymer({
   behaviors: [
     I18nBehavior,
     WebUIListenerBehavior,
+    settings.RouteObserverBehavior,
   ],
 
   properties: {
@@ -50,6 +51,36 @@ Polymer({
   },
 
   /**
+   * @param {!settings.Route} newRoute
+   * @param {settings.Route} oldRoute
+   */
+  currentRouteChanged: function(newRoute, oldRoute) {
+    if (newRoute == settings.routes.ACCOUNT_MANAGER) {
+      this.browserProxy_.showWelcomeDialogIfRequired();
+    }
+  },
+
+  /**
+   * @return {boolean} True if secondary account sign-ins are allowed, false
+   *    otherwise.
+   * @private
+   */
+  isSecondaryGoogleAccountSigninAllowed_: function() {
+    return loadTimeData.getBoolean('secondaryGoogleAccountSigninAllowed');
+  },
+
+  /**
+   * @return {string} 'Secondary Accounts disabled' message depending on
+   *    account type
+   * @private
+   */
+  getSecondaryAccountsDisabledUserMessage_: function() {
+    return loadTimeData.getBoolean('isChild')
+      ? this.i18n('accountManagerSecondaryAccountsDisabledChildText')
+      : this.i18n('accountManagerSecondaryAccountsDisabledText');
+  },
+
+  /**
    * @param {string} iconUrl
    * @return {string} A CSS image-set for multiple scale factors.
    * @private
@@ -64,6 +95,85 @@ Polymer({
    */
   addAccount_: function(event) {
     this.browserProxy_.addAccount();
+  },
+
+  /**
+   * @param {!settings.Account} account
+   * @return {boolean} True if the account reauthentication button should be
+   *    shown, false otherwise.
+   * @private
+   */
+  shouldShowReauthenticationButton_: function(account) {
+    // Device account re-authentication cannot be handled in-session, primarily
+    // because the user may have changed their password (leading to an LST
+    // invalidation) and we do not have a mechanism to change the cryptohome
+    // password in-session.
+    return !account.isDeviceAccount && !account.isSignedIn;
+  },
+
+  /**
+   * @param {!settings.Account} account
+   * @return {string} An appropriate management status label. e.g.
+   *    "Primary account" for unmanaged accounts, "Managed by <Domain>"
+   *    for Enterprise managed accounts etc.
+   * @private
+   */
+  getManagementLabel_: function(account) {
+    if (account.organization) {
+      return this.i18n('accountManagerManagedLabel', account.organization);
+    }
+
+    return this.i18n('accountManagerUnmanagedLabel');
+  },
+
+  /**
+   * @param {boolean} unmigrated
+   * @private
+   */
+  getAccountManagerSignedOutName_: function(unmigrated) {
+    return this.i18n(unmigrated ? 'accountManagerUnmigratedAccountName'
+                                : 'accountManagerSignedOutAccountName');
+  },
+
+  /**
+   * @param {boolean} unmigrated
+   * @private
+   */
+  getAccountManagerSignedOutLabel_: function(unmigrated) {
+    return this.i18n(unmigrated ? 'accountManagerMigrationLabel'
+                                : 'accountManagerReauthenticationLabel');
+  },
+
+
+  /**
+   * @param {!settings.Account} account
+   * @private
+   */
+  getAccountManagerSignedOutTitle_: function(account) {
+    const label = account.unmigrated ? 'accountManagerMigrationTooltip'
+                                     : 'accountManagerReauthenticationTooltip';
+    return loadTimeData.getStringF(label, account.email);
+  },
+
+  /**
+   * @param {!settings.Account} account
+   * @private
+   */
+  getMoreActionsTitle_: function(account) {
+    return loadTimeData.getStringF('accountManagerMoreActionsTooltip',
+                                    account.email);
+  },
+
+  /**
+   * @param {!CustomEvent<!{model: !{item: !settings.Account}}>} event
+   * @private
+   */
+  onReauthenticationTap_: function(event) {
+    if (event.model.item.unmigrated) {
+      this.browserProxy_.migrateAccount(event.model.item.email);
+    } else {
+      this.browserProxy_.reauthenticateAccount(event.model.item.email);
+    }
   },
 
   /**

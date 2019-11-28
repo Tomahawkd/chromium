@@ -42,18 +42,18 @@ Polymer({
     'updateSelectionLabel_(show, selectionLabel)',
   ],
 
-  /** @return {PaperButtonElement} */
+  /** @return {HTMLElement} */
   get deleteButton() {
-    return /** @type {PaperButtonElement} */ (this.$$('#delete'));
+    return /** @type {HTMLElement} */ (this.$$('#delete'));
   },
 
   /** @private */
-  onClearSelectionTap_: function() {
+  onClearSelectionClick_: function() {
     this.fire('clear-selected-items');
   },
 
   /** @private */
-  onDeleteTap_: function() {
+  onDeleteClick_: function() {
     this.fire('delete-selected-items');
   },
 
@@ -69,7 +69,8 @@ Polymer({
 
   /** @private */
   onShowChanged_: function() {
-    if (this.show)
+    if (this.show) {
       this.hasShown_ = true;
+    }
   },
 });

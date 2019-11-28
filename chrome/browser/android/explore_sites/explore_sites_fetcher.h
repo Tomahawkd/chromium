@@ -40,6 +40,7 @@ class ExploreSitesFetcher {
       bool is_immediate_fetch,
       const std::string& catalog_version,
       const std::string& accept_languages,
+      const std::string& country_code,
       scoped_refptr<network::SharedURLLoaderFactory> loader_factory,
       Callback callback);
 
@@ -66,6 +67,7 @@ class ExploreSitesFetcher {
 
   // Allow overriding device specific functionality for testing
   void SetDeviceDelegateForTest(std::unique_ptr<DeviceDelegate> delegate);
+  void OverrideCountryCodeForDebugging(const std::string& country_code);
 
  private:
   explicit ExploreSitesFetcher(
@@ -73,6 +75,7 @@ class ExploreSitesFetcher {
       const GURL& url,
       const std::string& catalog_version,
       const std::string& accept_languages,
+      const std::string& country_code,
       scoped_refptr<network ::SharedURLLoaderFactory> loader_factory,
       Callback callback);
 
@@ -88,8 +91,10 @@ class ExploreSitesFetcher {
 
   bool is_immediate_fetch_;
   std::string accept_languages_;
+  std::string country_code_;
   std::string client_version_;
-  GURL request_url_;
+  std::string catalog_version_;
+  GURL url_;
 
   std::unique_ptr<net::BackoffEntry> backoff_entry_;
   int max_failure_count_ = 0;
@@ -101,7 +106,7 @@ class ExploreSitesFetcher {
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   std::unique_ptr<network::SimpleURLLoader> url_loader_;
 
-  base::WeakPtrFactory<ExploreSitesFetcher> weak_factory_;
+  base::WeakPtrFactory<ExploreSitesFetcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExploreSitesFetcher);
 };

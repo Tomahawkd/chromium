@@ -5,7 +5,8 @@
 #include "components/download/public/common/download_item_impl_delegate.h"
 
 #include "base/logging.h"
-#include "components/download/database/in_progress/download_entry.h"
+#include "build/build_config.h"
+#include "components/download/public/common/auto_resumption_handler.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_item_impl.h"
 
@@ -71,11 +72,6 @@ void DownloadItemImplDelegate::UpdatePersistence(DownloadItemImpl* download) {}
 
 void DownloadItemImplDelegate::OpenDownload(DownloadItemImpl* download) {}
 
-bool DownloadItemImplDelegate::IsMostRecentDownloadItemAtFilePath(
-    DownloadItemImpl* download) {
-  return true;
-}
-
 void DownloadItemImplDelegate::ShowDownloadInShell(DownloadItemImpl* download) {
 }
 
@@ -84,15 +80,26 @@ void DownloadItemImplDelegate::DownloadRemoved(DownloadItemImpl* download) {}
 void DownloadItemImplDelegate::DownloadInterrupted(DownloadItemImpl* download) {
 }
 
-base::Optional<DownloadEntry> DownloadItemImplDelegate::GetInProgressEntry(
-    DownloadItemImpl* download) {
-  return base::Optional<DownloadEntry>();
-}
-
 bool DownloadItemImplDelegate::IsOffTheRecord() const {
   return false;
 }
 
+bool DownloadItemImplDelegate::IsActiveNetworkMetered() const {
+  return download::AutoResumptionHandler::Get()
+             ? download::AutoResumptionHandler::Get()->IsActiveNetworkMetered()
+             : false;
+}
+
 void DownloadItemImplDelegate::ReportBytesWasted(DownloadItemImpl* download) {}
+
+service_manager::Connector*
+DownloadItemImplDelegate::GetServiceManagerConnector() {
+  return nullptr;
+}
+
+QuarantineConnectionCallback
+DownloadItemImplDelegate::GetQuarantineConnectionCallback() {
+  return base::NullCallback();
+}
 
 }  // namespace download

@@ -6,29 +6,22 @@
 
 #include "ash/shell.h"
 #include "ash/system/cast/tray_cast.h"
-#include "ash/system/unified/unified_detailed_view_delegate.h"
+#include "ash/system/tray/detailed_view_delegate.h"
 
 namespace ash {
 
 UnifiedCastDetailedViewController::UnifiedCastDetailedViewController(
     UnifiedSystemTrayController* tray_controller)
     : detailed_view_delegate_(
-          std::make_unique<UnifiedDetailedViewDelegate>(tray_controller)) {}
+          std::make_unique<DetailedViewDelegate>(tray_controller)) {}
 
 UnifiedCastDetailedViewController::~UnifiedCastDetailedViewController() =
     default;
 
 views::View* UnifiedCastDetailedViewController::CreateView() {
   DCHECK(!view_);
-  view_ = new tray::CastDetailedView(
-      detailed_view_delegate_.get(),
-      Shell::Get()->cast_config()->sinks_and_routes());
+  view_ = new tray::CastDetailedView(detailed_view_delegate_.get());
   return view_;
-}
-
-void UnifiedCastDetailedViewController::OnDevicesUpdated(
-    std::vector<mojom::SinkAndRoutePtr> devices) {
-  view_->UpdateReceiverList(std::move(devices));
 }
 
 }  // namespace ash

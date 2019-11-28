@@ -29,8 +29,7 @@ class CastAudioMixer : public ::media::AudioOutputStream::AudioSourceCallback {
   ~CastAudioMixer() override;
 
   virtual ::media::AudioOutputStream* MakeStream(
-      const ::media::AudioParameters& params,
-      const std::string& device_id);
+      const ::media::AudioParameters& params);
 
  private:
   class MixerProxyStream;
@@ -40,14 +39,14 @@ class CastAudioMixer : public ::media::AudioOutputStream::AudioSourceCallback {
                  base::TimeTicks delay_timestamp,
                  int prior_frames_skipped,
                  ::media::AudioBus* dest) override;
-  void OnError() override;
+  void OnError(ErrorType type) override;
 
   // MixedAudioOutputStreams call Register on opening and AddInput on starting.
-  bool Register(MixerProxyStream* proxy_stream, const std::string& device_id);
+  bool Register(MixerProxyStream* proxy_stream);
   void Unregister(MixerProxyStream* proxy_stream);
   void AddInput(::media::AudioConverter::InputCallback* input_callback);
   void RemoveInput(::media::AudioConverter::InputCallback* input_callback);
-  void HandleError();
+  void HandleError(ErrorType type);
 
   CastAudioManager* const audio_manager_;
   bool error_;

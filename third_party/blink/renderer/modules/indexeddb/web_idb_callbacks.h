@@ -26,47 +26,38 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_WEB_IDB_CALLBACKS_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_WEB_IDB_CALLBACKS_H_
 
-#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-shared.h"
-#include "third_party/blink/public/platform/web_string.h"
-#include "third_party/blink/public/platform/web_vector.h"
+#include <memory>
+
+#include "base/memory/weak_ptr.h"
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 
 namespace blink {
 
-struct IDBDatabaseMetadata;
-class WebIDBCursor;
-class WebIDBDatabase;
-class WebIDBDatabaseError;
-class WebIDBKey;
-struct WebIDBNameAndVersion;
-class WebIDBValue;
+class WebIDBCursorImpl;
 
-class WebIDBCallbacks {
+class WebIDBCallbacks : public mojom::blink::IDBCallbacks {
  public:
-  virtual ~WebIDBCallbacks() = default;
-
-  // Pointers transfer ownership.
-  virtual void OnError(const WebIDBDatabaseError&) = 0;
-  virtual void OnSuccess(const WebVector<WebIDBNameAndVersion>&) = 0;
-  virtual void OnSuccess(const WebVector<WebString>&) = 0;
-  virtual void OnSuccess(WebIDBCursor*,
-                         WebIDBKey,
-                         WebIDBKey primary_key,
-                         WebIDBValue) = 0;
-  virtual void OnSuccess(WebIDBDatabase*, const IDBDatabaseMetadata&) = 0;
-  virtual void OnSuccess(WebIDBKey) = 0;
-  virtual void OnSuccess(WebIDBValue) = 0;
-  virtual void OnSuccess(WebVector<WebIDBValue>) = 0;
-  virtual void OnSuccess(long long) = 0;
-  virtual void OnSuccess() = 0;
-  virtual void OnSuccess(WebIDBKey, WebIDBKey primary_key, WebIDBValue) = 0;
-  virtual void OnBlocked(long long old_version) = 0;
-  virtual void OnUpgradeNeeded(long long old_version,
-                               WebIDBDatabase*,
-                               const IDBDatabaseMetadata&,
-                               mojom::IDBDataLoss data_loss,
-                               WebString data_loss_message) = 0;
-  virtual void Detach() = 0;
+  virtual void SuccessCursorPrefetch(
+      Vector<std::unique_ptr<IDBKey>> keys,
+      Vector<std::unique_ptr<IDBKey>> primary_keys,
+      Vector<std::unique_ptr<IDBValue>> values) = 0;
+  virtual void DetachRequestFromCallback() = 0;
+  virtual void SetState(base::WeakPtr<WebIDBCursorImpl> cursor,
+                        int64_t transaction_id) = 0;
+  virtual void SuccessCursor(
+      mojo::PendingAssociatedRemote<mojom::blink::IDBCursor> cursor_info,
+      std::unique_ptr<IDBKey> key,
+      std::unique_ptr<IDBKey> primary_key,
+      base::Optional<std::unique_ptr<IDBValue>> optional_value) = 0;
+  virtual void SuccessCursorContinue(
+      std::unique_ptr<IDBKey>,
+      std::unique_ptr<IDBKey> primary_key,
+      base::Optional<std::unique_ptr<IDBValue>>) = 0;
+  virtual void SuccessArray(Vector<mojom::blink::IDBReturnValuePtr> values) = 0;
+  virtual void SuccessValue(mojom::blink::IDBReturnValuePtr value) = 0;
+  virtual void SuccessKey(std::unique_ptr<IDBKey> key) = 0;
 };
 
 }  // namespace blink

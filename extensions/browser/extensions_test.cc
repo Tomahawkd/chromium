@@ -9,12 +9,14 @@
 #include "components/prefs/pref_service_factory.h"
 #include "components/prefs/testing_pref_store.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/test/test_browser_context.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_factory.h"
 #include "extensions/browser/test_extensions_browser_client.h"
 #include "extensions/test/test_content_utility_client.h"
+#include "services/network/public/mojom/cors_origin_pattern.mojom.h"
 
 namespace {
 
@@ -25,17 +27,27 @@ std::unique_ptr<content::TestBrowserContext> CreateTestIncognitoContext() {
   return incognito_context;
 }
 
+class ExtensionTestBrowserContext : public content::TestBrowserContext {
+ private:
+  void SetCorsOriginAccessListForOrigin(
+      const url::Origin& source_origin,
+      std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
+      std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
+      base::OnceClosure closure) override {
+    // This method is called for setting up Extensions, but can be ignored
+    // unless actual network requests need to be handled.
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                  std::move(closure));
+  }
+};
+
 }  // namespace
 
 namespace extensions {
 
-ExtensionsTest::ExtensionsTest()
-    : ExtensionsTest(content::TestBrowserThreadBundle::Options::DEFAULT) {}
-
 ExtensionsTest::ExtensionsTest(
-    content::TestBrowserThreadBundle::Options thread_options)
-    : thread_bundle_(
-          std::make_unique<content::TestBrowserThreadBundle>(thread_options)),
+    std::unique_ptr<content::BrowserTaskEnvironment> task_environment)
+    : task_environment_(std::move(task_environment)),
       rvh_test_enabler_(
           std::make_unique<content::RenderViewHostTestEnabler>()) {}
 
@@ -43,7 +55,7 @@ ExtensionsTest::~ExtensionsTest() {
   // Destroy the task runners before nulling the browser/utility clients, as
   // posted tasks may use them.
   rvh_test_enabler_.reset();
-  thread_bundle_.reset();
+  task_environment_.reset();
   content::SetUtilityClientForTesting(nullptr);
 }
 
@@ -55,8 +67,9 @@ void ExtensionsTest::SetExtensionsBrowserClient(
 }
 
 void ExtensionsTest::SetUp() {
+  content::ForceInProcessNetworkService(true);
   content_utility_client_ = std::make_unique<TestContentUtilityClient>();
-  browser_context_ = std::make_unique<content::TestBrowserContext>();
+  browser_context_ = std::make_unique<ExtensionTestBrowserContext>();
   incognito_context_ = CreateTestIncognitoContext();
 
   if (!extensions_browser_client_) {
@@ -86,7 +99,7 @@ void ExtensionsTest::SetUp() {
       browser_context(), pref_service_.get(),
       browser_context()->GetPath().AppendASCII("Extensions"),
       extension_pref_value_map_.get(), false /* extensions_disabled */,
-      std::vector<ExtensionPrefsObserver*>()));
+      std::vector<EarlyExtensionPrefsObserver*>()));
 
   ExtensionPrefsFactory::GetInstance()->SetInstanceForTesting(
       browser_context(), std::move(extension_prefs));

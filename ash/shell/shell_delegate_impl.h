@@ -11,10 +11,6 @@
 #include "ash/shell_delegate.h"
 #include "base/macros.h"
 
-namespace keyboard {
-class KeyboardUI;
-}
-
 namespace ash {
 namespace shell {
 
@@ -24,11 +20,10 @@ class ShellDelegateImpl : public ShellDelegate {
   ~ShellDelegateImpl() override;
 
   // ShellDelegate:
-  bool CanShowWindowForUser(aura::Window* window) const override;
-  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
+  bool CanShowWindowForUser(const aura::Window* window) const override;
   std::unique_ptr<ScreenshotDelegate> CreateScreenshotDelegate() override;
   AccessibilityDelegate* CreateAccessibilityDelegate() override;
-  ws::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
+  bool CanGoBack(gfx::NativeWindow window) const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellDelegateImpl);

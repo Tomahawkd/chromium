@@ -5,13 +5,12 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/test/launcher/unit_test_launcher.h"
-#include "base/test/scoped_task_environment.h"
 #include "base/test/test_suite.h"
 #include "build/build_config.h"
 #include "media/base/media.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
+#include "media/blink/blink_platform_with_task_environment.h"
+#include "mojo/public/cpp/bindings/binder_map.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
-#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/web/blink.h"
 
 #if defined(OS_ANDROID)
@@ -25,6 +24,8 @@
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
 #include "gin/v8_initializer.h"
 
+using media::BlinkPlatformWithTaskEnvironment;
+
 constexpr gin::V8Initializer::V8SnapshotFileType kSnapshotType =
 #if defined(USE_V8_CONTEXT_SNAPSHOT)
     gin::V8Initializer::V8SnapshotFileType::kWithAdditionalContext;
@@ -33,61 +34,53 @@ constexpr gin::V8Initializer::V8SnapshotFileType kSnapshotType =
 #endif  // defined(USE_V8_CONTEXT_SNAPSHOT)
 #endif  // defined(V8_USE_EXTERNAL_STARTUP_DATA)
 
-// We must use a custom blink::Platform that ensures the main thread scheduler
-// knows about the ScopedTaskEnvironment.
-class BlinkPlatformWithTaskEnvironment : public blink::Platform {
+class MediaBlinkTestSuite : public base::TestSuite {
  public:
-  BlinkPlatformWithTaskEnvironment()
-      : main_thread_scheduler_(
-            blink::scheduler::WebThreadScheduler::CreateMainThreadScheduler()) {
-  }
-
-  ~BlinkPlatformWithTaskEnvironment() override {
-    main_thread_scheduler_->Shutdown();
-  }
-
-  blink::scheduler::WebThreadScheduler* GetMainThreadScheduler() {
-    return main_thread_scheduler_.get();
-  }
+  MediaBlinkTestSuite(int argc, char** argv) : base::TestSuite(argc, argv) {}
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-  std::unique_ptr<blink::scheduler::WebThreadScheduler> main_thread_scheduler_;
+  void Initialize() override {
+    base::TestSuite::Initialize();
 
-  DISALLOW_COPY_AND_ASSIGN(BlinkPlatformWithTaskEnvironment);
-};
-
-static int RunTests(base::TestSuite* test_suite) {
 #if defined(OS_ANDROID)
-  if (media::MediaCodecUtil::IsMediaCodecAvailable())
-    media::EnablePlatformDecoderSupport();
+    if (media::MediaCodecUtil::IsMediaCodecAvailable())
+      media::EnablePlatformDecoderSupport();
 #endif
 
-  // Run this here instead of main() to ensure an AtExitManager is already
-  // present.
-  media::InitializeMediaLibrary();
+    // Run this here instead of main() to ensure an AtExitManager is already
+    // present.
+    media::InitializeMediaLibrary();
 
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
-  gin::V8Initializer::LoadV8Snapshot(kSnapshotType);
-  gin::V8Initializer::LoadV8Natives();
+    gin::V8Initializer::LoadV8Snapshot(kSnapshotType);
 #endif
 
 #if !defined(OS_IOS)
-  // Initialize mojo firstly to enable Blink initialization to use it.
-  mojo::core::Init();
+    // Initialize mojo firstly to enable Blink initialization to use it.
+    mojo::core::Init();
 #endif
 
-  BlinkPlatformWithTaskEnvironment platform_;
-  service_manager::BinderRegistry empty_registry;
-  blink::Initialize(&platform_, &empty_registry,
-                    platform_.GetMainThreadScheduler());
+    platform_ = std::make_unique<BlinkPlatformWithTaskEnvironment>();
 
-  return test_suite->Run();
-}
+    mojo::BinderMap binders;
+    blink::Initialize(platform_.get(), &binders,
+                      platform_->GetMainThreadScheduler());
+  }
+
+  void Shutdown() override {
+    platform_.reset();
+    base::TestSuite::Shutdown();
+  }
+
+  std::unique_ptr<BlinkPlatformWithTaskEnvironment> platform_;
+
+  DISALLOW_COPY_AND_ASSIGN(MediaBlinkTestSuite);
+};
 
 int main(int argc, char** argv) {
-  base::TestSuite test_suite(argc, argv);
+  MediaBlinkTestSuite test_suite(argc, argv);
   return base::LaunchUnitTests(
       argc, argv,
-      base::BindRepeating(&RunTests, base::Unretained(&test_suite)));
+      base::BindRepeating(&MediaBlinkTestSuite::Run,
+                          base::Unretained(&test_suite)));
 }

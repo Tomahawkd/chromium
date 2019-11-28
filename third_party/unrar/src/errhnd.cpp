@@ -7,6 +7,7 @@
 
 #include "rar.hpp"
 
+
 void ErrorHandler::Clean()
 {
   ExitCode=RARX_SUCCESS;

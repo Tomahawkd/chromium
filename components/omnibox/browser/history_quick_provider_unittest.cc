@@ -14,10 +14,10 @@
 #include <vector>
 
 #include "base/format_macros.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -146,21 +146,21 @@ class HistoryQuickProviderTest : public testing::Test {
   // Runs an autocomplete query on |text| and checks to see that the returned
   // results' destination URLs match those provided. |expected_urls| does not
   // need to be in sorted order.
-  void RunTest(const base::string16 text,
+  void RunTest(const base::string16& text,
                bool prevent_inline_autocomplete,
-               std::vector<std::string> expected_urls,
+               const std::vector<std::string>& expected_urls,
                bool can_inline_top_result,
-               base::string16 expected_fill_into_edit,
-               base::string16 autocompletion);
+               const base::string16& expected_fill_into_edit,
+               const base::string16& autocompletion);
 
   // As above, simply with a cursor position specified.
-  void RunTestWithCursor(const base::string16 text,
+  void RunTestWithCursor(const base::string16& text,
                          const size_t cursor_position,
                          bool prevent_inline_autocomplete,
-                         std::vector<std::string> expected_urls,
+                         const std::vector<std::string>& expected_urls,
                          bool can_inline_top_result,
-                         base::string16 expected_fill_into_edit,
-                         base::string16 autocompletion);
+                         const base::string16& expected_fill_into_edit,
+                         const base::string16& autocompletion);
 
   // TODO(shess): From history_service.h in reference to history_backend:
   // > This class has most of the implementation and runs on the 'thread_'.
@@ -180,7 +180,7 @@ class HistoryQuickProviderTest : public testing::Test {
   HistoryQuickProvider& provider() { return *provider_; }
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   std::unique_ptr<FakeAutocompleteProviderClient> client_;
 
   ACMatches ac_matches_;  // The resulting matches after running RunTest.
@@ -213,7 +213,7 @@ void HistoryQuickProviderTest::SetUp() {
 void HistoryQuickProviderTest::TearDown() {
   provider_ = nullptr;
   client_.reset();
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 std::vector<HistoryQuickProviderTest::TestURLInfo>
@@ -297,25 +297,25 @@ void HistoryQuickProviderTest::SetShouldContain::operator()(
 }
 
 void HistoryQuickProviderTest::RunTest(
-    const base::string16 text,
+    const base::string16& text,
     bool prevent_inline_autocomplete,
-    std::vector<std::string> expected_urls,
+    const std::vector<std::string>& expected_urls,
     bool can_inline_top_result,
-    base::string16 expected_fill_into_edit,
-    base::string16 expected_autocompletion) {
+    const base::string16& expected_fill_into_edit,
+    const base::string16& expected_autocompletion) {
   RunTestWithCursor(text, base::string16::npos, prevent_inline_autocomplete,
                     expected_urls, can_inline_top_result,
                     expected_fill_into_edit, expected_autocompletion);
 }
 
 void HistoryQuickProviderTest::RunTestWithCursor(
-    const base::string16 text,
+    const base::string16& text,
     const size_t cursor_position,
     bool prevent_inline_autocomplete,
-    std::vector<std::string> expected_urls,
+    const std::vector<std::string>& expected_urls,
     bool can_inline_top_result,
-    base::string16 expected_fill_into_edit,
-    base::string16 expected_autocompletion) {
+    const base::string16& expected_fill_into_edit,
+    const base::string16& expected_autocompletion) {
   SCOPED_TRACE(text);  // Minimal hint to query being run.
   base::RunLoop().RunUntilIdle();
   AutocompleteInput input(text, cursor_position,
@@ -327,8 +327,9 @@ void HistoryQuickProviderTest::RunTestWithCursor(
 
   ac_matches_ = provider_->matches();
 
-  // We should have gotten back at most AutocompleteProvider::kMaxMatches.
-  EXPECT_LE(ac_matches_.size(), AutocompleteProvider::kMaxMatches);
+  // We should have gotten back at most
+  // AutocompleteProvider::provider_max_matches().
+  EXPECT_LE(ac_matches_.size(), provider_->provider_max_matches());
 
   // If the number of expected and actual matches aren't equal then we need
   // test no further, but let's do anyway so that we know which URLs failed.
@@ -490,7 +491,7 @@ TEST_F(HistoryQuickProviderTest, ContentsClass) {
   // increase that number in the future.  Regardless, we require the first
   // five offsets to be correct--in this example these cover at least one
   // occurrence of each term.
-  EXPECT_LE(contents_class.size(), arraysize(expected_offsets));
+  EXPECT_LE(contents_class.size(), base::size(expected_offsets));
   EXPECT_GE(contents_class.size(), 5u);
   for (size_t i = 0; i < contents_class.size(); ++i)
     EXPECT_EQ(expected_offsets[i], contents_class[i].offset);

@@ -13,9 +13,9 @@
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
-#include "net/third_party/quic/core/crypto/proof_source.h"
-#include "net/third_party/quic/core/crypto/proof_verifier.h"
-#include "net/third_party/quic/test_tools/crypto_test_utils.h"
+#include "net/third_party/quiche/src/quic/core/crypto/proof_source.h"
+#include "net/third_party/quiche/src/quic/core/crypto/proof_verifier.h"
+#include "net/third_party/quiche/src/quic/test_tools/crypto_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
@@ -117,19 +117,16 @@ class TestCallback : public quic::ProofSource::Callback {
   quic::QuicCryptoProof* proof_;
 };
 
-class ProofTest : public ::testing::TestWithParam<quic::QuicTransportVersion> {
-};
+class ProofTest : public ::testing::TestWithParam<quic::ParsedQuicVersion> {};
 
 }  // namespace
 
-INSTANTIATE_TEST_CASE_P(
-    QuicTransportVersion,
-    ProofTest,
-    ::testing::ValuesIn(quic::AllSupportedTransportVersions()));
+INSTANTIATE_TEST_SUITE_P(QuicTransportVersion,
+                         ProofTest,
+                         ::testing::ValuesIn(quic::AllSupportedVersions()),
+                         ::testing::PrintToStringParamName());
 
-// TODO(rtenneti): Enable testing of quic::ProofVerifier. See
-// http://crbug.com/514468.
-TEST_P(ProofTest, DISABLED_Verify) {
+TEST_P(ProofTest, Verify) {
   std::unique_ptr<quic::ProofSource> source(
       quic::test::crypto_test_utils::ProofSourceForTesting());
   std::unique_ptr<quic::ProofVerifier> verifier(
@@ -140,7 +137,7 @@ TEST_P(ProofTest, DISABLED_Verify) {
   const uint16_t port = 8443;
   const string first_chlo_hash = "first chlo hash bytes";
   const string second_chlo_hash = "first chlo hash bytes";
-  const quic::QuicTransportVersion quic_version = GetParam();
+  const quic::QuicTransportVersion quic_version = GetParam().transport_version;
 
   bool called = false;
   bool first_called = false;
@@ -238,7 +235,7 @@ TEST_P(ProofTest, TlsSignature) {
   string sig;
   bool success;
   std::unique_ptr<TestingSignatureCallback> callback =
-      quic::QuicMakeUnique<TestingSignatureCallback>(&success, &sig);
+      std::make_unique<TestingSignatureCallback>(&success, &sig);
   source->ComputeTlsSignature(server_address, hostname, SSL_SIGN_RSA_PSS_SHA256,
                               to_be_signed, std::move(callback));
   EXPECT_TRUE(success);
@@ -286,8 +283,8 @@ TEST_P(ProofTest, UseAfterFree) {
 
   // GetProof here expects the async method to invoke the callback
   // synchronously.
-  source->GetProof(server_addr, hostname, server_config, GetParam(), chlo_hash,
-                   std::move(cb));
+  source->GetProof(server_addr, hostname, server_config,
+                   GetParam().transport_version, chlo_hash, std::move(cb));
   ASSERT_TRUE(called);
   ASSERT_TRUE(ok);
 

@@ -11,17 +11,10 @@
 #include "ash/ash_export.h"
 #include "base/callback.h"
 #include "base/strings/string16.h"
+#include "ui/gfx/native_widget_types.h"
 
 namespace aura {
 class Window;
-}
-
-namespace keyboard {
-class KeyboardUI;
-}
-
-namespace ws {
-class InputDeviceControllerClient;
 }
 
 namespace ash {
@@ -37,10 +30,7 @@ class ASH_EXPORT ShellDelegate {
 
   // Returns true if |window| can be shown for the delegate's concept of current
   // user.
-  virtual bool CanShowWindowForUser(aura::Window* window) const = 0;
-
-  // Create a shell-specific keyboard::KeyboardUI.
-  virtual std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() = 0;
+  virtual bool CanShowWindowForUser(const aura::Window* window) const = 0;
 
   // TODO(jamescook): Replace with a mojo-compatible interface.
   virtual std::unique_ptr<ScreenshotDelegate> CreateScreenshotDelegate() = 0;
@@ -48,10 +38,10 @@ class ASH_EXPORT ShellDelegate {
   // Creates a accessibility delegate. Shell takes ownership of the delegate.
   virtual AccessibilityDelegate* CreateAccessibilityDelegate() = 0;
 
-  virtual void OpenKeyboardShortcutHelpPage() const {}
+  // Check whether the current tab of the browser window can go back.
+  virtual bool CanGoBack(gfx::NativeWindow window) const = 0;
 
-  // Creator of Shell owns this; it's assumed this outlives Shell.
-  virtual ws::InputDeviceControllerClient* GetInputDeviceControllerClient() = 0;
+  virtual void OpenKeyboardShortcutHelpPage() const {}
 };
 
 }  // namespace ash

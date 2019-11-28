@@ -49,7 +49,7 @@ class IceTransport : public Transport,
   // Transport interface.
   void Start(Authenticator* authenticator,
              SendTransportInfoCallback send_transport_info_callback) override;
-  bool ProcessTransportInfo(buzz::XmlElement* transport_info) override;
+  bool ProcessTransportInfo(jingle_xmpp::XmlElement* transport_info) override;
 
  private:
   typedef std::map<std::string, IceTransportChannel*> ChannelsMap;
@@ -106,7 +106,7 @@ class IceTransport : public Transport,
   std::unique_ptr<IceTransportInfo> pending_transport_info_message_;
   base::OneShotTimer transport_info_timer_;
 
-  base::WeakPtrFactory<IceTransport> weak_factory_;
+  base::WeakPtrFactory<IceTransport> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IceTransport);
 };

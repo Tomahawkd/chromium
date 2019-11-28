@@ -8,7 +8,7 @@
 #include <deque>
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
@@ -59,8 +59,11 @@ class CC_EXPORT LayerTreeFrameSink : public viz::SharedBitmapReporter,
       scoped_refptr<viz::RasterContextProvider> worker_context_provider,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager);
+  LayerTreeFrameSink(const LayerTreeFrameSink&) = delete;
 
   ~LayerTreeFrameSink() override;
+
+  LayerTreeFrameSink& operator=(const LayerTreeFrameSink&) = delete;
 
   base::WeakPtr<LayerTreeFrameSink> GetWeakPtr();
 
@@ -80,6 +83,10 @@ class CC_EXPORT LayerTreeFrameSink : public viz::SharedBitmapReporter,
   virtual void DetachFromClient();
 
   bool HasClient() { return !!client_; }
+
+  void set_source_frame_number(int64_t frame_number) {
+    source_frame_number_ = frame_number;
+  }
 
   // The viz::ContextProviders may be null if frames should be submitted with
   // software SharedMemory resources.
@@ -105,10 +112,15 @@ class CC_EXPORT LayerTreeFrameSink : public viz::SharedBitmapReporter,
 
   // For successful swaps, the implementation must call
   // DidReceiveCompositorFrameAck() asynchronously when the frame has been
-  // processed in order to unthrottle the next frame. |show_hit_test_borders|
-  // controls whether viz will insert debug borders over hit-test data and is
-  // passed from LayerTreeDebugState.
+  // processed in order to unthrottle the next frame.
+  // If |hit_test_data_changed| is false, we do an equality check
+  // with the old hit-test data. If there is no change, we do not send the
+  // hit-test data. False positives are allowed. The value of
+  // |hit_test_data_changed| should remain constant in the caller.
+  // |show_hit_test_borders| controls whether viz will insert debug borders over
+  // hit-test data and is passed from LayerTreeDebugState.
   virtual void SubmitCompositorFrame(viz::CompositorFrame frame,
+                                     bool hit_test_data_changed,
                                      bool show_hit_test_borders) = 0;
 
   // Signals that a BeginFrame issued by the viz::BeginFrameSource provided to
@@ -116,13 +128,9 @@ class CC_EXPORT LayerTreeFrameSink : public viz::SharedBitmapReporter,
   virtual void DidNotProduceFrame(const viz::BeginFrameAck& ack) = 0;
 
   // viz::SharedBitmapReporter implementation.
-  void DidAllocateSharedBitmap(mojo::ScopedSharedBufferHandle buffer,
+  void DidAllocateSharedBitmap(base::ReadOnlySharedMemoryRegion region,
                                const viz::SharedBitmapId& id) override = 0;
   void DidDeleteSharedBitmap(const viz::SharedBitmapId& id) override = 0;
-
-  // Ensure next CompositorFrame is submitted to a new surface. Only used when
-  // surface synchronization is off.
-  virtual void ForceAllocateNewId() {}
 
  protected:
   class ContextLostForwarder;
@@ -139,10 +147,11 @@ class CC_EXPORT LayerTreeFrameSink : public viz::SharedBitmapReporter,
 
   std::unique_ptr<ContextLostForwarder> worker_context_lost_forwarder_;
 
+  int64_t source_frame_number_;
+
  private:
   THREAD_CHECKER(thread_checker_);
-  base::WeakPtrFactory<LayerTreeFrameSink> weak_ptr_factory_;
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeFrameSink);
+  base::WeakPtrFactory<LayerTreeFrameSink> weak_ptr_factory_{this};
 };
 
 }  // namespace cc

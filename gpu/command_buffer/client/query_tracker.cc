@@ -78,8 +78,8 @@ bool QuerySyncManager::Alloc(QuerySyncManager::QueryInfo* info) {
     bucket = buckets_.back().get();
   }
 
-  size_t index_in_bucket = 0;
-  for (size_t i = 0; i < kSyncsPerBucket; i++) {
+  uint32_t index_in_bucket = 0;
+  for (uint32_t i = 0; i < kSyncsPerBucket; i++) {
     if (!bucket->in_use_query_syncs[i]) {
       index_in_bucket = i;
       break;
@@ -218,18 +218,28 @@ bool QueryTracker::Query::CheckResultsAvailable(CommandBufferHelper* helper,
     // this method from CommandBufferHelper.
     if (processed_all || helper->IsContextLost()) {
       switch (target()) {
-        case GL_COMMANDS_ISSUED_CHROMIUM:
-          result_ = info_.sync->result;
-          break;
         case GL_LATENCY_QUERY_CHROMIUM:
           // Disabled DCHECK because of http://crbug.com/419236.
           //DCHECK(info_.sync->result >= client_begin_time_us_);
           result_ = info_.sync->result - client_begin_time_us_;
           break;
+        case GL_COMMANDS_ISSUED_CHROMIUM:
+        case GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM:
         case GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM:
-        default:
+        case GL_GET_ERROR_QUERY_CHROMIUM:
+        case GL_PROGRAM_COMPLETION_QUERY_CHROMIUM:
+        case GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM:
+        case GL_COMMANDS_COMPLETED_CHROMIUM:
+        case GL_SAMPLES_PASSED_ARB:
+        case GL_ANY_SAMPLES_PASSED:
+        case GL_ANY_SAMPLES_PASSED_CONSERVATIVE:
+        case GL_TIME_ELAPSED_EXT:
+        case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
+        case GL_TIMESTAMP_EXT:
           result_ = info_.sync->result;
           break;
+        default:
+          NOTREACHED();
       }
       if (on_completed_callback_) {
         std::move(on_completed_callback_.value()).Run();

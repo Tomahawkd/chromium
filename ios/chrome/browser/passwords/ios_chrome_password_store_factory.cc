@@ -9,11 +9,10 @@
 
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/password_manager/core/browser/android_affiliation/affiliated_match_helper.h"
@@ -29,7 +28,7 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sync/glue/sync_start_util.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
-#include "ios/chrome/browser/web_data_service_factory.h"
+#include "ios/chrome/browser/webdata_services/web_data_service_factory.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 // static
@@ -49,7 +48,8 @@ IOSChromePasswordStoreFactory::GetForBrowserState(
 
 // static
 IOSChromePasswordStoreFactory* IOSChromePasswordStoreFactory::GetInstance() {
-  return base::Singleton<IOSChromePasswordStoreFactory>::get();
+  static base::NoDestructor<IOSChromePasswordStoreFactory> instance;
+  return instance.get();
 }
 
 // static
@@ -79,7 +79,8 @@ scoped_refptr<RefcountedKeyedService>
 IOSChromePasswordStoreFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   std::unique_ptr<password_manager::LoginDatabase> login_db(
-      password_manager::CreateLoginDatabase(context->GetStatePath()));
+      password_manager::CreateLoginDatabaseForProfileStorage(
+          context->GetStatePath()));
 
   scoped_refptr<base::SequencedTaskRunner> main_task_runner(
       base::SequencedTaskRunnerHandle::Get());
@@ -89,8 +90,8 @@ IOSChromePasswordStoreFactory::BuildServiceInstanceFor(
   // TODO(crbug.com/741660): Create the task runner inside password_manager
   // component instead.
   scoped_refptr<base::SequencedTaskRunner> db_task_runner(
-      base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::USER_VISIBLE}));
+      base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock(),
+                                       base::TaskPriority::USER_VISIBLE}));
 
   scoped_refptr<password_manager::PasswordStore> store =
       new password_manager::PasswordStoreDefault(std::move(login_db));

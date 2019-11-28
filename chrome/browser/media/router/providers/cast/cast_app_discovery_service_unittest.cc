@@ -4,15 +4,16 @@
 
 #include "chrome/browser/media/router/providers/cast/cast_app_discovery_service.h"
 
-#include "base/test/scoped_task_environment.h"
+#include "base/bind.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "chrome/browser/media/router/test/test_helper.h"
 #include "chrome/common/media_router/discovery/media_sink_service_base.h"
 #include "chrome/common/media_router/providers/cast/cast_media_source.h"
 #include "chrome/common/media_router/test/test_helper.h"
 #include "components/cast_channel/cast_test_util.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -33,9 +34,12 @@ class CastAppDiscoveryServiceTest : public testing::Test {
                                                           &socket_service_,
                                                           &media_sink_service_,
                                                           &clock_)),
-        source_a_1_(*CastMediaSource::From("cast:AAAAAAAA?clientId=1")),
-        source_a_2_(*CastMediaSource::From("cast:AAAAAAAA?clientId=2")),
-        source_b_1_(*CastMediaSource::From("cast:BBBBBBBB?clientId=1")) {
+        source_a_1_(
+            *CastMediaSource::FromMediaSourceId("cast:AAAAAAAA?clientId=1")),
+        source_a_2_(
+            *CastMediaSource::FromMediaSourceId("cast:AAAAAAAA?clientId=2")),
+        source_b_1_(
+            *CastMediaSource::FromMediaSourceId("cast:BBBBBBBB?clientId=1")) {
     ON_CALL(socket_service_, GetSocket(_))
         .WillByDefault(testing::Return(&socket_));
     task_runner_->RunPendingTasks();
@@ -66,10 +70,10 @@ class CastAppDiscoveryServiceTest : public testing::Test {
   }
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
   base::SimpleTestTickClock clock_;
-  cast_channel::MockCastSocketService socket_service_;
+  testing::NiceMock<cast_channel::MockCastSocketService> socket_service_;
   cast_channel::MockCastSocket socket_;
   cast_channel::MockCastMessageHandler message_handler_;
   TestMediaSinkService media_sink_service_;
@@ -273,7 +277,7 @@ TEST_F(CastAppDiscoveryServiceTest, StartObservingMediaSinksCachedValue) {
                           base::Unretained(this)));
 
   // Same source as |source_a_1_|. The callback will be invoked.
-  auto source3 = CastMediaSource::From("cast:AAAAAAAA?clientId=1");
+  auto source3 = CastMediaSource::FromMediaSourceId("cast:AAAAAAAA?clientId=1");
   ASSERT_TRUE(source3);
   EXPECT_CALL(message_handler_, RequestAppAvailability(_, _, _)).Times(0);
   EXPECT_CALL(*this, OnSinkQueryUpdated(source_a_1_.source_id(), sinks_1));

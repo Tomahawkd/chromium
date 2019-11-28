@@ -7,12 +7,12 @@
 #include <cmath>
 #include <memory>
 
+#include "ash/accelerators/accelerator_controller_impl.h"
 #include "ash/display/mouse_cursor_event_filter.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/screenshot_delegate.h"
 #include "ash/shell.h"
 #include "ash/wm/window_util.h"
-#include "services/ws/window_service.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window_targeter.h"
@@ -23,6 +23,7 @@
 #include "ui/events/event_handler.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/accelerator_filter.h"
 #include "ui/wm/core/cursor_manager.h"
 
 namespace ash {
@@ -73,8 +74,6 @@ bool IsTopLevelWindow(aura::Window* window) {
       !window->delegate()) {
     return false;
   }
-  if (ws::WindowService::HasRemoteClient(window))
-    return ws::WindowService::IsTopLevelWindow(window);
   return true;
 }
 
@@ -284,7 +283,7 @@ void ScreenshotController::StartWindowScreenshotSession() {
         Shell::GetContainer(root, kShellWindowId_OverlayContainer)->layer(),
         true);
   }
-  SetSelectedWindow(wm::GetActiveWindow());
+  SetSelectedWindow(window_util::GetActiveWindow());
 
   cursor_setter_ = std::make_unique<ScopedCursorSetter>(ui::CursorType::kCross);
 
@@ -460,6 +459,18 @@ void ScreenshotController::OnKeyEvent(ui::KeyEvent* event) {
   // they should be able to continue manipulating the screen.
   if (!pen_events_only_)
     event->StopPropagation();
+
+  // Key event is blocked. So have to record current accelerator here.
+  if (event->stopped_propagation()) {
+    if (::wm::AcceleratorFilter::ShouldFilter(event))
+      return;
+
+    ui::Accelerator accelerator(*event);
+    ash::Shell::Get()
+        ->accelerator_controller()
+        ->accelerator_history()
+        ->StoreCurrentAccelerator(accelerator);
+  }
 }
 
 void ScreenshotController::OnMouseEvent(ui::MouseEvent* event) {

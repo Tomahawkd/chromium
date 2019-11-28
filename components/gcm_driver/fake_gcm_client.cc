@@ -65,8 +65,7 @@ FakeGCMClient::FakeGCMClient(
       start_mode_(DELAYED_START),
       start_mode_overridding_(RESPECT_START_MODE),
       ui_thread_(ui_thread),
-      io_thread_(io_thread),
-      weak_ptr_factory_(this) {}
+      io_thread_(io_thread) {}
 
 FakeGCMClient::~FakeGCMClient() {
 }
@@ -75,8 +74,9 @@ void FakeGCMClient::Initialize(
     const ChromeBuildInfo& chrome_build_info,
     const base::FilePath& store_path,
     const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
-    base::RepeatingCallback<
-        void(network::mojom::ProxyResolvingSocketFactoryRequest)>
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+    base::RepeatingCallback<void(
+        mojo::PendingReceiver<network::mojom::ProxyResolvingSocketFactory>)>
         get_socket_factory_callback,
     const scoped_refptr<network::SharedURLLoaderFactory>& url_loader_factory,
     network::NetworkConnectionTracker* network_connection_tracker,
@@ -117,7 +117,7 @@ void FakeGCMClient::Stop() {
 }
 
 void FakeGCMClient::Register(
-    const linked_ptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   DCHECK(io_thread_->RunsTasksInCurrentSequence());
 
   std::string registration_id;
@@ -140,17 +140,17 @@ void FakeGCMClient::Register(
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(&FakeGCMClient::RegisterFinished,
                                 weak_ptr_factory_.GetWeakPtr(),
-                                registration_info, registration_id));
+                                std::move(registration_info), registration_id));
 }
 
 bool FakeGCMClient::ValidateRegistration(
-    const linked_ptr<RegistrationInfo>& registration_info,
+    scoped_refptr<RegistrationInfo> registration_info,
     const std::string& registration_id) {
   return true;
 }
 
 void FakeGCMClient::Unregister(
-    const linked_ptr<RegistrationInfo>& registration_info) {
+    scoped_refptr<RegistrationInfo> registration_info) {
   DCHECK(io_thread_->RunsTasksInCurrentSequence());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -199,8 +199,7 @@ void FakeGCMClient::UpdateAccountMapping(
     const AccountMapping& account_mapping) {
 }
 
-void FakeGCMClient::RemoveAccountMapping(const std::string& account_id) {
-}
+void FakeGCMClient::RemoveAccountMapping(const CoreAccountId& account_id) {}
 
 void FakeGCMClient::SetLastTokenFetchTime(const base::Time& time) {
 }
@@ -271,17 +270,16 @@ void FakeGCMClient::Started() {
 }
 
 void FakeGCMClient::RegisterFinished(
-    const linked_ptr<RegistrationInfo>& registration_info,
+    scoped_refptr<RegistrationInfo> registration_info,
     const std::string& registrion_id) {
-  delegate_->OnRegisterFinished(
-      registration_info,
-      registrion_id,
-      registrion_id.empty() ? SERVER_ERROR : SUCCESS);
+  delegate_->OnRegisterFinished(std::move(registration_info), registrion_id,
+                                registrion_id.empty() ? SERVER_ERROR : SUCCESS);
 }
 
 void FakeGCMClient::UnregisterFinished(
-    const linked_ptr<RegistrationInfo>& registration_info) {
-  delegate_->OnUnregisterFinished(registration_info, GCMClient::SUCCESS);
+    scoped_refptr<RegistrationInfo> registration_info) {
+  delegate_->OnUnregisterFinished(std::move(registration_info),
+                                  GCMClient::SUCCESS);
 }
 
 void FakeGCMClient::SendFinished(const std::string& app_id,

@@ -28,7 +28,7 @@
 #include "components/subresource_filter/core/common/activation_decision.h"
 #include "components/subresource_filter/core/common/activation_list.h"
 #include "components/subresource_filter/core/common/test_ruleset_creator.h"
-#include "components/subresource_filter/mojom/subresource_filter.mojom.h"
+#include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/test/navigation_simulator.h"
@@ -53,13 +53,6 @@ void SubresourceFilterTestHarness::SetUp() {
       subresource_filter::ActivationList::SUBRESOURCE_FILTER));
 
   NavigateAndCommit(GURL("https://example.first"));
-
-  system_request_context_getter_ =
-      base::MakeRefCounted<net::TestURLRequestContextGetter>(
-          base::CreateSingleThreadTaskRunnerWithTraits(
-              {content::BrowserThread::IO}));
-  TestingBrowserProcess::GetGlobal()->SetSystemRequestContext(
-      system_request_context_getter_.get());
 
   // Set up safe browsing service with the fake database manager.
   //
@@ -120,8 +113,6 @@ void SubresourceFilterTestHarness::TearDown() {
   // all cleanup related to these classes actually happens.
   TestingBrowserProcess::GetGlobal()->SetRulesetService(nullptr);
   TestingBrowserProcess::GetGlobal()->SetSafeBrowsingService(nullptr);
-  TestingBrowserProcess::GetGlobal()->SetSystemRequestContext(nullptr);
-  system_request_context_getter_ = nullptr;
 
   base::RunLoop().RunUntilIdle();
 

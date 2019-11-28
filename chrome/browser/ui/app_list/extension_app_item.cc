@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "ash/public/cpp/app_list/app_list_config.h"
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
@@ -78,7 +79,7 @@ void ExtensionAppItem::Reload() {
   if (!icon_) {
     icon_ = extensions::ChromeAppIconService::Get(profile())->CreateIcon(
         this, extension_id(),
-        app_list::AppListConfig::instance().grid_icon_dimension(),
+        ash::AppListConfig::instance().grid_icon_dimension(),
         base::BindRepeating(&app_list::MaybeResizeAndPadIconForMd));
   } else {
     icon_->Reload();
@@ -158,8 +159,7 @@ void ExtensionAppItem::Activate(int event_flags) {
 
 void ExtensionAppItem::GetContextMenuModel(GetMenuModelCallback callback) {
   context_menu_ = std::make_unique<app_list::ExtensionAppContextMenu>(
-      this, profile(), extension_id(), GetController());
-  context_menu_->set_is_platform_app(is_platform_app_);
+      this, profile(), extension_id(), GetController(), is_platform_app_);
   context_menu_->GetMenuModel(std::move(callback));
 }
 

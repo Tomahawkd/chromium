@@ -3,6 +3,7 @@
 <script src="../../../resources/testharnessreport.js"></script>
 <script src="../../assert_selection.js"></script>
 <script>
+
 selection_test(
   '<div contenteditable dir="rtl">|abc\u05D0<span>\u05D1\u05D2def</span></div>',
   selection => selection.modify('move', 'right', 'character'),
@@ -12,19 +13,19 @@ selection_test(
 selection_test(
   '<div contenteditable dir="rtl">a|bc\u05D0<span>\u05D1\u05D2def</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">ab|c\u05D0<span>\u05D1\u05D2def</span></div>',
+  '<div contenteditable dir="rtl">|abc\u05D0<span>\u05D1\u05D2def</span></div>',
   '39-1 rtl right character');
 
 selection_test(
   '<div contenteditable dir="rtl">ab|c\u05D0<span>\u05D1\u05D2def</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">|abc\u05D0<span>\u05D1\u05D2def</span></div>',
+  '<div contenteditable dir="rtl">a|bc\u05D0<span>\u05D1\u05D2def</span></div>',
   '39-2 rtl right character');
 
 selection_test(
   '<div contenteditable dir="rtl">abc|\u05D0<span>\u05D1\u05D2def</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">a|bc\u05D0<span>\u05D1\u05D2def</span></div>',
+  '<div contenteditable dir="rtl">ab|c\u05D0<span>\u05D1\u05D2def</span></div>',
   '39-3 rtl right character');
 
 selection_test(
@@ -54,24 +55,24 @@ selection_test(
 selection_test(
   '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2d|ef</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2de|f</span></div>',
+  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2|def</span></div>',
   '39-8 rtl right character');
 
 selection_test(
   '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2de|f</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2|def</span></div>',
+  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2d|ef</span></div>',
   '39-9 rtl right character');
 
 selection_test(
   '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2def|</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2d|ef</span></div>',
+  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2de|f</span></div>',
   '39-10 rtl right character');
 
 selection_test(
   '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2def</span>|</div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2d|ef</span></div>',
+  '<div contenteditable dir="rtl">abc\u05D0<span>\u05D1\u05D2de|f</span></div>',
   '39-11 rtl right character');
 </script>

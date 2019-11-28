@@ -27,19 +27,17 @@ struct WebServiceWorkerRegistrationObjectInfo {
   WebServiceWorkerRegistrationObjectInfo(
       int64_t registration_id,
       WebURL scope,
-      mojom::ScriptType type,
       mojom::ServiceWorkerUpdateViaCache update_via_cache,
-      mojo::ScopedInterfaceEndpointHandle host_ptr_info,
-      mojo::ScopedInterfaceEndpointHandle request,
+      mojo::ScopedInterfaceEndpointHandle host_remote,
+      mojo::ScopedInterfaceEndpointHandle receiver,
       WebServiceWorkerObjectInfo installing,
       WebServiceWorkerObjectInfo waiting,
       WebServiceWorkerObjectInfo active)
       : registration_id(registration_id),
         scope(std::move(scope)),
-        type(type),
         update_via_cache(update_via_cache),
-        host_ptr_info(std::move(host_ptr_info)),
-        request(std::move(request)),
+        host_remote(std::move(host_remote)),
+        receiver(std::move(receiver)),
         installing(std::move(installing)),
         waiting(std::move(waiting)),
         active(std::move(active)) {}
@@ -49,13 +47,14 @@ struct WebServiceWorkerRegistrationObjectInfo {
   int64_t registration_id;
 
   WebURL scope;
-  mojom::ScriptType type;
   mojom::ServiceWorkerUpdateViaCache update_via_cache;
 
-  // For blink::mojom::ServiceWorkerRegistrationObjectHostAssociatedPtrInfo.
-  mojo::ScopedInterfaceEndpointHandle host_ptr_info;
-  // For blink::mojom::ServiceWorkerRegistrationObjectAssociatedRequest.
-  mojo::ScopedInterfaceEndpointHandle request;
+  // For
+  // mojo::PendingAssociatedRemote<blink::mojom::ServiceWorkerRegistrationObjectHost>.
+  mojo::ScopedInterfaceEndpointHandle host_remote;
+  // For
+  // mojo::PendingAssociatedReceiver<blink::mojom::ServiceWorkerRegistrationObject>.
+  mojo::ScopedInterfaceEndpointHandle receiver;
 
   WebServiceWorkerObjectInfo installing;
   WebServiceWorkerObjectInfo waiting;

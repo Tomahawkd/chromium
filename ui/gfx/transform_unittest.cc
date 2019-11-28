@@ -10,7 +10,7 @@
 #include <ostream>
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/angle_conversions.h"
@@ -19,6 +19,7 @@
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/quad_f.h"
 #include "ui/gfx/geometry/vector3d_f.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform_util.h"
 
 namespace gfx {
@@ -228,7 +229,7 @@ TEST(XFormTest, ConcatTranslate) {
   };
 
   Transform xform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     Transform translation;
     translation.Translate(value.tx, value.ty);
@@ -257,7 +258,7 @@ TEST(XFormTest, ConcatScale) {
   };
 
   Transform xform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     Transform scale;
     scale.Scale(value.scale, value.scale);
@@ -288,7 +289,7 @@ TEST(XFormTest, ConcatRotate) {
   };
 
   Transform xform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     Transform rotation;
     rotation.Rotate(value.degrees);
@@ -317,7 +318,7 @@ TEST(XFormTest, SetTranslate) {
       0, 0 }
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     for (int k = 0; k < 3; ++k) {
       Point3F p0, p1, p2;
@@ -364,7 +365,7 @@ TEST(XFormTest, SetScale) {
     { 1, std::numeric_limits<float>::quiet_NaN(), 0 },
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     for (int k = 0; k < 3; ++k) {
       Point3F p0, p1, p2;
@@ -417,7 +418,7 @@ TEST(XFormTest, SetRotate) {
     { 100, 0, 360.0f, 100, 0 }
   };
 
-  for (size_t i = 0; i < arraysize(set_rotate_cases); ++i) {
+  for (size_t i = 0; i < base::size(set_rotate_cases); ++i) {
     const SetRotateCase& value = set_rotate_cases[i];
     Point3F p0;
     Point3F p1(value.x, value.y, 0);
@@ -451,7 +452,7 @@ TEST(XFormTest, ConcatTranslate2D) {
   };
 
   Transform xform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     Transform translation;
     translation.Translate(value.tx, value.ty);
@@ -480,7 +481,7 @@ TEST(XFormTest, ConcatScale2D) {
   };
 
   Transform xform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     Transform scale;
     scale.Scale(value.scale, value.scale);
@@ -511,7 +512,7 @@ TEST(XFormTest, ConcatRotate2D) {
   };
 
   Transform xform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     Transform rotation;
     rotation.Rotate(value.degrees);
@@ -537,7 +538,7 @@ TEST(XFormTest, SetTranslate2D) {
     { 10, 20, 0.0f, 0.0f, 10, 20},
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     for (int j = -1; j < 2; ++j) {
       for (int k = 0; k < 3; ++k) {
@@ -589,7 +590,7 @@ TEST(XFormTest, SetScale2D) {
     { 0, 10.0f, 0},
   };
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     for (int j = -1; j < 2; ++j) {
       for (int k = 0; k < 3; ++k) {
@@ -650,7 +651,7 @@ TEST(XFormTest, SetRotate2D) {
     { 100, 0, 360.0f, 100, 0}
   };
 
-  for (size_t i = 0; i < arraysize(set_rotate_cases); ++i) {
+  for (size_t i = 0; i < base::size(set_rotate_cases); ++i) {
     const SetRotateCase& value = set_rotate_cases[i];
     for (int j = 1; j >= -1; --j) {
       float epsilon = 0.1f;
@@ -709,7 +710,7 @@ TEST(XFormTest, BlendRotate) {
     Vector3dF(1, 1, 1)
   };
   Transform from;
-  for (size_t index = 0; index < arraysize(axes); ++index) {
+  for (size_t index = 0; index < base::size(axes); ++index) {
     for (int i = -5; i < 15; ++i) {
       Transform to;
       to.RotateAbout(axes[index], 90);
@@ -732,7 +733,7 @@ TEST(XFormTest, CanBlend180DegreeRotation) {
     Vector3dF(1, 1, 1)
   };
   Transform from;
-  for (size_t index = 0; index < arraysize(axes); ++index) {
+  for (size_t index = 0; index < base::size(axes); ++index) {
     for (int i = -5; i < 15; ++i) {
       Transform to;
       to.RotateAbout(axes[index], 180.0);
@@ -2458,7 +2459,7 @@ TEST(XFormTest, Preserves2dAxisAlignment) {
   };
 
   Transform transform;
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     transform.MakeIdentity();
     transform.matrix().set(0, 0, value.a);
@@ -2477,7 +2478,7 @@ TEST(XFormTest, Preserves2dAxisAlignment) {
 
   // Try the same test cases again, but this time make sure that other matrix
   // elements (except perspective) have entries, to test that they are ignored.
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     transform.MakeIdentity();
     transform.matrix().set(0, 0, value.a);
@@ -2505,7 +2506,7 @@ TEST(XFormTest, Preserves2dAxisAlignment) {
 
   // Try the same test cases again, but this time add perspective which is
   // always assumed to not-preserve axis alignment.
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+  for (size_t i = 0; i < base::size(test_cases); ++i) {
     const TestCase& value = test_cases[i];
     transform.MakeIdentity();
     transform.matrix().set(0, 0, value.a);
@@ -2636,6 +2637,35 @@ TEST(XFormTest, TransformRectReverse) {
   Transform singular;
   singular.Scale3d(0.f, 0.f, 0.f);
   EXPECT_FALSE(singular.TransformRectReverse(&rect));
+}
+
+TEST(XFormTest, TransformRRectF) {
+  Transform translation;
+  translation.Translate(-3.f, -7.f);
+  RRectF rrect(1.f, 2.f, 20.f, 25.f, 5.f);
+  RRectF expected(-2.f, -5.f, 20.f, 25.f, 5.f);
+  EXPECT_TRUE(translation.TransformRRectF(&rrect));
+  EXPECT_EQ(expected.ToString(), rrect.ToString());
+
+  SkMatrix44 rot(SkMatrix44::kUninitialized_Constructor);
+  rot.set3x3(0, 1, 0, -1, 0, 0, 0, 0, 1);
+  Transform rotation_90_Clock(rot);
+
+  rrect = RRectF(gfx::RectF(0, 0, 20.f, 25.f),
+                 gfx::RoundedCornersF(1.f, 2.f, 3.f, 4.f));
+  expected = RRectF(gfx::RectF(-25.f, 0, 25.f, 20.f),
+                    gfx::RoundedCornersF(4.f, 1.f, 2.f, 3.f));
+  EXPECT_TRUE(rotation_90_Clock.TransformRRectF(&rrect));
+  EXPECT_EQ(expected.ToString(), rrect.ToString());
+
+  Transform scale;
+  scale.Scale(2.f, 2.f);
+  rrect = RRectF(gfx::RectF(0, 0, 20.f, 25.f),
+                 gfx::RoundedCornersF(1.f, 2.f, 3.f, 4.f));
+  expected = RRectF(gfx::RectF(0, 0, 40.f, 50.f),
+                    gfx::RoundedCornersF(2.f, 4.f, 6.f, 8.f));
+  EXPECT_TRUE(scale.TransformRRectF(&rrect));
+  EXPECT_EQ(expected.ToString(), rrect.ToString());
 }
 
 TEST(XFormTest, TransformBox) {

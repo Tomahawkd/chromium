@@ -9,16 +9,12 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/test/scoped_feature_list.h"
-#include "chromeos/chromeos_features.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "chromeos/components/proximity_auth/messenger_observer.h"
 #include "chromeos/components/proximity_auth/remote_status_update.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/secure_channel/public/cpp/client/fake_client_channel.h"
-#include "components/cryptauth/connection.h"
-#include "components/cryptauth/fake_connection.h"
-#include "components/cryptauth/fake_secure_context.h"
-#include "components/cryptauth/wire_message.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -111,12 +107,6 @@ class ProximityAuthMessengerImplTest : public testing::Test {
 
   DISALLOW_COPY_AND_ASSIGN(ProximityAuthMessengerImplTest);
 };
-
-TEST_F(ProximityAuthMessengerImplTest, SupportsSignIn) {
-  CreateMessenger(true /* is_multi_device_api_enabled */);
-
-  EXPECT_TRUE(messenger_->SupportsSignIn());
-}
 
 TEST_F(ProximityAuthMessengerImplTest,
        DispatchUnlockEvent_SendsExpectedMessage) {

@@ -25,8 +25,10 @@
 #include "base/bind_helpers.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
+#include "base/threading/scoped_thread_priority.h"
 #include "base/time/time.h"
 #include "base/win/win_util.h"
 #include "chrome/browser/browser_process.h"
@@ -150,7 +152,7 @@ DWORD CredentialBufferValidator::IsValid(ULONG auth_package,
   LUID luid;
   HANDLE token;
 
-  strcpy_s(source.SourceName, arraysize(source.SourceName), "Chrome");
+  strcpy_s(source.SourceName, base::size(source.SourceName), "Chrome");
   if (!AllocateLocallyUniqueId(&source.SourceIdentifier))
     return GetLastError();
 
@@ -250,6 +252,11 @@ bool CheckBlankPasswordWithPrefs(const WCHAR* username,
   }
 
   if (need_recheck) {
+    // Mitigate the issues caused by loading DLLs on a background thread
+    // (http://crbug/973868).
+    base::ScopedThreadMayLoadLibraryOnBackgroundThread priority_boost(
+        FROM_HERE);
+
     HANDLE handle = INVALID_HANDLE_VALUE;
 
     // Attempt to login using blank password.
@@ -333,8 +340,9 @@ void GetOsPasswordStatus() {
   PasswordCheckPrefs* prefs_weak = prefs.get();
   OsPasswordStatus* status_weak = status.get();
   // This task calls ::LogonUser(), hence MayBlock().
-  base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReply(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::Bind(&GetOsPasswordStatusInternal, prefs_weak, status_weak),
       base::Bind(&ReplyOsPasswordStatus, base::Passed(&prefs),
                  base::Passed(&status)));
@@ -456,7 +464,7 @@ bool AuthenticateUserNew(gfx::NativeWindow window,
                          password_manager::ReauthPurpose purpose) {
   bool retval = false;
   WCHAR cur_username[CREDUI_MAX_USERNAME_LENGTH + 1] = {};
-  DWORD cur_username_length = arraysize(cur_username);
+  DWORD cur_username_length = base::size(cur_username);
 
   // If this is a standlone workstation, it's possible the current user has no
   // password, so check here and allow it.
@@ -525,9 +533,9 @@ bool AuthenticateUserNew(gfx::NativeWindow window,
 }  // namespace
 
 void DelayReportOsPassword() {
-  base::PostDelayedTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                                  base::Bind(&GetOsPasswordStatus),
-                                  base::TimeDelta::FromSeconds(40));
+  base::PostDelayedTask(FROM_HERE, {content::BrowserThread::UI},
+                        base::BindOnce(&GetOsPasswordStatus),
+                        base::TimeDelta::FromSeconds(40));
 }
 
 bool AuthenticateUser(gfx::NativeWindow window,

@@ -23,6 +23,14 @@ Polymer({
 
   properties: {
     /**
+     * Authentication token provided by settings-people-page.
+     */
+    authToken: {
+      type: String,
+      value: '',
+    },
+
+    /**
      * The list of fingerprint objects.
      * @private {!Array<string>}
      */
@@ -73,8 +81,9 @@ Polymer({
    */
   currentRouteChanged: function(newRoute, oldRoute) {
     if (newRoute != settings.routes.FINGERPRINT) {
-      if (this.browserProxy_)
+      if (this.browserProxy_) {
         this.browserProxy_.endCurrentAuthentication();
+      }
     } else if (oldRoute == settings.routes.LOCK_SCREEN) {
       // Start fingerprint authentication when going from LOCK_SCREEN to
       // FINGERPRINT page.
@@ -102,14 +111,16 @@ Polymer({
       const ripple = listItem.querySelector('paper-ripple');
 
       // Activate the ripple.
-      if (ripple)
+      if (ripple) {
         ripple.simulatedRipple();
+      }
 
       // Flash the background.
       listItem.animate(
-          {
-            backgroundColor: ['var(--google-grey-300)', 'white'],
-          },
+          [
+            {backgroundColor: ['var(--google-grey-300)']},
+            {backgroundColor: ['white']}
+          ],
           FLASH_DURATION_MS);
     });
   },
@@ -138,8 +149,9 @@ Polymer({
    */
   onFingerprintDeleteTapped_: function(e) {
     this.browserProxy_.removeEnrollment(e.model.index).then(success => {
-      if (success)
+      if (success) {
         this.updateFingerprintsList_();
+      }
     });
   },
 
@@ -150,8 +162,9 @@ Polymer({
   onFingerprintLabelChanged_: function(e) {
     this.browserProxy_.changeEnrollmentLabel(e.model.index, e.model.item)
         .then(success => {
-          if (success)
+          if (success) {
             this.updateFingerprintsList_();
+          }
         });
   },
 

@@ -10,13 +10,13 @@
 #include <tuple>
 
 #include "base/files/file_util.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "ui/display/manager/managed_display_info.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/input_device.h"
-#include "ui/events/devices/input_device_manager.h"
 #include "ui/events/devices/touchscreen_device.h"
 
 namespace display {
@@ -35,10 +35,17 @@ bool IsDeviceConnectedViaUsb(const base::FilePath& path) {
 
   for (const auto& component : components) {
     if (base::StartsWith(component, "usb",
-                         base::CompareCase::INSENSITIVE_ASCII))
+                         base::CompareCase::INSENSITIVE_ASCII)) {
+      return true;
+    }
+
+    // TODO(malaykeshav): When evdi starts registering with the usb subsystem
+    // in the kernel, this would no longer be needed. All evdi displays are USB
+    // right now. This might change in the future however.
+    // See https://crbug.com/923165 for more info.
+    if (base::StartsWith(component, "evdi", base::CompareCase::SENSITIVE))
       return true;
   }
-
   return false;
 }
 
@@ -125,7 +132,7 @@ ManagedDisplayInfo* GetBestMatchForDevice(
 
   // If we have no historical information for the touch device identified by
   // |identifier|, do an early return.
-  if (!base::ContainsKey(touch_associations, identifier))
+  if (!base::Contains(touch_associations, identifier))
     return display_info;
 
   const TouchDeviceManager::AssociationInfoMap& info_map =
@@ -136,7 +143,7 @@ ManagedDisplayInfo* GetBestMatchForDevice(
     // We do not want to match anything to the internal display.
     if (Display::IsInternalDisplayId(display->id()))
       continue;
-    if (!base::ContainsKey(info_map, display->id()))
+    if (!base::Contains(info_map, display->id()))
       continue;
     const TouchDeviceManager::TouchAssociationInfo& info =
         info_map.at(display->id());
@@ -183,8 +190,8 @@ TouchDeviceIdentifier::GetFallbackTouchDeviceIdentifier() {
 uint32_t TouchDeviceIdentifier::GenerateIdentifier(std::string name,
                                                    uint16_t vendor_id,
                                                    uint16_t product_id) {
-  std::string hash_str = name + "-" + base::UintToString(vendor_id) + "-" +
-                         base::UintToString(product_id);
+  std::string hash_str = name + "-" + base::NumberToString(vendor_id) + "-" +
+                         base::NumberToString(product_id);
   return base::PersistentHash(hash_str);
 }
 
@@ -228,11 +235,11 @@ bool TouchDeviceIdentifier::operator!=(const TouchDeviceIdentifier& rhs) const {
 }
 
 std::string TouchDeviceIdentifier::ToString() const {
-  return base::UintToString(id_);
+  return base::NumberToString(id_);
 }
 
 std::string TouchDeviceIdentifier::SecondaryIdToString() const {
-  return base::UintToString(secondary_id_);
+  return base::NumberToString(secondary_id_);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -242,9 +249,7 @@ std::string TouchDeviceIdentifier::SecondaryIdToString() const {
 bool TouchCalibrationData::CalibrationPointPairCompare(
     const CalibrationPointPair& pair_1,
     const CalibrationPointPair& pair_2) {
-  return pair_1.first.y() < pair_2.first.y()
-             ? true
-             : pair_1.first.x() < pair_2.first.x();
+  return pair_1.first < pair_2.first;
 }
 
 TouchCalibrationData::TouchCalibrationData() {}
@@ -398,8 +403,8 @@ void TouchDeviceManager::AssociateDevicesWithCollision(
     // If this device is not the one that has a collision or if this device is
     // the one that has collision but we have no past port mapping information
     // associated with it, then we skip.
-    if (!base::ContainsKey(collision_set, identifier) ||
-        !base::ContainsKey(port_associations_, identifier)) {
+    if (!base::Contains(collision_set, identifier) ||
+        !base::Contains(port_associations_, identifier)) {
       device_it++;
       continue;
     }
@@ -592,7 +597,7 @@ void TouchDeviceManager::AddTouchCalibrationData(
     const TouchDeviceIdentifier& identifier,
     int64_t display_id,
     const TouchCalibrationData& data) {
-  if (!base::ContainsKey(touch_associations_, identifier))
+  if (!base::Contains(touch_associations_, identifier))
     touch_associations_.emplace(identifier, AssociationInfoMap());
 
   // Update the current touch association and associate the display identified
@@ -624,7 +629,7 @@ void TouchDeviceManager::AddTouchCalibrationData(
 void TouchDeviceManager::ClearTouchCalibrationData(
     const TouchDeviceIdentifier& identifier,
     int64_t display_id) {
-  if (base::ContainsKey(touch_associations_, identifier)) {
+  if (base::Contains(touch_associations_, identifier)) {
     ClearCalibrationDataInMap(touch_associations_.at(identifier), display_id);
   }
 }
@@ -645,7 +650,7 @@ TouchCalibrationData TouchDeviceManager::GetCalibrationData(
   if (display_id == kInvalidDisplayId) {
     // If the touch device is currently not associated with any display and the
     // |display_id| was not provided, then this is an invalid query.
-    if (!base::ContainsKey(active_touch_associations_, identifier))
+    if (!base::Contains(active_touch_associations_, identifier))
       return TouchCalibrationData();
 
     // If the display id is not provided, we return the calibration information
@@ -654,7 +659,7 @@ TouchCalibrationData TouchDeviceManager::GetCalibrationData(
     display_id = active_touch_associations_.at(identifier);
   }
 
-  if (base::ContainsKey(touch_associations_, identifier)) {
+  if (base::Contains(touch_associations_, identifier)) {
     const AssociationInfoMap& info_map = touch_associations_.at(identifier);
     if (info_map.find(display_id) != info_map.end())
       return info_map.at(display_id).calibration_data;
@@ -663,7 +668,7 @@ TouchCalibrationData TouchDeviceManager::GetCalibrationData(
   // Check for legacy calibration data.
   TouchDeviceIdentifier fallback_identifier(
       TouchDeviceIdentifier::GetFallbackTouchDeviceIdentifier());
-  if (base::ContainsKey(touch_associations_, fallback_identifier)) {
+  if (base::Contains(touch_associations_, fallback_identifier)) {
     const AssociationInfoMap& info_map =
         touch_associations_.at(fallback_identifier);
     if (info_map.find(display_id) != info_map.end())
@@ -677,13 +682,13 @@ TouchCalibrationData TouchDeviceManager::GetCalibrationData(
 bool TouchDeviceManager::DisplayHasTouchDevice(
     int64_t display_id,
     const TouchDeviceIdentifier& identifier) const {
-  return base::ContainsKey(active_touch_associations_, identifier) &&
+  return base::Contains(active_touch_associations_, identifier) &&
          active_touch_associations_.at(identifier) == display_id;
 }
 
 int64_t TouchDeviceManager::GetAssociatedDisplay(
     const TouchDeviceIdentifier& identifier) const {
-  if (base::ContainsKey(active_touch_associations_, identifier))
+  if (base::Contains(active_touch_associations_, identifier))
     return active_touch_associations_.at(identifier);
   return kInvalidDisplayId;
 }
@@ -714,7 +719,7 @@ std::ostream& operator<<(std::ostream& os,
 
 bool HasExternalTouchscreenDevice() {
   for (const auto& device :
-       ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices()) {
+       ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices()) {
     if (device.type == ui::InputDeviceType::INPUT_DEVICE_USB ||
         device.type == ui::InputDeviceType::INPUT_DEVICE_BLUETOOTH) {
       return true;
@@ -725,7 +730,7 @@ bool HasExternalTouchscreenDevice() {
 
 bool IsInternalTouchscreenDevice(const TouchDeviceIdentifier& identifier) {
   for (const auto& device :
-       ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices()) {
+       ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices()) {
     if (TouchDeviceIdentifier::FromDevice(device) == identifier)
       return device.type == ui::InputDeviceType::INPUT_DEVICE_INTERNAL;
   }

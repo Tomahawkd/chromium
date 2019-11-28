@@ -6,9 +6,7 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/strings/utf_string_conversions.h"
 #include "components/pdf/browser/pdf_web_contents_helper_client.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/referrer_type_converters.h"
@@ -44,8 +42,10 @@ PDFWebContentsHelper::~PDFWebContentsHelper() {
   touch_selection_controller_client_manager_->RemoveObserver(this);
 }
 
-void PDFWebContentsHelper::SetListener(mojom::PdfListenerPtr listener) {
-  remote_pdf_client_ = std::move(listener);
+void PDFWebContentsHelper::SetListener(
+    mojo::PendingRemote<mojom::PdfListener> listener) {
+  remote_pdf_client_.reset();
+  remote_pdf_client_.Bind(std::move(listener));
 }
 
 gfx::PointF PDFWebContentsHelper::ConvertHelper(const gfx::PointF& point_f,
@@ -83,6 +83,10 @@ void PDFWebContentsHelper::SelectionChanged(const gfx::PointF& left,
   DidScroll();
 }
 
+void PDFWebContentsHelper::SetPluginCanSave(bool can_save) {
+  client_->SetPluginCanSave(web_contents(), can_save);
+}
+
 void PDFWebContentsHelper::DidScroll() {
   if (!touch_selection_controller_client_manager_)
     InitTouchSelectionClientManager();
@@ -90,11 +94,11 @@ void PDFWebContentsHelper::DidScroll() {
   if (touch_selection_controller_client_manager_) {
     gfx::SelectionBound start;
     gfx::SelectionBound end;
-    start.SetEdgeTop(ConvertToRoot(selection_left_));
-    start.SetEdgeBottom(ConvertToRoot(gfx::PointF(
+    start.SetEdgeStart(ConvertToRoot(selection_left_));
+    start.SetEdgeEnd(ConvertToRoot(gfx::PointF(
         selection_left_.x(), selection_left_.y() + selection_left_height_)));
-    end.SetEdgeTop(ConvertToRoot(selection_right_));
-    end.SetEdgeBottom(ConvertToRoot(gfx::PointF(
+    end.SetEdgeStart(ConvertToRoot(selection_right_));
+    end.SetEdgeEnd(ConvertToRoot(gfx::PointF(
         selection_right_.x(), selection_right_.y() + selection_right_height_)));
 
     // Don't do left/right comparison after setting type.
@@ -149,7 +153,7 @@ PDFWebContentsHelper::CreateDrawable() {
 
 void PDFWebContentsHelper::OnManagerWillDestroy(
     content::TouchSelectionControllerClientManager* manager) {
-  DCHECK(manager == touch_selection_controller_client_manager_);
+  DCHECK_EQ(touch_selection_controller_client_manager_, manager);
   manager->RemoveObserver(this);
   touch_selection_controller_client_manager_ = nullptr;
 }

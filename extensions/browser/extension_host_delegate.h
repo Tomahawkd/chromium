@@ -7,10 +7,12 @@
 
 #include <string>
 
-#include "content/public/common/media_stream_request.h"
+#include "content/public/browser/media_stream_request.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "ui/base/window_open_disposition.h"
 
 namespace content {
+enum class PictureInPictureResult;
 class JavaScriptDialogManager;
 class RenderFrameHost;
 class WebContents;
@@ -28,7 +30,6 @@ class SurfaceId;
 namespace extensions {
 class Extension;
 class ExtensionHost;
-class ExtensionHostQueue;
 
 // A delegate to support functionality that cannot exist in the extensions
 // module. This is not an inner class of ExtensionHost to allow it to be forward
@@ -70,19 +71,16 @@ class ExtensionHostDelegate {
   virtual bool CheckMediaAccessPermission(
       content::RenderFrameHost* render_frame_host,
       const GURL& security_origin,
-      content::MediaStreamType type,
+      blink::mojom::MediaStreamType type,
       const Extension* extension) = 0;
-
-  // Returns the ExtensionHostQueue implementation to use for creating
-  // ExtensionHost renderers.
-  virtual ExtensionHostQueue* GetExtensionHostQueue() const = 0;
 
   // Notifies the Picture-in-Picture controller that there is a new player
   // entering Picture-in-Picture.
-  // Returns the size of the Picture-in-Picture window.
-  virtual gfx::Size EnterPictureInPicture(content::WebContents* web_contents,
-                                          const viz::SurfaceId& surface_id,
-                                          const gfx::Size& natural_size) = 0;
+  // Returns the result of the enter request.
+  virtual content::PictureInPictureResult EnterPictureInPicture(
+      content::WebContents* web_contents,
+      const viz::SurfaceId& surface_id,
+      const gfx::Size& natural_size) = 0;
 
   // Updates the Picture-in-Picture controller with a signal that
   // Picture-in-Picture mode has ended.

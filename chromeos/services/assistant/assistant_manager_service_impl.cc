@@ -5,41 +5,62 @@
 #include "chromeos/services/assistant/assistant_manager_service_impl.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
-#include "ash/public/interfaces/constants.mojom.h"
+#include "ash/public/cpp/assistant/assistant_state_base.h"
 #include "base/barrier_closure.h"
 #include "base/bind.h"
+#include "base/callback_forward.h"
 #include "base/feature_list.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/stringprintf.h"
+#include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/system/sys_info.h"
 #include "base/task/post_task.h"
-#include "build/util/webkit_version.h"
+#include "base/unguessable_token.h"
 #include "chromeos/assistant/internal/internal_constants.h"
 #include "chromeos/assistant/internal/internal_util.h"
+#include "chromeos/assistant/internal/proto/google3/assistant/api/client_input/warmer_welcome_input.pb.h"
 #include "chromeos/assistant/internal/proto/google3/assistant/api/client_op/device_args.pb.h"
 #include "chromeos/dbus/util/version_loader.h"
+#include "chromeos/services/assistant/assistant_manager_service_delegate.h"
+#include "chromeos/services/assistant/constants.h"
+#include "chromeos/services/assistant/media_session/assistant_media_session.h"
+#include "chromeos/services/assistant/platform_api_impl.h"
 #include "chromeos/services/assistant/public/features.h"
-#include "chromeos/services/assistant/public/proto/assistant_device_settings_ui.pb.h"
-#include "chromeos/services/assistant/public/proto/settings_ui.pb.h"
-#include "chromeos/services/assistant/service.h"
+#include "chromeos/services/assistant/public/mojom/assistant.mojom-shared.h"
+#include "chromeos/services/assistant/service_context.h"
 #include "chromeos/services/assistant/utils.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
+#include "libassistant/shared/internal_api/alarm_timer_manager.h"
+#include "libassistant/shared/internal_api/alarm_timer_types.h"
 #include "libassistant/shared/internal_api/assistant_manager_delegate.h"
 #include "libassistant/shared/internal_api/assistant_manager_internal.h"
+#include "libassistant/shared/public/assistant_manager.h"
 #include "libassistant/shared/public/media_manager.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "mojo/public/mojom/base/time.mojom.h"
+#include "services/media_session/public/mojom/media_session.mojom.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
+// A macro which ensures we are running on the main thread.
+#define ENSURE_MAIN_THREAD(method, ...)                                     \
+  if (!main_task_runner()->RunsTasksInCurrentSequence()) {                  \
+    main_task_runner()->PostTask(                                           \
+        FROM_HERE,                                                          \
+        base::BindOnce(method, weak_factory_.GetWeakPtr(), ##__VA_ARGS__)); \
+    return;                                                                 \
+  }
+
 using ActionModule = assistant_client::ActionModule;
 using Resolution = assistant_client::ConversationStateListener::Resolution;
-using SpeakerIdEnrollmentState =
-    assistant_client::SpeakerIdEnrollmentUpdate::State;
+using MediaStatus = assistant_client::MediaStatus;
+using CommunicationErrorType =
+    chromeos::assistant::AssistantManagerService::CommunicationErrorType;
 
 namespace api = ::assistant::api;
 
@@ -47,20 +68,32 @@ namespace chromeos {
 namespace assistant {
 namespace {
 
-constexpr char kUserID[] = "0";
+static bool is_first_init = true;
+
 constexpr char kWiFiDeviceSettingId[] = "WIFI";
 constexpr char kBluetoothDeviceSettingId[] = "BLUETOOTH";
 constexpr char kVolumeLevelDeviceSettingId[] = "VOLUME_LEVEL";
 constexpr char kScreenBrightnessDeviceSettingId[] = "BRIGHTNESS_LEVEL";
 constexpr char kDoNotDisturbDeviceSettingId[] = "DO_NOT_DISTURB";
 constexpr char kNightLightDeviceSettingId[] = "NIGHT_LIGHT_SWITCH";
-constexpr char kTimerFireNotificationGroupId[] = "assistant/timer_fire";
-constexpr char kQueryDeeplinkPrefix[] = "googleassistant://send-query?q=";
-constexpr base::Feature kAssistantTimerNotificationFeature{
-    "ChromeOSAssistantTimerNotification", base::FEATURE_ENABLED_BY_DEFAULT};
+constexpr char kIntentActionView[] = "android.intent.action.VIEW";
+
 constexpr base::Feature kChromeOSAssistantDogfood{
     "ChromeOSAssistantDogfood", base::FEATURE_DISABLED_BY_DEFAULT};
+
 constexpr char kServersideDogfoodExperimentId[] = "20347368";
+constexpr char kServersideOpenAppExperimentId[] = "39651593";
+
+constexpr char kNextTrackClientOp[] = "media.NEXT";
+constexpr char kPauseTrackClientOp[] = "media.PAUSE";
+constexpr char kPlayMediaClientOp[] = "media.PLAY_MEDIA";
+constexpr char kPrevTrackClientOp[] = "media.PREVIOUS";
+constexpr char kResumeTrackClientOp[] = "media.RESUME";
+constexpr char kStopTrackClientOp[] = "media.STOP";
+
+// The screen context query is locale independent. That is the same query
+// applies to all locales.
+constexpr char kScreenContextQuery[] = "screen context";
 
 constexpr float kDefaultSliderStep = 0.1f;
 
@@ -69,41 +102,6 @@ bool IsScreenContextAllowed(ash::AssistantStateBase* assistant_state) {
              ash::mojom::AssistantAllowedState::ALLOWED &&
          assistant_state->settings_enabled().value_or(false) &&
          assistant_state->context_enabled().value_or(false);
-}
-
-void UpdateInternalOptions(
-    assistant_client::AssistantManagerInternal* assistant_manager_internal,
-    const std::string& arc_version,
-    const std::string& locale,
-    bool spoken_feedback_enabled,
-    bool speaker_enrollment_done) {
-  // Build user agent string.
-  std::string user_agent;
-  base::StringAppendF(&user_agent,
-                      "Mozilla/5.0 (X11; CrOS %s %s; %s) "
-                      "AppleWebKit/%d.%d (KHTML, like Gecko)",
-                      base::SysInfo::OperatingSystemArchitecture().c_str(),
-                      base::SysInfo::OperatingSystemVersion().c_str(),
-                      base::SysInfo::GetLsbReleaseBoard().c_str(),
-                      WEBKIT_VERSION_MAJOR, WEBKIT_VERSION_MINOR);
-
-  if (!arc_version.empty())
-    base::StringAppendF(&user_agent, " ARC/%s", arc_version.c_str());
-
-  // Build internal options
-  auto* internal_options =
-      assistant_manager_internal->CreateDefaultInternalOptions();
-  SetAssistantOptions(internal_options, user_agent, locale,
-                      spoken_feedback_enabled);
-
-  if (base::FeatureList::IsEnabled(assistant::features::kAssistantVoiceMatch) &&
-      speaker_enrollment_done) {
-    internal_options->EnableRequireVoiceMatchVerification();
-  }
-
-  assistant_manager_internal->SetOptions(*internal_options, [](bool success) {
-    DVLOG(2) << "set options: " << success;
-  });
 }
 
 action::AppStatus GetActionAppStatus(mojom::AppStatus status) {
@@ -121,76 +119,105 @@ action::AppStatus GetActionAppStatus(mojom::AppStatus status) {
   }
 }
 
+ash::mojom::AssistantTimerState GetTimerState(
+    assistant_client::Timer::State state) {
+  switch (state) {
+    case assistant_client::Timer::State::UNKNOWN:
+      return ash::mojom::AssistantTimerState::kUnknown;
+    case assistant_client::Timer::State::SCHEDULED:
+      return ash::mojom::AssistantTimerState::kScheduled;
+    case assistant_client::Timer::State::PAUSED:
+      return ash::mojom::AssistantTimerState::kPaused;
+    case assistant_client::Timer::State::FIRED:
+      return ash::mojom::AssistantTimerState::kFired;
+  }
+}
+
+CommunicationErrorType CommunicationErrorTypeFromLibassistantErrorCode(
+    int error_code) {
+  if (IsAuthError(error_code))
+    return CommunicationErrorType::AuthenticationError;
+  return CommunicationErrorType::Other;
+}
+
 }  // namespace
 
 AssistantManagerServiceImpl::AssistantManagerServiceImpl(
-    service_manager::Connector* connector,
-    device::mojom::BatteryMonitorPtr battery_monitor,
-    Service* service,
-    network::NetworkConnectionTracker* network_connection_tracker)
-    : action_module_(std::make_unique<action::CrosActionModule>(this)),
-      main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      chromium_api_delegate_(service->io_task_runner()),
+    mojom::Client* client,
+    ServiceContext* context,
+    std::unique_ptr<AssistantManagerServiceDelegate> delegate,
+    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+        url_loader_factory_info,
+    bool is_signed_out_mode)
+    : client_(client),
+      media_session_(std::make_unique<AssistantMediaSession>(client_, this)),
+      action_module_(std::make_unique<action::CrosActionModule>(
+          this,
+          assistant::features::IsAppSupportEnabled(),
+          assistant::features::IsRoutinesEnabled())),
+      chromium_api_delegate_(std::move(url_loader_factory_info)),
       assistant_settings_manager_(
-          std::make_unique<AssistantSettingsManagerImpl>(this)),
-      display_connection_(std::make_unique<CrosDisplayConnection>(this)),
-      service_(service),
+          std::make_unique<AssistantSettingsManagerImpl>(context, this)),
+      context_(context),
+      delegate_(std::move(delegate)),
       background_thread_("background thread"),
+      is_signed_out_mode_(is_signed_out_mode),
       weak_factory_(this) {
   background_thread_.Start();
-  platform_api_ = std::make_unique<PlatformApiImpl>(
-      connector, std::move(battery_monitor), background_thread_.task_runner(),
-      network_connection_tracker);
-  connector->BindInterface(ash::mojom::kServiceName,
-                           &ash_message_center_controller_);
+
+  platform_api_ = delegate_->CreatePlatformApi(
+      media_session_.get(), background_thread_.task_runner());
+
+  mojo::Remote<media_session::mojom::MediaControllerManager>
+      media_controller_manager;
+  client->RequestMediaControllerManager(
+      media_controller_manager.BindNewPipeAndPassReceiver());
+  media_controller_manager->CreateActiveMediaController(
+      media_controller_.BindNewPipeAndPassReceiver());
 }
 
-AssistantManagerServiceImpl::~AssistantManagerServiceImpl() {}
+AssistantManagerServiceImpl::~AssistantManagerServiceImpl() {
+  background_thread_.Stop();
+}
 
-void AssistantManagerServiceImpl::Start(const std::string& access_token,
-                                        bool enable_hotword,
-                                        base::OnceClosure post_init_callback) {
+void AssistantManagerServiceImpl::Start(
+    const base::Optional<std::string>& access_token,
+    bool enable_hotword) {
   DCHECK(!assistant_manager_);
+  DCHECK_EQ(GetState(), State::STOPPED);
 
   // Set the flag to avoid starting the service multiple times.
-  state_ = State::STARTED;
+  SetStateAndInformObservers(State::STARTING);
 
   started_time_ = base::TimeTicks::Now();
 
-  platform_api_->OnHotwordEnabled(enable_hotword);
-
-  using AssistantManagerPtr =
-      std::unique_ptr<assistant_client::AssistantManager>;
-  // This is a tempory holder of the |assistant_client::AssistantManager| that
-  // is going to be created on the background thread. It is owned by the
-  // background task callback closure.
-  auto* new_assistant_manager = new AssistantManagerPtr();
+  EnableHotword(enable_hotword);
 
   // LibAssistant creation will make file IO and sync wait. Post the creation to
   // background thread to avoid DCHECK.
   background_thread_.task_runner()->PostTaskAndReply(
       FROM_HERE,
-      base::BindOnce(
-          [](AssistantManagerPtr* result,
-             base::OnceCallback<AssistantManagerPtr()> task) {
-            *result = std::move(task).Run();
-          },
-          new_assistant_manager,
-          base::BindOnce(&AssistantManagerServiceImpl::StartAssistantInternal,
-                         base::Unretained(this), access_token, enable_hotword,
-                         chromeos::version_loader::GetARCVersion(),
-                         service_->assistant_state()->locale().value(),
-                         spoken_feedback_enabled_)),
+      base::BindOnce(&AssistantManagerServiceImpl::StartAssistantInternal,
+                     base::Unretained(this), access_token),
       base::BindOnce(&AssistantManagerServiceImpl::PostInitAssistant,
-                     base::Unretained(this), std::move(post_init_callback),
-                     base::Owned(new_assistant_manager)));
+                     weak_factory_.GetWeakPtr()));
 }
 
 void AssistantManagerServiceImpl::Stop() {
-  state_ = State::STOPPED;
+  // We cannot cleanly stop the service if it is in the process of starting up.
+  DCHECK_NE(GetState(), State::STARTING);
+
+  SetStateAndInformObservers(State::STOPPED);
+
+  // When user disables the feature, we also deletes all data.
+  if (!assistant_state()->settings_enabled().value() && assistant_manager_)
+    assistant_manager_->ResetAllDataAndShutdown();
+
+  media_controller_observer_receiver_.reset();
 
   assistant_manager_internal_ = nullptr;
   assistant_manager_.reset(nullptr);
+  display_connection_.reset(nullptr);
 }
 
 AssistantManagerService::State AssistantManagerServiceImpl::GetState() const {
@@ -199,6 +226,11 @@ AssistantManagerService::State AssistantManagerServiceImpl::GetState() const {
 
 void AssistantManagerServiceImpl::SetAccessToken(
     const std::string& access_token) {
+  if (!assistant_manager_)
+    return;
+
+  DCHECK(!access_token.empty());
+
   VLOG(1) << "Set access token.";
   // Push the |access_token| we got as an argument into AssistantManager before
   // starting to ensure that all server requests will be authenticated once
@@ -218,16 +250,96 @@ void AssistantManagerServiceImpl::RegisterFallbackMediaHandler() {
 
   // Register handler for media actions.
   assistant_manager_internal_->RegisterFallbackMediaHandler(
-      [this](std::string play_media_args_proto) {
-        std::string url = GetWebUrlFromMediaArgs(play_media_args_proto);
-        if (!url.empty()) {
-          OnOpenUrl(url);
+      [this](std::string action_name, std::string media_action_args_proto) {
+        if (action_name == kPlayMediaClientOp) {
+          OnPlayMedia(media_action_args_proto);
+        } else {
+          OnMediaControlAction(action_name, media_action_args_proto);
         }
       });
 }
 
+void AssistantManagerServiceImpl::UpdateInternalMediaPlayerStatus(
+    media_session::mojom::MediaSessionAction action) {
+  auto* media_manager = assistant_manager_->GetMediaManager();
+  if (!media_manager)
+    return;
+
+  switch (action) {
+    case media_session::mojom::MediaSessionAction::kPause:
+      media_manager->Pause();
+      break;
+    case media_session::mojom::MediaSessionAction::kPlay:
+      media_manager->Resume();
+      break;
+    case media_session::mojom::MediaSessionAction::kPreviousTrack:
+    case media_session::mojom::MediaSessionAction::kNextTrack:
+    case media_session::mojom::MediaSessionAction::kSeekBackward:
+    case media_session::mojom::MediaSessionAction::kSeekForward:
+    case media_session::mojom::MediaSessionAction::kSkipAd:
+    case media_session::mojom::MediaSessionAction::kStop:
+    case media_session::mojom::MediaSessionAction::kSeekTo:
+    case media_session::mojom::MediaSessionAction::kScrubTo:
+      NOTIMPLEMENTED();
+      break;
+  }
+}
+
+void AssistantManagerServiceImpl::WaitUntilStartIsFinishedForTesting() {
+  // First we wait until |StartAssistantInternal| is finished.
+  background_thread_.FlushForTesting();
+  // Then we wait until |PostInitAssistant| finishes.
+  // (which runs on the main thread).
+  base::RunLoop().RunUntilIdle();
+}
+
+void AssistantManagerServiceImpl::AddMediaControllerObserver() {
+  if (features::IsMediaSessionIntegrationEnabled()) {
+    media_controller_->AddObserver(
+        media_controller_observer_receiver_.BindNewPipeAndPassRemote());
+  }
+}
+
+void AssistantManagerServiceImpl::RegisterAlarmsTimersListener() {
+  if (!assistant_manager_internal_)
+    return;
+
+  auto* alarm_timer_manager =
+      assistant_manager_internal_->GetAlarmTimerManager();
+
+  // Can be nullptr during unittests.
+  if (!alarm_timer_manager)
+    return;
+
+  auto listener_callback = base::BindRepeating(
+      [](scoped_refptr<base::SequencedTaskRunner> task_runner,
+         base::RepeatingClosure task) {
+        task_runner->PostTask(FROM_HERE, task);
+      },
+      main_task_runner(),
+      base::BindRepeating(
+          &AssistantManagerServiceImpl::OnAlarmTimerStateChanged,
+          weak_factory_.GetWeakPtr()));
+  alarm_timer_manager->RegisterRingingStateListener(
+      [listener = std::move(listener_callback)] { listener.Run(); });
+}
+
 void AssistantManagerServiceImpl::EnableListening(bool enable) {
+  if (!assistant_manager_)
+    return;
   assistant_manager_->EnableListening(enable);
+}
+
+void AssistantManagerServiceImpl::EnableHotword(bool enable) {
+  platform_api_->OnHotwordEnabled(enable);
+}
+
+void AssistantManagerServiceImpl::SetArcPlayStoreEnabled(bool enable) {
+  DCHECK(GetState() == State::RUNNING);
+  // Both LibAssistant and Chrome threads may access |display_connection_|.
+  // |display_connection_| is thread safe.
+  if (assistant::features::IsAppSupportEnabled())
+    display_connection_->SetArcPlayStoreEnabled(enable);
 }
 
 AssistantSettingsManager*
@@ -235,94 +347,31 @@ AssistantManagerServiceImpl::GetAssistantSettingsManager() {
   return assistant_settings_manager_.get();
 }
 
-void AssistantManagerServiceImpl::SendGetSettingsUiRequest(
-    const std::string& selector,
-    GetSettingsUiResponseCallback callback) {
-  DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
-
-  std::string serialized_proto = SerializeGetSettingsUiRequest(selector);
-  assistant_manager_internal_->SendGetSettingsUiRequest(
-      serialized_proto, std::string(), [
-        repeating_callback =
-            base::AdaptCallbackForRepeating(std::move(callback)),
-        weak_ptr = weak_factory_.GetWeakPtr(),
-        task_runner = main_thread_task_runner_
-      ](const assistant_client::VoicelessResponse& response) {
-        // This callback may be called from server multiple times. We should
-        // only process non-empty response.
-        std::string settings = UnwrapGetSettingsUiResponse(response);
-        if (!settings.empty()) {
-          task_runner->PostTask(
-              FROM_HERE,
-              base::BindOnce(
-                  &AssistantManagerServiceImpl::HandleGetSettingsResponse,
-                  std::move(weak_ptr), repeating_callback, settings));
-        }
-      });
+void AssistantManagerServiceImpl::AddCommunicationErrorObserver(
+    CommunicationErrorObserver* observer) {
+  error_observers_.AddObserver(observer);
 }
 
-void AssistantManagerServiceImpl::SendUpdateSettingsUiRequest(
-    const std::string& update,
-    UpdateSettingsUiResponseCallback callback) {
-  DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
-
-  std::string serialized_proto = SerializeUpdateSettingsUiRequest(update);
-  assistant_manager_internal_->SendUpdateSettingsUiRequest(
-      serialized_proto, std::string(), [
-        repeating_callback =
-            base::AdaptCallbackForRepeating(std::move(callback)),
-        weak_ptr = weak_factory_.GetWeakPtr(),
-        task_runner = main_thread_task_runner_
-      ](const assistant_client::VoicelessResponse& response) {
-        // This callback may be called from server multiple times. We should
-        // only process non-empty response.
-        std::string update = UnwrapUpdateSettingsUiResponse(response);
-        if (!update.empty()) {
-          task_runner->PostTask(
-              FROM_HERE,
-              base::BindOnce(
-                  &AssistantManagerServiceImpl::HandleUpdateSettingsResponse,
-                  std::move(weak_ptr), repeating_callback, update));
-        }
-      });
+void AssistantManagerServiceImpl::RemoveCommunicationErrorObserver(
+    const CommunicationErrorObserver* observer) {
+  error_observers_.RemoveObserver(observer);
 }
 
-void AssistantManagerServiceImpl::StartSpeakerIdEnrollment(
-    bool skip_cloud_enrollment,
-    mojom::SpeakerIdEnrollmentClientPtr client) {
-  DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
-
-  speaker_id_enrollment_client_ = std::move(client);
-
-  assistant_client::SpeakerIdEnrollmentConfig client_config;
-  client_config.user_id = kUserID;
-  client_config.skip_cloud_enrollment = skip_cloud_enrollment;
-
-  assistant_manager_internal_->StartSpeakerIdEnrollment(client_config, [
-    weak_ptr = weak_factory_.GetWeakPtr(),
-    task_runner = main_thread_task_runner_
-  ](const assistant_client::SpeakerIdEnrollmentUpdate& update) {
-    task_runner->PostTask(
-        FROM_HERE,
-        base::BindOnce(
-            &AssistantManagerServiceImpl::HandleSpeakerIdEnrollmentUpdate,
-            weak_ptr, update));
-  });
+void AssistantManagerServiceImpl::AddAndFireStateObserver(
+    StateObserver* observer) {
+  state_observers_.AddObserver(observer);
+  observer->OnStateChanged(GetState());
 }
 
-void AssistantManagerServiceImpl::StopSpeakerIdEnrollment(
-    AssistantSettingsManager::StopSpeakerIdEnrollmentCallback callback) {
-  assistant_manager_internal_->StopSpeakerIdEnrollment([
-    repeating_callback = base::AdaptCallbackForRepeating(std::move(callback)),
-    task_runner = main_thread_task_runner_,
-    weak_ptr = weak_factory_.GetWeakPtr()
-  ]() {
-    task_runner->PostTask(
-        FROM_HERE,
-        base::BindOnce(
-            &AssistantManagerServiceImpl::HandleStopSpeakerIdEnrollment,
-            std::move(weak_ptr), repeating_callback));
-  });
+void AssistantManagerServiceImpl::RemoveStateObserver(
+    const StateObserver* observer) {
+  state_observers_.RemoveObserver(observer);
+}
+
+void AssistantManagerServiceImpl::SyncDeviceAppsStatus() {
+  assistant_settings_manager_->SyncDeviceAppsStatus(
+      base::BindOnce(&AssistantManagerServiceImpl::OnDeviceAppsEnabled,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void AssistantManagerServiceImpl::StartVoiceInteraction() {
@@ -342,8 +391,35 @@ void AssistantManagerServiceImpl::StopActiveInteraction(
       cancel_conversation);
 }
 
+void AssistantManagerServiceImpl::StartWarmerWelcomeInteraction(
+    int num_warmer_welcome_triggered,
+    bool allow_tts) {
+  DCHECK(assistant_manager_internal_ != nullptr);
+
+  const std::string interaction =
+      CreateWarmerWelcomeInteraction(num_warmer_welcome_triggered);
+
+  assistant_client::VoicelessOptions options;
+  options.is_user_initiated = true;
+  options.modality =
+      allow_tts ? assistant_client::VoicelessOptions::Modality::VOICE_MODALITY
+                : assistant_client::VoicelessOptions::Modality::TYPING_MODALITY;
+
+  auto interaction_type = allow_tts ? mojom::AssistantInteractionType::kVoice
+                                    : mojom::AssistantInteractionType::kText;
+  options.conversation_turn_id = NewPendingInteraction(
+      interaction_type, mojom::AssistantQuerySource::kWarmerWelcome,
+      /*query=*/std::string());
+
+  assistant_manager_internal_->SendVoicelessInteraction(
+      interaction, /*description=*/"warmer_welcome_trigger", options,
+      [](auto) {});
+}
+
+// TODO(eyor): Add a method that can be called to clear the cached interaction
+// when the UI is hidden/closed.
 void AssistantManagerServiceImpl::StartCachedScreenContextInteraction() {
-  if (!IsScreenContextAllowed(service_->assistant_state()))
+  if (!IsScreenContextAllowed(assistant_state()))
     return;
 
   // It is illegal to call this method without having first cached screen
@@ -352,24 +428,36 @@ void AssistantManagerServiceImpl::StartCachedScreenContextInteraction() {
   DCHECK(assistant_tree_);
   DCHECK(!assistant_screenshot_.empty());
 
-  SendScreenContextRequest(std::move(assistant_extra_),
-                           std::move(assistant_tree_), assistant_screenshot_);
+  SendScreenContextRequest(assistant_extra_.get(), assistant_tree_.get(),
+                           assistant_screenshot_);
+}
+
+void AssistantManagerServiceImpl::StartEditReminderInteraction(
+    const std::string& client_id) {
+  const std::string interaction = CreateEditReminderInteraction(client_id);
+  assistant_client::VoicelessOptions voiceless_options;
+
+  voiceless_options.is_user_initiated = true;
+  assistant_manager_internal_->SendVoicelessInteraction(
+      interaction, std::string(), voiceless_options, [](auto) {});
 }
 
 void AssistantManagerServiceImpl::StartMetalayerInteraction(
     const gfx::Rect& region) {
-  if (!IsScreenContextAllowed(service_->assistant_state()))
+  if (!IsScreenContextAllowed(assistant_state()))
     return;
 
-  service_->assistant_screen_context_controller()->RequestScreenshot(
+  assistant_screen_context_controller()->RequestScreenshot(
       region,
       base::BindOnce(&AssistantManagerServiceImpl::SendScreenContextRequest,
                      weak_factory_.GetWeakPtr(), /*assistant_extra=*/nullptr,
                      /*assistant_tree=*/nullptr));
 }
 
-void AssistantManagerServiceImpl::StartTextInteraction(const std::string& query,
-                                                       bool allow_tts) {
+void AssistantManagerServiceImpl::StartTextInteraction(
+    const std::string& query,
+    mojom::AssistantQuerySource source,
+    bool allow_tts) {
   assistant_client::VoicelessOptions options;
   options.is_user_initiated = true;
 
@@ -378,25 +466,41 @@ void AssistantManagerServiceImpl::StartTextInteraction(const std::string& query,
         assistant_client::VoicelessOptions::Modality::TYPING_MODALITY;
   }
 
-  std::string interaction = CreateTextQueryInteraction(query);
-  assistant_manager_internal_->SendVoicelessInteraction(
-      interaction, /*description=*/"text_query", options, [](auto) {});
+  // Cache metadata about this interaction that can be resolved when the
+  // associated conversation turn starts in LibAssistant.
+  options.conversation_turn_id = NewPendingInteraction(
+      mojom::AssistantInteractionType::kText, source, query);
+
+  if (base::FeatureList::IsEnabled(
+          assistant::features::kEnableTextQueriesWithClientDiscourseContext) &&
+      assistant_extra_ && assistant_tree_) {
+    // We don't send the screenshot, because the backend only needs the
+    // view hierarchy to resolve contextual queries such as "Who is he?".
+    assistant_manager_internal_->SendTextQueryWithClientDiscourseContext(
+        query,
+        CreateContextProto(
+            AssistantBundle{assistant_extra_.get(), assistant_tree_.get()},
+            is_first_client_discourse_context_query_),
+        options);
+    is_first_client_discourse_context_query_ = false;
+  } else {
+    std::string interaction = CreateTextQueryInteraction(query);
+    assistant_manager_internal_->SendVoicelessInteraction(
+        interaction, /*description=*/"text_query", options, [](auto) {});
+  }
 }
 
 void AssistantManagerServiceImpl::AddAssistantInteractionSubscriber(
-    mojom::AssistantInteractionSubscriberPtr subscriber) {
-  interaction_subscribers_.AddPtr(std::move(subscriber));
-}
-
-void AssistantManagerServiceImpl::AddAssistantNotificationSubscriber(
-    mojom::AssistantNotificationSubscriberPtr subscriber) {
-  notification_subscribers_.AddPtr(std::move(subscriber));
+    mojo::PendingRemote<mojom::AssistantInteractionSubscriber> subscriber) {
+  mojo::Remote<mojom::AssistantInteractionSubscriber> subscriber_remote(
+      std::move(subscriber));
+  interaction_subscribers_.Add(std::move(subscriber_remote));
 }
 
 void AssistantManagerServiceImpl::RetrieveNotification(
     mojom::AssistantNotificationPtr notification,
     int action_index) {
-  const std::string& notification_id = notification->notification_id;
+  const std::string& notification_id = notification->server_id;
   const std::string& consistency_token = notification->consistency_token;
   const std::string& opaque_token = notification->opaque_token;
 
@@ -413,7 +517,7 @@ void AssistantManagerServiceImpl::RetrieveNotification(
 
 void AssistantManagerServiceImpl::DismissNotification(
     mojom::AssistantNotificationPtr notification) {
-  const std::string& notification_id = notification->notification_id;
+  const std::string& notification_id = notification->server_id;
   const std::string& consistency_token = notification->consistency_token;
   const std::string& opaque_token = notification->opaque_token;
   const std::string& grouping_key = notification->grouping_key;
@@ -429,32 +533,125 @@ void AssistantManagerServiceImpl::DismissNotification(
       dismissed_interaction, "DismissNotification", options, [](auto) {});
 }
 
-void AssistantManagerServiceImpl::OnConversationTurnStarted(bool is_mic_open) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnConversationTurnStartedOnMainThread,
-          weak_factory_.GetWeakPtr(), is_mic_open));
+void AssistantManagerServiceImpl::OnConversationTurnStartedInternal(
+    const assistant_client::ConversationTurnMetadata& metadata) {
+  ENSURE_MAIN_THREAD(
+      &AssistantManagerServiceImpl::OnConversationTurnStartedInternal,
+      metadata);
+
+  platform_api_->OnConversationTurnStarted();
+
+  // Retrieve the cached interaction metadata associated with this conversation
+  // turn or construct a new instance if there's no match in the cache.
+  mojom::AssistantInteractionMetadataPtr metadata_ptr;
+  auto it = pending_interactions_.find(metadata.id);
+  if (it != pending_interactions_.end()) {
+    metadata_ptr = std::move(it->second);
+    pending_interactions_.erase(it);
+  } else {
+    metadata_ptr = mojom::AssistantInteractionMetadata::New();
+    metadata_ptr->type = metadata.is_mic_open
+                             ? mojom::AssistantInteractionType::kVoice
+                             : mojom::AssistantInteractionType::kText;
+    metadata_ptr->source = mojom::AssistantQuerySource::kLibAssistantInitiated;
+  }
+
+  for (auto& it : interaction_subscribers_)
+    it->OnInteractionStarted(metadata_ptr->Clone());
 }
 
 void AssistantManagerServiceImpl::OnConversationTurnFinished(
     Resolution resolution) {
-  main_thread_task_runner_->PostTask(
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnConversationTurnFinished,
+                     resolution);
+
+  // TODO(updowndota): Find a better way to handle the edge cases.
+  if (resolution != Resolution::NORMAL_WITH_FOLLOW_ON &&
+      resolution != Resolution::CANCELLED &&
+      resolution != Resolution::BARGE_IN) {
+    platform_api_->SetMicState(false);
+  }
+
+  platform_api_->OnConversationTurnFinished();
+
+  switch (resolution) {
+    // Interaction ended normally.
+    case Resolution::NORMAL:
+    case Resolution::NORMAL_WITH_FOLLOW_ON:
+    case Resolution::NO_RESPONSE:
+      for (auto& it : interaction_subscribers_) {
+        it->OnInteractionFinished(
+            mojom::AssistantInteractionResolution::kNormal);
+      }
+
+      RecordQueryResponseTypeUMA();
+      break;
+    // Interaction ended due to interruption.
+    case Resolution::BARGE_IN:
+    case Resolution::CANCELLED:
+      for (auto& it : interaction_subscribers_) {
+        it->OnInteractionFinished(
+            mojom::AssistantInteractionResolution::kInterruption);
+      }
+
+      if (receive_inline_response_ || receive_modify_settings_proto_response_ ||
+          !receive_url_response_.empty()) {
+        RecordQueryResponseTypeUMA();
+      }
+      break;
+    // Interaction ended due to mic timeout.
+    case Resolution::TIMEOUT:
+      for (auto& it : interaction_subscribers_) {
+        it->OnInteractionFinished(
+            mojom::AssistantInteractionResolution::kMicTimeout);
+      }
+      break;
+    // Interaction ended due to error.
+    case Resolution::COMMUNICATION_ERROR:
+      for (auto& it : interaction_subscribers_) {
+        it->OnInteractionFinished(
+            mojom::AssistantInteractionResolution::kError);
+      }
+      break;
+    // Interaction ended because the device was not selected to produce a
+    // response. This occurs due to multi-device hotword loss.
+    case Resolution::DEVICE_NOT_SELECTED:
+      for (auto& it : interaction_subscribers_) {
+        it->OnInteractionFinished(
+            mojom::AssistantInteractionResolution::kMultiDeviceHotwordLoss);
+      }
+      break;
+  }
+}
+
+void AssistantManagerServiceImpl::OnScheduleWait(int id, int time_ms) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnScheduleWait, id, time_ms);
+
+  // Schedule a wait for |time_ms|, notifying the CrosActionModule when the wait
+  // has finished so that it can inform LibAssistant to resume execution.
+  main_task_runner()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(
-          &AssistantManagerServiceImpl::OnConversationTurnFinishedOnMainThread,
-          weak_factory_.GetWeakPtr(), resolution));
+          [](const base::WeakPtr<AssistantManagerServiceImpl>& weak_ptr,
+             int id) {
+            if (weak_ptr) {
+              weak_ptr->action_module_->OnScheduledWaitDone(
+                  id, /*cancelled=*/false);
+            }
+          },
+          weak_factory_.GetWeakPtr(), id),
+      base::TimeDelta::FromMilliseconds(time_ms));
+
+  // Notify subscribers that a wait has been started.
+  for (auto& it : interaction_subscribers_)
+    it->OnWaitStarted();
 }
 
 // TODO(b/113541754): Deprecate this API when the server provides a fallback.
 void AssistantManagerServiceImpl::OnShowContextualQueryFallback() {
   // Show fallback text.
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&AssistantManagerServiceImpl::OnShowTextOnMainThread,
-                     weak_factory_.GetWeakPtr(),
-                     l10n_util::GetStringUTF8(
-                         IDS_ASSISTANT_SCREEN_CONTEXT_QUERY_FALLBACK_TEXT)));
+  OnShowText(l10n_util::GetStringUTF8(
+      IDS_ASSISTANT_SCREEN_CONTEXT_QUERY_FALLBACK_TEXT));
 
   // Construct a fallback card.
   std::stringstream html;
@@ -485,22 +682,24 @@ void AssistantManagerServiceImpl::OnShowContextualQueryFallback() {
        << "</div></body></html>";
 
   // Show fallback card.
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&AssistantManagerServiceImpl::OnShowHtmlOnMainThread,
-                     weak_factory_.GetWeakPtr(), html.str(), /*fallback=*/""));
+  OnShowHtml(html.str(), /*fallback=*/"");
 }
 
 void AssistantManagerServiceImpl::OnShowHtml(const std::string& html,
                                              const std::string& fallback) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&AssistantManagerServiceImpl::OnShowHtmlOnMainThread,
-                     weak_factory_.GetWeakPtr(), html, fallback));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnShowHtml, html, fallback);
+
+  receive_inline_response_ = true;
+
+  for (auto& it : interaction_subscribers_)
+    it->OnHtmlResponse(html, fallback);
 }
 
 void AssistantManagerServiceImpl::OnShowSuggestions(
     const std::vector<action::Suggestion>& suggestions) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnShowSuggestions,
+                     suggestions);
+
   // Convert to mojom struct for IPC.
   std::vector<mojom::AssistantSuggestionPtr> ptrs;
   for (const action::Suggestion& suggestion : suggestions) {
@@ -511,104 +710,228 @@ void AssistantManagerServiceImpl::OnShowSuggestions(
     ptrs.push_back(std::move(ptr));
   }
 
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnShowSuggestionsOnMainThread,
-          weak_factory_.GetWeakPtr(), std::move(ptrs)));
+  for (auto& it : interaction_subscribers_)
+    it->OnSuggestionsResponse(mojo::Clone(ptrs));
 }
 
 void AssistantManagerServiceImpl::OnShowText(const std::string& text) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&AssistantManagerServiceImpl::OnShowTextOnMainThread,
-                     weak_factory_.GetWeakPtr(), text));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnShowText, text);
+
+  receive_inline_response_ = true;
+
+  for (auto& it : interaction_subscribers_)
+    it->OnTextResponse(text);
 }
 
-void AssistantManagerServiceImpl::OnOpenUrl(const std::string& url) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&AssistantManagerServiceImpl::OnOpenUrlOnMainThread,
-                     weak_factory_.GetWeakPtr(), url));
+void AssistantManagerServiceImpl::OnOpenUrl(const std::string& url,
+                                            bool is_background) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnOpenUrl, url,
+                     is_background);
+
+  receive_url_response_ = url;
+  const GURL gurl = GURL(url);
+
+  for (auto& it : interaction_subscribers_)
+    it->OnOpenUrlResponse(gurl, is_background);
 }
 
 void AssistantManagerServiceImpl::OnShowNotification(
     const action::Notification& notification) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnShowNotification,
+                     notification);
+
   mojom::AssistantNotificationPtr notification_ptr =
       mojom::AssistantNotification::New();
   notification_ptr->title = notification.title;
   notification_ptr->message = notification.text;
   notification_ptr->action_url = GURL(notification.action_url);
-  notification_ptr->notification_id = notification.notification_id;
+  notification_ptr->client_id = notification.notification_id;
+  notification_ptr->server_id = notification.notification_id;
   notification_ptr->consistency_token = notification.consistency_token;
   notification_ptr->opaque_token = notification.opaque_token;
   notification_ptr->grouping_key = notification.grouping_key;
   notification_ptr->obfuscated_gaia_id = notification.obfuscated_gaia_id;
+
+  if (notification.expiry_timestamp_ms) {
+    notification_ptr->expiry_time =
+        base::Time::FromJavaTime(notification.expiry_timestamp_ms);
+  }
+
+  // The server sometimes sends an empty |notification_id|, but our client
+  // requires a non-empty |client_id| for notifications. Known instances in
+  // which the server sends an empty |notification_id| are for Reminders.
+  if (notification_ptr->client_id.empty())
+    notification_ptr->client_id = base::UnguessableToken::Create().ToString();
+
   for (const auto& button : notification.buttons) {
     notification_ptr->buttons.push_back(mojom::AssistantNotificationButton::New(
         button.label, GURL(button.action_url)));
   }
 
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnShowNotificationOnMainThread,
-          weak_factory_.GetWeakPtr(), std::move(notification_ptr)));
+  assistant_notification_controller()->AddOrUpdateNotification(
+      notification_ptr.Clone());
 }
 
 void AssistantManagerServiceImpl::OnOpenAndroidApp(
     const action::AndroidAppInfo& app_info,
     const action::InteractionInfo& interaction) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnOpenAndroidApp, app_info,
+                     interaction);
   mojom::AndroidAppInfoPtr app_info_ptr = mojom::AndroidAppInfo::New();
   app_info_ptr->package_name = app_info.package_name;
-  service_->device_actions()->OpenAndroidApp(
-      std::move(app_info_ptr),
-      base::BindOnce(&AssistantManagerServiceImpl::HandleOpenAndroidAppResponse,
-                     weak_factory_.GetWeakPtr(), interaction));
+  for (auto& it : interaction_subscribers_) {
+    it->OnOpenAppResponse(
+        mojo::Clone(app_info_ptr),
+        base::BindOnce(
+            &AssistantManagerServiceImpl::HandleOpenAndroidAppResponse,
+            weak_factory_.GetWeakPtr(), interaction));
+  }
 }
 
 void AssistantManagerServiceImpl::OnVerifyAndroidApp(
     const std::vector<action::AndroidAppInfo>& apps_info,
     const action::InteractionInfo& interaction) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnVerifyAndroidApp,
+                     apps_info, interaction);
   std::vector<mojom::AndroidAppInfoPtr> apps_info_list;
-  for (auto app_info : apps_info) {
+  for (auto& app_info : apps_info) {
     mojom::AndroidAppInfoPtr app_info_ptr = mojom::AndroidAppInfo::New();
     app_info_ptr->package_name = app_info.package_name;
     apps_info_list.push_back(std::move(app_info_ptr));
   }
-  service_->device_actions()->VerifyAndroidApp(
+  device_actions()->VerifyAndroidApp(
       std::move(apps_info_list),
       base::BindOnce(
           &AssistantManagerServiceImpl::HandleVerifyAndroidAppResponse,
           weak_factory_.GetWeakPtr(), interaction));
 }
 
+void AssistantManagerServiceImpl::OnOpenMediaAndroidIntent(
+    const std::string play_media_args_proto,
+    action::AndroidAppInfo* android_app_info) {
+  DCHECK(main_task_runner()->RunsTasksInCurrentSequence());
+
+  // Handle android media playback intent.
+  mojom::AndroidAppInfoPtr app_info_ptr = mojom::AndroidAppInfo::New();
+  app_info_ptr->package_name = android_app_info->package_name;
+  app_info_ptr->action = kIntentActionView;
+  if (!android_app_info->intent.empty()) {
+    app_info_ptr->intent = android_app_info->intent;
+  } else {
+    std::string url = GetAndroidIntentUrlFromMediaArgs(play_media_args_proto);
+    if (!url.empty()) {
+      app_info_ptr->intent = url;
+    }
+  }
+  for (auto& it : interaction_subscribers_) {
+    it->OnOpenAppResponse(
+        mojo::Clone(app_info_ptr),
+        base::BindOnce(
+            &AssistantManagerServiceImpl::HandleLaunchMediaIntentResponse,
+            weak_factory_.GetWeakPtr()));
+  }
+}
+
+void AssistantManagerServiceImpl::OnPlayMedia(
+    const std::string play_media_args_proto) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnPlayMedia,
+                     play_media_args_proto);
+
+  std::unique_ptr<action::AndroidAppInfo> android_app_info =
+      GetAndroidAppInfoFromMediaArgs(play_media_args_proto);
+  if (android_app_info) {
+    OnOpenMediaAndroidIntent(play_media_args_proto, android_app_info.get());
+  } else {
+    std::string url = GetWebUrlFromMediaArgs(play_media_args_proto);
+    // Fallack to web URL.
+    if (!url.empty())
+      OnOpenUrl(url, /*in_background=*/false);
+  }
+}
+
+void AssistantManagerServiceImpl::OnMediaControlAction(
+    const std::string& action_name,
+    const std::string& media_action_args_proto) {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnMediaControlAction,
+                     action_name, media_action_args_proto);
+
+  if (action_name == kPauseTrackClientOp) {
+    media_controller_->Suspend();
+    return;
+  }
+
+  if (action_name == kResumeTrackClientOp) {
+    media_controller_->Resume();
+    return;
+  }
+
+  if (action_name == kNextTrackClientOp) {
+    media_controller_->NextTrack();
+    return;
+  }
+
+  if (action_name == kPrevTrackClientOp) {
+    media_controller_->PreviousTrack();
+    return;
+  }
+
+  if (action_name == kStopTrackClientOp) {
+    media_controller_->Stop();
+    return;
+  }
+  // TODO(llin): Handle media.SEEK_RELATIVE.
+}
+
 void AssistantManagerServiceImpl::OnRecognitionStateChanged(
     assistant_client::ConversationStateListener::RecognitionState state,
     const assistant_client::ConversationStateListener::RecognitionResult&
         recognition_result) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnRecognitionStateChangedOnMainThread,
-          weak_factory_.GetWeakPtr(), state, recognition_result));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnRecognitionStateChanged,
+                     state, recognition_result);
+
+  switch (state) {
+    case assistant_client::ConversationStateListener::RecognitionState::STARTED:
+      for (auto& it : interaction_subscribers_)
+        it->OnSpeechRecognitionStarted();
+      break;
+    case assistant_client::ConversationStateListener::RecognitionState::
+        INTERMEDIATE_RESULT:
+      for (auto& it : interaction_subscribers_) {
+        it->OnSpeechRecognitionIntermediateResult(
+            recognition_result.high_confidence_text,
+            recognition_result.low_confidence_text);
+      }
+      break;
+    case assistant_client::ConversationStateListener::RecognitionState::
+        END_OF_UTTERANCE:
+      for (auto& it : interaction_subscribers_)
+        it->OnSpeechRecognitionEndOfUtterance();
+      break;
+    case assistant_client::ConversationStateListener::RecognitionState::
+        FINAL_RESULT:
+      for (auto& it : interaction_subscribers_) {
+        it->OnSpeechRecognitionFinalResult(
+            recognition_result.recognized_speech);
+      }
+      break;
+  }
 }
 
 void AssistantManagerServiceImpl::OnRespondingStarted(bool is_error_response) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnRespondingStartedOnMainThread,
-          weak_factory_.GetWeakPtr(), is_error_response));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnRespondingStarted,
+                     is_error_response);
+
+  for (auto& it : interaction_subscribers_)
+    it->OnTtsStarted(is_error_response);
 }
 
 void AssistantManagerServiceImpl::OnSpeechLevelUpdated(
     const float speech_level) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnSpeechLevelUpdatedOnMainThread,
-          weak_factory_.GetWeakPtr(), speech_level));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnSpeechLevelUpdated,
+                     speech_level);
+
+  for (auto& it : interaction_subscribers_)
+    it->OnSpeechLevelUpdated(speech_level);
 }
 
 void LogUnsupportedChange(api::client_op::ModifySettingArgs args) {
@@ -720,13 +1043,13 @@ void AssistantManagerServiceImpl::OnModifySettingsAction(
 
   if (modify_setting_args.setting_id() == kWiFiDeviceSettingId) {
     HandleOnOffChange(modify_setting_args, [&](bool enabled) {
-      this->service_->device_actions()->SetWifiEnabled(enabled);
+      this->device_actions()->SetWifiEnabled(enabled);
     });
   }
 
   if (modify_setting_args.setting_id() == kBluetoothDeviceSettingId) {
     HandleOnOffChange(modify_setting_args, [&](bool enabled) {
-      this->service_->device_actions()->SetBluetoothEnabled(enabled);
+      this->device_actions()->SetBluetoothEnabled(enabled);
     });
   }
 
@@ -741,7 +1064,7 @@ void AssistantManagerServiceImpl::OnModifySettingsAction(
   }
 
   if (modify_setting_args.setting_id() == kScreenBrightnessDeviceSettingId) {
-    this->service_->device_actions()->GetScreenBrightnessLevel(base::BindOnce(
+    this->device_actions()->GetScreenBrightnessLevel(base::BindOnce(
         [](base::WeakPtr<chromeos::assistant::AssistantManagerServiceImpl>
                this_,
            api::client_op::ModifySettingArgs modify_setting_args, bool success,
@@ -752,8 +1075,8 @@ void AssistantManagerServiceImpl::OnModifySettingsAction(
           HandleSliderChange(
               modify_setting_args,
               [&](double new_value) {
-                this_->service_->device_actions()->SetScreenBrightnessLevel(
-                    new_value, true);
+                this_->device_actions()->SetScreenBrightnessLevel(new_value,
+                                                                  true);
               },
               [&]() { return current_value; });
         },
@@ -762,13 +1085,13 @@ void AssistantManagerServiceImpl::OnModifySettingsAction(
 
   if (modify_setting_args.setting_id() == kDoNotDisturbDeviceSettingId) {
     HandleOnOffChange(modify_setting_args, [&](bool enabled) {
-      ash_message_center_controller_->SetQuietMode(enabled);
+      this->assistant_notification_controller()->SetQuietMode(enabled);
     });
   }
 
   if (modify_setting_args.setting_id() == kNightLightDeviceSettingId) {
     HandleOnOffChange(modify_setting_args, [&](bool enabled) {
-      this->service_->device_actions()->SetNightLightEnabled(enabled);
+      this->device_actions()->SetNightLightEnabled(enabled);
     });
   }
 }
@@ -776,7 +1099,7 @@ void AssistantManagerServiceImpl::OnModifySettingsAction(
 ActionModule::Result AssistantManagerServiceImpl::HandleModifySettingClientOp(
     const std::string& modify_setting_args_proto) {
   DVLOG(2) << "HandleModifySettingClientOp=" << modify_setting_args_proto;
-  main_thread_task_runner_->PostTask(
+  main_task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&AssistantManagerServiceImpl::OnModifySettingsAction,
                      weak_factory_.GetWeakPtr(), modify_setting_args_proto));
@@ -800,207 +1123,111 @@ bool AssistantManagerServiceImpl::SupportsModifySettings() {
 
 void AssistantManagerServiceImpl::OnNotificationRemoved(
     const std::string& grouping_key) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnNotificationRemovedOnMainThread,
-          weak_factory_.GetWeakPtr(), grouping_key));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnNotificationRemoved,
+                     grouping_key);
+
+  if (grouping_key.empty()) {
+    assistant_notification_controller()->RemoveAllNotifications(
+        /*from_server=*/true);
+  } else {
+    assistant_notification_controller()->RemoveNotificationByGroupingKey(
+        grouping_key, /*from_server=*/
+        true);
+  }
 }
 
 void AssistantManagerServiceImpl::OnCommunicationError(int error_code) {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(
-          &AssistantManagerServiceImpl::OnCommunicationErrorOnMainThread,
-          weak_factory_.GetWeakPtr(), error_code));
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnCommunicationError,
+                     error_code);
+
+  CommunicationErrorType type =
+      CommunicationErrorTypeFromLibassistantErrorCode(error_code);
+
+  for (auto& observer : error_observers_)
+    observer.OnCommunicationError(type);
 }
 
-std::unique_ptr<assistant_client::AssistantManager>
-AssistantManagerServiceImpl::StartAssistantInternal(
-    const std::string& access_token,
-    bool enable_hotword,
-    const std::string& arc_version,
-    const std::string& locale,
-    bool spoken_feedback_enabled) {
+void AssistantManagerServiceImpl::StartAssistantInternal(
+    const base::Optional<std::string>& access_token) {
   DCHECK(background_thread_.task_runner()->BelongsToCurrentThread());
+  base::AutoLock lock(new_assistant_manager_lock_);
+  // There can only be one |AssistantManager| instance at any given time.
+  DCHECK(!assistant_manager_);
+  new_display_connection_ = std::make_unique<CrosDisplayConnection>(
+      this, assistant::features::IsFeedbackUiEnabled(),
+      assistant::features::IsMediaSessionIntegrationEnabled());
 
-  std::unique_ptr<assistant_client::AssistantManager> assistant_manager;
-  assistant_manager.reset(assistant_client::AssistantManager::Create(
-      platform_api_.get(), CreateLibAssistantConfig(!enable_hotword)));
-  auto* assistant_manager_internal =
-      UnwrapAssistantManagerInternal(assistant_manager.get());
+  new_assistant_manager_ = delegate_->CreateAssistantManager(
+      platform_api_.get(), CreateLibAssistantConfig());
+  new_assistant_manager_internal_ =
+      delegate_->UnwrapAssistantManagerInternal(new_assistant_manager_.get());
 
-  UpdateInternalOptions(assistant_manager_internal, arc_version, locale,
-                        spoken_feedback_enabled, speaker_id_enrollment_done_);
+  UpdateInternalOptions(new_assistant_manager_internal_);
 
-  assistant_manager_internal->SetDisplayConnection(display_connection_.get());
-  assistant_manager_internal->RegisterActionModule(action_module_.get());
-  assistant_manager_internal->SetAssistantManagerDelegate(this);
-  assistant_manager_internal->GetFuchsiaApiHelperOrDie()->SetFuchsiaApiDelegate(
-      &chromium_api_delegate_);
-  assistant_manager->AddConversationStateListener(this);
-  assistant_manager->AddDeviceStateListener(this);
+  new_assistant_manager_internal_->SetDisplayConnection(
+      new_display_connection_.get());
+  new_assistant_manager_internal_->RegisterActionModule(action_module_.get());
+  new_assistant_manager_internal_->SetAssistantManagerDelegate(this);
+  new_assistant_manager_internal_->GetFuchsiaApiHelperOrDie()
+      ->SetFuchsiaApiDelegate(&chromium_api_delegate_);
+  new_assistant_manager_->AddConversationStateListener(this);
+  new_assistant_manager_->AddDeviceStateListener(this);
 
   std::vector<std::string> server_experiment_ids;
   FillServerExperimentIds(&server_experiment_ids);
 
-  if (server_experiment_ids.size() > 0)
-    assistant_manager_internal->AddExtraExperimentIds(server_experiment_ids);
+  if (server_experiment_ids.size() > 0) {
+    new_assistant_manager_internal_->AddExtraExperimentIds(
+        server_experiment_ids);
+  }
 
-  assistant_manager->SetAuthTokens(
-      {std::pair<std::string, std::string>(kUserID, access_token)});
-  assistant_manager->Start();
-
-  return assistant_manager;
+  if (!is_signed_out_mode_) {
+    new_assistant_manager_->SetAuthTokens(
+        {std::pair<std::string, std::string>(kUserID, access_token.value())});
+  }
+  new_assistant_manager_->Start();
 }
 
-void AssistantManagerServiceImpl::PostInitAssistant(
-    base::OnceClosure post_init_callback,
-    std::unique_ptr<assistant_client::AssistantManager>* assistant_manager) {
-  DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
+void AssistantManagerServiceImpl::PostInitAssistant() {
+  DCHECK(main_task_runner()->RunsTasksInCurrentSequence());
+  DCHECK_EQ(GetState(), State::STARTING);
 
-  assistant_manager_ = std::move(*assistant_manager);
-  assistant_manager_internal_ =
-      UnwrapAssistantManagerInternal(assistant_manager_.get());
-  state_ = State::RUNNING;
+  {
+    base::AutoLock lock(new_assistant_manager_lock_);
+
+    // It is possible that multiple |StartAssistantInternal| finished on
+    // background thread, before any of the matching |PostInitAssistant| had
+    // run. Because we only hold the last created instance in
+    // |new_assistant_manager_|, it is possible that |new_assistant_manager_| be
+    // null if we moved it in previous |PostInitAssistant| runs.
+    if (!new_assistant_manager_) {
+      return;
+    }
+
+    display_connection_ = std::move(new_display_connection_);
+    assistant_manager_ = std::move(new_assistant_manager_);
+    assistant_manager_internal_ = new_assistant_manager_internal_;
+    new_assistant_manager_internal_ = nullptr;
+  }
 
   const base::TimeDelta time_since_started =
       base::TimeTicks::Now() - started_time_;
   UMA_HISTOGRAM_TIMES("Assistant.ServiceStartTime", time_since_started);
 
-  std::move(post_init_callback).Run();
-  UpdateDeviceSettings();
-  SyncSpeakerIdEnrollmentStatus();
-}
+  SetStateAndInformObservers(State::STARTED);
 
-void AssistantManagerServiceImpl::SyncSpeakerIdEnrollmentStatus() {
-  DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
-  if (speaker_id_enrollment_client_) {
-    // Speaker id enrollment is in progress.
-    return;
-  }
+  assistant_settings_manager_->UpdateServerDeviceSettings();
 
-  // TODO(updowndota): Add a dedicate API for fetching enrollment status.
-  assistant_client::SpeakerIdEnrollmentConfig client_config;
-  client_config.user_id = kUserID;
-  client_config.skip_cloud_enrollment = false;
-
-  assistant_manager_internal_->StartSpeakerIdEnrollment(
-      client_config,
-      [weak_ptr = weak_factory_.GetWeakPtr(),
-       task_runner = main_thread_task_runner_](
-          const assistant_client::SpeakerIdEnrollmentUpdate& update) {
-        task_runner->PostTask(
-            FROM_HERE, base::BindOnce(&AssistantManagerServiceImpl::
-                                          HandleSpeakerIdEnrollmentStatusSync,
-                                      weak_ptr, update));
-      });
-}
-
-void AssistantManagerServiceImpl::UpdateDeviceSettings() {
-  DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
-
-  const std::string device_id = assistant_manager_->GetDeviceId();
-  if (device_id.empty())
-    return;
-
-  // Update device id and device type.
-  assistant::SettingsUiUpdate update;
-  assistant::AssistantDeviceSettingsUpdate* device_settings_update =
-      update.mutable_assistant_device_settings_update()
-          ->add_assistant_device_settings_update();
-  device_settings_update->set_device_id(device_id);
-  device_settings_update->set_assistant_device_type(
-      assistant::AssistantDevice::CROS);
-
-  VLOG(1) << "Update assistant device locale: "
-          << base::i18n::GetConfiguredLocale();
-  device_settings_update->mutable_device_settings()->set_locale(
-      service_->assistant_state()->locale().value());
-
-  // Enable personal readout to grant permission for personal features.
-  device_settings_update->mutable_device_settings()->set_personal_readout(
-      assistant::AssistantDeviceSettings::PERSONAL_READOUT_ENABLED);
-
-  // Device settings update result is not handled because it is not included in
-  // the SettingsUiUpdateResult.
-  SendUpdateSettingsUiRequest(update.SerializeAsString(), base::DoNothing());
-}
-
-void AssistantManagerServiceImpl::HandleGetSettingsResponse(
-    base::RepeatingCallback<void(const std::string&)> callback,
-    const std::string& settings) {
-  callback.Run(settings);
-}
-
-void AssistantManagerServiceImpl::HandleUpdateSettingsResponse(
-    base::RepeatingCallback<void(const std::string&)> callback,
-    const std::string& result) {
-  callback.Run(result);
-}
-
-void AssistantManagerServiceImpl::HandleSpeakerIdEnrollmentUpdate(
-    const assistant_client::SpeakerIdEnrollmentUpdate& update) {
-  switch (update.state) {
-    case SpeakerIdEnrollmentState::LISTEN:
-      speaker_id_enrollment_client_->OnListeningHotword();
-      break;
-    case SpeakerIdEnrollmentState::PROCESS:
-      speaker_id_enrollment_client_->OnProcessingHotword();
-      break;
-    case SpeakerIdEnrollmentState::DONE:
-      speaker_id_enrollment_client_->OnSpeakerIdEnrollmentDone();
-      if (!speaker_id_enrollment_done_) {
-        speaker_id_enrollment_done_ = true;
-        UpdateInternalOptions(assistant_manager_internal_,
-                              chromeos::version_loader::GetARCVersion(),
-                              service_->assistant_state()->locale().value(),
-                              spoken_feedback_enabled_,
-                              speaker_id_enrollment_done_);
-      }
-      break;
-    case SpeakerIdEnrollmentState::FAILURE:
-      speaker_id_enrollment_client_->OnSpeakerIdEnrollmentFailure();
-      break;
-    case SpeakerIdEnrollmentState::INIT:
-    case SpeakerIdEnrollmentState::CHECK:
-    case SpeakerIdEnrollmentState::UPLOAD:
-    case SpeakerIdEnrollmentState::FETCH:
-      break;
+  if (base::FeatureList::IsEnabled(assistant::features::kAssistantAppSupport)) {
+    device_actions()->AddAppListEventSubscriber(
+        app_list_subscriber_receiver_.BindNewPipeAndPassRemote());
   }
 }
 
-void AssistantManagerServiceImpl::HandleSpeakerIdEnrollmentStatusSync(
-    const assistant_client::SpeakerIdEnrollmentUpdate& update) {
-  switch (update.state) {
-    case SpeakerIdEnrollmentState::LISTEN:
-      speaker_id_enrollment_done_ = false;
-      // Stop the enrollment since we already get the status.
-      if (!speaker_id_enrollment_client_)
-        StopSpeakerIdEnrollment(base::DoNothing());
-      break;
-    case SpeakerIdEnrollmentState::DONE:
-      speaker_id_enrollment_done_ = true;
-      UpdateInternalOptions(assistant_manager_internal_,
-                            chromeos::version_loader::GetARCVersion(),
-                            service_->assistant_state()->locale().value(),
-                            spoken_feedback_enabled_,
-                            speaker_id_enrollment_done_);
-      break;
-    case SpeakerIdEnrollmentState::PROCESS:
-    case SpeakerIdEnrollmentState::FAILURE:
-    case SpeakerIdEnrollmentState::INIT:
-    case SpeakerIdEnrollmentState::CHECK:
-    case SpeakerIdEnrollmentState::UPLOAD:
-    case SpeakerIdEnrollmentState::FETCH:
-      break;
-  }
-}
-
-void AssistantManagerServiceImpl::HandleStopSpeakerIdEnrollment(
-    base::RepeatingCallback<void()> callback) {
-  speaker_id_enrollment_client_.reset();
-  callback.Run();
+void AssistantManagerServiceImpl::HandleLaunchMediaIntentResponse(
+    bool app_opened) {
+  // TODO(llin): Handle the response.
+  NOTIMPLEMENTED();
 }
 
 void AssistantManagerServiceImpl::HandleOpenAndroidAppResponse(
@@ -1030,248 +1257,180 @@ void AssistantManagerServiceImpl::HandleVerifyAndroidAppResponse(
 
   assistant_client::VoicelessOptions options;
   options.obfuscated_gaia_id = interaction.user_id;
+  // Set the request to be user initiated so that a new conversation will be
+  // created to handle the client OPs in the response of this request.
+  options.is_user_initiated = true;
 
   assistant_manager_internal_->SendVoicelessInteraction(
       interaction_proto, "verify_provider_response", options, [](auto) {});
 }
 
-// assistant_client::DeviceStateListener overrides
-// Run on LibAssistant threads
+// This method runs on the LibAssistant thread.
+// This method is triggered as the callback of libassistant bootup checkin.
 void AssistantManagerServiceImpl::OnStartFinished() {
-  main_thread_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&AssistantManagerServiceImpl::RegisterFallbackMediaHandler,
-                     weak_factory_.GetWeakPtr()));
-}
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnStartFinished);
 
-void AssistantManagerServiceImpl::OnTimerSoundingStarted() {
-  // TODO(llin): Migrate to use the AlarmManager API to better support multiple
-  // timers when the API is available.
-  if (!base::FeatureList::IsEnabled(kAssistantTimerNotificationFeature))
+  // It is possible the |assistant_manager_| was destructed before the
+  // rescheduled main thread task got a chance to run. We check this and also
+  // try to avoid double run by checking |GetState()|.
+  if (!assistant_manager_ || (GetState() == State::RUNNING))
     return;
 
-  const std::string notification_title =
-      l10n_util::GetStringUTF8(IDS_ASSISTANT_TIMER_NOTIFICATION_TITLE);
-  const std::string notification_content =
-      l10n_util::GetStringUTF8(IDS_ASSISTANT_TIMER_NOTIFICATION_CONTENT);
-  const std::string stop_timer_query =
-      l10n_util::GetStringUTF8(IDS_ASSISTANT_STOP_TIMER_QUERY);
+  SetStateAndInformObservers(State::RUNNING);
 
-  const std::string action_url = kQueryDeeplinkPrefix + stop_timer_query;
-  action::Notification notification(
-      /*title=*/notification_title,
-      /*text=*/notification_content,
-      /*action_url=*/action_url,
-      /*notification_id=*/{},
-      /*consistency_token=*/{},
-      /*opaque_token=*/{},
-      /*grouping_key=*/kTimerFireNotificationGroupId,
-      /*obfuscated_gaia_id=*/{},
-      /*buttons=*/
-      {{l10n_util::GetStringUTF8(IDS_ASSISTANT_STOP_BUTTON_TEXT), action_url}});
-  OnShowNotification(notification);
+  if (is_first_init) {
+    is_first_init = false;
+    // Only sync status at the first init to prevent unexpected corner cases.
+    if (assistant_state()->hotword_enabled().value())
+      assistant_settings_manager_->SyncSpeakerIdEnrollmentStatus();
+  }
+
+  const base::TimeDelta time_since_started =
+      base::TimeTicks::Now() - started_time_;
+  UMA_HISTOGRAM_TIMES("Assistant.ServiceReadyTime", time_since_started);
+
+  SyncDeviceAppsStatus();
+
+  RegisterFallbackMediaHandler();
+  AddMediaControllerObserver();
+
+  auto* media_manager = assistant_manager_->GetMediaManager();
+  if (media_manager)
+    media_manager->AddListener(this);
+
+  RegisterAlarmsTimersListener();
+
+  if (assistant_state()->arc_play_store_enabled().has_value())
+    SetArcPlayStoreEnabled(assistant_state()->arc_play_store_enabled().value());
 }
 
-void AssistantManagerServiceImpl::OnTimerSoundingFinished() {
-  if (!base::FeatureList::IsEnabled(kAssistantTimerNotificationFeature))
-    return;
-
-  OnNotificationRemoved(kTimerFireNotificationGroupId);
+void AssistantManagerServiceImpl::OnAndroidAppListRefreshed(
+    std::vector<mojom::AndroidAppInfoPtr> apps_info) {
+  std::vector<action::AndroidAppInfo> android_apps_info;
+  for (const auto& app_info : apps_info) {
+    android_apps_info.push_back({app_info->package_name, app_info->version,
+                                 app_info->localized_app_name,
+                                 app_info->intent});
+  }
+  display_connection_->OnAndroidAppListRefreshed(android_apps_info);
 }
 
-void AssistantManagerServiceImpl::OnConversationTurnStartedOnMainThread(
-    bool is_mic_open) {
-  platform_api_->GetAudioInputProvider()
-      .GetAudioInput()
-      .OnConversationTurnStarted();
+void AssistantManagerServiceImpl::UpdateInternalOptions(
+    assistant_client::AssistantManagerInternal* assistant_manager_internal) {
+  // Build internal options
+  auto* internal_options =
+      assistant_manager_internal->CreateDefaultInternalOptions();
+  SetAssistantOptions(internal_options, assistant_state()->locale().value(),
+                      spoken_feedback_enabled_);
 
-  interaction_subscribers_.ForAllPtrs([is_mic_open](auto* ptr) {
-    ptr->OnInteractionStarted(/*is_voice_interaction=*/is_mic_open);
+  internal_options->SetClientControlEnabled(
+      assistant::features::IsRoutinesEnabled());
+
+  if (is_signed_out_mode_) {
+    internal_options->SetUserCredentialMode(
+        assistant_client::InternalOptions::UserCredentialMode::SIGNED_OUT);
+  }
+
+  if (!features::IsVoiceMatchDisabled())
+    internal_options->EnableRequireVoiceMatchVerification();
+
+  assistant_manager_internal->SetOptions(*internal_options, [](bool success) {
+    DVLOG(2) << "set options: " << success;
   });
 }
 
-void AssistantManagerServiceImpl::OnConversationTurnFinishedOnMainThread(
-    assistant_client::ConversationStateListener::Resolution resolution) {
-  // TODO(updowndota): Find a better way to handle the edge cases.
-  if (resolution != Resolution::NORMAL_WITH_FOLLOW_ON &&
-      resolution != Resolution::CANCELLED &&
-      resolution != Resolution::BARGE_IN) {
-    platform_api_->SetMicState(false);
-  }
+void AssistantManagerServiceImpl::MediaSessionChanged(
+    const base::Optional<base::UnguessableToken>& request_id) {
+  if (request_id.has_value())
+    media_session_audio_focus_id_ = std::move(request_id.value());
+}
 
-  platform_api_->GetAudioInputProvider()
-      .GetAudioInput()
-      .OnConversationTurnFinished();
+void AssistantManagerServiceImpl::MediaSessionInfoChanged(
+    media_session::mojom::MediaSessionInfoPtr info) {
+  media_session_info_ptr_ = std::move(info);
+  UpdateMediaState();
+}
 
-  switch (resolution) {
-    // Interaction ended normally.
-    case Resolution::NORMAL:
-    case Resolution::NORMAL_WITH_FOLLOW_ON:
-    case Resolution::NO_RESPONSE:
-      interaction_subscribers_.ForAllPtrs([](auto* ptr) {
-        ptr->OnInteractionFinished(
-            mojom::AssistantInteractionResolution::kNormal);
-      });
+void AssistantManagerServiceImpl::MediaSessionMetadataChanged(
+    const base::Optional<media_session::MediaMetadata>& metadata) {
+  media_metadata_ = std::move(metadata);
+  UpdateMediaState();
+}
 
-      RecordQueryResponseTypeUMA();
+
+void AssistantManagerServiceImpl::OnPlaybackStateChange(
+    const MediaStatus& status) {
+  if (media_session_)
+    media_session_->NotifyMediaSessionMetadataChanged(status);
+}
+
+void AssistantManagerServiceImpl::OnAlarmTimerStateChanged() {
+  ENSURE_MAIN_THREAD(&AssistantManagerServiceImpl::OnAlarmTimerStateChanged);
+  // Currently, we only handle ringing events here. After some AlarmTimerManager
+  // API improvement, we will be handling other alarm/timer events.
+  auto* alarm_timer_manager =
+      assistant_manager_internal_->GetAlarmTimerManager();
+  // TODO(llin): Use GetAllEvents after the AlarmTimerManager API improvement is
+  // ready (b/128701326).
+  const assistant_client::AlarmTimerEvent& ringing_event =
+      alarm_timer_manager->GetRingingEvent();
+
+  switch (ringing_event.type) {
+    case assistant_client::AlarmTimerEvent::NONE:
+      assistant_alarm_timer_controller()->OnAlarmTimerStateChanged(nullptr);
       break;
-    // Interaction ended due to interruption.
-    case Resolution::BARGE_IN:
-    case Resolution::CANCELLED:
-      interaction_subscribers_.ForAllPtrs([](auto* ptr) {
-        ptr->OnInteractionFinished(
-            mojom::AssistantInteractionResolution::kInterruption);
-      });
+    case assistant_client::AlarmTimerEvent::TIMER: {
+      ash::mojom::AssistantAlarmTimerEventPtr alarm_timer_event_ptr =
+          ash::mojom::AssistantAlarmTimerEvent::New();
+      alarm_timer_event_ptr->type =
+          ash::mojom::AssistantAlarmTimerEventType::kTimer;
 
-      if (receive_inline_response_ || receive_modify_settings_proto_response_ ||
-          !receive_url_response_.empty()) {
-        RecordQueryResponseTypeUMA();
+      if (ringing_event.type == assistant_client::AlarmTimerEvent::TIMER) {
+        alarm_timer_event_ptr->data = ash::mojom::AlarmTimerData::New();
+        ash::mojom::AssistantTimerPtr timer_data_ptr =
+            ash::mojom::AssistantTimer::New();
+        timer_data_ptr->state = GetTimerState(ringing_event.timer_data.state);
+        timer_data_ptr->timer_id = ringing_event.timer_data.timer_id;
+        alarm_timer_event_ptr->data->set_timer_data(std::move(timer_data_ptr));
       }
+
+      assistant_alarm_timer_controller()->OnAlarmTimerStateChanged(
+          std::move(alarm_timer_event_ptr));
       break;
-    // Interaction ended due to mic timeout.
-    case Resolution::TIMEOUT:
-      interaction_subscribers_.ForAllPtrs([](auto* ptr) {
-        ptr->OnInteractionFinished(
-            mojom::AssistantInteractionResolution::kMicTimeout);
-      });
-      break;
-    // Interaction ended due to error.
-    case Resolution::COMMUNICATION_ERROR:
-      interaction_subscribers_.ForAllPtrs([](auto* ptr) {
-        ptr->OnInteractionFinished(
-            mojom::AssistantInteractionResolution::kError);
-      });
-      break;
-    // Interaction ended because the device was not selected to produce a
-    // response. This occurs due to multi-device hotword loss.
-    case Resolution::DEVICE_NOT_SELECTED:
-      interaction_subscribers_.ForAllPtrs([](auto* ptr) {
-        ptr->OnInteractionFinished(
-            mojom::AssistantInteractionResolution::kMultiDeviceHotwordLoss);
-      });
+    }
+    case assistant_client::AlarmTimerEvent::ALARM:
+      // TODO(llin): Handle alarm.
+      NOTREACHED();
       break;
   }
-}
-
-void AssistantManagerServiceImpl::OnShowHtmlOnMainThread(
-    const std::string& html,
-    const std::string& fallback) {
-  receive_inline_response_ = true;
-
-  interaction_subscribers_.ForAllPtrs(
-      [&html, &fallback](auto* ptr) { ptr->OnHtmlResponse(html, fallback); });
-}
-
-void AssistantManagerServiceImpl::OnShowSuggestionsOnMainThread(
-    const std::vector<mojom::AssistantSuggestionPtr>& suggestions) {
-  interaction_subscribers_.ForAllPtrs([&suggestions](auto* ptr) {
-    ptr->OnSuggestionsResponse(mojo::Clone(suggestions));
-  });
-}
-
-void AssistantManagerServiceImpl::OnShowTextOnMainThread(
-    const std::string& text) {
-  receive_inline_response_ = true;
-
-  interaction_subscribers_.ForAllPtrs(
-      [&text](auto* ptr) { ptr->OnTextResponse(text); });
-}
-
-void AssistantManagerServiceImpl::OnOpenUrlOnMainThread(
-    const std::string& url) {
-  receive_url_response_ = url;
-
-  interaction_subscribers_.ForAllPtrs(
-      [&url](auto* ptr) { ptr->OnOpenUrlResponse(GURL(url)); });
-}
-
-void AssistantManagerServiceImpl::OnShowNotificationOnMainThread(
-    const mojom::AssistantNotificationPtr& notification) {
-  notification_subscribers_.ForAllPtrs([&notification](auto* ptr) {
-    ptr->OnShowNotification(notification.Clone());
-  });
-}
-
-void AssistantManagerServiceImpl::OnNotificationRemovedOnMainThread(
-    const std::string& grouping_key) {
-  notification_subscribers_.ForAllPtrs(
-      [grouping_key](auto* ptr) { ptr->OnRemoveNotification(grouping_key); });
-}
-
-void AssistantManagerServiceImpl::OnCommunicationErrorOnMainThread(
-    int error_code) {
-  if (IsAuthError(error_code))
-    service_->RequestAccessToken();
-}
-
-void AssistantManagerServiceImpl::OnRecognitionStateChangedOnMainThread(
-    assistant_client::ConversationStateListener::RecognitionState state,
-    const assistant_client::ConversationStateListener::RecognitionResult&
-        recognition_result) {
-  switch (state) {
-    case assistant_client::ConversationStateListener::RecognitionState::STARTED:
-      interaction_subscribers_.ForAllPtrs(
-          [](auto* ptr) { ptr->OnSpeechRecognitionStarted(); });
-      break;
-    case assistant_client::ConversationStateListener::RecognitionState::
-        INTERMEDIATE_RESULT:
-      interaction_subscribers_.ForAllPtrs([&recognition_result](auto* ptr) {
-        ptr->OnSpeechRecognitionIntermediateResult(
-            recognition_result.high_confidence_text,
-            recognition_result.low_confidence_text);
-      });
-      break;
-    case assistant_client::ConversationStateListener::RecognitionState::
-        END_OF_UTTERANCE:
-      interaction_subscribers_.ForAllPtrs(
-          [](auto* ptr) { ptr->OnSpeechRecognitionEndOfUtterance(); });
-      break;
-    case assistant_client::ConversationStateListener::RecognitionState::
-        FINAL_RESULT:
-      interaction_subscribers_.ForAllPtrs([&recognition_result](auto* ptr) {
-        ptr->OnSpeechRecognitionFinalResult(
-            recognition_result.recognized_speech);
-      });
-      break;
-  }
-}
-
-void AssistantManagerServiceImpl::OnRespondingStartedOnMainThread(
-    bool is_error_response) {
-  interaction_subscribers_.ForAllPtrs(
-      [is_error_response](auto* ptr) { ptr->OnTtsStarted(is_error_response); });
-}
-
-void AssistantManagerServiceImpl::OnSpeechLevelUpdatedOnMainThread(
-    const float speech_level) {
-  interaction_subscribers_.ForAllPtrs(
-      [&speech_level](auto* ptr) { ptr->OnSpeechLevelUpdated(speech_level); });
 }
 
 void AssistantManagerServiceImpl::CacheScreenContext(
     CacheScreenContextCallback callback) {
-  if (!IsScreenContextAllowed(service_->assistant_state())) {
+  if (!IsScreenContextAllowed(assistant_state())) {
     std::move(callback).Run();
     return;
   }
 
   // Our callback should be run only after both view hierarchy and screenshot
   // data have been cached from their respective providers.
-  auto on_done =
-      base::BarrierClosure(2, base::BindOnce(
-                                  [](CacheScreenContextCallback callback) {
-                                    std::move(callback).Run();
-                                  },
-                                  base::Passed(std::move(callback))));
+  auto on_done = base::BarrierClosure(2, std::move(callback));
 
-  service_->client()->RequestAssistantStructure(
+  client_->RequestAssistantStructure(
       base::BindOnce(&AssistantManagerServiceImpl::CacheAssistantStructure,
                      weak_factory_.GetWeakPtr(), on_done));
 
-  service_->assistant_screen_context_controller()->RequestScreenshot(
+  assistant_screen_context_controller()->RequestScreenshot(
       gfx::Rect(),
       base::BindOnce(&AssistantManagerServiceImpl::CacheAssistantScreenshot,
                      weak_factory_.GetWeakPtr(), on_done));
+}
+
+void AssistantManagerServiceImpl::ClearScreenContextCache() {
+  assistant_extra_.reset();
+  assistant_tree_.reset();
+  assistant_screenshot_.clear();
+  is_first_client_discourse_context_query_ = true;
 }
 
 void AssistantManagerServiceImpl::OnAccessibilityStatusChanged(
@@ -1284,10 +1443,33 @@ void AssistantManagerServiceImpl::OnAccessibilityStatusChanged(
   // When |spoken_feedback_enabled_| changes we need to update our internal
   // options to turn on/off A11Y features in LibAssistant.
   if (assistant_manager_internal_)
-    UpdateInternalOptions(
-        assistant_manager_internal_, chromeos::version_loader::GetARCVersion(),
-        service_->assistant_state()->locale().value(), spoken_feedback_enabled_,
-        speaker_id_enrollment_done_);
+    UpdateInternalOptions(assistant_manager_internal_);
+}
+
+void AssistantManagerServiceImpl::OnDeviceAppsEnabled(bool enabled) {
+  // The device apps state sync should only be sent after service is running.
+  // Check state here to prevent timing issue when the service is restarting.
+  if (GetState() != State::RUNNING)
+    return;
+
+  display_connection_->SetDeviceAppsEnabled(enabled);
+  action_module_->SetAppSupportEnabled(
+      assistant::features::IsAppSupportEnabled() && enabled);
+}
+
+void AssistantManagerServiceImpl::StopAlarmTimerRinging() {
+  if (!assistant_manager_internal_)
+    return;
+
+  assistant_manager_internal_->GetAlarmTimerManager()->StopRinging();
+}
+
+void AssistantManagerServiceImpl::CreateTimer(base::TimeDelta duration) {
+  if (!assistant_manager_internal_)
+    return;
+
+  assistant_manager_internal_->GetAlarmTimerManager()->CreateTimer(
+      duration.InSeconds(), /*label=*/std::string());
 }
 
 void AssistantManagerServiceImpl::CacheAssistantStructure(
@@ -1307,9 +1489,22 @@ void AssistantManagerServiceImpl::CacheAssistantScreenshot(
 }
 
 void AssistantManagerServiceImpl::SendScreenContextRequest(
-    ax::mojom::AssistantExtraPtr assistant_extra,
-    std::unique_ptr<ui::AssistantTree> assistant_tree,
+    ax::mojom::AssistantExtra* assistant_extra,
+    ui::AssistantTree* assistant_tree,
     const std::vector<uint8_t>& assistant_screenshot) {
+  if (assistant::features::IsScreenContextQueryEnabled()) {
+    assistant_client::VoicelessOptions options;
+    options.is_user_initiated = true;
+
+    assistant_manager_internal_->SendTextQueryWithClientDiscourseContext(
+        kScreenContextQuery,
+        CreateContextProto(
+            AssistantBundle{assistant_extra_.get(), assistant_tree_.get()},
+            assistant_screenshot),
+        options);
+    return;
+  }
+
   std::vector<std::string> context_protos;
 
   // Screen context can have the assistant_extra and assistant_tree set to
@@ -1317,13 +1512,17 @@ void AssistantManagerServiceImpl::SendScreenContextRequest(
   // the metalayer. For this scenario, we don't create a context proto for the
   // AssistantBundle that consists of the assistant_extra and assistant_tree.
   if (assistant_extra && assistant_tree) {
-    context_protos.emplace_back(CreateContextProto(AssistantBundle{
-        std::move(assistant_extra), std::move(assistant_tree)}));
+    // Note: the value of is_first_query for screen context query is a no-op
+    // because it is not used for metalayer and "What's on my screen" queries.
+    context_protos.emplace_back(
+        CreateContextProto(AssistantBundle{assistant_extra, assistant_tree},
+                           /*is_first_query=*/true));
   }
 
-  context_protos.emplace_back(CreateContextProto(assistant_screenshot));
+  // Note: the value of is_first_query for screen context query is a no-op.
+  context_protos.emplace_back(CreateContextProto(assistant_screenshot,
+                                                 /*is_first_query=*/true));
   assistant_manager_internal_->SendScreenContextRequest(context_protos);
-  assistant_screenshot_.clear();
 }
 
 std::string AssistantManagerServiceImpl::GetLastSearchSource() {
@@ -1338,6 +1537,9 @@ void AssistantManagerServiceImpl::FillServerExperimentIds(
   if (base::FeatureList::IsEnabled(kChromeOSAssistantDogfood)) {
     server_experiment_ids->emplace_back(kServersideDogfoodExperimentId);
   }
+
+  if (base::FeatureList::IsEnabled(assistant::features::kAssistantAppSupport))
+    server_experiment_ids->emplace_back(kServersideOpenAppExperimentId);
 }
 
 void AssistantManagerServiceImpl::RecordQueryResponseTypeUMA() {
@@ -1362,6 +1564,121 @@ void AssistantManagerServiceImpl::RecordQueryResponseTypeUMA() {
   receive_inline_response_ = false;
   receive_modify_settings_proto_response_ = false;
   receive_url_response_.clear();
+}
+
+void AssistantManagerServiceImpl::SendAssistantFeedback(
+    mojom::AssistantFeedbackPtr assistant_feedback) {
+  const std::string interaction = CreateSendFeedbackInteraction(
+      assistant_feedback->assistant_debug_info_allowed,
+      assistant_feedback->description, assistant_feedback->screenshot_png);
+  assistant_client::VoicelessOptions voiceless_options;
+
+  voiceless_options.is_user_initiated = false;
+
+  assistant_manager_internal_->SendVoicelessInteraction(
+      interaction, "send feedback with details", voiceless_options,
+      [](auto) {});
+}
+
+void AssistantManagerServiceImpl::UpdateMediaState() {
+  if (media_session_info_ptr_) {
+    if (media_session_info_ptr_->is_sensitive) {
+      // Do not update media state if the session is considered to be sensitive
+      // (off the record profile).
+      return;
+    }
+
+    if (media_session_info_ptr_->state ==
+            media_session::mojom::MediaSessionInfo::SessionState::kSuspended &&
+        media_session_info_ptr_->playback_state ==
+            media_session::mojom::MediaPlaybackState::kPlaying) {
+      // It is an intermediate state caused by some providers override the
+      // playback state. We considered it as invalid and skip reporting the
+      // state.
+      return;
+    }
+  }
+
+  // MediaSession Integrated providers (include the libassistant internal
+  // media provider) will trigger media state change event. Only update the
+  // external media status if the state changes is triggered by external
+  // providers.
+  if (media_session_ && media_session_->internal_audio_focus_id() ==
+                            media_session_audio_focus_id_) {
+    return;
+  }
+
+  MediaStatus media_status;
+
+  // Set media metadata.
+  if (media_metadata_.has_value()) {
+    media_status.metadata.title =
+        base::UTF16ToUTF8(media_metadata_.value().title);
+  }
+
+  // Set playback state.
+  media_status.playback_state = MediaStatus::IDLE;
+  if (media_session_info_ptr_ &&
+      media_session_info_ptr_->state !=
+          media_session::mojom::MediaSessionInfo::SessionState::kInactive) {
+    switch (media_session_info_ptr_->playback_state) {
+      case media_session::mojom::MediaPlaybackState::kPlaying:
+        media_status.playback_state = MediaStatus::PLAYING;
+        break;
+      case media_session::mojom::MediaPlaybackState::kPaused:
+        media_status.playback_state = MediaStatus::PAUSED;
+        break;
+    }
+  }
+
+  auto* media_manager = assistant_manager_->GetMediaManager();
+  if (media_manager)
+    media_manager->SetExternalPlaybackState(media_status);
+}
+
+std::string AssistantManagerServiceImpl::NewPendingInteraction(
+    mojom::AssistantInteractionType interaction_type,
+    mojom::AssistantQuerySource source,
+    const std::string& query) {
+  auto id = base::NumberToString(next_interaction_id_++);
+  pending_interactions_[id] =
+      mojom::AssistantInteractionMetadata::New(interaction_type, source, query);
+  return id;
+}
+
+ash::mojom::AssistantAlarmTimerController*
+AssistantManagerServiceImpl::assistant_alarm_timer_controller() {
+  return context_->assistant_alarm_timer_controller();
+}
+
+ash::mojom::AssistantNotificationController*
+AssistantManagerServiceImpl::assistant_notification_controller() {
+  return context_->assistant_notification_controller();
+}
+
+ash::mojom::AssistantScreenContextController*
+AssistantManagerServiceImpl::assistant_screen_context_controller() {
+  return context_->assistant_screen_context_controller();
+}
+
+ash::AssistantStateBase* AssistantManagerServiceImpl::assistant_state() {
+  return context_->assistant_state();
+}
+
+mojom::DeviceActions* AssistantManagerServiceImpl::device_actions() {
+  return context_->device_actions();
+}
+
+scoped_refptr<base::SequencedTaskRunner>
+AssistantManagerServiceImpl::main_task_runner() {
+  return context_->main_task_runner();
+}
+
+void AssistantManagerServiceImpl::SetStateAndInformObservers(State new_state) {
+  state_ = new_state;
+
+  for (auto& observer : state_observers_)
+    observer.OnStateChanged(state_);
 }
 
 }  // namespace assistant

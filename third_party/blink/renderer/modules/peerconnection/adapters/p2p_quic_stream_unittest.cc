@@ -4,8 +4,8 @@
 
 #include "third_party/blink/renderer/modules/peerconnection/adapters/p2p_quic_stream.h"
 #include "net/test/gtest_util.h"
-#include "net/third_party/quic/core/quic_data_writer.h"
-#include "net/third_party/quic/test_tools/quic_test_utils.h"
+#include "net/third_party/quiche/src/quic/core/quic_data_writer.h"
+#include "net/third_party/quiche/src/quic/test_tools/quic_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/renderer/modules/peerconnection/adapters/p2p_quic_stream_impl.h"
 #include "third_party/blink/renderer/modules/peerconnection/adapters/test/mock_p2p_quic_stream_delegate.h"
@@ -174,7 +174,23 @@ TEST_F(P2PQuicStreamTest, StreamClosedAfterReceivingReset) {
 
   quic::QuicRstStreamFrame rst_frame(quic::kInvalidControlFrameId, kStreamId,
                                      quic::QUIC_STREAM_CANCELLED, 0);
+  if (!VersionHasIetfQuicFrames(connection_->version().transport_version)) {
+    // Google RST_STREAM closes the stream in both directions. A RST_STREAM
+    // is then sent to the peer to communicate the final byte offset.
+    EXPECT_CALL(session_,
+                SendRstStream(kStreamId, quic::QUIC_RST_ACKNOWLEDGEMENT, 0));
+  }
   stream_->OnStreamReset(rst_frame);
+  if (VersionHasIetfQuicFrames(connection_->version().transport_version)) {
+    // In IETF QUIC, the RST_STREAM only closes the stream in one direction.
+    // A STOP_SENDING frame in require to induce the a RST_STREAM being
+    // send to close the other direction.
+    EXPECT_CALL(*connection_, SendControlFrame(_));
+    EXPECT_CALL(*connection_, OnStreamReset(kStreamId, testing::_));
+    quic::QuicStopSendingFrame stop_sending_frame(quic::kInvalidControlFrameId,
+                                                  kStreamId, 0);
+    session_.OnStopSendingFrame(stop_sending_frame);
+  }
 
   EXPECT_TRUE(stream_->IsClosedForTesting());
 }
@@ -194,7 +210,7 @@ TEST_F(P2PQuicStreamTest, StreamWritesData) {
         // order to check that it's what was written.
         std::string data_consumed_by_quic(write_length, 'a');
         quic::QuicDataWriter writer(write_length, &data_consumed_by_quic[0],
-                                    quic::NETWORK_BYTE_ORDER);
+                                    quiche::NETWORK_BYTE_ORDER);
         stream->WriteStreamData(offset, write_length, &writer);
 
         EXPECT_THAT(data_consumed_by_quic, ElementsAreArray(kSomeData));
@@ -222,7 +238,7 @@ TEST_F(P2PQuicStreamTest, StreamWritesDataWithFin) {
         // what was written.
         std::string data_consumed_by_quic(write_length, 'a');
         quic::QuicDataWriter writer(write_length, &data_consumed_by_quic[0],
-                                    quic::NETWORK_BYTE_ORDER);
+                                    quiche::NETWORK_BYTE_ORDER);
         stream->WriteStreamData(offset, write_length, &writer);
 
         EXPECT_THAT(data_consumed_by_quic, ElementsAreArray(kSomeData));
@@ -438,5 +454,65 @@ TEST_F(P2PQuicStreamTest, StreamReceivesMoreDataThanDelegateReadBufferSize) {
   stream_->MarkReceivedDataConsumed(4);
   // Just the last data received ("ta") is held in the delegate's read buffer.
   EXPECT_EQ(2u, stream_->DelegateReadBufferedAmountForTesting());
+}
+
+// Tests that after a delegate unsets itself, it will no longer receive the
+// OnWriteDataConsumed callback.
+TEST_F(P2PQuicStreamTest, UnsetDelegateDoesNotFireOnWriteDataConsumed) {
+  InitializeStream();
+  stream_->SetDelegate(nullptr);
+  // Mock out the QuicSession to get the QuicStream::OnStreamDataConsumed
+  // callback to fire.
+  EXPECT_CALL(session_,
+              WritevData(stream_, kStreamId,
+                         /*write_length=*/base::size(kSomeData), _, _))
+      .WillOnce(Invoke([](quic::QuicStream* stream, quic::QuicStreamId id,
+                          size_t write_length, quic::QuicStreamOffset offset,
+                          quic::StreamSendingState state) {
+        return quic::QuicConsumedData(
+            write_length, state != quic::StreamSendingState::NO_FIN);
+      }));
+
+  EXPECT_CALL(delegate_, OnWriteDataConsumed(_)).Times(0);
+
+  stream_->WriteData(VectorFromArray(kSomeData), /*fin=*/false);
+}
+
+// Tests that after a delegate unsets itself, it will no longer receive the
+// OnRemoteReset callback.
+TEST_F(P2PQuicStreamTest, UnsetDelegateDoesNotFireOnRemoteReset) {
+  InitializeStream();
+  stream_->SetDelegate(nullptr);
+  EXPECT_CALL(delegate_, OnRemoteReset()).Times(0);
+
+  quic::QuicRstStreamFrame rst_frame(quic::kInvalidControlFrameId, kStreamId,
+                                     quic::QUIC_STREAM_CANCELLED, 0);
+  stream_->OnStreamReset(rst_frame);
+}
+
+// Tests that after a delegate unsets itself, it will no longer receive the
+// OnDataReceived callback when receiving a stream frame with data and no FIN
+// bit.
+TEST_F(P2PQuicStreamTest, UnsetDelegateDoesNotFireOnDataReceivedWithData) {
+  InitializeStream();
+  stream_->SetDelegate(nullptr);
+
+  EXPECT_CALL(delegate_, OnDataReceived(_, _)).Times(0);
+
+  quic::QuicStreamFrame stream_frame(stream_->id(), /*fin=*/false, 0,
+                                     StringPieceFromArray(kSomeData));
+  stream_->OnStreamFrame(stream_frame);
+}
+
+// Tests that after a delegate unsets itself, it will no longer receive the
+// OnDataReceived callback when receiving a stream frame with the FIN bit.
+TEST_F(P2PQuicStreamTest, UnsetDelegateDoesNotFireOnDataReceivedWithFin) {
+  InitializeStream();
+  stream_->SetDelegate(nullptr);
+
+  EXPECT_CALL(delegate_, OnDataReceived(_, _)).Times(0);
+
+  quic::QuicStreamFrame stream_frame(stream_->id(), /*fin=*/true, 0, {});
+  stream_->OnStreamFrame(stream_frame);
 }
 }  // namespace blink

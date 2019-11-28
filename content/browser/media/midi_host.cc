@@ -17,7 +17,7 @@
 #include "media/midi/message_util.h"
 #include "media/midi/midi_message_queue.h"
 #include "media/midi/midi_service.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 
 namespace content {
 namespace {
@@ -37,8 +37,8 @@ const size_t kAcknowledgementThresholdBytes = 1024 * 1024;  // 1 MB.
 using midi::IsDataByte;
 using midi::IsSystemRealTimeMessage;
 using midi::IsValidWebMIDIData;
-using midi::kSysExByte;
 using midi::kEndOfSysExByte;
+using midi::kSysExByte;
 using midi::mojom::PortState;
 using midi::mojom::Result;
 
@@ -48,8 +48,7 @@ MidiHost::MidiHost(int renderer_process_id, midi::MidiService* midi_service)
       midi_service_(midi_service),
       sent_bytes_in_flight_(0),
       bytes_sent_since_last_acknowledgement_(0),
-      output_port_count_(0),
-      midi_session_(this) {
+      output_port_count_(0) {
   DCHECK(midi_service_);
 }
 
@@ -60,28 +59,21 @@ MidiHost::~MidiHost() {
 }
 
 // static
-void MidiHost::BindRequest(int render_process_id,
-                           midi::MidiService* midi_service,
-                           midi::mojom::MidiSessionProviderRequest request) {
+void MidiHost::BindReceiver(
+    int render_process_id,
+    midi::MidiService* midi_service,
+    mojo::PendingReceiver<midi::mojom::MidiSessionProvider> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  mojo::MakeStrongBinding(
+  mojo::MakeSelfOwnedReceiver(
       base::WrapUnique(new MidiHost(render_process_id, midi_service)),
-      std::move(request));
+      std::move(receiver));
 }
 
 void MidiHost::CompleteStartSession(Result result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(midi_client_);
-  if (result == Result::OK) {
-    // ChildSecurityPolicy is set just before OnStartSession by
-    // MidiDispatcherHost. So we can safely cache the policy.
-    has_sys_ex_permission_ =
-        ChildProcessSecurityPolicyImpl::GetInstance()->CanSendMidiSysExMessage(
-            renderer_process_id_);
-    midi_session_.Bind(std::move(pending_session_request_));
-    midi_session_.set_connection_error_handler(
-        base::BindOnce(&MidiHost::EndSession, base::Unretained(this)));
-  }
+  if (result == Result::OK)
+    midi_session_.Bind(std::move(pending_session_receiver_));
   midi_client_->SessionStarted(result);
 }
 
@@ -133,8 +125,15 @@ void MidiHost::ReceiveMidiData(uint32_t port,
     // MIDI devices may send a system exclusive messages even if the renderer
     // doesn't have a permission to receive it. Don't kill the renderer as
     // SendData() does.
-    if (message[0] == kSysExByte && !has_sys_ex_permission_)
-      continue;
+    if (message[0] == kSysExByte) {
+      if (!has_sys_ex_permission_) {
+        has_sys_ex_permission_ =
+            ChildProcessSecurityPolicyImpl::GetInstance()
+                ->CanSendMidiSysExMessage(renderer_process_id_);
+        if (!has_sys_ex_permission_)
+          continue;
+      }
+    }
 
     // Send to the renderer.
     CallClient(&midi::mojom::MidiSessionClient::DataReceived, port, message,
@@ -165,17 +164,19 @@ void MidiHost::Detach() {
   midi_service_ = nullptr;
 }
 
-void MidiHost::StartSession(midi::mojom::MidiSessionRequest request,
-                            midi::mojom::MidiSessionClientPtr client) {
+void MidiHost::StartSession(
+    mojo::PendingReceiver<midi::mojom::MidiSession> session_receiver,
+    mojo::PendingRemote<midi::mojom::MidiSessionClient> client) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK(!pending_session_request_);
+  DCHECK(!pending_session_receiver_);
   // Checks to see if |midi_session_| isn't already bound to another
   // MidiSessionRequest.
-  DCHECK(!midi_session_);
-  pending_session_request_ = std::move(request);
+  pending_session_receiver_ = std::move(session_receiver);
 
   DCHECK(!midi_client_);
-  midi_client_ = std::move(client);
+  midi_client_.Bind(std::move(client));
+  midi_client_.set_disconnect_handler(
+      base::BindOnce(&MidiHost::EndSession, base::Unretained(this)));
 
   if (midi_service_)
     midi_service_->StartSession(this);
@@ -188,9 +189,8 @@ void MidiHost::SendData(uint32_t port,
   {
     base::AutoLock auto_lock(output_port_count_lock_);
     if (output_port_count_ <= port) {
-      bad_message::ReceivedBadMessage(
-          RenderProcessHost::FromID(renderer_process_id_),
-          bad_message::MH_INVALID_MIDI_PORT);
+      bad_message::ReceivedBadMessage(renderer_process_id_,
+                                      bad_message::MH_INVALID_MIDI_PORT);
       return;
     }
   }
@@ -201,11 +201,19 @@ void MidiHost::SendData(uint32_t port,
   // Blink running in a renderer checks permission to raise a SecurityError
   // in JavaScript. The actual permission check for security purposes
   // happens here in the browser process.
-  if (!has_sys_ex_permission_ && base::ContainsValue(data, kSysExByte)) {
-    bad_message::ReceivedBadMessage(
-        RenderProcessHost::FromID(renderer_process_id_),
-        bad_message::MH_SYS_EX_PERMISSION);
-    return;
+  // Check |has_sys_ex_permission_| first to avoid searching kSysExByte in large
+  // bulk data transfers for correct uses.
+  if (!has_sys_ex_permission_ && base::Contains(data, kSysExByte)) {
+    if (!has_sys_ex_permission_) {
+      has_sys_ex_permission_ =
+          ChildProcessSecurityPolicyImpl::GetInstance()
+              ->CanSendMidiSysExMessage(renderer_process_id_);
+      if (!has_sys_ex_permission_) {
+        bad_message::ReceivedBadMessage(renderer_process_id_,
+                                        bad_message::MH_SYS_EX_PERMISSION);
+        return;
+      }
+    }
   }
 
   if (!IsValidWebMIDIData(data))
@@ -227,10 +235,9 @@ void MidiHost::SendData(uint32_t port,
 template <typename Method, typename... Params>
 void MidiHost::CallClient(Method method, Params... params) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&MidiHost::CallClient<Method, Params...>, AsWeakPtr(),
-                       method, std::move(params)...));
+    base::PostTask(FROM_HERE, {BrowserThread::IO},
+                   base::BindOnce(&MidiHost::CallClient<Method, Params...>,
+                                  AsWeakPtr(), method, std::move(params)...));
     return;
   }
   (midi_client_.get()->*method)(std::move(params)...);
@@ -240,7 +247,7 @@ void MidiHost::EndSession() {
   if (midi_service_)
     midi_service_->EndSession(this);
   midi_client_.reset();
-  midi_session_.Close();
-};
+  midi_session_.reset();
+}
 
 }  // namespace content

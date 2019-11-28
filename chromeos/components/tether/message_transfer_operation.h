@@ -12,7 +12,7 @@
 #include "base/optional.h"
 #include "base/timer/timer.h"
 #include "base/unguessable_token.h"
-#include "chromeos/components/tether/ble_connection_manager.h"
+#include "chromeos/components/tether/proto/tether.pb.h"
 #include "chromeos/services/device_sync/public/cpp/device_sync_client.h"
 #include "chromeos/services/secure_channel/public/cpp/client/client_channel.h"
 #include "chromeos/services/secure_channel/public/cpp/client/connection_attempt.h"
@@ -97,6 +97,7 @@ class MessageTransferOperation {
   friend class ConnectTetheringOperationTest;
   friend class DisconnectTetheringOperationTest;
   friend class HostScannerOperationTest;
+  friend class KeepAliveOperationTest;
   friend class MessageTransferOperationTest;
 
   class ConnectionAttemptDelegate
@@ -199,7 +200,7 @@ class MessageTransferOperation {
   base::flat_map<multidevice::RemoteDeviceRef,
                  std::unique_ptr<base::OneShotTimer>>
       remote_device_to_timer_map_;
-  base::WeakPtrFactory<MessageTransferOperation> weak_ptr_factory_;
+  base::WeakPtrFactory<MessageTransferOperation> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MessageTransferOperation);
 };

@@ -7,11 +7,10 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "base/at_exit.h"
-#include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "tools/android/forwarder2/host_controller.h"
 #include "tools/android/forwarder2/socket.h"
@@ -30,7 +29,7 @@ enum : int {
 class HostControllersManager {
  public:
   explicit HostControllersManager(
-      base::Callback<int()> exit_notifier_fd_callback);
+      base::RepeatingCallback<int()> exit_notifier_fd_callback);
   ~HostControllersManager();
   void HandleRequest(const std::string& adb_path,
                      const std::string& device_serial,
@@ -44,8 +43,8 @@ class HostControllersManager {
   FRIEND_TEST_ALL_PREFIXES(HostControllersManagerTest, AdbNoExtraFds);
   FRIEND_TEST_ALL_PREFIXES(HostControllersManagerTest, AdbArgumentSequence);
 
-  typedef base::hash_map<std::string, linked_ptr<HostController>>
-      HostControllerMap;
+  using HostControllerMap =
+      std::unordered_map<std::string, std::unique_ptr<HostController>>;
 
   static std::string MakeHostControllerMapKey(int adb_port, int device_port);
 
@@ -103,12 +102,12 @@ class HostControllersManager {
   virtual bool GetAppOutputAndError(const std::vector<std::string>& argv,
                                     std::string* output);
 
-  base::hash_map<std::string, int> device_serial_to_adb_port_map_;
+  std::unordered_map<std::string, int> device_serial_to_adb_port_map_;
   std::unique_ptr<HostControllerMap> controllers_;
   std::unique_ptr<base::AtExitManager>
       at_exit_manager_;  // Needed by base::Thread.
   std::unique_ptr<base::Thread> thread_;
-  base::Callback<int()> exit_notifier_fd_callback_;
+  base::RepeatingCallback<int()> exit_notifier_fd_callback_;
   bool has_failed_;
   base::WeakPtrFactory<HostControllersManager> weak_ptr_factory_;
 };

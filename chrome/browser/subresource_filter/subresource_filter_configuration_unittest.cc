@@ -8,7 +8,7 @@
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "components/subresource_filter/core/common/activation_list.h"
 #include "components/subresource_filter/core/common/activation_scope.h"
-#include "components/subresource_filter/mojom/subresource_filter.mojom.h"
+#include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -25,7 +25,8 @@ class SubresourceFilterConfigurationTest
 
 // Do not configure the URL with Safe Browsing to be part of any list. The only
 // time we should filter subresources is if we have ALL_SITES scope.
-TEST_P(SubresourceFilterConfigurationTest, NoList_UsuallyNoActivation) {
+TEST_P(SubresourceFilterConfigurationTest,
+       DISABLED_NoList_UsuallyNoActivation) {
   ActivationScope scope;
   ActivationList activation_list;
   ActivationLevel level;
@@ -43,7 +44,7 @@ TEST_P(SubresourceFilterConfigurationTest, NoList_UsuallyNoActivation) {
   }
 }
 
-TEST_P(SubresourceFilterConfigurationTest, OneListActivation) {
+TEST_P(SubresourceFilterConfigurationTest, DISABLED_OneListActivation) {
   ActivationScope scope;
   ActivationList activation_list;
   ActivationLevel level;
@@ -64,7 +65,7 @@ TEST_P(SubresourceFilterConfigurationTest, OneListActivation) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     /* no prefix */,
     SubresourceFilterConfigurationTest,
     ::testing::Combine(

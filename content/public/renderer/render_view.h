@@ -12,21 +12,12 @@
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "content/public/common/browser_controls_state.h"
 #include "ipc/ipc_sender.h"
-#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace blink {
-class WebElement;
-class WebFrameWidget;
 class WebView;
-struct WebRect;
 }  // namespace blink
-
-namespace gfx {
-class Size;
-}
 
 namespace content {
 
@@ -62,16 +53,10 @@ class CONTENT_EXPORT RenderView : public IPC::Sender {
   virtual RenderFrame* GetMainRenderFrame() = 0;
 
   // Get the routing ID of the view.
-  virtual int GetRoutingID() const = 0;
-
-  // Returns the size of the view.
-  virtual gfx::Size GetSize() const = 0;
-
-  // Returns the device scale factor of the display the render view is in.
-  virtual float GetDeviceScaleFactor() const = 0;
+  virtual int GetRoutingID() = 0;
 
   // Returns the page's zoom level for the render view.
-  virtual float GetZoomLevel() const = 0;
+  virtual float GetZoomLevel() = 0;
 
   // Gets WebKit related preferences associated with this view.
   virtual const WebPreferences& GetWebkitPreferences() = 0;
@@ -83,13 +68,10 @@ class CONTENT_EXPORT RenderView : public IPC::Sender {
   // Returns the associated WebView. May return NULL when the view is closing.
   virtual blink::WebView* GetWebView() = 0;
 
-  // Returns the associated WebFrameWidget.
-  virtual blink::WebFrameWidget* GetWebFrameWidget() = 0;
-
   // Whether content state (such as form state, scroll position and page
   // contents) should be sent to the browser immediately. This is normally
   // false, but set to true by some tests.
-  virtual bool GetContentStateImmediately() const = 0;
+  virtual bool GetContentStateImmediately() = 0;
 
   // Inject edit commands to be used for the next keyboard event.
   // TODO(alexmos): Currently, these are used only by BlinkTestRunner.  They
@@ -100,21 +82,7 @@ class CONTENT_EXPORT RenderView : public IPC::Sender {
   virtual void ClearEditCommands() = 0;
 
   // Returns |renderer_preferences_.accept_languages| value.
-  virtual const std::string& GetAcceptLanguages() const = 0;
-
-  virtual void UpdateBrowserControlsState(BrowserControlsState constraints,
-                                          BrowserControlsState current,
-                                          bool animate) = 0;
-
-  // Converts the |rect| from Viewport coordinates to Window coordinates.
-  // See blink::WebWidgetClient::convertViewportToWindow for more details.
-  virtual void ConvertViewportToWindowViaWidget(blink::WebRect* rect) = 0;
-
-  // Returns the bounds of |element| in Window coordinates. The bounds have been
-  // adjusted to include any transformations, including page scale.
-  // This function will update the layout if required.
-  virtual gfx::RectF ElementBoundsInWindow(const blink::WebElement& element)
-      = 0;
+  virtual const std::string& GetAcceptLanguages() = 0;
 
  protected:
   ~RenderView() override {}

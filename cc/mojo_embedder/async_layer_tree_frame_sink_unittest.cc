@@ -10,13 +10,20 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread.h"
 #include "cc/test/fake_layer_tree_frame_sink_client.h"
-#include "components/viz/client/local_surface_id_provider.h"
+#include "components/viz/client/hit_test_data_provider_draw_quad.h"
+#include "components/viz/common/quads/render_pass_draw_quad.h"
+#include "components/viz/common/quads/solid_color_draw_quad.h"
+#include "components/viz/common/quads/surface_draw_quad.h"
+#include "components/viz/common/surfaces/surface_range.h"
+#include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_gpu_memory_buffer_manager.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -32,7 +39,12 @@ class ThreadTrackingLayerTreeFrameSinkClient
       base::PlatformThreadId* called_thread_id,
       base::RunLoop* run_loop)
       : called_thread_id_(called_thread_id), run_loop_(run_loop) {}
+  ThreadTrackingLayerTreeFrameSinkClient(
+      const ThreadTrackingLayerTreeFrameSinkClient&) = delete;
   ~ThreadTrackingLayerTreeFrameSinkClient() override = default;
+
+  ThreadTrackingLayerTreeFrameSinkClient& operator=(
+      const ThreadTrackingLayerTreeFrameSinkClient&) = delete;
 
   // FakeLayerTreeFrameSinkClient:
   void DidLoseLayerTreeFrameSink() override {
@@ -45,8 +57,6 @@ class ThreadTrackingLayerTreeFrameSinkClient
  private:
   base::PlatformThreadId* called_thread_id_;
   base::RunLoop* run_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(ThreadTrackingLayerTreeFrameSinkClient);
 };
 
 TEST(AsyncLayerTreeFrameSinkTest,
@@ -58,21 +68,16 @@ TEST(AsyncLayerTreeFrameSinkTest,
       viz::TestContextProvider::Create();
   viz::TestGpuMemoryBufferManager test_gpu_memory_buffer_manager;
 
-  viz::mojom::CompositorFrameSinkPtrInfo sink_info;
-  viz::mojom::CompositorFrameSinkRequest sink_request =
-      mojo::MakeRequest(&sink_info);
-  viz::mojom::CompositorFrameSinkClientPtr client;
-  viz::mojom::CompositorFrameSinkClientRequest client_request =
-      mojo::MakeRequest(&client);
+  mojo::PendingRemote<viz::mojom::CompositorFrameSink> sink_remote;
+  mojo::PendingReceiver<viz::mojom::CompositorFrameSink> sink_receiver =
+      sink_remote.InitWithNewPipeAndPassReceiver();
+  mojo::PendingRemote<viz::mojom::CompositorFrameSinkClient> client;
 
   AsyncLayerTreeFrameSink::InitParams init_params;
   init_params.compositor_task_runner = bg_thread.task_runner();
   init_params.gpu_memory_buffer_manager = &test_gpu_memory_buffer_manager;
-  init_params.pipes.compositor_frame_sink_info = std::move(sink_info);
-  init_params.pipes.client_request = std::move(client_request);
-  init_params.local_surface_id_provider =
-      std::make_unique<viz::DefaultLocalSurfaceIdProvider>();
-  init_params.enable_surface_synchronization = true;
+  init_params.pipes.compositor_frame_sink_remote = std::move(sink_remote);
+  init_params.pipes.client_receiver = client.InitWithNewPipeAndPassReceiver();
   auto layer_tree_frame_sink = std::make_unique<AsyncLayerTreeFrameSink>(
       std::move(provider), nullptr, &init_params);
 
@@ -93,7 +98,7 @@ TEST(AsyncLayerTreeFrameSinkTest,
   // Closes the pipe, which should trigger calling DidLoseLayerTreeFrameSink()
   // (and quitting the RunLoop). There is no need to wait for BindToClient()
   // to complete as mojo::Binding error callbacks are processed asynchronously.
-  sink_request = viz::mojom::CompositorFrameSinkRequest();
+  sink_receiver.reset();
   close_run_loop.Run();
 
   EXPECT_NE(base::kInvalidThreadId, called_thread_id);
@@ -115,5 +120,175 @@ TEST(AsyncLayerTreeFrameSinkTest,
 }
 
 }  // namespace
+
+// Boilerplate code for simple AsyncLayerTreeFrameSink. Friend of
+// AsyncLayerTreeFrameSink.
+class AsyncLayerTreeFrameSinkSimpleTest : public testing::Test {
+ public:
+  AsyncLayerTreeFrameSinkSimpleTest()
+      : task_runner_(base::MakeRefCounted<base::TestMockTimeTaskRunner>(
+            base::TestMockTimeTaskRunner::Type::kStandalone)),
+        display_rect_(1, 1) {
+    auto context_provider = viz::TestContextProvider::Create();
+
+    mojo::PendingRemote<viz::mojom::CompositorFrameSink> sink_remote;
+    mojo::PendingReceiver<viz::mojom::CompositorFrameSink> sink_receiver =
+        sink_remote.InitWithNewPipeAndPassReceiver();
+    mojo::PendingRemote<viz::mojom::CompositorFrameSinkClient> client;
+
+    init_params_.compositor_task_runner = task_runner_;
+    init_params_.gpu_memory_buffer_manager = &test_gpu_memory_buffer_manager_;
+    init_params_.pipes.compositor_frame_sink_remote = std::move(sink_remote);
+    init_params_.pipes.client_receiver =
+        client.InitWithNewPipeAndPassReceiver();
+
+    layer_tree_frame_sink_ = std::make_unique<AsyncLayerTreeFrameSink>(
+        std::move(context_provider), nullptr, &init_params_);
+
+    viz::LocalSurfaceId local_surface_id(1, base::UnguessableToken::Create());
+    layer_tree_frame_sink_->SetLocalSurfaceId(local_surface_id);
+    layer_tree_frame_sink_->BindToClient(&layer_tree_frame_sink_client_);
+  }
+
+  void SendRenderPassList(viz::RenderPassList* pass_list,
+                          bool hit_test_data_changed) {
+    auto frame = viz::CompositorFrameBuilder()
+                     .SetRenderPassList(std::move(*pass_list))
+                     .Build();
+    pass_list->clear();
+    layer_tree_frame_sink_->SubmitCompositorFrame(
+        std::move(frame), hit_test_data_changed,
+        /*show_hit_test_borders=*/false);
+  }
+
+  const viz::HitTestRegionList& GetHitTestData() const {
+    return layer_tree_frame_sink_->get_last_hit_test_data_for_testing();
+  }
+
+  AsyncLayerTreeFrameSink::InitParams init_params_;
+
+  scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
+  viz::TestGpuMemoryBufferManager test_gpu_memory_buffer_manager_;
+  gfx::Rect display_rect_;
+  std::unique_ptr<AsyncLayerTreeFrameSink> layer_tree_frame_sink_;
+  FakeLayerTreeFrameSinkClient layer_tree_frame_sink_client_;
+};
+
+TEST_F(AsyncLayerTreeFrameSinkSimpleTest, HitTestRegionListEmpty) {
+  viz::RenderPassList pass_list;
+  auto pass = viz::RenderPass::Create();
+  pass->id = 1;
+  pass->output_rect = display_rect_;
+  pass_list.push_back(move(pass));
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
+  task_runner_->RunUntilIdle();
+
+  EXPECT_TRUE(viz::HitTestRegionList::IsEqual(viz::HitTestRegionList(),
+                                              GetHitTestData()));
+}
+
+TEST_F(AsyncLayerTreeFrameSinkSimpleTest, HitTestRegionListDuplicate) {
+  viz::RenderPassList pass_list;
+  // Initial submission.
+  auto pass1 = viz::RenderPass::Create();
+  pass1->id = 1;
+  pass1->output_rect = display_rect_;
+  pass_list.push_back(move(pass1));
+
+  viz::HitTestRegionList region_list1;
+  region_list1.flags = viz::HitTestRegionFlags::kHitTestMine;
+  region_list1.bounds.SetRect(0, 0, 1024, 768);
+  layer_tree_frame_sink_client_.set_hit_test_region_list(region_list1);
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
+  task_runner_->RunUntilIdle();
+  const viz::HitTestRegionList hit_test_region_list = GetHitTestData();
+
+  // Identical submission.
+  auto pass2 = viz::RenderPass::Create();
+  pass2->id = 2;
+  pass2->output_rect = display_rect_;
+  pass_list.push_back(move(pass2));
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
+  task_runner_->RunUntilIdle();
+
+  EXPECT_TRUE(
+      viz::HitTestRegionList::IsEqual(hit_test_region_list, GetHitTestData()));
+
+  // Different submission.
+  auto pass3 = viz::RenderPass::Create();
+  pass3->id = 3;
+  pass3->output_rect = display_rect_;
+  pass_list.push_back(move(pass3));
+
+  viz::HitTestRegionList region_list2;
+  region_list2.flags = viz::HitTestRegionFlags::kHitTestMine;
+  region_list2.bounds.SetRect(0, 0, 800, 600);
+  layer_tree_frame_sink_client_.set_hit_test_region_list(region_list2);
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
+  task_runner_->RunUntilIdle();
+  EXPECT_FALSE(
+      viz::HitTestRegionList::IsEqual(hit_test_region_list, GetHitTestData()));
+}
+
+TEST_F(AsyncLayerTreeFrameSinkSimpleTest,
+       HitTestRegionListDuplicateChangedFlip) {
+  viz::RenderPassList pass_list;
+
+  // Initial submission.
+  auto pass1 = viz::RenderPass::Create();
+  pass1->id = 1;
+  pass1->output_rect = display_rect_;
+  pass_list.push_back(move(pass1));
+
+  viz::HitTestRegionList region_list1;
+  region_list1.flags = viz::HitTestRegionFlags::kHitTestMine;
+  region_list1.bounds.SetRect(0, 0, 1024, 768);
+  layer_tree_frame_sink_client_.set_hit_test_region_list(region_list1);
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
+  task_runner_->RunUntilIdle();
+  viz::HitTestRegionList hit_test_region_list = GetHitTestData();
+
+  // Different submission with |hit_test_data_changed| set to true.
+  auto pass2 = viz::RenderPass::Create();
+  pass2->id = 2;
+  pass2->output_rect = display_rect_;
+  pass_list.push_back(std::move(pass2));
+
+  viz::HitTestRegionList region_list2;
+  region_list2.flags = viz::HitTestRegionFlags::kHitTestMine;
+  region_list2.bounds.SetRect(0, 0, 800, 600);
+  layer_tree_frame_sink_client_.set_hit_test_region_list(region_list2);
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/true);
+  task_runner_->RunUntilIdle();
+
+  EXPECT_FALSE(
+      viz::HitTestRegionList::IsEqual(hit_test_region_list, GetHitTestData()));
+  hit_test_region_list = GetHitTestData();
+
+  // Different submission with |hit_test_data_changed| set back to false. We
+  // expect the hit-data to still have been sent.
+  auto pass3 = viz::RenderPass::Create();
+  pass3->id = 3;
+  pass3->output_rect = display_rect_;
+  pass_list.push_back(move(pass3));
+
+  viz::HitTestRegionList region_list3;
+  region_list3.flags = viz::HitTestRegionFlags::kHitTestChildSurface;
+  region_list3.bounds.SetRect(0, 0, 800, 600);
+  layer_tree_frame_sink_client_.set_hit_test_region_list(region_list3);
+
+  SendRenderPassList(&pass_list, /*hit_test_data_changed=*/false);
+  task_runner_->RunUntilIdle();
+
+  EXPECT_FALSE(
+      viz::HitTestRegionList::IsEqual(hit_test_region_list, GetHitTestData()));
+}
+
 }  // namespace mojo_embedder
 }  // namespace cc

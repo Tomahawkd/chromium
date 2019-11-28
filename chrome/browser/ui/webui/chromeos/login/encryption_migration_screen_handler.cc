@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/metrics/histogram_macros.h"
@@ -21,24 +22,25 @@
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/arc/arc_migration_constants.h"
+#include "chrome/browser/chromeos/login/screens/encryption_migration_screen.h"
 #include "chrome/browser/chromeos/login/ui/login_feedback.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/cryptohome/async_method_caller.h"
 #include "chromeos/cryptohome/cryptohome_util.h"
 #include "chromeos/cryptohome/homedir_methods.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power/power_manager_client.h"
+#include "chromeos/dbus/power/power_policy_controller.h"
 #include "chromeos/dbus/power_manager/power_supply_properties.pb.h"
-#include "chromeos/dbus/power_manager_client.h"
-#include "chromeos/dbus/power_policy_controller.h"
 #include "components/login/localized_values_builder.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
+#include "content/public/browser/system_connector.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -47,8 +49,6 @@
 #include "ui/chromeos/devicetype_utils.h"
 
 namespace {
-
-constexpr char kJsScreenPath[] = "login.EncryptionMigrationScreen";
 
 // Path to the mount point to check the available space.
 constexpr char kCheckStoragePath[] = "/home";
@@ -253,18 +253,19 @@ FirstScreen GetFirstScreenForMode(chromeos::EncryptionMigrationMode mode) {
 
 namespace chromeos {
 
-EncryptionMigrationScreenHandler::EncryptionMigrationScreenHandler()
-    : BaseScreenHandler(kScreenId),
-      tick_clock_(base::DefaultTickClock::GetInstance()),
-      weak_ptr_factory_(this) {
-  set_call_js_prefix(kJsScreenPath);
+constexpr StaticOobeScreenId EncryptionMigrationScreenView::kScreenId;
+
+EncryptionMigrationScreenHandler::EncryptionMigrationScreenHandler(
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container),
+      tick_clock_(base::DefaultTickClock::GetInstance()) {
   free_disk_space_fetcher_ = base::Bind(&base::SysInfo::AmountOfFreeDiskSpace,
                                         base::FilePath(kCheckStoragePath));
 }
 
 EncryptionMigrationScreenHandler::~EncryptionMigrationScreenHandler() {
-  DBusThreadManager::Get()->GetCryptohomeClient()->RemoveObserver(this);
-  DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(this);
+  CryptohomeClient::Get()->RemoveObserver(this);
+  PowerManagerClient::Get()->RemoveObserver(this);
   if (delegate_)
     delegate_->OnViewDestroyed(this);
 }
@@ -281,7 +282,8 @@ void EncryptionMigrationScreenHandler::Hide() {
   show_on_init_ = false;
 }
 
-void EncryptionMigrationScreenHandler::SetDelegate(Delegate* delegate) {
+void EncryptionMigrationScreenHandler::SetDelegate(
+    EncryptionMigrationScreen* delegate) {
   delegate_ = delegate;
   if (page_is_ready())
     Initialize();
@@ -294,7 +296,7 @@ void EncryptionMigrationScreenHandler::SetUserContext(
 
 void EncryptionMigrationScreenHandler::SetMode(EncryptionMigrationMode mode) {
   mode_ = mode;
-  CallJSWithPrefix("setIsResuming", IsStartImmediately());
+  CallJS("login.EncryptionMigrationScreen.setIsResuming", IsStartImmediately());
 }
 
 void EncryptionMigrationScreenHandler::SetContinueLoginCallback(
@@ -309,8 +311,8 @@ void EncryptionMigrationScreenHandler::SetRestartLoginCallback(
 
 void EncryptionMigrationScreenHandler::SetupInitialView() {
   // Pass constant value(s) to the UI.
-  CallJSWithPrefix("setNecessaryBatteryPercent",
-                   arc::kMigrationMinimumBatteryPercent);
+  CallJS("login.EncryptionMigrationScreen.setNecessaryBatteryPercent",
+         arc::kMigrationMinimumBatteryPercent);
 
   // If old encryption is detected in ARC kiosk mode, skip all checks (user
   // confirmation, battery level, and remaining space) and start migration
@@ -320,7 +322,7 @@ void EncryptionMigrationScreenHandler::SetupInitialView() {
     StartMigration();
     return;
   }
-  DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
+  PowerManagerClient::Get()->AddObserver(this);
   CheckAvailableStorage();
 }
 
@@ -426,11 +428,11 @@ void EncryptionMigrationScreenHandler::PowerChanged(
     current_battery_percent_ = 100.0;
   }
 
-  CallJSWithPrefix(
-      "setBatteryState", *current_battery_percent_,
-      *current_battery_percent_ >= arc::kMigrationMinimumBatteryPercent,
-      proto.battery_state() ==
-          power_manager::PowerSupplyProperties_BatteryState_CHARGING);
+  CallJS("login.EncryptionMigrationScreen.setBatteryState",
+         *current_battery_percent_,
+         *current_battery_percent_ >= arc::kMigrationMinimumBatteryPercent,
+         proto.battery_state() ==
+             power_manager::PowerSupplyProperties_BatteryState_CHARGING);
 
   // If the migration was already requested and the bettery level is enough now,
   // The migration should start immediately.
@@ -461,14 +463,14 @@ void EncryptionMigrationScreenHandler::HandleSkipMigration() {
 
 void EncryptionMigrationScreenHandler::HandleRequestRestartOnLowStorage() {
   RecordUserChoice(UserChoice::USER_CHOICE_RESTART_ON_LOW_STORAGE);
-  DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart(
+  PowerManagerClient::Get()->RequestRestart(
       power_manager::REQUEST_RESTART_OTHER,
       "login encryption migration low storage");
 }
 
 void EncryptionMigrationScreenHandler::HandleRequestRestartOnFailure() {
   RecordUserChoice(UserChoice::USER_CHOICE_RESTART_ON_FAILURE);
-  DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart(
+  PowerManagerClient::Get()->RequestRestart(
       power_manager::REQUEST_RESTART_OTHER,
       "login encryption migration failure");
 }
@@ -478,8 +480,9 @@ void EncryptionMigrationScreenHandler::HandleOpenFeedbackDialog() {
   const std::string description = base::StringPrintf(
       "Auto generated feedback for http://crbug.com/719266.\n"
       "(uniquifier:%s)",
-      base::Int64ToString(base::Time::Now().ToInternalValue()).c_str());
-  login_feedback_.reset(new LoginFeedback(Profile::FromWebUI(web_ui())));
+      base::NumberToString(base::Time::Now().ToInternalValue()).c_str());
+  login_feedback_ =
+      std::make_unique<LoginFeedback>(Profile::FromWebUI(web_ui()));
   login_feedback_->Request(description, base::Closure());
 }
 
@@ -488,12 +491,12 @@ void EncryptionMigrationScreenHandler::UpdateUIState(UIState state) {
     return;
 
   current_ui_state_ = state;
-  CallJSWithPrefix("setUIState", static_cast<int>(state));
+  CallJS("login.EncryptionMigrationScreen.setUIState", static_cast<int>(state));
 
   // When this handler is about to show the READY screen, we should get the
   // latest battery status and show it on the screen.
   if (state == UIState::READY)
-    DBusThreadManager::Get()->GetPowerManagerClient()->RequestStatusUpdate();
+    PowerManagerClient::Get()->RequestStatusUpdate();
 
   // We should request wake lock and not shut down on lid close during
   // migration.
@@ -517,8 +520,9 @@ void EncryptionMigrationScreenHandler::UpdateUIState(UIState state) {
 }
 
 void EncryptionMigrationScreenHandler::CheckAvailableStorage() {
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       free_disk_space_fetcher_,
       base::Bind(&EncryptionMigrationScreenHandler::OnGetAvailableStorage,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -537,9 +541,10 @@ void EncryptionMigrationScreenHandler::OnGetAvailableStorage(int64_t size) {
     }
   } else {
     RecordFirstScreen(FirstScreen::FIRST_SCREEN_LOW_STORAGE);
-    CallJSWithPrefix("setAvailableSpaceInString", ui::FormatBytes(size));
-    CallJSWithPrefix("setNecessarySpaceInString",
-                     ui::FormatBytes(arc::kMigrationMinimumAvailableStorage));
+    CallJS("login.EncryptionMigrationScreen.setAvailableSpaceInString",
+           ui::FormatBytes(size));
+    CallJS("login.EncryptionMigrationScreen.setNecessarySpaceInString",
+           ui::FormatBytes(arc::kMigrationMinimumAvailableStorage));
     UpdateUIState(UIState::NOT_ENOUGH_STORAGE);
   }
 }
@@ -558,7 +563,7 @@ void EncryptionMigrationScreenHandler::WaitBatteryAndMigrate() {
   UpdateUIState(UIState::READY);
 
   should_migrate_on_enough_battery_ = true;
-  DBusThreadManager::Get()->GetPowerManagerClient()->RequestStatusUpdate();
+  PowerManagerClient::Get()->RequestStatusUpdate();
 }
 
 void EncryptionMigrationScreenHandler::StartMigration() {
@@ -575,7 +580,7 @@ void EncryptionMigrationScreenHandler::StartMigration() {
   } else {
     auth_request = CreateAuthorizationRequest();
   }
-  DBusThreadManager::Get()->GetCryptohomeClient()->MountEx(
+  CryptohomeClient::Get()->MountEx(
       cryptohome::CreateAccountIdentifierFromAccountId(
           user_context_.GetAccountId()),
       auth_request, mount,
@@ -602,8 +607,8 @@ void EncryptionMigrationScreenHandler::OnMountExistingVault(
 
   cryptohome::MigrateToDircryptoRequest request;
   request.set_minimal_migration(IsMinimalMigration());
-  DBusThreadManager::Get()->GetCryptohomeClient()->AddObserver(this);
-  DBusThreadManager::Get()->GetCryptohomeClient()->MigrateToDircrypto(
+  CryptohomeClient::Get()->AddObserver(this);
+  CryptohomeClient::Get()->MigrateToDircrypto(
       cryptohome::CreateAccountIdentifierFromAccountId(
           user_context_.GetAccountId()),
       request,
@@ -616,25 +621,24 @@ device::mojom::WakeLock* EncryptionMigrationScreenHandler::GetWakeLock() {
   if (wake_lock_)
     return wake_lock_.get();
 
-  device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
+  mojo::PendingReceiver<device::mojom::WakeLock> receiver =
+      wake_lock_.BindNewPipeAndPassReceiver();
 
   // Service manager connection might be not initialized in some testing
   // contexts.
-  if (!content::ServiceManagerConnection::GetForProcess())
+  if (!content::GetSystemConnector())
     return wake_lock_.get();
 
-  service_manager::Connector* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
-  DCHECK(connector);
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  device::mojom::WakeLockProviderPtr wake_lock_provider;
-  connector->BindInterface(device::mojom::kServiceName,
-                           mojo::MakeRequest(&wake_lock_provider));
+  mojo::Remote<device::mojom::WakeLockProvider> wake_lock_provider;
+  content::GetSystemConnector()->Connect(
+      device::mojom::kServiceName,
+      wake_lock_provider.BindNewPipeAndPassReceiver());
   wake_lock_provider->GetWakeLockWithoutContext(
       device::mojom::WakeLockType::kPreventAppSuspension,
       device::mojom::WakeLockReason::kOther,
-      "Encryption migration is in progress...", std::move(request));
+      "Encryption migration is in progress...", std::move(receiver));
   return wake_lock_.get();
 }
 
@@ -650,7 +654,7 @@ void EncryptionMigrationScreenHandler::RemoveCryptohome() {
   cryptohome::AccountIdentifier account_id_proto;
   account_id_proto.set_account_id(cryptohome_id.id());
 
-  DBusThreadManager::Get()->GetCryptohomeClient()->RemoveEx(
+  CryptohomeClient::Get()->RemoveEx(
       account_id_proto,
       base::BindOnce(&EncryptionMigrationScreenHandler::OnRemoveCryptohome,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -704,14 +708,14 @@ void EncryptionMigrationScreenHandler::DircryptoMigrationProgress(
       break;
     case cryptohome::DIRCRYPTO_MIGRATION_IN_PROGRESS:
       UpdateUIState(GetMigratingUIState());
-      CallJSWithPrefix("setMigrationProgress",
-                       static_cast<double>(current) / total);
+      CallJS("login.EncryptionMigrationScreen.setMigrationProgress",
+             static_cast<double>(current) / total);
       break;
     case cryptohome::DIRCRYPTO_MIGRATION_SUCCESS:
       RecordMigrationResultSuccess(IsResumingIncompleteMigration(),
                                    IsArcKiosk());
       // Stop listening to the progress updates.
-      DBusThreadManager::Get()->GetCryptohomeClient()->RemoveObserver(this);
+      CryptohomeClient::Get()->RemoveObserver(this);
       // If the battery level decreased during migration, record the consumed
       // battery level.
       if (current_battery_percent_ &&
@@ -739,7 +743,7 @@ void EncryptionMigrationScreenHandler::DircryptoMigrationProgress(
           std::move(continue_login_callback_).Run(user_context_);
       } else {
         // Restart immediately after successful full migration.
-        DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart(
+        PowerManagerClient::Get()->RequestRestart(
             power_manager::REQUEST_RESTART_OTHER,
             "login encryption migration success");
       }
@@ -748,7 +752,7 @@ void EncryptionMigrationScreenHandler::DircryptoMigrationProgress(
       RecordMigrationResultGeneralFailure(IsResumingIncompleteMigration(),
                                           IsArcKiosk());
       // Stop listening to the progress updates.
-      DBusThreadManager::Get()->GetCryptohomeClient()->RemoveObserver(this);
+      CryptohomeClient::Get()->RemoveObserver(this);
       // Shows error screen after removing user directory is completed.
       RemoveCryptohome();
       break;
@@ -803,7 +807,7 @@ void EncryptionMigrationScreenHandler::MaybeStopForcingMigration() {
   // We only want to disable auto-starting migration in the first case.
   if (mode_ == EncryptionMigrationMode::START_MIGRATION ||
       mode_ == EncryptionMigrationMode::START_MINIMAL_MIGRATION)
-    CallJSWithPrefix("setIsResuming", false);
+    CallJS("login.EncryptionMigrationScreen.setIsResuming", false);
 }
 
 }  // namespace chromeos

@@ -4,6 +4,9 @@
 
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_reader.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_impl.h"
 
 namespace resource_coordinator {
@@ -14,24 +17,44 @@ LocalSiteCharacteristicsDataReader::LocalSiteCharacteristicsDataReader(
 
 LocalSiteCharacteristicsDataReader::~LocalSiteCharacteristicsDataReader() {}
 
-SiteFeatureUsage
+performance_manager::SiteFeatureUsage
 LocalSiteCharacteristicsDataReader::UpdatesFaviconInBackground() const {
   return impl_->UpdatesFaviconInBackground();
 }
 
-SiteFeatureUsage LocalSiteCharacteristicsDataReader::UpdatesTitleInBackground()
-    const {
+performance_manager::SiteFeatureUsage
+LocalSiteCharacteristicsDataReader::UpdatesTitleInBackground() const {
   return impl_->UpdatesTitleInBackground();
 }
 
-SiteFeatureUsage LocalSiteCharacteristicsDataReader::UsesAudioInBackground()
-    const {
+performance_manager::SiteFeatureUsage
+LocalSiteCharacteristicsDataReader::UsesAudioInBackground() const {
   return impl_->UsesAudioInBackground();
 }
 
-SiteFeatureUsage
+performance_manager::SiteFeatureUsage
 LocalSiteCharacteristicsDataReader::UsesNotificationsInBackground() const {
   return impl_->UsesNotificationsInBackground();
+}
+
+bool LocalSiteCharacteristicsDataReader::DataLoaded() const {
+  return impl_->DataLoaded();
+}
+
+void LocalSiteCharacteristicsDataReader::RegisterDataLoadedCallback(
+    base::OnceClosure&& callback) {
+  // Register a closure that is bound using a weak pointer to this instance.
+  // In that way it won't be invoked by the underlying |impl_| after this
+  // reader is destroyed.
+  base::OnceClosure closure(
+      base::BindOnce(&LocalSiteCharacteristicsDataReader::RunClosure,
+                     weak_factory_.GetWeakPtr(), std::move(callback)));
+  impl_->RegisterDataLoadedCallback(std::move(closure));
+}
+
+void LocalSiteCharacteristicsDataReader::RunClosure(
+    base::OnceClosure&& closure) {
+  std::move(closure).Run();
 }
 
 }  // namespace resource_coordinator

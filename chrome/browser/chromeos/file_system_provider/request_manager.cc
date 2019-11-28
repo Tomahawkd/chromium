@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/extensions/window_controller_list.h"
@@ -33,8 +34,7 @@ RequestManager::RequestManager(
       provider_id_(provider_id),
       notification_manager_(notification_manager),
       next_id_(1),
-      timeout_(base::TimeDelta::FromSeconds(kDefaultTimeout)),
-      weak_ptr_factory_(this) {}
+      timeout_(base::TimeDelta::FromSeconds(kDefaultTimeout)) {}
 
 RequestManager::~RequestManager() {
   // Abort all of the active requests.

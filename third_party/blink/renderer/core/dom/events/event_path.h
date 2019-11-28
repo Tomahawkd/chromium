@@ -43,8 +43,7 @@ class TouchList;
 class TreeScope;
 class WindowEventContext;
 
-class CORE_EXPORT EventPath final
-    : public GarbageCollectedFinalized<EventPath> {
+class CORE_EXPORT EventPath final : public GarbageCollected<EventPath> {
  public:
   explicit EventPath(Node&, Event* = nullptr);
 
@@ -83,7 +82,7 @@ class CORE_EXPORT EventPath final
 
   static EventTarget& EventTargetRespectingTargetRules(Node&);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
   void Clear() {
     node_event_contexts_.clear();
     tree_scope_event_contexts_.clear();

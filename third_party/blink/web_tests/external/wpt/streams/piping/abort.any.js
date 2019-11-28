@@ -1,4 +1,4 @@
-// META: global=worker
+// META: global=worker,jsshell
 // META: script=../resources/recording-streams.js
 // META: script=../resources/test-utils.js
 'use strict';
@@ -99,6 +99,21 @@ promise_test(t => {
         return ws.getWriter().ready;
       });
 }, 'preventAbort should prevent aborting the readable');
+
+promise_test(t => {
+  const rs = recordingReadableStream(errorOnPull, hwm0);
+  const ws = recordingWritableStream();
+  const abortController = new AbortController();
+  const signal = abortController.signal;
+  abortController.abort();
+  return promise_rejects(t, 'AbortError', rs.pipeTo(ws, { signal, preventCancel: true, preventAbort: true }),
+                         'pipeTo should reject')
+    .then(() => {
+      assert_equals(rs.events.length, 0, 'cancel should not be called');
+      assert_equals(ws.events.length, 0, 'writable should not have been aborted');
+      return ws.getWriter().ready;
+    });
+}, 'preventCancel and preventAbort should prevent canceling the readable and aborting the readable');
 
 promise_test(t => {
   const rs = new ReadableStream({

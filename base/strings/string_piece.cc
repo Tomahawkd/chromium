@@ -11,6 +11,7 @@
 #include <ostream>
 
 #include "base/logging.h"
+#include "base/strings/utf_string_conversions.h"
 
 namespace base {
 namespace {
@@ -40,17 +41,13 @@ template class BasicStringPiece<std::string>;
 template class BasicStringPiece<string16>;
 #endif
 
-bool operator==(const StringPiece& x, const StringPiece& y) {
-  if (x.size() != y.size())
-    return false;
-
-  return CharTraits<StringPiece::value_type>::compare(x.data(), y.data(),
-                                                      x.size()) == 0;
-}
-
 std::ostream& operator<<(std::ostream& o, const StringPiece& piece) {
   o.write(piece.data(), static_cast<std::streamsize>(piece.size()));
   return o;
+}
+
+std::ostream& operator<<(std::ostream& o, const StringPiece16& piece) {
+  return o << UTF16ToUTF8(piece);
 }
 
 namespace internal {
@@ -222,8 +219,11 @@ size_t find_first_of(const StringPiece& self,
 size_t find_first_of(const StringPiece16& self,
                      const StringPiece16& s,
                      size_t pos) {
+  // Use the faster std::find() if searching for a single character.
   StringPiece16::const_iterator found =
-      std::find_first_of(self.begin() + pos, self.end(), s.begin(), s.end());
+      s.size() == 1 ? std::find(self.begin() + pos, self.end(), s[0])
+                    : std::find_first_of(self.begin() + pos, self.end(),
+                                         s.begin(), s.end());
   if (found == self.end())
     return StringPiece16::npos;
   return found - self.begin();

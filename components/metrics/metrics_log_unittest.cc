@@ -18,6 +18,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+#include "components/metrics/cpu_metrics_provider.h"
 #include "components/metrics/delegating_provider.h"
 #include "components/metrics/environment_recorder.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -79,15 +81,25 @@ class MetricsLogTest : public testing::Test {
   ~MetricsLogTest() override {}
 
  protected:
-  // Check that the values in |system_values| correspond to the test data
-  // defined at the top of this file.
+  // Check that the values in |system_values| are filled in and expected ones
+  // correspond to the test data defined at the top of this file.
   void CheckSystemProfile(const SystemProfileProto& system_profile) {
+    // Check for presence of core system profile fields.
+    EXPECT_TRUE(system_profile.has_build_timestamp());
+    EXPECT_TRUE(system_profile.has_app_version());
+    EXPECT_TRUE(system_profile.has_channel());
+    EXPECT_TRUE(system_profile.has_application_locale());
+
+    const SystemProfileProto::OS& os = system_profile.os();
+    EXPECT_TRUE(os.has_name());
+    EXPECT_TRUE(os.has_version());
+
+    // Check matching test brand code.
     EXPECT_EQ(TestMetricsServiceClient::kBrandForTesting,
               system_profile.brand_code());
 
-    const SystemProfileProto::Hardware& hardware =
-        system_profile.hardware();
-
+    // Check for presence of fields set by a metrics provider.
+    const SystemProfileProto::Hardware& hardware = system_profile.hardware();
     EXPECT_TRUE(hardware.has_cpu());
     EXPECT_TRUE(hardware.cpu().has_vendor_name());
     EXPECT_TRUE(hardware.cpu().has_signature());
@@ -164,6 +176,9 @@ TEST_F(MetricsLogTest, BasicRecord) {
   system_profile->mutable_os()->set_build_fingerprint(
       base::android::BuildInfo::GetInstance()->android_build_fp());
   system_profile->set_app_package_name("test app");
+#elif defined(OS_IOS)
+  system_profile->mutable_os()->set_build_number(
+      base::SysInfo::GetIOSBuildNumber());
 #endif
 
   // Hard to mock.
@@ -237,7 +252,22 @@ TEST_F(MetricsLogTest, RecordEnvironment) {
   TestMetricsLog log(kClientId, kSessionId, MetricsLog::ONGOING_LOG, &client);
 
   DelegatingProvider delegating_provider;
+  auto cpu_provider = std::make_unique<metrics::CPUMetricsProvider>();
+  delegating_provider.RegisterMetricsProvider(std::move(cpu_provider));
   log.RecordEnvironment(&delegating_provider);
+
+  // Check non-system profile values.
+  EXPECT_EQ(MetricsLog::Hash(kClientId), log.uma_proto().client_id());
+  EXPECT_EQ(kSessionId, log.uma_proto().session_id());
+  // Check that the system profile on the log has the correct values set.
+  CheckSystemProfile(log.system_profile());
+
+  // Call RecordEnvironment() again and verify things are are still filled in.
+  log.RecordEnvironment(&delegating_provider);
+
+  // Check non-system profile values.
+  EXPECT_EQ(MetricsLog::Hash(kClientId), log.uma_proto().client_id());
+  EXPECT_EQ(kSessionId, log.uma_proto().session_id());
   // Check that the system profile on the log has the correct values set.
   CheckSystemProfile(log.system_profile());
 }

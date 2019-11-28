@@ -10,11 +10,11 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "components/autofill/android/form_data_android.h"
+#include "components/autofill/android/jni_headers/AutofillProvider_jni.h"
 #include "components/autofill/core/browser/autofill_handler_proxy.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/AutofillProvider_jni.h"
 #include "ui/gfx/geometry/rect_f.h"
 
 using base::android::AttachCurrentThread;
@@ -27,6 +27,8 @@ using content::WebContents;
 using gfx::RectF;
 
 namespace autofill {
+
+using mojom::SubmissionSource;
 
 AutofillProviderAndroid::AutofillProviderAndroid(
     const JavaRef<jobject>& jcaller,
@@ -174,8 +176,7 @@ void AutofillProviderAndroid::FireSuccessfulSubmission(
 void AutofillProviderAndroid::OnFormSubmitted(AutofillHandlerProxy* handler,
                                               const FormData& form,
                                               bool known_success,
-                                              SubmissionSource source,
-                                              base::TimeTicks timestamp) {
+                                              SubmissionSource source) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!IsCurrentlyLinkedHandler(handler) || !IsCurrentlyLinkedForm(form))
     return;

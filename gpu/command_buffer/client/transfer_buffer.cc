@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <climits>
 
 #include "base/bits.h"
 #include "base/logging.h"
@@ -105,6 +106,10 @@ void TransferBuffer::ShrinkLastBlock(unsigned int new_size) {
   ring_buffer_->ShrinkLastBlock(new_size);
 }
 
+unsigned int TransferBuffer::GetMaxSize() const {
+  return max_buffer_size_ - result_size_;
+}
+
 void TransferBuffer::AllocateRingBuffer(unsigned int size) {
   for (;size >= min_buffer_size_; size /= 2) {
     int32_t id = -1;
@@ -130,7 +135,12 @@ void TransferBuffer::AllocateRingBuffer(unsigned int size) {
 }
 
 static unsigned int ComputePOTSize(unsigned int dimension) {
-  return (dimension == 0) ? 0 : 1 << base::bits::Log2Ceiling(dimension);
+  // Avoid shifting by more than the size of an unsigned int - 1, because that's
+  // undefined behavior.
+  return (dimension == 0)
+             ? 0
+             : 1 << std::min(static_cast<int>(sizeof(dimension) * CHAR_BIT - 1),
+                             base::bits::Log2Ceiling(dimension));
 }
 
 void TransferBuffer::ReallocateRingBuffer(unsigned int size, bool shrink) {
@@ -153,7 +163,7 @@ void TransferBuffer::ReallocateRingBuffer(unsigned int size, bool shrink) {
   if (usable_ && (shrink || needed_buffer_size > current_size)) {
     // We should never attempt to reallocate the buffer if someone has a result
     // pointer that hasn't been released. This would cause a use-after-free.
-    CHECK(!outstanding_result_pointer_);
+    DCHECK(!outstanding_result_pointer_);
     if (HaveBuffer()) {
       Free();
     }
@@ -177,7 +187,7 @@ void TransferBuffer::ShrinkOrExpandRingBufferIfNecessary(
     unsigned int size_to_allocate) {
   // We should never attempt to shrink the buffer if someone has a result
   // pointer that hasn't been released.
-  CHECK(!outstanding_result_pointer_);
+  DCHECK(!outstanding_result_pointer_);
   // Don't resize the buffer while blocks are in use to avoid throwing away
   // live allocations.
   if (HaveBuffer() && ring_buffer_->NumUsedBlocks() > 0)
@@ -244,13 +254,17 @@ void* TransferBuffer::AcquireResultBuffer() {
   // ensure this invariant.
   DCHECK(!outstanding_result_pointer_);
   ReallocateRingBuffer(result_size_);
+#if DCHECK_IS_ON()
   outstanding_result_pointer_ = true;
+#endif
   return result_buffer_;
 }
 
 void TransferBuffer::ReleaseResultBuffer() {
   DCHECK(outstanding_result_pointer_);
+#if DCHECK_IS_ON()
   outstanding_result_pointer_ = false;
+#endif
 }
 
 int TransferBuffer::GetResultOffset() {
@@ -265,10 +279,6 @@ int TransferBuffer::GetShmId() {
 
 unsigned int TransferBuffer::GetCurrentMaxAllocationWithoutRealloc() const {
   return HaveBuffer() ? ring_buffer_->GetLargestFreeOrPendingSize() : 0;
-}
-
-unsigned int TransferBuffer::GetMaxAllocation() const {
-  return HaveBuffer() ? max_buffer_size_ - result_size_ : 0;
 }
 
 ScopedTransferBufferPtr::ScopedTransferBufferPtr(

@@ -8,9 +8,11 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "base/logging.h"
@@ -55,77 +57,100 @@ void RemoveDuplicatePrepopulateIDs(
     const SearchTermsData& search_terms_data,
     std::set<std::string>* removed_keyword_guids) {
   DCHECK(template_urls);
+  TemplateURLService::OwnedTemplateURLVector checked_urls;
 
   // For convenience construct an ID->TemplateURL* map from |prepopulated_urls|.
   std::map<int, TemplateURLData*> prepopulated_url_map;
   for (const auto& url : prepopulated_urls)
     prepopulated_url_map[url->prepopulate_id] = url.get();
 
-  // Separate |template_urls| into prepopulated and non-prepopulated groups.
-  std::multimap<int, std::unique_ptr<TemplateURL>> unchecked_urls;
-  TemplateURLService::OwnedTemplateURLVector checked_urls;
+  constexpr size_t invalid_index = std::numeric_limits<size_t>::max();
+  // A helper structure for deduplicating elements with the same prepopulate_id.
+  struct DuplicationData {
+    DuplicationData() : index_representative(invalid_index) {}
+
+    // The index into checked_urls at which the best representative is stored.
+    size_t index_representative;
+
+    // Proper duplicates for consideration during selection phase.  This
+    // does not include the representative stored in checked_urls.
+    TemplateURLService::OwnedTemplateURLVector duplicates;
+  };
+  // Map from prepopulate_id to data for deduplication and selection.
+  std::unordered_map<int, DuplicationData> duplication_map;
+
+  const auto has_default_search_keyword = [&](const auto& turl) {
+    return default_search_provider &&
+           (default_search_provider->prepopulate_id() ==
+            turl->prepopulate_id()) &&
+           default_search_provider->HasSameKeywordAs(turl->data(),
+                                                     search_terms_data);
+  };
+
+  // Deduplication phase: move elements into new vector, preserving order while
+  // gathering duplicates into separate container for selection.
   for (auto& turl : *template_urls) {
-    int prepopulate_id = turl->prepopulate_id();
-    if (prepopulate_id)
-      unchecked_urls.insert(std::make_pair(prepopulate_id, std::move(turl)));
-    else
+    const int prepopulate_id = turl->prepopulate_id();
+    if (prepopulate_id) {
+      auto& duplication_data = duplication_map[prepopulate_id];
+      if (duplication_data.index_representative == invalid_index) {
+        // This is the first found.
+        duplication_data.index_representative = checked_urls.size();
+        checked_urls.push_back(std::move(turl));
+      } else {
+        // This is a duplicate.
+        duplication_data.duplicates.push_back(std::move(turl));
+      }
+    } else {
       checked_urls.push_back(std::move(turl));
+    }
   }
 
-  // For each group of prepopulated URLs with one ID, find the best URL to use
-  // and add it to the (initially all non-prepopulated) URLs we've already OKed.
-  // Delete the others from the service and from memory.
-  while (!unchecked_urls.empty()) {
-    // Find the best URL.
-    int prepopulate_id = unchecked_urls.begin()->first;
-    auto prepopulated_url = prepopulated_url_map.find(prepopulate_id);
-    auto end = unchecked_urls.upper_bound(prepopulate_id);
-    auto best = unchecked_urls.begin();
-    bool matched_keyword = false;
-    for (auto i = unchecked_urls.begin(); i != end; ++i) {
-      // If the user-selected DSE is a prepopulated engine its properties will
-      // either come from the prepopulation origin or from the user preferences
-      // file (see DefaultSearchManager). Those properties will end up
-      // overwriting whatever we load now anyway. If we are eliminating
-      // duplicates, then, we err on the side of keeping the thing that looks
-      // more like the value we will end up with in the end.
-      if (default_search_provider &&
-          (default_search_provider->prepopulate_id() ==
-              i->second->prepopulate_id()) &&
-          default_search_provider->HasSameKeywordAs(i->second->data(),
-                                                    search_terms_data)) {
-        best = i;
-        break;
-      }
+  // Selection and cleanup phase: swap out elements if necessary to ensure new
+  // vector contains only the best representative for each prepopulate_id.
+  // Then delete the remaining duplicates.
+  for (auto& id_data : duplication_map) {
+    const auto prepopulated_url = prepopulated_url_map.find(id_data.first);
+    const auto has_prepopulated_keyword = [&](const auto& turl) {
+      return (prepopulated_url != prepopulated_url_map.end()) &&
+             turl->HasSameKeywordAs(*prepopulated_url->second,
+                                    search_terms_data);
+    };
 
-      // Otherwise, a URL is best if it matches the prepopulated data's keyword;
-      // if none match, just fall back to using the one with the lowest ID.
-      if (matched_keyword)
-        continue;
-      if ((prepopulated_url != prepopulated_url_map.end()) &&
-          i->second->HasSameKeywordAs(*prepopulated_url->second,
-                                      search_terms_data)) {
-        best = i;
-        matched_keyword = true;
-      } else if (i->second->id() < best->second->id()) {
-        best = i;
+    // If the user-selected DSE is a prepopulated engine its properties will
+    // either come from the prepopulation origin or from the user preferences
+    // file (see DefaultSearchManager). Those properties will end up
+    // overwriting whatever we load now anyway. If we are eliminating
+    // duplicates, then, we err on the side of keeping the thing that looks
+    // more like the value we will end up with in the end.
+    // Otherwise, a URL is best if it matches the prepopulated data's keyword;
+    // if none match, just fall back to using the one with the lowest ID.
+    auto& best = checked_urls[id_data.second.index_representative];
+    if (!has_default_search_keyword(best)) {
+      bool matched_keyword = has_prepopulated_keyword(best);
+      for (auto& duplicate : id_data.second.duplicates) {
+        if (has_default_search_keyword(duplicate)) {
+          best.swap(duplicate);
+          break;
+        } else if (matched_keyword) {
+          continue;
+        } else if (has_prepopulated_keyword(duplicate)) {
+          best.swap(duplicate);
+          matched_keyword = true;
+        } else if (duplicate->id() < best->id()) {
+          best.swap(duplicate);
+        }
       }
     }
 
-    // Add the best URL to the checked group and delete the rest.
-    checked_urls.push_back(std::move(best->second));
-    for (auto i = unchecked_urls.begin(); i != end; ++i) {
-      if (i == best)
-        continue;
+    // Clean up what's left.
+    for (const auto& duplicate : id_data.second.duplicates) {
       if (service) {
-        service->RemoveKeyword(i->second->id());
+        service->RemoveKeyword(duplicate->id());
         if (removed_keyword_guids)
-          removed_keyword_guids->insert(i->second->sync_guid());
+          removed_keyword_guids->insert(duplicate->sync_guid());
       }
     }
-
-    // Done with this group.
-    unchecked_urls.erase(unchecked_urls.begin(), end);
   }
 
   // Return the checked URLs.
@@ -157,16 +182,31 @@ TemplateURL* FindURLByPrepopulateID(
 
 void MergeIntoPrepopulatedEngineData(const TemplateURL* original_turl,
                                      TemplateURLData* prepopulated_url) {
-  DCHECK_EQ(original_turl->prepopulate_id(), prepopulated_url->prepopulate_id);
-  if (!original_turl->safe_for_autoreplace()) {
-    prepopulated_url->safe_for_autoreplace = false;
-    prepopulated_url->SetKeyword(original_turl->keyword());
+  DCHECK(original_turl->prepopulate_id() == 0 ||
+         original_turl->prepopulate_id() == prepopulated_url->prepopulate_id);
+  // When the user modified search engine's properties or search engine is
+  // imported from Play API data we need to preserve certain search engine
+  // properties from overriding with prepopulated data.
+  if (!original_turl->safe_for_autoreplace() ||
+      original_turl->created_from_play_api()) {
+    prepopulated_url->safe_for_autoreplace =
+        original_turl->safe_for_autoreplace();
     prepopulated_url->SetShortName(original_turl->short_name());
+    prepopulated_url->SetKeyword(original_turl->keyword());
+    if (original_turl->created_from_play_api()) {
+      // TODO(crbug/1002271): Search url from Play API might contain attribution
+      // info and therefore should be preserved through prepopulated data
+      // update. In the future we might decide to take different approach to
+      // pass attribution info to search providers.
+      prepopulated_url->SetURL(original_turl->url());
+    }
   }
   prepopulated_url->id = original_turl->id();
   prepopulated_url->sync_guid = original_turl->sync_guid();
   prepopulated_url->date_created = original_turl->date_created();
   prepopulated_url->last_modified = original_turl->last_modified();
+  prepopulated_url->created_from_play_api =
+      original_turl->created_from_play_api();
 }
 
 ActionsFromPrepopulateData::ActionsFromPrepopulateData() {}
@@ -176,14 +216,9 @@ ActionsFromPrepopulateData::ActionsFromPrepopulateData(
 
 ActionsFromPrepopulateData::~ActionsFromPrepopulateData() {}
 
-// This is invoked when the version of the prepopulate data changes.
-// If |removed_keyword_guids| is not NULL, the Sync GUID of each item removed
-// from the DB will be added to it.  Note that this function will take
-// ownership of |prepopulated_urls| and will clear the vector.
 void MergeEnginesFromPrepopulateData(
     KeywordWebDataService* service,
     std::vector<std::unique_ptr<TemplateURLData>>* prepopulated_urls,
-    size_t default_search_index,
     TemplateURLService::OwnedTemplateURLVector* template_urls,
     TemplateURL* default_search_provider,
     std::set<std::string>* removed_keyword_guids) {
@@ -230,8 +265,13 @@ ActionsFromPrepopulateData CreateActionsFromCurrentPrepopulateData(
     const TemplateURL* default_search_provider) {
   // Create a map to hold all provided |template_urls| that originally came from
   // prepopulate data (i.e. have a non-zero prepopulate_id()).
+  TemplateURL* play_api_turl = nullptr;
   std::map<int, TemplateURL*> id_to_turl;
   for (auto& turl : existing_urls) {
+    if (turl->created_from_play_api()) {
+      DCHECK_EQ(nullptr, play_api_turl);
+      play_api_turl = turl.get();
+    }
     int prepopulate_id = turl->prepopulate_id();
     if (prepopulate_id > 0)
       id_to_turl[prepopulate_id] = turl.get();
@@ -247,18 +287,24 @@ ActionsFromPrepopulateData CreateActionsFromCurrentPrepopulateData(
     DCHECK_NE(0, prepopulated_id);
 
     auto existing_url_iter = id_to_turl.find(prepopulated_id);
+    TemplateURL* existing_url = nullptr;
     if (existing_url_iter != id_to_turl.end()) {
+      existing_url = existing_url_iter->second;
+      id_to_turl.erase(existing_url_iter);
+    } else if (play_api_turl &&
+               play_api_turl->keyword() == prepopulated_url->keyword()) {
+      existing_url = play_api_turl;
+    }
+
+    if (existing_url != nullptr) {
       // Update the data store with the new prepopulated data. Preserve user
       // edits to the name and keyword.
-      TemplateURL* existing_url(existing_url_iter->second);
-      id_to_turl.erase(existing_url_iter);
       MergeIntoPrepopulatedEngineData(existing_url, prepopulated_url.get());
       // Update last_modified to ensure that if this entry is later merged with
       // entries from Sync, the conflict resolution logic knows that this was
       // updated and propagates the new values to the server.
       prepopulated_url->last_modified = base::Time::Now();
-      actions.edited_engines.push_back(
-          std::make_pair(existing_url, *prepopulated_url));
+      actions.edited_engines.push_back({existing_url, *prepopulated_url});
     } else {
       actions.added_engines.push_back(*prepopulated_url);
     }
@@ -275,9 +321,18 @@ ActionsFromPrepopulateData CreateActionsFromCurrentPrepopulateData(
     if ((template_url->safe_for_autoreplace()) &&
         (!default_search_provider ||
          (template_url->prepopulate_id() !=
-             default_search_provider->prepopulate_id()) ||
-         (template_url->keyword() != default_search_provider->keyword())))
-      actions.removed_engines.push_back(template_url);
+          default_search_provider->prepopulate_id()) ||
+         (template_url->keyword() != default_search_provider->keyword()))) {
+      if (template_url->created_from_play_api()) {
+        // Don't remove the entry created from Play API. Just reset
+        // prepopulate_id for it.
+        TemplateURLData data = template_url->data();
+        data.prepopulate_id = 0;
+        actions.edited_engines.push_back({template_url, data});
+      } else {
+        actions.removed_engines.push_back(template_url);
+      }
+    }
   }
 
   return actions;
@@ -333,10 +388,8 @@ void GetSearchProvidersUsingLoadedEngines(
     std::set<std::string>* removed_keyword_guids) {
   DCHECK(template_urls);
   DCHECK(resource_keyword_version);
-  size_t default_search_index;
   std::vector<std::unique_ptr<TemplateURLData>> prepopulated_urls =
-      TemplateURLPrepopulateData::GetPrepopulatedEngines(prefs,
-                                                         &default_search_index);
+      TemplateURLPrepopulateData::GetPrepopulatedEngines(prefs, nullptr);
   RemoveDuplicatePrepopulateIDs(service, prepopulated_urls,
                                 default_search_provider, template_urls,
                                 search_terms_data, removed_keyword_guids);
@@ -344,9 +397,9 @@ void GetSearchProvidersUsingLoadedEngines(
   const int prepopulate_resource_keyword_version =
       TemplateURLPrepopulateData::GetDataVersion(prefs);
   if (*resource_keyword_version < prepopulate_resource_keyword_version) {
-    MergeEnginesFromPrepopulateData(
-        service, &prepopulated_urls, default_search_index, template_urls,
-        default_search_provider, removed_keyword_guids);
+    MergeEnginesFromPrepopulateData(service, &prepopulated_urls, template_urls,
+                                    default_search_provider,
+                                    removed_keyword_guids);
     *resource_keyword_version = prepopulate_resource_keyword_version;
   } else {
     *resource_keyword_version = 0;

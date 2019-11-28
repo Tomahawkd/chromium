@@ -5,14 +5,14 @@
 #ifndef COMPONENTS_DOM_DISTILLER_IOS_DISTILLER_PAGE_IOS_H_
 #define COMPONENTS_DOM_DISTILLER_IOS_DISTILLER_PAGE_IOS_H_
 
-#include <memory>
 #include <objc/objc.h>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/dom_distiller/core/distiller_page.h"
-#include "ios/web/public/web_state/web_state_observer.h"
+#include "ios/web/public/web_state_observer.h"
 #include "url/gurl.h"
 
 namespace web {
@@ -21,6 +21,8 @@ class WebState;
 }
 
 namespace dom_distiller {
+
+class DistillerPageMediaBlocker;
 
 // Loads URLs and injects JavaScript into a page, extracting the distilled page
 // content.
@@ -49,8 +51,6 @@ class DistillerPageIOS : public DistillerPage, public web::WebStateObserver {
       web::PageLoadCompletionStatus load_completion_status);
 
  private:
-  friend class DistillerWebStateObserver;
-
   // Called once the |script_| has been evaluated on the page.
   void HandleJavaScriptResult(id result);
 
@@ -66,6 +66,7 @@ class DistillerPageIOS : public DistillerPage, public web::WebStateObserver {
   std::string script_;
   web::BrowserState* browser_state_;
   std::unique_ptr<web::WebState> web_state_;
+  std::unique_ptr<DistillerPageMediaBlocker> media_blocker_;
 
   // Used to store whether the owned WebState is currently loading or not.
   // TODO(crbug.com/782159): this is a work-around as WebState::IsLoading()

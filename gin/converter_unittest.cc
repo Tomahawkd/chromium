@@ -9,6 +9,9 @@
 #include <stdint.h>
 
 #include "base/compiler_specific.h"
+#include "base/stl_util.h"
+#include "base/strings/string16.h"
+#include "base/strings/utf_string_conversions.h"
 #include "gin/handle.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/test/v8_test.h"
@@ -65,7 +68,7 @@ TEST_F(ConverterTest, Bool) {
       {Undefined(instance_->isolate()).As<Value>(), false},
   };
 
-  for (size_t i = 0; i < arraysize(test_data); ++i) {
+  for (size_t i = 0; i < base::size(test_data); ++i) {
     bool result = false;
     EXPECT_TRUE(Converter<bool>::FromV8(instance_->isolate(),
                                         test_data[i].input, &result));
@@ -78,11 +81,36 @@ TEST_F(ConverterTest, Bool) {
   }
 }
 
+TEST_F(ConverterTest, String16) {
+  v8::Isolate* isolate = instance_->isolate();
+
+  HandleScope handle_scope(isolate);
+
+  EXPECT_TRUE(Converter<base::string16>::ToV8(isolate, base::ASCIIToUTF16(""))
+                  ->StrictEquals(StringToV8(isolate, "")));
+  EXPECT_TRUE(
+      Converter<base::string16>::ToV8(isolate, base::ASCIIToUTF16("hello"))
+          ->StrictEquals(StringToV8(isolate, "hello")));
+
+  base::string16 result;
+
+  ASSERT_FALSE(
+      Converter<base::string16>::FromV8(isolate, v8::False(isolate), &result));
+  ASSERT_FALSE(
+      Converter<base::string16>::FromV8(isolate, v8::True(isolate), &result));
+  ASSERT_TRUE(Converter<base::string16>::FromV8(
+      isolate, v8::String::Empty(isolate), &result));
+  EXPECT_EQ(result, base::string16());
+  ASSERT_TRUE(Converter<base::string16>::FromV8(
+      isolate, StringToV8(isolate, "hello"), &result));
+  EXPECT_EQ(result, base::ASCIIToUTF16("hello"));
+}
+
 TEST_F(ConverterTest, Int32) {
   HandleScope handle_scope(instance_->isolate());
 
   int test_data_to[] = {-1, 0, 1};
-  for (size_t i = 0; i < arraysize(test_data_to); ++i) {
+  for (size_t i = 0; i < base::size(test_data_to); ++i) {
     EXPECT_TRUE(Converter<int32_t>::ToV8(instance_->isolate(), test_data_to[i])
                     ->StrictEquals(
                           Integer::New(instance_->isolate(), test_data_to[i])));
@@ -116,7 +144,7 @@ TEST_F(ConverterTest, Int32) {
       {v8::Undefined(instance_->isolate()).As<Value>(), false, 0},
   };
 
-  for (size_t i = 0; i < arraysize(test_data_from); ++i) {
+  for (size_t i = 0; i < base::size(test_data_from); ++i) {
     int32_t result = std::numeric_limits<int32_t>::min();
     bool success = Converter<int32_t>::FromV8(instance_->isolate(),
                                               test_data_from[i].input, &result);
@@ -138,9 +166,12 @@ TEST_F(ConverterTest, Vector) {
       Converter<std::vector<int>>::ToV8(instance_->isolate(), expected)
           .As<Array>();
   EXPECT_EQ(3u, js_array->Length());
+  v8::Local<v8::Context> context = instance_->isolate()->GetCurrentContext();
   for (size_t i = 0; i < expected.size(); ++i) {
-    EXPECT_TRUE(Integer::New(instance_->isolate(), expected[i])
-                    ->StrictEquals(js_array->Get(static_cast<int>(i))));
+    EXPECT_TRUE(
+        Integer::New(instance_->isolate(), expected[i])
+            ->StrictEquals(
+                js_array->Get(context, static_cast<int>(i)).ToLocalChecked()));
   }
 }
 

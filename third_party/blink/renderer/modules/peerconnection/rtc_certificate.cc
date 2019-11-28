@@ -33,7 +33,7 @@
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/renderer/platform/bindings/to_v8.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
-#include "third_party/webrtc/rtc_base/sslcertificate.h"
+#include "third_party/webrtc/rtc_base/ssl_certificate.h"
 
 namespace blink {
 
@@ -54,11 +54,10 @@ HeapVector<Member<RTCDtlsFingerprint>> RTCCertificate::getFingerprints() {
            first_certificate_stats.get();
        certificate_stats; certificate_stats = certificate_stats->issuer.get()) {
     RTCDtlsFingerprint* fingerprint = RTCDtlsFingerprint::Create();
-    fingerprint->setAlgorithm(WTF::String::FromUTF8(
-        certificate_stats->fingerprint_algorithm.c_str()));
+    fingerprint->setAlgorithm(
+        WTF::String::FromUTF8(certificate_stats->fingerprint_algorithm));
     fingerprint->setValue(
-        WTF::String::FromUTF8(certificate_stats->fingerprint.c_str())
-            .LowerASCII());
+        WTF::String::FromUTF8(certificate_stats->fingerprint).LowerASCII());
     fingerprints.push_back(fingerprint);
   }
 

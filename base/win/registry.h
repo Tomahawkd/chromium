@@ -6,14 +6,17 @@
 #define BASE_WIN_REGISTRY_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
-#include "base/win/windows_types.h"
 
 #include "base/base_export.h"
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/win/object_watcher.h"
 #include "base/win/scoped_handle.h"
+#include "base/win/windows_types.h"
 
 namespace base {
 namespace win {
@@ -30,7 +33,7 @@ namespace win {
 class BASE_EXPORT RegKey {
  public:
   // Called from the MessageLoop when the key changes.
-  typedef base::Callback<void()> ChangeCallback;
+  using ChangeCallback = OnceCallback<void()>;
 
   RegKey();
   explicit RegKey(HKEY key);
@@ -39,8 +42,10 @@ class BASE_EXPORT RegKey {
 
   LONG Create(HKEY rootkey, const wchar_t* subkey, REGSAM access);
 
-  LONG CreateWithDisposition(HKEY rootkey, const wchar_t* subkey,
-                             DWORD* disposition, REGSAM access);
+  LONG CreateWithDisposition(HKEY rootkey,
+                             const wchar_t* subkey,
+                             DWORD* disposition,
+                             REGSAM access);
 
   // Creates a subkey or open it if it already exists.
   LONG CreateKey(const wchar_t* name, REGSAM access);
@@ -130,24 +135,15 @@ class BASE_EXPORT RegKey {
   // Returns true on success.
   // To stop watching, delete this RegKey object. To continue watching the
   // object after the callback is invoked, call StartWatching again.
-  bool StartWatching(const ChangeCallback& callback);
+  bool StartWatching(ChangeCallback callback);
 
   HKEY Handle() const { return key_; }
 
  private:
   class Watcher;
 
-  // Calls RegDeleteKeyEx on supported platforms, alternatively falls back to
-  // RegDeleteKey.
-  static LONG RegDeleteKeyExWrapper(HKEY hKey,
-                                    const wchar_t* lpSubKey,
-                                    REGSAM samDesired,
-                                    DWORD Reserved);
-
   // Recursively deletes a key and all of its subkeys.
-  static LONG RegDelRecurse(HKEY root_key,
-                            const std::wstring& name,
-                            REGSAM access);
+  static LONG RegDelRecurse(HKEY root_key, const wchar_t* name, REGSAM access);
 
   HKEY key_;  // The registry key being iterated.
   REGSAM wow64access_;

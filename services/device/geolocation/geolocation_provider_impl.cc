@@ -16,13 +16,16 @@
 #include "base/memory/singleton.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/default_tick_clock.h"
+#include "net/base/network_change_notifier.h"
 #include "services/device/geolocation/location_arbitrator.h"
+#include "services/device/geolocation/position_cache_impl.h"
 #include "services/device/public/cpp/geolocation/geoposition.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
-#include "jni/LocationProviderFactory_jni.h"
+#include "services/device/geolocation/geolocation_jni_headers/LocationProviderFactory_jni.h"
 #endif
 
 namespace device {
@@ -109,13 +112,14 @@ GeolocationProviderImpl* GeolocationProviderImpl::GetInstance() {
   return base::Singleton<GeolocationProviderImpl>::get();
 }
 
-void GeolocationProviderImpl::BindGeolocationControlRequest(
-    mojom::GeolocationControlRequest request) {
-  // The |binding_| has been bound already here means that more than one
+void GeolocationProviderImpl::BindGeolocationControlReceiver(
+    mojo::PendingReceiver<mojom::GeolocationControl> receiver) {
+  // The |receiver_| has been bound already here means that more than one
   // GeolocationPermissionContext in chrome tried to bind to Device Service.
-  // We only bind the first request. See more info in geolocation_control.mojom.
-  if (!binding_.is_bound())
-    binding_.Bind(std::move(request));
+  // We only bind the first receiver. See more info in
+  // geolocation_control.mojom.
+  if (!receiver_.is_bound())
+    receiver_.Bind(std::move(receiver));
 }
 
 void GeolocationProviderImpl::UserDidOptIntoLocationServices() {
@@ -130,8 +134,7 @@ GeolocationProviderImpl::GeolocationProviderImpl()
     : base::Thread("Geolocation"),
       user_did_opt_into_location_services_(false),
       ignore_location_updates_(false),
-      main_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      binding_(this) {
+      main_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   high_accuracy_callbacks_.set_removal_callback(base::Bind(
       &GeolocationProviderImpl::OnClientsChanged, base::Unretained(this)));
@@ -234,9 +237,13 @@ void GeolocationProviderImpl::Init() {
         std::move(g_url_loader_factory_info.Get()));
   }
 
+  DCHECK(!net::NetworkChangeNotifier::CreateIfNeeded())
+      << "PositionCacheImpl needs a global NetworkChangeNotifier";
   arbitrator_ = std::make_unique<LocationArbitrator>(
       g_custom_location_provider_callback.Get(), std::move(url_loader_factory),
-      g_api_key.Get());
+      g_api_key.Get(),
+      std::make_unique<PositionCacheImpl>(
+          base::DefaultTickClock::GetInstance()));
   arbitrator_->SetUpdateCallback(callback);
 }
 

@@ -9,30 +9,33 @@
 #include <memory>
 #include <string>
 
-#include "ash/assistant/assistant_controller_observer.h"
+#include "ash/assistant/model/assistant_ui_model_observer.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/caption_bar.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/optional.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/content/public/cpp/navigable_contents.h"
-#include "ui/aura/window_observer.h"
 #include "ui/views/view.h"
 
 namespace ash {
 
-class AssistantController;
+enum class AssistantButtonId;
+class AssistantWebViewDelegate;
 
 // AssistantWebView is a child of AssistantBubbleView which allows Assistant UI
 // to render remotely hosted content within its bubble. It provides a CaptionBar
 // for window level controls and embeds web contents with help from the Content
 // Service.
-class AssistantWebView : public views::View,
-                         public aura::WindowObserver,
-                         public AssistantControllerObserver,
-                         public CaptionBarDelegate,
-                         public content::NavigableContentsObserver {
+class COMPONENT_EXPORT(ASSISTANT_UI) AssistantWebView
+    : public views::View,
+      public CaptionBarDelegate,
+      public content::NavigableContentsObserver,
+      public AssistantUiModelObserver {
  public:
-  explicit AssistantWebView(AssistantController* assistant_controller);
+  AssistantWebView(AssistantViewDelegate* assistant_view_delegate,
+                   AssistantWebViewDelegate* web_container_view_delegate);
   ~AssistantWebView() override;
 
   // views::View:
@@ -40,47 +43,54 @@ class AssistantWebView : public views::View,
   gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int width) const override;
   void ChildPreferredSizeChanged(views::View* child) override;
-
-  // views::WindowObserver:
-  void OnWindowBoundsChanged(aura::Window* window,
-                             const gfx::Rect& old_bounds,
-                             const gfx::Rect& new_bounds,
-                             ui::PropertyChangeReason reason) override;
-  void OnWindowDestroying(aura::Window* window) override;
+  void OnFocus() override;
+  void AboutToRequestFocusFromTabTraversal(bool reverse) override;
 
   // CaptionBarDelegate:
   bool OnCaptionButtonPressed(AssistantButtonId id) override;
 
-  // AssistantControllerObserver:
-  void OnDeepLinkReceived(
-      assistant::util::DeepLinkType type,
-      const std::map<std::string, std::string>& params) override;
-
   // content::NavigableContentsObserver:
-  void DidAutoResizeView(const gfx::Size& new_size) override;
   void DidStopLoading() override;
   void DidSuppressNavigation(const GURL& url,
                              WindowOpenDisposition disposition,
                              bool from_user_gesture) override;
+  void UpdateCanGoBack(bool can_go_back) override;
+
+  // AssistantUiModelObserver:
+  void OnUiVisibilityChanged(
+      AssistantVisibility new_visibility,
+      AssistantVisibility old_visibility,
+      base::Optional<AssistantEntryPoint> entry_point,
+      base::Optional<AssistantExitPoint> exit_point) override;
+  void OnUsableWorkAreaChanged(const gfx::Rect& usable_work_area) override;
+
+  // Invoke to open the specified |url|.
+  void OpenUrl(const GURL& url);
+
+  views::View* caption_bar_for_testing() { return caption_bar_; }
 
  private:
   void InitLayout();
   void RemoveContents();
 
-  AssistantController* const assistant_controller_;  // Owned by Shell.
+  // Updates the size of the web contents by changing its view size to avoid
+  // either being cut or not fully filling the whole container when the usable
+  // work area changed.
+  void UpdateContentSize();
 
-  CaptionBar* caption_bar_;  // Owned by view hierarchy.
+  // TODO(b/143177141): Remove AssistantViewDelegate once standalone is
+  // deprecated.
+  AssistantViewDelegate* const assistant_view_delegate_;
+  AssistantWebViewDelegate* const web_container_view_delegate_;
 
-  content::mojom::NavigableContentsFactoryPtr contents_factory_;
+  CaptionBar* caption_bar_ = nullptr;  // Owned by view hierarchy.
+
+  mojo::Remote<content::mojom::NavigableContentsFactory> contents_factory_;
   std::unique_ptr<content::NavigableContents> contents_;
 
-  // Our contents are drawn to a layer that is not masked by our widget's layer.
-  // This causes our contents to ignore the corner radius that we have set on
-  // the widget. To address this, we apply a separate layer mask to the
-  // contents' native view layer enforcing our desired corner radius.
-  std::unique_ptr<ui::LayerOwner> contents_mask_;
+  bool contents_view_initialized_ = false;
 
-  base::WeakPtrFactory<AssistantWebView> weak_factory_;
+  base::WeakPtrFactory<AssistantWebView> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AssistantWebView);
 };

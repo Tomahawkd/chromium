@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/content_browser_test.h"
@@ -27,8 +28,8 @@ bool AbortOnEndInterceptor(URLLoaderInterceptor::RequestParams* params) {
       "HTTP/1.1 400 This is not OK\n"
       "Content-type: text/plain\n";
   net::HttpResponseInfo info;
-  info.headers = new net::HttpResponseHeaders(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.length()));
+  info.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   network::ResourceResponseHead response;
   response.headers = info.headers;
   response.headers->GetMimeType(&response.mime_type);
@@ -53,7 +54,7 @@ bool AbortOnEndInterceptor(URLLoaderInterceptor::RequestParams* params) {
 using WebKitBrowserTest = ContentBrowserTest;
 
 // This is a browser test because it is hard to reproduce reliably in a
-// layout test without races. http://crbug.com/75604 deals with a request
+// web test without races. http://crbug.com/75604 deals with a request
 // for an async script which gets data in the response and immediately
 // after aborts. This test creates that condition, and it is passed
 // if chrome does not crash.
@@ -63,7 +64,7 @@ IN_PROC_BROWSER_TEST_F(WebKitBrowserTest, AbortOnEnd) {
   URLLoaderInterceptor interceptor(base::BindRepeating(&AbortOnEndInterceptor));
   GURL url = embedded_test_server()->GetURL(kAsyncScriptThatAbortsOnEndPage);
 
-  NavigateToURL(shell(), url);
+  EXPECT_TRUE(NavigateToURL(shell(), url));
 
   // If you are seeing this test fail, please strongly investigate the
   // possibility that http://crbug.com/75604 and
@@ -77,7 +78,7 @@ IN_PROC_BROWSER_TEST_F(WebKitBrowserTest, AbortOnEnd) {
 // destroying the Document, so it is not a use after free unless
 // you don't have test_runner loaded.
 
-// TODO(gavinp): remove this browser_test if we can get good LayoutTest
+// TODO(gavinp): remove this browser_test if we can get good web test
 // coverage of the same issue.
 const char kXsltBadImportPage[] = "/webkit/xslt-bad-import.html";
 IN_PROC_BROWSER_TEST_F(WebKitBrowserTest, XsltBadImport) {
@@ -85,7 +86,7 @@ IN_PROC_BROWSER_TEST_F(WebKitBrowserTest, XsltBadImport) {
   URLLoaderInterceptor interceptor(base::BindRepeating(&AbortOnEndInterceptor));
   GURL url = embedded_test_server()->GetURL(kXsltBadImportPage);
 
-  NavigateToURL(shell(), url);
+  EXPECT_TRUE(NavigateToURL(shell(), url));
 
   EXPECT_FALSE(shell()->web_contents()->IsCrashed());
 }
@@ -97,7 +98,7 @@ IN_PROC_BROWSER_TEST_F(WebKitBrowserTest, XsltBadImport) {
 
 // TODO(gavinp,jochen): This browser_test depends on there not being a
 // prerendering client and prerendering platform provided by the test_shell.
-// But both will exist when we use content_shell to run layout tests. We must
+// But both will exist when we use content_shell to run web tests. We must
 // then add a mechanism to start content_shell without these, or else this
 // test is not very interesting.
 const char kPrerenderNoCrashPage[] = "/prerender/prerender-no-crash.html";
@@ -105,7 +106,7 @@ IN_PROC_BROWSER_TEST_F(WebKitBrowserTest, PrerenderNoCrash) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url = embedded_test_server()->GetURL(kPrerenderNoCrashPage);
 
-  NavigateToURL(shell(), url);
+  EXPECT_TRUE(NavigateToURL(shell(), url));
 
   EXPECT_FALSE(shell()->web_contents()->IsCrashed());
 }

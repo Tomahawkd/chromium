@@ -2,7 +2,7 @@
 # Lead. See comment in whitelist.h
 set noparent
 
-rdevlin.cronin@chromium.org
+file://chrome/browser/extensions/component_extensions_whitelist/EXTENSION_WHITELIST_OWNERS
 
 # TEAM: extensions-dev@chromium.org
 # COMPONENT: Platform>Extensions

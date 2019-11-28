@@ -4,7 +4,6 @@
 
 :host .text {
   color: #333;
-  font: 13px Roboto, sans-serif;
   line-height: 18px;
 }
 
@@ -29,6 +28,5 @@ oobe-dialog {
 
 .update-illustration {
   height: 264px;
-  padding-bottom: 82px;
   width: 264px;
 }

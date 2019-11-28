@@ -9,7 +9,8 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
+#include "base/time/clock.h"
 #include "base/time/tick_clock.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -32,17 +33,18 @@ namespace {
 
 class TestUpgradeDetectorImpl : public UpgradeDetectorImpl {
  public:
-  explicit TestUpgradeDetectorImpl(const base::TickClock* tick_clock)
-      : UpgradeDetectorImpl(tick_clock) {}
+  explicit TestUpgradeDetectorImpl(const base::Clock* clock,
+                                   const base::TickClock* tick_clock)
+      : UpgradeDetectorImpl(clock, tick_clock) {}
   ~TestUpgradeDetectorImpl() override = default;
 
   // Exposed for testing.
+  using UpgradeDetectorImpl::clock;
+  using UpgradeDetectorImpl::GetThresholdForLevel;
+  using UpgradeDetectorImpl::NotifyOnUpgradeWithTimePassed;
+  using UpgradeDetectorImpl::OnExperimentChangesDetected;
   using UpgradeDetectorImpl::UPGRADE_AVAILABLE_REGULAR;
   using UpgradeDetectorImpl::UpgradeDetected;
-  using UpgradeDetectorImpl::OnExperimentChangesDetected;
-  using UpgradeDetectorImpl::NotifyOnUpgradeWithTimePassed;
-  using UpgradeDetectorImpl::GetThresholdForLevel;
-  using UpgradeDetectorImpl::tick_clock;
 
   // UpgradeDetector:
   void TriggerCriticalUpdate() override {
@@ -110,8 +112,7 @@ class MockUpgradeObserver : public UpgradeObserver {
 class UpgradeDetectorImplTest : public ::testing::Test {
  protected:
   UpgradeDetectorImplTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME),
+      : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME),
         scoped_local_state_(TestingBrowserProcess::GetGlobal()) {
     // Disable the detector's check to see if autoupdates are inabled.
     // Without this, tests put the detector into an invalid state by detecting
@@ -120,8 +121,10 @@ class UpgradeDetectorImplTest : public ::testing::Test {
                                            std::make_unique<base::Value>(true));
   }
 
+  const base::Clock* GetMockClock() { return task_environment_.GetMockClock(); }
+
   const base::TickClock* GetMockTickClock() {
-    return scoped_task_environment_.GetMockTickClock();
+    return task_environment_.GetMockTickClock();
   }
 
   // Sets the browser.relaunch_notification_period preference in Local State to
@@ -138,22 +141,22 @@ class UpgradeDetectorImplTest : public ::testing::Test {
     }
   }
 
-  void RunUntilIdle() { scoped_task_environment_.RunUntilIdle(); }
+  void RunUntilIdle() { task_environment_.RunUntilIdle(); }
 
   // Fast-forwards virtual time by |delta|.
   void FastForwardBy(base::TimeDelta delta) {
-    scoped_task_environment_.FastForwardBy(delta);
+    task_environment_.FastForwardBy(delta);
   }
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   ScopedTestingLocalState scoped_local_state_;
 
   DISALLOW_COPY_AND_ASSIGN(UpgradeDetectorImplTest);
 };
 
 TEST_F(UpgradeDetectorImplTest, VariationsChanges) {
-  TestUpgradeDetectorImpl detector(GetMockTickClock());
+  TestUpgradeDetectorImpl detector(GetMockClock(), GetMockTickClock());
   TestUpgradeNotificationListener notifications_listener(&detector);
   EXPECT_FALSE(detector.notify_upgrade());
   EXPECT_EQ(0, notifications_listener.notification_count());
@@ -174,7 +177,7 @@ TEST_F(UpgradeDetectorImplTest, VariationsChanges) {
 }
 
 TEST_F(UpgradeDetectorImplTest, VariationsCriticalChanges) {
-  TestUpgradeDetectorImpl detector(GetMockTickClock());
+  TestUpgradeDetectorImpl detector(GetMockClock(), GetMockTickClock());
   TestUpgradeNotificationListener notifications_listener(&detector);
   EXPECT_FALSE(detector.notify_upgrade());
   EXPECT_EQ(0, notifications_listener.notification_count());
@@ -202,11 +205,7 @@ TEST_F(UpgradeDetectorImplTest, VariationsCriticalChanges) {
 // elevated: 16h
 // high: 24h
 TEST_F(UpgradeDetectorImplTest, TestPeriodChanges) {
-  // Fast forward a little bit to get away from zero ticks, which has special
-  // meaning in the detector.
-  FastForwardBy(base::TimeDelta::FromHours(1));
-
-  TestUpgradeDetectorImpl upgrade_detector(GetMockTickClock());
+  TestUpgradeDetectorImpl upgrade_detector(GetMockClock(), GetMockTickClock());
   ::testing::StrictMock<MockUpgradeObserver> mock_observer(&upgrade_detector);
 
   // Changing the period when no upgrade has been detected updates the
@@ -367,7 +366,7 @@ TEST_F(UpgradeDetectorImplTest, TestPeriodChanges) {
 
 // Appends the time and stage from detector to |notifications|.
 ACTION_P2(AppendTicksAndStage, detector, notifications) {
-  notifications->emplace_back(detector->tick_clock()->NowTicks(),
+  notifications->emplace_back(detector->clock()->Now(),
                               detector->upgrade_notification_stage());
 }
 
@@ -386,26 +385,21 @@ class UpgradeDetectorImplTimerTest : public UpgradeDetectorImplTest,
   DISALLOW_COPY_AND_ASSIGN(UpgradeDetectorImplTimerTest);
 };
 
-INSTANTIATE_TEST_CASE_P(,
-                        UpgradeDetectorImplTimerTest,
-                        ::testing::Values(0,           // Default period of 7d.
-                                          86400000,    // 1d.
-                                          11100000));  // 3:05:00.
+INSTANTIATE_TEST_SUITE_P(All,
+                         UpgradeDetectorImplTimerTest,
+                         ::testing::Values(0,           // Default period of 7d.
+                                           86400000,    // 1d.
+                                           11100000));  // 3:05:00.
 
 // Tests that the notification timer is handled as desired.
 TEST_P(UpgradeDetectorImplTimerTest, TestNotificationTimer) {
   using TimeAndStage =
-      std::pair<base::TimeTicks,
-                UpgradeDetector::UpgradeNotificationAnnoyanceLevel>;
+      std::pair<base::Time, UpgradeDetector::UpgradeNotificationAnnoyanceLevel>;
   using Notifications = std::vector<TimeAndStage>;
   static constexpr base::TimeDelta kTwentyMinues =
       base::TimeDelta::FromMinutes(20);
 
-  // Fast forward a little bit to get away from zero ticks, which has special
-  // meaning in the detector.
-  FastForwardBy(base::TimeDelta::FromHours(1));
-
-  TestUpgradeDetectorImpl detector(GetMockTickClock());
+  TestUpgradeDetectorImpl detector(GetMockClock(), GetMockTickClock());
   ::testing::StrictMock<MockUpgradeObserver> mock_observer(&detector);
 
   // Cache the thresholds for the detector's annoyance levels.

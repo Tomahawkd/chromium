@@ -36,8 +36,6 @@ test_common_source_files = [
   "tests/test_audio_encoder.h",
   "tests/test_case.cc",
   "tests/test_case.h",
-  "tests/test_compositor.cc",
-  "tests/test_compositor.h",
   "tests/test_console.cc",
   "tests/test_console.h",
   "tests/test_core.cc",
@@ -147,7 +145,6 @@ test_common_source_files = [
 ]
 
 copy("copy_test_files") {
-  visibility = [ ":*" ]
   sources = [
     # Keep "test_case.html.mock-http-headers" with "test_case.html"
     # and "corb_eligible_resource.json.mock-http-headers" with
@@ -165,7 +162,6 @@ copy("copy_test_files") {
 }
 
 copy("copy_test_files2") {
-  visibility = [ ":*" ]
   sources = [
     "tests/test_url_loader_data/hello.txt",
   ]
@@ -490,7 +486,7 @@ if (enable_nacl) {
       ":ppapi_nacl_tests(//build/toolchain/nacl:newlib_pnacl)",
     ]
 
-    if (target_cpu != "mipsel") {
+    if (target_cpu != "mipsel" && !is_mac) {
       data_deps +=
           [ ":ppapi_nacl_tests(//build/toolchain/nacl:glibc_${target_cpu})" ]
     }

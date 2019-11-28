@@ -10,7 +10,8 @@
 Polymer({
   is: 'settings-crostini-subpage',
 
-  behaviors: [PrefsBehavior],
+  behaviors:
+      [PrefsBehavior, WebUIListenerBehavior, settings.RouteOriginBehavior],
 
   properties: {
     /** Preferences state. */
@@ -18,9 +19,71 @@ Polymer({
       type: Object,
       notify: true,
     },
+
+    /**
+     * Whether export / import UI should be displayed.
+     * @private {boolean}
+     */
+    showCrostiniExportImport_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('showCrostiniExportImport');
+      },
+    },
+
+    /** @private {boolean} */
+    showArcAdbSideloading_: {
+      type: Boolean,
+      computed: 'and_(isArcAdbSideloadingSupported_, isAndroidEnabled_)',
+    },
+
+    /** @private {boolean} */
+    isArcAdbSideloadingSupported_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('ArcAdbSideloadingSupported');
+      },
+    },
+
+    /** @private {boolean} */
+    isAndroidEnabled_: {
+      type: Boolean,
+    },
+
+    /**
+     * Whether the uninstall options should be displayed.
+     * @private {boolean}
+     */
+    hideCrostiniUninstall_: {
+      type: Boolean,
+    },
   },
 
-  observers: ['onCrostiniEnabledChanged_(prefs.crostini.enabled.value)'],
+  /** settings.RouteOriginBehavior override */
+  route_: settings.routes.CROSTINI_DETAILS,
+
+  observers: [
+    'onCrostiniEnabledChanged_(prefs.crostini.enabled.value)',
+    'onArcEnabledChanged_(prefs.arc.enabled.value)'
+  ],
+
+  attached: function() {
+    const callback = (status) => {
+      this.hideCrostiniUninstall_ = status;
+    };
+    this.addWebUIListener('crostini-installer-status-changed', callback);
+    settings.CrostiniBrowserProxyImpl.getInstance()
+        .requestCrostiniInstallerStatus();
+  },
+
+  ready: function() {
+    const r = settings.routes;
+    this.addFocusConfig_(r.CROSTINI_SHARED_PATHS, '#crostini-shared-paths');
+    this.addFocusConfig_(
+        r.CROSTINI_SHARED_USB_DEVICES, '#crostini-shared-usb-devices');
+    this.addFocusConfig_(r.CROSTINI_EXPORT_IMPORT, '#crostini-export-import');
+    this.addFocusConfig_(r.CROSTINI_ANDROID_ADB, '#crostini-enable-arc-adb');
+  },
 
   /** @private */
   onCrostiniEnabledChanged_: function(enabled) {
@@ -30,17 +93,41 @@ Polymer({
     }
   },
 
+  /** @private */
+  onArcEnabledChanged_: function(enabled) {
+    this.isAndroidEnabled_ = enabled;
+  },
+
+  /** @private */
+  onExportImportClick_: function() {
+    settings.navigateTo(settings.routes.CROSTINI_EXPORT_IMPORT);
+  },
+
+  /** @private */
+  onEnableArcAdbClick_: function() {
+    settings.navigateTo(settings.routes.CROSTINI_ANDROID_ADB);
+  },
+
   /**
    * Shows a confirmation dialog when removing crostini.
-   * @param {!Event} event
    * @private
    */
-  onRemoveTap_: function(event) {
+  onRemoveClick_: function() {
     settings.CrostiniBrowserProxyImpl.getInstance().requestRemoveCrostini();
   },
 
   /** @private */
-  onSharedPathsTap_: function(event) {
+  onSharedPathsClick_: function() {
     settings.navigateTo(settings.routes.CROSTINI_SHARED_PATHS);
+  },
+
+  /** @private */
+  onSharedUsbDevicesClick_: function() {
+    settings.navigateTo(settings.routes.CROSTINI_SHARED_USB_DEVICES);
+  },
+
+  /** @private */
+  and_: function(a, b) {
+    return a && b;
   },
 });

@@ -14,6 +14,7 @@
 
 class Browser;
 class ExtensionAction;
+class GURL;
 class Profile;
 
 namespace content {
@@ -101,7 +102,8 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   ExtensionContextMenuModel(const Extension* extension,
                             Browser* browser,
                             ButtonVisibility visibility,
-                            PopupDelegate* delegate);
+                            PopupDelegate* delegate,
+                            bool can_show_icon_in_toolbar);
   ~ExtensionContextMenuModel() override;
 
   // SimpleMenuModel::Delegate:
@@ -123,6 +125,11 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
 
   MenuEntries GetCurrentPageAccess(const Extension* extension,
                                    content::WebContents* web_contents) const;
+
+  // Returns true if the given page access command is enabled in the menu.
+  bool IsPageAccessCommandEnabled(const Extension& extension,
+                                  const GURL& url,
+                                  int command_id) const;
 
   void HandlePageAccessCommand(int command_id,
                                const Extension* extension) const;
@@ -159,6 +166,8 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
 
   // The visibility of the button at the time the menu opened.
   ButtonVisibility button_visibility_;
+
+  const bool can_show_icon_in_toolbar_;
 
   // Menu matcher for context menu items specified by the extension.
   std::unique_ptr<ContextMenuMatcher> extension_items_;

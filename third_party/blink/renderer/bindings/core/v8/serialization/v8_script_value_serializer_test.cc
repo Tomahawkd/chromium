@@ -50,10 +50,9 @@
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
-#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -212,7 +211,7 @@ TEST(V8ScriptValueSerializerTest, DeserializationErrorReturnsNull) {
   EXPECT_FALSE(scope.GetExceptionState().HadException());
 }
 
-TEST(V8ScriptValueSerializerTest, NeuteringHappensAfterSerialization) {
+TEST(V8ScriptValueSerializerTest, DetachHappensAfterSerialization) {
   // This object will throw an exception before the [[Transfer]] step.
   // As a result, the ArrayBuffer will not be transferred.
   V8TestingScope scope;
@@ -221,7 +220,7 @@ TEST(V8ScriptValueSerializerTest, NeuteringHappensAfterSerialization) {
                                  "postMessage");
 
   DOMArrayBuffer* array_buffer = DOMArrayBuffer::Create(1, 1);
-  ASSERT_FALSE(array_buffer->IsNeutered());
+  ASSERT_FALSE(array_buffer->IsDetached());
   v8::Local<v8::Value> object = Eval("({ get a() { throw 'party'; }})", scope);
   Transferables transferables;
   transferables.array_buffers.push_back(array_buffer);
@@ -230,7 +229,7 @@ TEST(V8ScriptValueSerializerTest, NeuteringHappensAfterSerialization) {
   ASSERT_TRUE(exception_state.HadException());
   EXPECT_FALSE(HadDOMExceptionInCoreTest(
       "DataCloneError", scope.GetScriptState(), exception_state));
-  EXPECT_FALSE(array_buffer->IsNeutered());
+  EXPECT_FALSE(array_buffer->IsDetached());
 }
 
 TEST(V8ScriptValueSerializerTest, RoundTripDOMPoint) {
@@ -770,7 +769,8 @@ TEST(V8ScriptValueSerializerTest, RoundTripImageData) {
   ImageData* new_image_data = V8ImageData::ToImpl(result.As<v8::Object>());
   EXPECT_NE(image_data, new_image_data);
   EXPECT_EQ(image_data->Size(), new_image_data->Size());
-  EXPECT_EQ(image_data->data()->length(), new_image_data->data()->length());
+  EXPECT_EQ(image_data->data()->lengthAsSizeT(),
+            new_image_data->data()->lengthAsSizeT());
   EXPECT_EQ(200, new_image_data->data()->Data()[0]);
 }
 
@@ -795,8 +795,8 @@ TEST(V8ScriptValueSerializerTest, RoundTripImageDataWithColorSpaceInfo) {
       new_image_data->getColorSettings();
   EXPECT_EQ("p3", new_color_settings->colorSpace());
   EXPECT_EQ("float32", new_color_settings->storageFormat());
-  EXPECT_EQ(image_data->BufferBase()->ByteLength(),
-            new_image_data->BufferBase()->ByteLength());
+  EXPECT_EQ(image_data->BufferBase()->ByteLengthAsSizeT(),
+            new_image_data->BufferBase()->ByteLengthAsSizeT());
   EXPECT_EQ(200, static_cast<unsigned char*>(
                      new_image_data->BufferBase()->Data())[0]);
 }
@@ -815,7 +815,7 @@ TEST(V8ScriptValueSerializerTest, DecodeImageDataV9) {
   ASSERT_TRUE(V8ImageData::HasInstance(result, scope.GetIsolate()));
   ImageData* new_image_data = V8ImageData::ToImpl(result.As<v8::Object>());
   EXPECT_EQ(IntSize(2, 1), new_image_data->Size());
-  EXPECT_EQ(8u, new_image_data->data()->length());
+  EXPECT_EQ(8u, new_image_data->data()->lengthAsSizeT());
   EXPECT_EQ(200, new_image_data->data()->Data()[0]);
 }
 
@@ -830,7 +830,7 @@ TEST(V8ScriptValueSerializerTest, DecodeImageDataV16) {
   ASSERT_TRUE(V8ImageData::HasInstance(result, scope.GetIsolate()));
   ImageData* new_image_data = V8ImageData::ToImpl(result.As<v8::Object>());
   EXPECT_EQ(IntSize(2, 1), new_image_data->Size());
-  EXPECT_EQ(8u, new_image_data->data()->length());
+  EXPECT_EQ(8u, new_image_data->data()->lengthAsSizeT());
   EXPECT_EQ(200, new_image_data->data()->Data()[0]);
 }
 
@@ -851,14 +851,27 @@ TEST(V8ScriptValueSerializerTest, DecodeImageDataV18) {
       new_image_data->getColorSettings();
   EXPECT_EQ("p3", new_color_settings->colorSpace());
   EXPECT_EQ("float32", new_color_settings->storageFormat());
-  EXPECT_EQ(32u, new_image_data->BufferBase()->ByteLength());
+  EXPECT_EQ(32u, new_image_data->BufferBase()->ByteLengthAsSizeT());
   EXPECT_EQ(200, static_cast<unsigned char*>(
                      new_image_data->BufferBase()->Data())[0]);
 }
 
+TEST(V8ScriptValueSerializerTest, InvalidImageDataDecodeV18) {
+  V8TestingScope scope;
+  ScriptState* script_state = scope.GetScriptState();
+  {
+    // Nonsense image serialization tag (kOriginCleanTag).
+    scoped_refptr<SerializedScriptValue> input =
+        SerializedValue({0xff, 0x12, 0xff, 0x0d, 0x5c, 0x23, 0x02, 0x00, 0x00,
+                         0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00});
+    EXPECT_TRUE(
+        V8ScriptValueDeserializer(script_state, input).Deserialize()->IsNull());
+  }
+}
+
 MessagePort* MakeMessagePort(ExecutionContext* execution_context,
                              ::MojoHandle* unowned_handle_out = nullptr) {
-  MessagePort* port = MessagePort::Create(*execution_context);
+  auto* port = MakeGarbageCollected<MessagePort>(*execution_context);
   mojo::MessagePipe pipe;
   ::MojoHandle unowned_handle = pipe.handle0.get().value();
   port->Entangle(std::move(pipe.handle0));
@@ -894,7 +907,7 @@ TEST(V8ScriptValueSerializerTest, NeuteredMessagePortThrowsDataCloneError) {
                                  ExceptionState::kExecutionContext, "Window",
                                  "postMessage");
 
-  MessagePort* port = MessagePort::Create(*scope.GetExecutionContext());
+  auto* port = MakeGarbageCollected<MessagePort>(*scope.GetExecutionContext());
   EXPECT_TRUE(port->IsNeutered());
   v8::Local<v8::Value> wrapper = ToV8(port, scope.GetScriptState());
   Transferables transferables;
@@ -961,8 +974,8 @@ TEST(V8ScriptValueSerializerTest, RoundTripMojoHandle) {
   V8TestingScope scope;
 
   mojo::MessagePipe pipe;
-  MojoHandle* handle =
-      MojoHandle::Create(mojo::ScopedHandle::From(std::move(pipe.handle0)));
+  auto* handle = MakeGarbageCollected<MojoHandle>(
+      mojo::ScopedHandle::From(std::move(pipe.handle0)));
   v8::Local<v8::Value> wrapper = ToV8(handle, scope.GetScriptState());
   Transferables transferables;
   transferables.mojo_handles.push_back(handle);
@@ -982,8 +995,8 @@ TEST(V8ScriptValueSerializerTest, UntransferredMojoHandleThrowsDataCloneError) {
                                  "postMessage");
 
   mojo::MessagePipe pipe;
-  MojoHandle* handle =
-      MojoHandle::Create(mojo::ScopedHandle::From(std::move(pipe.handle0)));
+  auto* handle = MakeGarbageCollected<MojoHandle>(
+      mojo::ScopedHandle::From(std::move(pipe.handle0)));
   v8::Local<v8::Value> wrapper = ToV8(handle, scope.GetScriptState());
   Transferables transferables;
 
@@ -1003,7 +1016,7 @@ TEST(V8ScriptValueSerializerTest, RoundTripImageBitmap) {
   sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(10, 7);
   surface->getCanvas()->clear(SK_ColorRED);
   ImageBitmap* image_bitmap = ImageBitmap::Create(
-      StaticBitmapImage::Create(surface->makeImageSnapshot()));
+      UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot()));
   ASSERT_TRUE(image_bitmap->BitmapImage());
 
   // Serialize and deserialize it.
@@ -1031,12 +1044,11 @@ TEST(V8ScriptValueSerializerTest, RoundTripImageBitmapWithColorSpaceInfo) {
   // Make a 10x7 red ImageBitmap in P3 color space.
   SkImageInfo info = SkImageInfo::Make(
       10, 7, kRGBA_F16_SkColorType, kPremul_SkAlphaType,
-      SkColorSpace::MakeRGB(SkColorSpace::kLinear_RenderTargetGamma,
-                            SkColorSpace::kDCIP3_D65_Gamut));
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, SkNamedGamut::kDCIP3));
   sk_sp<SkSurface> surface = SkSurface::MakeRaster(info);
   surface->getCanvas()->clear(SK_ColorRED);
   ImageBitmap* image_bitmap = ImageBitmap::Create(
-      StaticBitmapImage::Create(surface->makeImageSnapshot()));
+      UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot()));
   ASSERT_TRUE(image_bitmap->BitmapImage());
 
   // Serialize and deserialize it.
@@ -1138,8 +1150,7 @@ TEST(V8ScriptValueSerializerTest, DecodeImageBitmapV18) {
   uint8_t pixel[8] = {};
   SkImageInfo info = SkImageInfo::Make(
       1, 1, kRGBA_F16_SkColorType, kPremul_SkAlphaType,
-      SkColorSpace::MakeRGB(SkColorSpace::kLinear_RenderTargetGamma,
-                            SkColorSpace::kDCIP3_D65_Gamut));
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, SkNamedGamut::kDCIP3));
   ASSERT_TRUE(new_image_bitmap->BitmapImage()
                   ->PaintImageForCurrentFrame()
                   .GetSkImage()
@@ -1255,6 +1266,14 @@ TEST(V8ScriptValueSerializerTest, InvalidImageBitmapDecodeV18) {
     EXPECT_TRUE(
         V8ScriptValueDeserializer(script_state, input).Deserialize()->IsNull());
   }
+  {
+    // Nonsense image serialization tag (kImageDataStorageFormatTag).
+    scoped_refptr<SerializedScriptValue> input =
+        SerializedValue({0xff, 0x12, 0xff, 0x0d, 0x5c, 0x67, 0x03, 0x00, 0x00,
+                         0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00});
+    EXPECT_TRUE(
+        V8ScriptValueDeserializer(script_state, input).Deserialize()->IsNull());
+  }
 }
 
 TEST(V8ScriptValueSerializerTest, TransferImageBitmap) {
@@ -1265,7 +1284,7 @@ TEST(V8ScriptValueSerializerTest, TransferImageBitmap) {
   surface->getCanvas()->clear(SK_ColorRED);
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   ImageBitmap* image_bitmap =
-      ImageBitmap::Create(StaticBitmapImage::Create(image));
+      ImageBitmap::Create(UnacceleratedStaticBitmapImage::Create(image));
   ASSERT_TRUE(image_bitmap->BitmapImage());
 
   v8::Local<v8::Value> wrapper = ToV8(image_bitmap, scope.GetScriptState());
@@ -1296,7 +1315,8 @@ TEST(V8ScriptValueSerializerTest, TransferImageBitmap) {
 TEST(V8ScriptValueSerializerTest, TransferOffscreenCanvas) {
   // More exhaustive tests in web_tests/. This is a sanity check.
   V8TestingScope scope;
-  OffscreenCanvas* canvas = OffscreenCanvas::Create(10, 7);
+  OffscreenCanvas* canvas =
+      OffscreenCanvas::Create(scope.GetExecutionContext(), 10, 7);
   canvas->SetPlaceholderCanvasId(519);
   v8::Local<v8::Value> wrapper = ToV8(canvas, scope.GetScriptState());
   Transferables transferables;
@@ -1307,7 +1327,7 @@ TEST(V8ScriptValueSerializerTest, TransferOffscreenCanvas) {
   OffscreenCanvas* new_canvas =
       V8OffscreenCanvas::ToImpl(result.As<v8::Object>());
   EXPECT_EQ(IntSize(10, 7), new_canvas->Size());
-  EXPECT_EQ(519u, new_canvas->PlaceholderCanvasId());
+  EXPECT_EQ(519, new_canvas->PlaceholderCanvasId());
   EXPECT_TRUE(canvas->IsNeutered());
   EXPECT_FALSE(new_canvas->IsNeutered());
 }
@@ -1476,14 +1496,14 @@ TEST(V8ScriptValueSerializerTest, RoundTripFileNonNativeSnapshot) {
 // when the checker was constructed, according to WTF::currentTime.
 class TimeIntervalChecker {
  public:
-  TimeIntervalChecker() : start_time_(WTF::CurrentTime()) {}
+  TimeIntervalChecker() : start_time_(base::Time::Now()) {}
   bool WasAliveAt(double time_in_milliseconds) {
-    double time = time_in_milliseconds / kMsPerSecond;
-    return start_time_ <= time && time <= WTF::CurrentTime();
+    base::Time time = base::Time::FromJsTime(time_in_milliseconds);
+    return start_time_ <= time && time <= base::Time::Now();
   }
 
  private:
-  const double start_time_;
+  const base::Time start_time_;
 };
 
 TEST(V8ScriptValueSerializerTest, DecodeFileV3) {
@@ -1504,7 +1524,7 @@ TEST(V8ScriptValueSerializerTest, DecodeFileV3) {
   EXPECT_EQ("text/plain", new_file->type());
   EXPECT_FALSE(new_file->HasValidSnapshotMetadata());
   EXPECT_EQ(0u, new_file->size());
-  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->lastModifiedDate()));
+  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->LastModifiedDate()));
   EXPECT_EQ(File::kIsUserVisible, new_file->GetUserVisibility());
 }
 
@@ -1529,7 +1549,7 @@ TEST(V8ScriptValueSerializerTest, DecodeFileV4) {
   EXPECT_EQ("text/plain", new_file->type());
   EXPECT_FALSE(new_file->HasValidSnapshotMetadata());
   EXPECT_EQ(0u, new_file->size());
-  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->lastModifiedDate()));
+  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->LastModifiedDate()));
   EXPECT_EQ(File::kIsUserVisible, new_file->GetUserVisibility());
 }
 
@@ -1556,7 +1576,7 @@ TEST(V8ScriptValueSerializerTest, DecodeFileV4WithSnapshot) {
   EXPECT_EQ(512u, new_file->size());
   // From v4 to v7, the last modified time is written in seconds.
   // So -0.25 represents 250 ms before the Unix epoch.
-  EXPECT_EQ(-250.0, new_file->lastModifiedDate());
+  EXPECT_EQ(-250.0, new_file->LastModifiedDate());
 }
 
 TEST(V8ScriptValueSerializerTest, DecodeFileV7) {
@@ -1580,7 +1600,7 @@ TEST(V8ScriptValueSerializerTest, DecodeFileV7) {
   EXPECT_EQ("text/plain", new_file->type());
   EXPECT_FALSE(new_file->HasValidSnapshotMetadata());
   EXPECT_EQ(0u, new_file->size());
-  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->lastModifiedDate()));
+  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->LastModifiedDate()));
   EXPECT_EQ(File::kIsNotUserVisible, new_file->GetUserVisibility());
 }
 
@@ -1607,7 +1627,7 @@ TEST(V8ScriptValueSerializerTest, DecodeFileV8WithSnapshot) {
   EXPECT_EQ(512u, new_file->size());
   // From v8, the last modified time is written in milliseconds.
   // So -0.25 represents 0.25 ms before the Unix epoch.
-  EXPECT_EQ(-0.25, new_file->lastModifiedDate());
+  EXPECT_EQ(-0.25, new_file->LastModifiedDate());
   EXPECT_EQ(File::kIsUserVisible, new_file->GetUserVisibility());
 }
 
@@ -1682,7 +1702,7 @@ TEST(V8ScriptValueSerializerTest, DecodeFileIndexOutOfRange) {
 
 TEST(V8ScriptValueSerializerTest, RoundTripFileList) {
   V8TestingScope scope;
-  FileList* file_list = FileList::Create();
+  auto* file_list = MakeGarbageCollected<FileList>();
   file_list->Append(File::Create("/native/path"));
   file_list->Append(File::Create("/native/path2"));
   v8::Local<v8::Value> wrapper = ToV8(file_list, scope.GetScriptState());
@@ -1737,13 +1757,13 @@ TEST(V8ScriptValueSerializerTest, DecodeFileListV8WithoutSnapshot) {
   EXPECT_EQ("text/plain", new_file->type());
   EXPECT_FALSE(new_file->HasValidSnapshotMetadata());
   EXPECT_EQ(0u, new_file->size());
-  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->lastModifiedDate()));
+  EXPECT_TRUE(time_interval_checker.WasAliveAt(new_file->LastModifiedDate()));
   EXPECT_EQ(File::kIsNotUserVisible, new_file->GetUserVisibility());
 }
 
 TEST(V8ScriptValueSerializerTest, RoundTripFileListIndex) {
   V8TestingScope scope;
-  FileList* file_list = FileList::Create();
+  auto* file_list = MakeGarbageCollected<FileList>();
   file_list->Append(File::Create("/native/path"));
   file_list->Append(File::Create("/native/path2"));
   v8::Local<v8::Value> wrapper = ToV8(file_list, scope.GetScriptState());
@@ -1843,7 +1863,7 @@ TEST(V8ScriptValueSerializerTest, DecodeWithInefficientVersionEnvelope) {
 }
 
 // Sanity check for transferring ReadableStreams. This is mostly tested via
-// layout tests.
+// web tests.
 TEST(V8ScriptValueSerializerTest, RoundTripReadableStream) {
   ScopedTransferableStreamsForTest enable_transferable_streams(true);
 
@@ -1853,7 +1873,7 @@ TEST(V8ScriptValueSerializerTest, RoundTripReadableStream) {
 
   auto* rs = ReadableStream::Create(script_state, ASSERT_NO_EXCEPTION);
   v8::Local<v8::Value> wrapper = ToV8(rs, script_state);
-  Vector<ScriptValue> transferable_array = {ScriptValue(script_state, wrapper)};
+  HeapVector<ScriptValue> transferable_array = {ScriptValue(isolate, wrapper)};
   Transferables transferables;
   ASSERT_TRUE(SerializedScriptValue::ExtractTransferables(
       isolate, transferable_array, transferables, ASSERT_NO_EXCEPTION));

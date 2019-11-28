@@ -26,7 +26,8 @@
 
 #include "third_party/blink/renderer/core/loader/resource/css_style_sheet_resource.h"
 
-#include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
+#include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
@@ -45,8 +46,6 @@ namespace blink {
 CSSStyleSheetResource* CSSStyleSheetResource::Fetch(FetchParameters& params,
                                                     ResourceFetcher* fetcher,
                                                     ResourceClient* client) {
-  DCHECK_EQ(params.GetResourceRequest().GetFrameType(),
-            network::mojom::RequestContextFrameType::kNone);
   params.SetRequestContext(mojom::RequestContextType::STYLE);
   CSSStyleSheetResource* resource = ToCSSStyleSheetResource(
       fetcher->RequestResource(params, CSSStyleSheetResourceFactory(), client));
@@ -57,7 +56,7 @@ CSSStyleSheetResource* CSSStyleSheetResource::CreateForTest(
     const KURL& url,
     const WTF::TextEncoding& encoding) {
   ResourceRequest request(url);
-  request.SetFetchCredentialsMode(network::mojom::FetchCredentialsMode::kOmit);
+  request.SetCredentialsMode(network::mojom::CredentialsMode::kOmit);
   ResourceLoaderOptions options;
   TextResourceDecoderOptions decoder_options(
       TextResourceDecoderOptions::kCSSContent, encoding);
@@ -91,6 +90,17 @@ void CSSStyleSheetResource::SetParsedStyleSheetCache(
 void CSSStyleSheetResource::Trace(blink::Visitor* visitor) {
   visitor->Trace(parsed_style_sheet_cache_);
   TextResource::Trace(visitor);
+}
+
+void CSSStyleSheetResource::OnMemoryDump(
+    WebMemoryDumpLevelOfDetail level_of_detail,
+    WebProcessMemoryDump* memory_dump) const {
+  Resource::OnMemoryDump(level_of_detail, memory_dump);
+  const String name = GetMemoryDumpName() + "/style_sheets";
+  auto* dump = memory_dump->CreateMemoryAllocatorDump(name);
+  dump->AddScalar("size", "bytes", decoded_sheet_text_.CharactersSizeInBytes());
+  memory_dump->AddSuballocation(
+      dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
 }
 
 network::mojom::ReferrerPolicy CSSStyleSheetResource::GetReferrerPolicy()
@@ -222,10 +232,8 @@ StyleSheetContents* CSSStyleSheetResource::CreateParsedStyleSheetFromCache(
 
   // If the stylesheet has a media query, we need to clone the cached sheet
   // due to potential differences in the rule set.
-  if (RuntimeEnabledFeatures::CacheStyleSheetWithMediaQueriesEnabled() &&
-      parsed_style_sheet_cache_->HasMediaQueries()) {
+  if (parsed_style_sheet_cache_->HasMediaQueries())
     return parsed_style_sheet_cache_->Copy();
-  }
 
   return parsed_style_sheet_cache_;
 }

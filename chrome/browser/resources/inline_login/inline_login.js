@@ -11,7 +11,7 @@ cr.define('inline.login', function() {
 
   /**
    * The auth extension host instance.
-   * @type {cr.login.GaiaAuthHost}
+   * @type {cr.login.Authenticator}
    */
   let authExtHost;
 
@@ -32,8 +32,10 @@ cr.define('inline.login', function() {
   function onAuthReady(e) {
     $('contents').classList.toggle('loading', false);
     authReadyFired = true;
-    if (isLoginPrimaryAccount)
+    if (isLoginPrimaryAccount) {
       chrome.send('metricsHandler:recordAction', ['Signin_SigninPage_Shown']);
+    }
+    chrome.send('authExtensionReady');
   }
 
   function onDropLink(e) {
@@ -55,17 +57,24 @@ cr.define('inline.login', function() {
     $('contents').classList.toggle('loading', true);
   }
 
+  function onShowIncognito() {
+    chrome.send('showIncognito');
+  }
+
   /**
    * Initialize the UI.
    */
   function initialize() {
     $('navigation-button').addEventListener('click', navigationButtonClicked);
-    authExtHost = new cr.login.GaiaAuthHost('signin-frame');
+    cr.addWebUIListener('showBackButton', showBackButton);
+    cr.addWebUIListener('navigateBackInWebview', navigateBackInWebview);
+    authExtHost = new cr.login.Authenticator('signin-frame');
     authExtHost.addEventListener('dropLink', onDropLink);
     authExtHost.addEventListener('ready', onAuthReady);
     authExtHost.addEventListener('newWindow', onNewWindow);
     authExtHost.addEventListener('resize', onResize);
     authExtHost.addEventListener('authCompleted', onAuthCompleted);
+    authExtHost.addEventListener('showIncognito', onShowIncognito);
     chrome.send('initialize');
   }
 
@@ -80,7 +89,7 @@ cr.define('inline.login', function() {
     $('contents')
         .classList.toggle(
             'loading',
-            data.authMode != cr.login.GaiaAuthHost.AuthMode.DESKTOP ||
+            data.authMode != cr.login.Authenticator.AuthMode.DESKTOP ||
                 data.constrained == '1');
     isLoginPrimaryAccount = data.isLoginPrimaryAccount;
   }
@@ -128,20 +137,17 @@ cr.define('inline.login', function() {
   }
 
   function showBackButton() {
-    $('navigation-button').icon =
-        isRTL() ? 'cr:arrow-forward' : 'cr:arrow-back';
-
-    $('navigation-button')
-        .setAttribute(
-            'aria-label', loadTimeData.getString('accessibleBackButtonLabel'));
+    $('navigation-icon').icon =
+        isRTL() ? 'cr:chevron-right' : 'cr:chevron-left';
+    $('navigation-button').classList.add('enabled');
   }
 
-  function showCloseButton() {
-    $('navigation-button').icon = 'cr:close';
-    $('navigation-button').classList.add('enabled');
-    $('navigation-button')
-        .setAttribute(
-            'aria-label', loadTimeData.getString('accessibleCloseButtonLabel'));
+  function navigateBackInWebview() {
+    if ($('signin-frame').canGoBack()) {
+      $('signin-frame').back();
+    } else {
+      closeDialog();
+    }
   }
 
   function navigationButtonClicked() {
@@ -158,7 +164,6 @@ cr.define('inline.login', function() {
     loadAuthExtension: loadAuthExtension,
     navigationButtonClicked: navigationButtonClicked,
     showBackButton: showBackButton,
-    showCloseButton: showCloseButton
   };
 });
 

@@ -11,9 +11,9 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/decryptor.h"
+#include "media/base/win/d3d11_create_device_cb.h"
 #include "media/cdm/cdm_proxy_context.h"
 #include "media/gpu/media_gpu_export.h"
-#include "media/gpu/windows/d3d11_create_device_cb.h"
 
 namespace media {
 
@@ -87,7 +87,7 @@ class MEDIA_GPU_EXPORT D3D11Decryptor : public Decryptor {
   // to.
   ComPtr<ID3D11Buffer> cpu_accessible_buffer_;
 
-  base::WeakPtrFactory<D3D11Decryptor> weak_factory_;
+  base::WeakPtrFactory<D3D11Decryptor> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(D3D11Decryptor);
 };

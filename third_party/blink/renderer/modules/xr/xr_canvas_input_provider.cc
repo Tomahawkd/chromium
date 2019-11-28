@@ -4,10 +4,11 @@
 
 #include "third_party/blink/renderer/modules/xr/xr_canvas_input_provider.h"
 
-#include "third_party/blink/renderer/core/dom/events/event_listener.h"
+#include "device/vr/public/mojom/vr_service.mojom-blink.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
 #include "third_party/blink/renderer/core/events/pointer_event.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
-#include "third_party/blink/renderer/modules/xr/xr_device.h"
+#include "third_party/blink/renderer/modules/xr/xr.h"
 #include "third_party/blink/renderer/modules/xr/xr_frame_provider.h"
 #include "third_party/blink/renderer/modules/xr/xr_input_source.h"
 #include "third_party/blink/renderer/modules/xr/xr_session.h"
@@ -17,24 +18,25 @@ namespace blink {
 
 namespace {
 
-class XRCanvasInputEventListener : public EventListener {
+class XRCanvasInputEventListener : public NativeEventListener {
  public:
   XRCanvasInputEventListener(XRCanvasInputProvider* input_provider)
-      : EventListener(kCPPEventListenerType), input_provider_(input_provider) {}
-
-  bool operator==(const EventListener& that) const override {
-    return this == &that;
-  }
+      : input_provider_(input_provider) {}
 
   void Invoke(ExecutionContext* execution_context, Event* event) override {
     if (!input_provider_->ShouldProcessEvents())
       return;
 
+    PointerEvent* pointer_event = ToPointerEvent(event);
+    DCHECK(pointer_event);
+    if (!pointer_event->isPrimary())
+      return;
+
     if (event->type() == event_type_names::kPointerdown) {
-      input_provider_->OnPointerDown(ToPointerEvent(event));
+      input_provider_->OnPointerDown(pointer_event);
     } else if (event->type() == event_type_names::kPointerup ||
                event->type() == event_type_names::kPointercancel) {
-      input_provider_->OnPointerUp(ToPointerEvent(event));
+      input_provider_->OnPointerUp(pointer_event);
     }
   }
 
@@ -58,8 +60,7 @@ XRCanvasInputProvider::XRCanvasInputProvider(XRSession* session,
   canvas->addEventListener(event_type_names::kPointercancel, listener_);
 }
 
-XRCanvasInputProvider::~XRCanvasInputProvider() {
-}
+XRCanvasInputProvider::~XRCanvasInputProvider() {}
 
 void XRCanvasInputProvider::Stop() {
   if (!listener_) {
@@ -74,17 +75,17 @@ void XRCanvasInputProvider::Stop() {
 
 bool XRCanvasInputProvider::ShouldProcessEvents() {
   // Don't process canvas gestures if there's an active immersive session.
-  return !(session_->device()->frameProvider()->immersive_session());
+  return !(session_->xr()->frameProvider()->immersive_session());
 }
 
 void XRCanvasInputProvider::OnPointerDown(PointerEvent* event) {
   UpdateInputSource(event);
-  session_->OnSelectStart(input_source_);
+  input_source_->OnSelectStart();
 }
 
 void XRCanvasInputProvider::OnPointerUp(PointerEvent* event) {
   UpdateInputSource(event);
-  session_->OnSelect(input_source_);
+  input_source_->OnSelect();
   ClearInputSource();
 }
 
@@ -97,8 +98,12 @@ void XRCanvasInputProvider::UpdateInputSource(PointerEvent* event) {
     return;
 
   if (!input_source_) {
-    input_source_ = MakeGarbageCollected<XRInputSource>(session_, 0);
-    input_source_->SetTargetRayMode(XRInputSource::kScreen);
+    // XRSession doesn't like source ID's of 0.  We should only be processing
+    // Canvas Input events in non-immersive sessions anyway, where we don't
+    // expect other controllers, so this number is somewhat arbitrary anyway.
+    input_source_ = MakeGarbageCollected<XRInputSource>(
+        session_, 1, device::mojom::XRTargetRayMode::TAPPING);
+    session_->AddTransientInputSource(input_source_);
   }
 
   // Get the event location relative to the canvas element.
@@ -109,16 +114,17 @@ void XRCanvasInputProvider::UpdateInputSource(PointerEvent* event) {
   // position of the screen interaction and shoves it backwards through the
   // projection matrix to get a 3D point in space, which is then returned in
   // matrix form so we can use it as an XRInputSource's pointerMatrix.
-  XRView* view = session_->views()[0];
-  std::unique_ptr<TransformationMatrix> pointer_transform_matrix =
-      view->UnprojectPointer(element_x, element_y, canvas_->OffsetWidth(),
-                             canvas_->OffsetHeight());
+  XRViewData& view = session_->views()[0];
+  TransformationMatrix viewer_from_pointer = view.UnprojectPointer(
+      element_x, element_y, canvas_->OffsetWidth(), canvas_->OffsetHeight());
 
-  // Update the input source's pointer matrix.
-  input_source_->SetPointerTransformMatrix(std::move(pointer_transform_matrix));
+  // Update the pointer pose in input space. For screen tapping, input
+  // space is equivalent to viewer space.
+  input_source_->SetInputFromPointer(&viewer_from_pointer);
 }
 
 void XRCanvasInputProvider::ClearInputSource() {
+  session_->RemoveTransientInputSource(input_source_);
   input_source_ = nullptr;
 }
 

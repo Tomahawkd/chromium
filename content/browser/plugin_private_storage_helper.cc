@@ -25,12 +25,13 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "ppapi/shared_impl/ppapi_constants.h"
-#include "storage/browser/fileapi/async_file_util.h"
-#include "storage/browser/fileapi/async_file_util_adapter.h"
-#include "storage/browser/fileapi/file_system_context.h"
-#include "storage/browser/fileapi/isolated_context.h"
-#include "storage/browser/fileapi/obfuscated_file_util.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/browser/file_system/async_file_util.h"
+#include "storage/browser/file_system/async_file_util_adapter.h"
+#include "storage/browser/file_system/file_system_context.h"
+#include "storage/browser/file_system/isolated_context.h"
+#include "storage/browser/file_system/obfuscated_file_util.h"
+#include "storage/browser/quota/special_storage_policy.h"
+#include "storage/common/file_system/file_system_util.h"
 
 namespace content {
 
@@ -326,7 +327,7 @@ void PluginPrivateDataDeletionHelper::CheckOriginsOnFileTaskRunner(
               filesystem_context_.get(), origin.GetOrigin(),
               plugin_path.BaseName().MaybeAsASCII(), begin_, end_,
               decrement_callback);
-      base::PostTaskWithTraits(
+      base::PostTask(
           FROM_HERE, {BrowserThread::IO},
           base::BindOnce(
               &PluginPrivateDataByOriginChecker::CheckFilesOnIOThread,
@@ -387,6 +388,8 @@ void PluginPrivateDataDeletionHelper::DecrementTaskCount(
 void ClearPluginPrivateDataOnFileTaskRunner(
     scoped_refptr<storage::FileSystemContext> filesystem_context,
     const GURL& storage_origin,
+    const StoragePartition::OriginMatcherFunction& origin_matcher,
+    const scoped_refptr<storage::SpecialStoragePolicy>& special_storage_policy,
     const base::Time begin,
     const base::Time end,
     const base::Closure& callback) {
@@ -413,7 +416,9 @@ void ClearPluginPrivateDataOnFileTaskRunner(
   // If a specific origin is provided, then check that it is in the list
   // returned and remove all the other origins.
   if (!storage_origin.is_empty()) {
-    if (!base::ContainsKey(origins, storage_origin)) {
+    DCHECK(origin_matcher.is_null()) << "Only 1 of |storage_origin| and "
+                                        "|origin_matcher| should be specified.";
+    if (!base::Contains(origins, storage_origin)) {
       // Nothing matches, so nothing to do.
       callback.Run();
       return;
@@ -422,6 +427,26 @@ void ClearPluginPrivateDataOnFileTaskRunner(
     // List should only contain the one value that matches.
     origins.clear();
     origins.insert(storage_origin);
+  }
+
+  // If a filter is provided, determine which origins match.
+  if (!origin_matcher.is_null()) {
+    DCHECK(storage_origin.is_empty())
+        << "Only 1 of |storage_origin| and |origin_matcher| should be "
+           "specified.";
+    std::set<GURL> origins_to_check;
+    origins_to_check.swap(origins);
+    for (const auto& origin : origins_to_check) {
+      if (origin_matcher.Run(url::Origin::Create(origin),
+                             special_storage_policy.get()))
+        origins.insert(origin);
+    }
+
+    // If no origins matched, there is nothing to do.
+    if (origins.empty()) {
+      callback.Run();
+      return;
+    }
   }
 
   PluginPrivateDataDeletionHelper* helper = new PluginPrivateDataDeletionHelper(

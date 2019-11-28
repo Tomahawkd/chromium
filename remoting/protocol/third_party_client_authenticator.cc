@@ -23,13 +23,12 @@ ThirdPartyClientAuthenticator::ThirdPartyClientAuthenticator(
     const FetchThirdPartyTokenCallback& fetch_token_callback)
     : ThirdPartyAuthenticatorBase(WAITING_MESSAGE),
       create_base_authenticator_callback_(create_base_authenticator_callback),
-      fetch_token_callback_(std::move(fetch_token_callback)),
-      weak_factory_(this) {}
+      fetch_token_callback_(std::move(fetch_token_callback)) {}
 
 ThirdPartyClientAuthenticator::~ThirdPartyClientAuthenticator() = default;
 
 void ThirdPartyClientAuthenticator::ProcessTokenMessage(
-    const buzz::XmlElement* message,
+    const jingle_xmpp::XmlElement* message,
     const base::Closure& resume_callback) {
   std::string token_url = message->TextNamed(kTokenUrlTag);
   std::string token_scope = message->TextNamed(kTokenScopeTag);
@@ -52,11 +51,11 @@ void ThirdPartyClientAuthenticator::ProcessTokenMessage(
 }
 
 void ThirdPartyClientAuthenticator::AddTokenElements(
-    buzz::XmlElement* message) {
+    jingle_xmpp::XmlElement* message) {
   DCHECK_EQ(token_state_, MESSAGE_READY);
   DCHECK(!token_.empty());
 
-  buzz::XmlElement* token_tag = new buzz::XmlElement(kTokenTag);
+  jingle_xmpp::XmlElement* token_tag = new jingle_xmpp::XmlElement(kTokenTag);
   token_tag->SetBodyText(token_);
   message->AddElement(token_tag);
   token_state_ = ACCEPTED;

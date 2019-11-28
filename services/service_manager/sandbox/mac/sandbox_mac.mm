@@ -24,12 +24,11 @@
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
+#include "base/mac/mach_port_rendezvous.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/mac/scoped_nsautorelease_pool.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
-#include "base/metrics/field_trial_memory_mac.h"
 #include "base/rand_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -43,7 +42,10 @@
 #include "services/service_manager/sandbox/mac/cdm.sb.h"
 #include "services/service_manager/sandbox/mac/common.sb.h"
 #include "services/service_manager/sandbox/mac/gpu.sb.h"
+#include "services/service_manager/sandbox/mac/gpu_v2.sb.h"
 #include "services/service_manager/sandbox/mac/nacl_loader.sb.h"
+#include "services/service_manager/sandbox/mac/network.sb.h"
+#include "services/service_manager/sandbox/mac/pdf_compositor.sb.h"
 #include "services/service_manager/sandbox/mac/ppapi.sb.h"
 #include "services/service_manager/sandbox/mac/renderer.sb.h"
 #include "services/service_manager/sandbox/mac/utility.sb.h"
@@ -51,38 +53,6 @@
 #include "services/service_manager/sandbox/switches.h"
 
 namespace service_manager {
-namespace {
-
-// Is the sandbox currently active.
-bool gSandboxIsActive = false;
-
-struct SandboxTypeToResourceIDMapping {
-  SandboxType sandbox_type;
-  const char* seatbelt_policy_string;
-};
-
-// Mapping from sandbox process types to resource IDs containing the sandbox
-// profile for all process types known to service_manager.
-// TODO(tsepez): Implement profile for SANDBOX_TYPE_NETWORK.
-SandboxTypeToResourceIDMapping kDefaultSandboxTypeToResourceIDMapping[] = {
-    {SANDBOX_TYPE_NO_SANDBOX, nullptr},
-    {SANDBOX_TYPE_RENDERER, kSeatbeltPolicyString_renderer},
-    {SANDBOX_TYPE_UTILITY, kSeatbeltPolicyString_utility},
-    {SANDBOX_TYPE_GPU, kSeatbeltPolicyString_gpu},
-    {SANDBOX_TYPE_PPAPI, kSeatbeltPolicyString_ppapi},
-    {SANDBOX_TYPE_NETWORK, nullptr},
-    {SANDBOX_TYPE_CDM, kSeatbeltPolicyString_cdm},
-    {SANDBOX_TYPE_NACL_LOADER, kSeatbeltPolicyString_nacl_loader},
-    {SANDBOX_TYPE_PDF_COMPOSITOR, kSeatbeltPolicyString_ppapi},
-    {SANDBOX_TYPE_PROFILING, kSeatbeltPolicyString_utility},
-    {SANDBOX_TYPE_AUDIO, kSeatbeltPolicyString_audio},
-};
-
-static_assert(arraysize(kDefaultSandboxTypeToResourceIDMapping) ==
-                  size_t(SANDBOX_TYPE_AFTER_LAST_TYPE),
-              "sandbox type to resource id mapping incorrect");
-
-}  // namespace
 
 // Static variable declarations.
 const char* SandboxMac::kSandboxBrowserPID = "BROWSER_PID";
@@ -110,101 +80,75 @@ const char* SandboxMac::kSandboxBundleVersionPath = "BUNDLE_VERSION_PATH";
 
 // static
 void SandboxMac::Warmup(SandboxType sandbox_type) {
-  base::mac::ScopedNSAutoreleasePool scoped_pool;
+  DCHECK_EQ(sandbox_type, SANDBOX_TYPE_GPU);
 
-  {  // CGColorSpaceCreateWithName(), CGBitmapContextCreate() - 10.5.6
-    base::ScopedCFTypeRef<CGColorSpaceRef> rgb_colorspace(
-        CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB));
+  @autoreleasepool {
+    {  // CGColorSpaceCreateWithName(), CGBitmapContextCreate() - 10.5.6
+      base::ScopedCFTypeRef<CGColorSpaceRef> rgb_colorspace(
+          CGColorSpaceCreateWithName(kCGColorSpaceGenericRGB));
 
-    // Allocate a 1x1 image.
-    char data[4];
-    base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
-        data, 1, 1, 8, 1 * 4, rgb_colorspace,
-        kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host));
+      // Allocate a 1x1 image.
+      char data[4];
+      base::ScopedCFTypeRef<CGContextRef> context(CGBitmapContextCreate(
+          data, 1, 1, 8, 1 * 4, rgb_colorspace,
+          kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host));
 
-    // Load in the color profiles we'll need (as a side effect).
-    ignore_result(base::mac::GetSRGBColorSpace());
-    ignore_result(base::mac::GetSystemColorSpace());
+      // Load in the color profiles we'll need (as a side effect).
+      ignore_result(base::mac::GetSRGBColorSpace());
+      ignore_result(base::mac::GetSystemColorSpace());
 
-    // CGColorSpaceCreateSystemDefaultCMYK - 10.6
-    base::ScopedCFTypeRef<CGColorSpaceRef> cmyk_colorspace(
-        CGColorSpaceCreateWithName(kCGColorSpaceGenericCMYK));
-  }
+      // CGColorSpaceCreateSystemDefaultCMYK - 10.6
+      base::ScopedCFTypeRef<CGColorSpaceRef> cmyk_colorspace(
+          CGColorSpaceCreateWithName(kCGColorSpaceGenericCMYK));
+    }
 
-  {  // localtime() - 10.5.6
-    time_t tv = {0};
-    localtime(&tv);
-  }
+    {  // localtime() - 10.5.6
+      time_t tv = {0};
+      localtime(&tv);
+    }
 
-  {  // Gestalt() tries to read /System/Library/CoreServices/SystemVersion.plist
-    // on 10.5.6
-    int32_t tmp;
-    base::SysInfo::OperatingSystemVersionNumbers(&tmp, &tmp, &tmp);
-  }
+    {  // Gestalt() tries to read
+       // /System/Library/CoreServices/SystemVersion.plist
+      // on 10.5.6
+      int32_t tmp;
+      base::SysInfo::OperatingSystemVersionNumbers(&tmp, &tmp, &tmp);
+    }
 
-  {  // CGImageSourceGetStatus() - 10.6
-     // Create a png with just enough data to get everything warmed up...
-    char png_header[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    NSData* data =
-        [NSData dataWithBytes:png_header length:arraysize(png_header)];
-    base::ScopedCFTypeRef<CGImageSourceRef> img(
-        CGImageSourceCreateWithData((CFDataRef)data, NULL));
-    CGImageSourceGetStatus(img);
-  }
+    {  // CGImageSourceGetStatus() - 10.6
+       // Create a png with just enough data to get everything warmed up...
+      char png_header[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+      NSData* data = [NSData dataWithBytes:png_header
+                                    length:base::size(png_header)];
+      base::ScopedCFTypeRef<CGImageSourceRef> img(
+          CGImageSourceCreateWithData((CFDataRef)data, NULL));
+      CGImageSourceGetStatus(img);
+    }
 
-  {
-    // Allow access to /dev/urandom.
-    base::GetUrandomFD();
-  }
+    {
+      // Allow access to /dev/urandom.
+      base::GetUrandomFD();
+    }
 
-  {  // IOSurfaceLookup() - 10.7
-    // Needed by zero-copy texture update framework - crbug.com/323338
-    base::ScopedCFTypeRef<IOSurfaceRef> io_surface(IOSurfaceLookup(0));
-  }
-
-  // Process-type dependent warm-up.
-  if (sandbox_type == SANDBOX_TYPE_UTILITY) {
-    // CFTimeZoneCopyZone() tries to read /etc and /private/etc/localtime - 10.8
-    // Needed by Media Galleries API Picasa - crbug.com/151701
-    CFTimeZoneCopySystem();
-  }
-
-  if (sandbox_type == SANDBOX_TYPE_PPAPI ||
-      sandbox_type == SANDBOX_TYPE_PDF_COMPOSITOR) {
-    // Preload AppKit color spaces used for ppapi(https://crbug.com/348304),
-    // as well as pdf compositor service likely on version 10.10 or
-    // older(https://crbug.com/822218).
-    NSColor* color = [NSColor controlTextColor];
-    [color colorUsingColorSpaceName:NSCalibratedRGBColorSpace];
+    {  // IOSurfaceLookup() - 10.7
+      // Needed by zero-copy texture update framework - crbug.com/323338
+      base::ScopedCFTypeRef<IOSurfaceRef> io_surface(IOSurfaceLookup(0));
+    }
   }
 }
 
 // Load the appropriate template for the given sandbox type.
 // Returns the template as a string or an empty string on error.
 std::string LoadSandboxTemplate(SandboxType sandbox_type) {
-  // We use a custom sandbox definition to lock things down as tightly as
-  // possible.
-  auto* it = std::find_if(
-      std::begin(kDefaultSandboxTypeToResourceIDMapping),
-      std::end(kDefaultSandboxTypeToResourceIDMapping),
-      [sandbox_type](const SandboxTypeToResourceIDMapping& element) {
-        return element.sandbox_type == sandbox_type;
-      });
-
-  CHECK(it != std::end(kDefaultSandboxTypeToResourceIDMapping))
-      << "Unknown sandbox type " << sandbox_type;
-  base::StringPiece sandbox_definition = it->seatbelt_policy_string;
-
-  // Prefix sandbox_data with common_sandbox_prefix_data.
-  std::string sandbox_profile = kSeatbeltPolicyString_common;
-  sandbox_definition.AppendToString(&sandbox_profile);
-  return sandbox_profile;
+  DCHECK_EQ(sandbox_type, SANDBOX_TYPE_GPU);
+  return kSeatbeltPolicyString_gpu;
 }
 
 // Turns on the OS X sandbox for this process.
 
 // static
 bool SandboxMac::Enable(SandboxType sandbox_type) {
+  DCHECK_EQ(sandbox_type, SANDBOX_TYPE_GPU);
+
   std::string sandbox_data = LoadSandboxTemplate(sandbox_type);
   if (sandbox_data.empty())
     return false;
@@ -239,7 +183,7 @@ bool SandboxMac::Enable(SandboxType sandbox_type) {
 
   if (!compiler.InsertStringParam(
           kSandboxFieldTrialSeverName,
-          base::FieldTrialMemoryClient::GetBootstrapName())) {
+          base::MachPortRendezvousClient::GetBootstrapName())) {
     return false;
   }
 
@@ -263,30 +207,67 @@ bool SandboxMac::Enable(SandboxType sandbox_type) {
   std::string error_str;
   bool success = compiler.CompileAndApplyProfile(&error_str);
   DLOG_IF(FATAL, !success) << "Failed to initialize sandbox: " << error_str;
-  gSandboxIsActive = success;
   return success;
-}
-
-// static
-bool SandboxMac::IsCurrentlyActive() {
-  return gSandboxIsActive;
 }
 
 // static
 base::FilePath SandboxMac::GetCanonicalPath(const base::FilePath& path) {
   base::ScopedFD fd(HANDLE_EINTR(open(path.value().c_str(), O_RDONLY)));
   if (!fd.is_valid()) {
-    DPLOG(FATAL) << "GetCanonicalSandboxPath() failed for: " << path.value();
+    DPLOG(ERROR) << "GetCanonicalSandboxPath() failed for: " << path.value();
     return path;
   }
 
   base::FilePath::CharType canonical_path[MAXPATHLEN];
   if (HANDLE_EINTR(fcntl(fd.get(), F_GETPATH, canonical_path)) != 0) {
-    DPLOG(FATAL) << "GetCanonicalSandboxPath() failed for: " << path.value();
+    DPLOG(ERROR) << "GetCanonicalSandboxPath() failed for: " << path.value();
     return path;
   }
 
   return base::FilePath(canonical_path);
+}
+
+// static
+std::string SandboxMac::GetSandboxProfile(SandboxType sandbox_type) {
+  std::string profile =
+      std::string(service_manager::kSeatbeltPolicyString_common);
+
+  switch (sandbox_type) {
+    case service_manager::SANDBOX_TYPE_AUDIO:
+      profile += service_manager::kSeatbeltPolicyString_audio;
+      break;
+    case service_manager::SANDBOX_TYPE_CDM:
+      profile += service_manager::kSeatbeltPolicyString_cdm;
+      break;
+    case service_manager::SANDBOX_TYPE_GPU:
+      profile += service_manager::kSeatbeltPolicyString_gpu_v2;
+      break;
+    case service_manager::SANDBOX_TYPE_NACL_LOADER:
+      profile += service_manager::kSeatbeltPolicyString_nacl_loader;
+      break;
+    case service_manager::SANDBOX_TYPE_NETWORK:
+      profile += service_manager::kSeatbeltPolicyString_network;
+      break;
+    case service_manager::SANDBOX_TYPE_PDF_COMPOSITOR:
+      profile += service_manager::kSeatbeltPolicyString_pdf_compositor;
+      break;
+    case service_manager::SANDBOX_TYPE_PPAPI:
+      profile += service_manager::kSeatbeltPolicyString_ppapi;
+      break;
+    case service_manager::SANDBOX_TYPE_PROFILING:
+    case service_manager::SANDBOX_TYPE_UTILITY:
+      profile += service_manager::kSeatbeltPolicyString_utility;
+      break;
+    case service_manager::SANDBOX_TYPE_RENDERER:
+      profile += service_manager::kSeatbeltPolicyString_renderer;
+      break;
+    case service_manager::SANDBOX_TYPE_INVALID:
+    case service_manager::SANDBOX_TYPE_FIRST_TYPE:
+    case service_manager::SANDBOX_TYPE_AFTER_LAST_TYPE:
+      CHECK(false);
+      break;
+  }
+  return profile;
 }
 
 }  // namespace service_manager

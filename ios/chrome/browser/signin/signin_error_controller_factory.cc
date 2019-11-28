@@ -7,13 +7,12 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
-#include "base/memory/singleton.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
-#include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/signin/profile_oauth2_token_service_factory.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 
 namespace ios {
 
@@ -26,14 +25,15 @@ SigninErrorController* SigninErrorControllerFactory::GetForBrowserState(
 
 // static
 SigninErrorControllerFactory* SigninErrorControllerFactory::GetInstance() {
-  return base::Singleton<SigninErrorControllerFactory>::get();
+  static base::NoDestructor<SigninErrorControllerFactory> instance;
+  return instance.get();
 }
 
 SigninErrorControllerFactory::SigninErrorControllerFactory()
     : BrowserStateKeyedServiceFactory(
           "SigninErrorController",
           BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(ProfileOAuth2TokenServiceFactory::GetInstance());
+  DependsOn(IdentityManagerFactory::GetInstance());
 }
 
 SigninErrorControllerFactory::~SigninErrorControllerFactory() {
@@ -46,8 +46,7 @@ SigninErrorControllerFactory::BuildServiceInstanceFor(
       ChromeBrowserState::FromBrowserState(context);
   return std::make_unique<SigninErrorController>(
       SigninErrorController::AccountMode::ANY_ACCOUNT,
-      ProfileOAuth2TokenServiceFactory::GetForBrowserState(
-          chrome_browser_state));
+      IdentityManagerFactory::GetForBrowserState(chrome_browser_state));
 }
 
 }  // namespace ios

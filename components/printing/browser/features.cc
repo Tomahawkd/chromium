@@ -7,8 +7,10 @@
 namespace printing {
 namespace features {
 
-const base::Feature kUsePdfCompositorServiceForPrint{
-    "UsePdfCompositorServiceForPrint", base::FEATURE_ENABLED_BY_DEFAULT};
+#if defined(OS_MACOSX)
+const base::Feature kEnableCustomMacPaperSizes{
+    "EnableCustomMacPaperSizes", base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
 
 }  // namespace features
 }  // namespace printing

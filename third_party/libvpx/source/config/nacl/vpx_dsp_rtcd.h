@@ -2702,6 +2702,9 @@ void vpx_highbd_sad8x8x4d_c(const uint8_t* src_ptr,
                             uint32_t* sad_array);
 #define vpx_highbd_sad8x8x4d vpx_highbd_sad8x8x4d_c
 
+int vpx_highbd_satd_c(const tran_low_t* coeff, int length);
+#define vpx_highbd_satd vpx_highbd_satd_c
+
 void vpx_highbd_subtract_block_c(int rows,
                                  int cols,
                                  int16_t* diff_ptr,
@@ -3151,6 +3154,13 @@ void vpx_sad32x32x4d_c(const uint8_t* src_ptr,
                        int ref_stride,
                        uint32_t* sad_array);
 #define vpx_sad32x32x4d vpx_sad32x32x4d_c
+
+void vpx_sad32x32x8_c(const uint8_t* src_ptr,
+                      int src_stride,
+                      const uint8_t* ref_ptr,
+                      int ref_stride,
+                      uint32_t* sad_array);
+#define vpx_sad32x32x8 vpx_sad32x32x8_c
 
 unsigned int vpx_sad32x64_c(const uint8_t* src_ptr,
                             int src_stride,

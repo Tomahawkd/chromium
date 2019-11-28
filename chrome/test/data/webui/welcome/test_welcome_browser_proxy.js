@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/** @implements {welcome.WelcomeBrowserProxy} */
-class TestWelcomeBrowserProxy extends TestBrowserProxy {
+import {TestBrowserProxy} from '../test_browser_proxy.m.js';
+
+/** @implements {WelcomeBrowserProxy} */
+export class TestWelcomeBrowserProxy extends TestBrowserProxy {
   constructor() {
     super([
       'handleActivateSignIn',
+      'handleUserDecline',
       'goToNewTabPage',
       'goToURL',
     ]);
@@ -15,6 +18,11 @@ class TestWelcomeBrowserProxy extends TestBrowserProxy {
   /** @override */
   handleActivateSignIn(providerId) {
     this.methodCalled('handleActivateSignIn', providerId);
+  }
+
+  /** @override */
+  handleUserDecline(url) {
+    this.methodCalled('handleUserDecline', url);
   }
 
   /** @override */

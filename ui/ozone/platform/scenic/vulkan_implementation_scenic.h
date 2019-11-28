@@ -10,19 +10,24 @@
 
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_instance.h"
-#include "ui/ozone/public/interfaces/scenic_gpu_host.mojom.h"
+#include "ui/ozone/public/mojom/scenic_gpu_host.mojom.h"
 
 namespace ui {
 
+class ScenicSurfaceFactory;
+class SysmemBufferManager;
+
 class VulkanImplementationScenic : public gpu::VulkanImplementation {
  public:
-  VulkanImplementationScenic(mojom::ScenicGpuHost* scenic_gpu_host,
-                             fuchsia::ui::scenic::Scenic* scenic);
+  VulkanImplementationScenic(ScenicSurfaceFactory* scenic_surface_factory,
+                             SysmemBufferManager* sysmem_buffer_manager,
+                             bool allow_protected_memory,
+                             bool enforce_protected_memory);
   ~VulkanImplementationScenic() override;
 
   // VulkanImplementation:
-  bool InitializeVulkanInstance() override;
-  VkInstance GetVulkanInstance() override;
+  bool InitializeVulkanInstance(bool using_surface) override;
+  gpu::VulkanInstance* GetVulkanInstance() override;
   std::unique_ptr<gpu::VulkanSurface> CreateViewSurface(
       gfx::AcceleratedWidget window) override;
   bool GetPhysicalDevicePresentationSupport(
@@ -34,14 +39,33 @@ class VulkanImplementationScenic : public gpu::VulkanImplementation {
   std::unique_ptr<gfx::GpuFence> ExportVkFenceToGpuFence(
       VkDevice vk_device,
       VkFence vk_fence) override;
+  VkSemaphore CreateExternalSemaphore(VkDevice vk_device) override;
+  VkSemaphore ImportSemaphoreHandle(VkDevice vk_device,
+                                    gpu::SemaphoreHandle handle) override;
+  gpu::SemaphoreHandle GetSemaphoreHandle(VkDevice vk_device,
+                                          VkSemaphore vk_semaphore) override;
+  VkExternalMemoryHandleTypeFlagBits GetExternalImageHandleType() override;
+  bool CanImportGpuMemoryBuffer(
+      gfx::GpuMemoryBufferType memory_buffer_type) override;
+  bool CreateImageFromGpuMemoryHandle(
+      VkDevice vk_device,
+      gfx::GpuMemoryBufferHandle gmb_handle,
+      gfx::Size size,
+      VkImage* vk_image,
+      VkImageCreateInfo* vk_image_info,
+      VkDeviceMemory* vk_device_memory,
+      VkDeviceSize* mem_allocation_size,
+      base::Optional<gpu::VulkanYCbCrInfo>* ycbcr_info) override;
+  std::unique_ptr<gpu::SysmemBufferCollection> RegisterSysmemBufferCollection(
+      VkDevice device,
+      gfx::SysmemBufferCollectionId id,
+      zx::channel token) override;
 
  private:
-  mojom::ScenicGpuHost* const scenic_gpu_host_;
-  fuchsia::ui::scenic::Scenic* const scenic_;
-  gpu::VulkanInstance vulkan_instance_;
+  ScenicSurfaceFactory* const scenic_surface_factory_;
+  SysmemBufferManager* const sysmem_buffer_manager_;
 
-  PFN_vkVoidFunction vkCreateMagmaSurfaceKHR_ = nullptr;
-  PFN_vkVoidFunction vkGetPhysicalDeviceMagmaPresentationSupportKHR_ = nullptr;
+  gpu::VulkanInstance vulkan_instance_;
 
   DISALLOW_COPY_AND_ASSIGN(VulkanImplementationScenic);
 };

@@ -15,11 +15,10 @@
 #include "base/location.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "chromeos/chromeos_features.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/proximity_auth/messenger_observer.h"
 #include "chromeos/components/proximity_auth/remote_status_update.h"
-#include "components/cryptauth/wire_message.h"
+#include "chromeos/constants/chromeos_features.h"
 
 namespace proximity_auth {
 
@@ -62,7 +61,7 @@ std::string GetMessageType(const base::DictionaryValue& message) {
 
 MessengerImpl::MessengerImpl(
     std::unique_ptr<chromeos::secure_channel::ClientChannel> channel)
-    : channel_(std::move(channel)), weak_ptr_factory_(this) {
+    : channel_(std::move(channel)) {
   DCHECK(!channel_->is_disconnected());
   channel_->AddObserver(this);
 }
@@ -79,10 +78,6 @@ void MessengerImpl::RemoveObserver(MessengerObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-bool MessengerImpl::SupportsSignIn() const {
-  return true;
-}
-
 void MessengerImpl::DispatchUnlockEvent() {
   base::DictionaryValue message;
   message.SetString(kTypeKey, kMessageTypeLocalEvent);
@@ -92,14 +87,6 @@ void MessengerImpl::DispatchUnlockEvent() {
 }
 
 void MessengerImpl::RequestDecryption(const std::string& challenge) {
-  if (!SupportsSignIn()) {
-    PA_LOG(WARNING) << "Dropping decryption request, as remote device "
-                    << "does not support protocol v3.1.";
-    for (auto& observer : observers_)
-      observer.OnDecryptResponse(std::string());
-    return;
-  }
-
   const std::string encrypted_message_data = challenge;
   std::string encrypted_message_data_base64;
   base::Base64UrlEncode(encrypted_message_data,
@@ -114,14 +101,6 @@ void MessengerImpl::RequestDecryption(const std::string& challenge) {
 }
 
 void MessengerImpl::RequestUnlock() {
-  if (!SupportsSignIn()) {
-    PA_LOG(WARNING) << "Dropping unlock request, as remote device does not "
-                    << "support protocol v3.1.";
-    for (auto& observer : observers_)
-      observer.OnUnlockResponse(false);
-    return;
-  }
-
   base::DictionaryValue message;
   message.SetString(kTypeKey, kMessageTypeUnlockRequest);
   queued_messages_.push_back(PendingMessage(message));
@@ -209,7 +188,8 @@ void MessengerImpl::OnMessageReceived(const std::string& payload) {
 
 void MessengerImpl::HandleMessage(const std::string& message) {
   // The decoded message should be a JSON string.
-  std::unique_ptr<base::Value> message_value = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> message_value =
+      base::JSONReader::ReadDeprecated(message);
   if (!message_value || !message_value->is_dict()) {
     PA_LOG(ERROR) << "Unable to parse message as JSON:\n" << message;
     return;

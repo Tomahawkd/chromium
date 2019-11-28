@@ -147,7 +147,7 @@ void ImportDataHandler::InitializeDialog(const base::ListValue* args) {
   std::string callback_id;
   CHECK(args->GetString(0, &callback_id));
 
-  importer_list_.reset(new ImporterList());
+  importer_list_ = std::make_unique<ImporterList>();
   importer_list_->DetectSourceProfiles(
       g_browser_process->GetApplicationLocale(),
       true,  // include_interactive_profiles
@@ -209,10 +209,9 @@ void ImportDataHandler::ImportEnded() {
   importer_host_->set_observer(NULL);
   importer_host_ = NULL;
 
-  CallJavascriptFunction(
-      "cr.webUIListenerCallback", base::Value("import-data-status-changed"),
-      base::Value(import_did_succeed_ ? kImportStatusSucceeded
-                                      : kImportStatusFailed));
+  FireWebUIListener("import-data-status-changed",
+                    base::Value(import_did_succeed_ ? kImportStatusSucceeded
+                                                    : kImportStatusFailed));
 }
 
 void ImportDataHandler::FileSelected(const base::FilePath& path,

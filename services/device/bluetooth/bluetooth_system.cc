@@ -4,27 +4,36 @@
 
 #include "services/device/bluetooth/bluetooth_system.h"
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/optional.h"
+#include "base/strings/string_util.h"
 #include "dbus/object_path.h"
+#include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/dbus/bluetooth_adapter_client.h"
+#include "device/bluetooth/dbus/bluetooth_device_client.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 
 namespace device {
 
-void BluetoothSystem::Create(mojom::BluetoothSystemRequest request,
-                             mojom::BluetoothSystemClientPtr client) {
-  mojo::MakeStrongBinding(std::make_unique<BluetoothSystem>(std::move(client)),
-                          std::move(request));
+void BluetoothSystem::Create(
+    mojo::PendingReceiver<mojom::BluetoothSystem> receiver,
+    mojo::PendingRemote<mojom::BluetoothSystemClient> client) {
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<BluetoothSystem>(std::move(client)),
+      std::move(receiver));
 }
 
-BluetoothSystem::BluetoothSystem(mojom::BluetoothSystemClientPtr client) {
-  client_ptr_ = std::move(client);
+BluetoothSystem::BluetoothSystem(
+    mojo::PendingRemote<mojom::BluetoothSystemClient> client)
+    : client_(std::move(client)) {
   GetBluetoothAdapterClient()->AddObserver(this);
 
   std::vector<dbus::ObjectPath> object_paths =
@@ -87,7 +96,7 @@ void BluetoothSystem::AdapterPropertyChanged(
   if (properties->powered.name() == property_name)
     UpdateStateAndNotifyIfNecessary();
   else if (properties->discovering.name() == property_name)
-    client_ptr_->OnScanStateChanged(GetScanStateFromActiveAdapter());
+    client_->OnScanStateChanged(GetScanStateFromActiveAdapter());
 }
 
 void BluetoothSystem::GetState(GetStateCallback callback) {
@@ -98,9 +107,11 @@ void BluetoothSystem::SetPowered(bool powered, SetPoweredCallback callback) {
   switch (state_) {
     case State::kUnsupported:
     case State::kUnavailable:
-      std::move(callback).Run(SetPoweredResult::kBluetoothUnavailable);
+      std::move(callback).Run(SetPoweredResult::kFailedBluetoothUnavailable);
       return;
     case State::kTransitioning:
+      std::move(callback).Run(SetPoweredResult::kFailedInProgress);
+      return;
     case State::kPoweredOff:
     case State::kPoweredOn:
       break;
@@ -111,12 +122,9 @@ void BluetoothSystem::SetPowered(bool powered, SetPoweredCallback callback) {
     return;
   }
 
-  // Update the BluetoothSystem state to kTransitioning if a previous call to
-  // SetPowered() has not done so already.
-  if (state_ != State::kTransitioning) {
-    state_ = State::kTransitioning;
-    client_ptr_->OnStateChanged(state_);
-  }
+  DCHECK_NE(state_, State::kTransitioning);
+  state_ = State::kTransitioning;
+  client_->OnStateChanged(state_);
 
   GetBluetoothAdapterClient()
       ->GetProperties(active_adapter_.value())
@@ -151,7 +159,7 @@ void BluetoothSystem::StartScan(StartScanCallback callback) {
     case State::kUnavailable:
     case State::kPoweredOff:
     case State::kTransitioning:
-      std::move(callback).Run(StartScanResult::kBluetoothUnavailable);
+      std::move(callback).Run(StartScanResult::kFailedBluetoothUnavailable);
       return;
     case State::kPoweredOn:
       break;
@@ -169,7 +177,7 @@ void BluetoothSystem::StopScan(StopScanCallback callback) {
     case State::kUnavailable:
     case State::kPoweredOff:
     case State::kTransitioning:
-      std::move(callback).Run(StopScanResult::kBluetoothUnavailable);
+      std::move(callback).Run(StopScanResult::kFailedBluetoothUnavailable);
       return;
     case State::kPoweredOn:
       break;
@@ -181,10 +189,61 @@ void BluetoothSystem::StopScan(StopScanCallback callback) {
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
+void BluetoothSystem::GetAvailableDevices(
+    GetAvailableDevicesCallback callback) {
+  switch (state_) {
+    case State::kUnsupported:
+    case State::kUnavailable:
+    case State::kPoweredOff:
+    case State::kTransitioning:
+      std::move(callback).Run({});
+      return;
+    case State::kPoweredOn:
+      break;
+  }
+
+  std::vector<dbus::ObjectPath> device_paths =
+      GetBluetoothDeviceClient()->GetDevicesForAdapter(active_adapter_.value());
+
+  std::vector<mojom::BluetoothDeviceInfoPtr> devices;
+  for (const auto& device_path : device_paths) {
+    auto* properties = GetBluetoothDeviceClient()->GetProperties(device_path);
+    std::array<uint8_t, 6> parsed_address;
+    if (!BluetoothDevice::ParseAddress(properties->address.value(),
+                                       parsed_address)) {
+      LOG(WARNING) << "Failed to parse device address '"
+                   << properties->address.value() << "' for "
+                   << device_path.value();
+      continue;
+    }
+
+    auto device_info = mojom::BluetoothDeviceInfo::New();
+    device_info->address = std::move(parsed_address);
+    device_info->name = properties->name.is_valid()
+                            ? base::make_optional(properties->name.value())
+                            : base::nullopt;
+    device_info->connection_state =
+        properties->connected.value()
+            ? mojom::BluetoothDeviceInfo::ConnectionState::kConnected
+            : mojom::BluetoothDeviceInfo::ConnectionState::kNotConnected;
+    device_info->is_paired = properties->paired.value();
+
+    // TODO(ortuno): Get the DeviceType from the device Class and Appearance.
+    devices.push_back(std::move(device_info));
+  }
+  std::move(callback).Run(std::move(devices));
+}
+
 bluez::BluetoothAdapterClient* BluetoothSystem::GetBluetoothAdapterClient() {
   // Use AlternateBluetoothAdapterClient to avoid interfering with users of the
   // regular BluetoothAdapterClient.
   return bluez::BluezDBusManager::Get()->GetAlternateBluetoothAdapterClient();
+}
+
+bluez::BluetoothDeviceClient* BluetoothSystem::GetBluetoothDeviceClient() {
+  // Use AlternateBluetoothDeviceClient to avoid interfering with users of the
+  // regular BluetoothDeviceClient.
+  return bluez::BluezDBusManager::Get()->GetAlternateBluetoothDeviceClient();
 }
 
 void BluetoothSystem::UpdateStateAndNotifyIfNecessary() {
@@ -199,7 +258,7 @@ void BluetoothSystem::UpdateStateAndNotifyIfNecessary() {
   }
 
   if (old_state != state_)
-    client_ptr_->OnStateChanged(state_);
+    client_->OnStateChanged(state_);
 }
 
 BluetoothSystem::ScanState BluetoothSystem::GetScanStateFromActiveAdapter() {

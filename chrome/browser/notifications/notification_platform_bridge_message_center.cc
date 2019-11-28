@@ -132,12 +132,11 @@ void NotificationPlatformBridgeMessageCenter::GetDisplayed(
     Profile* profile,
     GetDisplayedNotificationsCallback callback) const {
   DCHECK_EQ(profile, profile_);
-
-  auto displayed_notifications = std::make_unique<std::set<std::string>>(
+  auto displayed_notifications =
       g_browser_process->notification_ui_manager()->GetAllIdsByProfile(
-          NotificationUIManager::GetProfileID(profile_)));
+          NotificationUIManager::GetProfileID(profile_));
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(std::move(callback), std::move(displayed_notifications),
                      true /* supports_synchronization */));

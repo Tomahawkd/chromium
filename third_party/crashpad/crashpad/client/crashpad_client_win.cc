@@ -36,6 +36,7 @@
 #include "util/misc/random_string.h"
 #include "util/win/address_types.h"
 #include "util/win/command_line.h"
+#include "util/win/context_wrappers.h"
 #include "util/win/critical_section_with_debug_info.h"
 #include "util/win/get_function.h"
 #include "util/win/handle.h"
@@ -95,7 +96,7 @@ CRITICAL_SECTION g_critical_section_with_debug_info;
 
 void SetHandlerStartupState(StartupState state) {
   DCHECK(state == StartupState::kSucceeded || state == StartupState::kFailed);
-  base::subtle::Acquire_Store(&g_handler_startup_state,
+  base::subtle::Release_Store(&g_handler_startup_state,
                               static_cast<base::subtle::AtomicWord>(state));
 }
 
@@ -103,7 +104,7 @@ StartupState BlockUntilHandlerStartedOrFailed() {
   // Wait until we know the handler has either succeeded or failed to start.
   base::subtle::AtomicWord startup_state;
   while (
-      (startup_state = base::subtle::Release_Load(&g_handler_startup_state)) ==
+      (startup_state = base::subtle::Acquire_Load(&g_handler_startup_state)) ==
       static_cast<int>(StartupState::kNotReady)) {
     Sleep(1);
   }
@@ -187,11 +188,7 @@ void HandleAbortSignal(int signum) {
   EXCEPTION_RECORD record = {};
   record.ExceptionCode = STATUS_FATAL_APP_EXIT;
   record.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
-#if defined(ARCH_CPU_64_BITS)
-  record.ExceptionAddress = reinterpret_cast<void*>(context.Rip);
-#else
-  record.ExceptionAddress = reinterpret_cast<void*>(context.Eip);
-#endif  // ARCH_CPU_64_BITS
+  record.ExceptionAddress = ProgramCounterFromCONTEXT(&context);
 
   EXCEPTION_POINTERS exception_pointers;
   exception_pointers.ContextRecord = &context;
@@ -773,11 +770,7 @@ void CrashpadClient::DumpWithoutCrash(const CONTEXT& context) {
   constexpr uint32_t kSimulatedExceptionCode = 0x517a7ed;
   EXCEPTION_RECORD record = {};
   record.ExceptionCode = kSimulatedExceptionCode;
-#if defined(ARCH_CPU_64_BITS)
-  record.ExceptionAddress = reinterpret_cast<void*>(context.Rip);
-#else
-  record.ExceptionAddress = reinterpret_cast<void*>(context.Eip);
-#endif  // ARCH_CPU_64_BITS
+  record.ExceptionAddress = ProgramCounterFromCONTEXT(&context);
 
   exception_pointers.ExceptionRecord = &record;
 

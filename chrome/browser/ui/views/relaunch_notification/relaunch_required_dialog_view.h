@@ -13,7 +13,6 @@
 
 class Browser;
 namespace views {
-class Label;
 class Widget;
 }  // namespace views
 
@@ -25,7 +24,7 @@ class RelaunchRequiredDialogView : views::DialogDelegateView {
   // Shows the dialog in |browser| for a relaunch that will be forced at
   // |deadline|. |on_accept| is run if the user accepts the prompt to restart.
   static views::Widget* Show(Browser* browser,
-                             base::TimeTicks deadline,
+                             base::Time deadline,
                              base::RepeatingClosure on_accept);
 
   ~RelaunchRequiredDialogView() override;
@@ -36,27 +35,23 @@ class RelaunchRequiredDialogView : views::DialogDelegateView {
 
   // Sets the relaunch deadline to |deadline| and refreshes the view's title
   // accordingly.
-  void SetDeadline(base::TimeTicks deadline);
+  void SetDeadline(base::Time deadline);
 
   // views::DialogDelegateView:
   bool Cancel() override;
   bool Accept() override;
-  int GetDefaultDialogButton() const override;
-  base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   ui::ModalType GetModalType() const override;
   base::string16 GetWindowTitle() const override;
   bool ShouldShowCloseButton() const override;
   gfx::ImageSkia GetWindowIcon() override;
   bool ShouldShowWindowIcon() const override;
-  int GetHeightForWidth(int width) const override;
-  void Layout() override;
 
  protected:
   // views::DialogDelegateView:
   gfx::Size CalculatePreferredSize() const override;
 
  private:
-  RelaunchRequiredDialogView(base::TimeTicks deadline,
+  RelaunchRequiredDialogView(base::Time deadline,
                              base::RepeatingClosure on_accept);
 
   // Invoked when the timer fires to refresh the title text.
@@ -66,9 +61,6 @@ class RelaunchRequiredDialogView : views::DialogDelegateView {
 
   // A callback to run if the user accepts the prompt to relaunch the browser.
   base::RepeatingClosure on_accept_;
-
-  // The label containing the body text of the dialog.
-  views::Label* body_label_;
 
   // Timer that schedules title refreshes.
   RelaunchRequiredTimer relaunch_required_timer_;

@@ -6,10 +6,9 @@
 #define CONTENT_BROWSER_BACKGROUND_FETCH_BACKGROUND_FETCH_METRICS_H_
 
 #include "content/public/browser/background_fetch_delegate.h"
-#include "third_party/blink/public/platform/modules/background_fetch/background_fetch.mojom.h"
+#include "third_party/blink/public/mojom/background_fetch/background_fetch.mojom.h"
 
 namespace content {
-
 namespace background_fetch {
 
 // Records the number of registrations that have unfinished fetches found on
@@ -29,7 +28,6 @@ void RecordBackgroundFetchUkmEvent(
     BackgroundFetchPermission permission);
 
 }  // namespace background_fetch
-
 }  // namespace content
 
 #endif  // CONTENT_BROWSER_BACKGROUND_FETCH_BACKGROUND_FETCH_METRICS_H_

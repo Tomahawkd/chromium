@@ -28,8 +28,8 @@ per-file *.typemap=file://ipc/SECURITY_OWNERS
 per-file *_param_traits*.*=set noparent
 per-file *_param_traits*.*=file://ipc/SECURITY_OWNERS
 
-per-file *_struct_traits*.*=set noparent
-per-file *_struct_traits*.*=file://ipc/SECURITY_OWNERS
+per-file *_mojom_traits*.*=set noparent
+per-file *_mojom_traits*.*=file://ipc/SECURITY_OWNERS
 
 per-file *font_config_ipc_linux*=set noparent
 per-file *font_config_ipc_linux*=file://ipc/SECURITY_OWNERS
@@ -41,6 +41,6 @@ per-file *.mojom=file://ipc/SECURITY_OWNERS
 per-file accessibility_node_data.*=dmazzoni@chromium.org
 per-file accessibility_node_data.*=dtseng@chromium.org
 
-# DirectWrite
-per-file dwrite_font_platform_win*=scottmg@chromium.org
-per-file font_warmup_win.cc=scottmg@chromium.org
+# AppCache
+per-file appcache_interfaces.h=pwnall@chromium.org
+per-file appcache_interfaces.cc=pwnall@chromium.org

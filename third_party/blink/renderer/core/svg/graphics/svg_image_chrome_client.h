@@ -41,8 +41,6 @@ class SVGImage;
 
 class CORE_EXPORT SVGImageChromeClient final : public EmptyChromeClient {
  public:
-  static SVGImageChromeClient* Create(SVGImage*);
-
   explicit SVGImageChromeClient(SVGImage*);
 
   bool IsSVGImageChromeClient() const override;
@@ -58,7 +56,8 @@ class CORE_EXPORT SVGImageChromeClient final : public EmptyChromeClient {
  private:
   void ChromeDestroyed() override;
   void InvalidateRect(const IntRect&) override;
-  void ScheduleAnimation(const LocalFrameView*) override;
+  void ScheduleAnimation(const LocalFrameView*,
+                         base::TimeDelta = base::TimeDelta()) override;
 
   void SetTimer(std::unique_ptr<TimerBase>);
   TimerBase* GetTimerForTesting() const { return animation_timer_.get(); }
@@ -74,8 +73,7 @@ class CORE_EXPORT SVGImageChromeClient final : public EmptyChromeClient {
 
   FRIEND_TEST_ALL_PREFIXES(SVGImageTest, TimelineSuspendAndResume);
   FRIEND_TEST_ALL_PREFIXES(SVGImageTest, ResetAnimation);
-  FRIEND_TEST_ALL_PREFIXES(SVGImagePageVisibilityTest,
-                           PageVisibilityHiddenToVisible);
+  FRIEND_TEST_ALL_PREFIXES(SVGImageSimTest, PageVisibilityHiddenToVisible);
 };
 
 DEFINE_TYPE_CASTS(SVGImageChromeClient,

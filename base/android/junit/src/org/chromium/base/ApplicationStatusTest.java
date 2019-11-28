@@ -14,7 +14,6 @@ import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
@@ -50,9 +49,7 @@ public class ApplicationStatusTest {
     }
 
     @Test
-    public void testWindowsFocusChanged() throws Exception {
-        ApplicationStatus.initialize(RuntimeEnvironment.application);
-
+    public void testWindowsFocusChanged() {
         ApplicationStatus.WindowFocusChangedListener mock =
                 mock(ApplicationStatus.WindowFocusChangedListener.class);
         ApplicationStatus.registerWindowFocusChangedListener(mock);

@@ -10,10 +10,10 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "chrome/android/chrome_jni_headers/CanMakePaymentQuery_jni.h"
 #include "components/payments/content/can_make_payment_query_factory.h"
 #include "components/payments/core/can_make_payment_query.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/CanMakePaymentQuery_jni.h"
 #include "url/gurl.h"
 
 namespace payments {
@@ -24,7 +24,8 @@ jboolean JNI_CanMakePaymentQuery_CanQuery(
     const base::android::JavaParamRef<jobject>& jweb_contents,
     const base::android::JavaParamRef<jstring>& jtop_level_origin,
     const base::android::JavaParamRef<jstring>& jframe_origin,
-    const base::android::JavaParamRef<jobject>& jquery_map) {
+    const base::android::JavaParamRef<jobject>& jquery_map,
+    jboolean per_method_quota) {
   auto* web_contents = content::WebContents::FromJavaWebContents(jweb_contents);
   if (!web_contents)
     return false;
@@ -50,7 +51,7 @@ jboolean JNI_CanMakePaymentQuery_CanQuery(
       ->CanQuery(
           GURL(base::android::ConvertJavaStringToUTF8(env, jtop_level_origin)),
           GURL(base::android::ConvertJavaStringToUTF8(env, jframe_origin)),
-          query);
+          query, per_method_quota);
 }
 
 }  // namespace payments

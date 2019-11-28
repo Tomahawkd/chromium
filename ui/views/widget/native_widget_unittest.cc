@@ -35,8 +35,8 @@ class ScopedTestWidget {
 
 class NativeWidgetTest : public ViewsTestBase {
  public:
-  NativeWidgetTest() {}
-  ~NativeWidgetTest() override {}
+  NativeWidgetTest() = default;
+  ~NativeWidgetTest() override = default;
 
   internal::NativeWidgetPrivate* CreateNativeWidgetOfType(
       Widget::InitParams::Type type) {
@@ -44,7 +44,7 @@ class NativeWidgetTest : public ViewsTestBase {
     Widget::InitParams params = CreateParams(type);
     params.ownership = views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET;
     params.bounds = gfx::Rect(10, 10, 200, 200);
-    widget->Init(params);
+    widget->Init(std::move(params));
     return widget->native_widget_private();
   }
 
@@ -82,10 +82,6 @@ TEST_F(NativeWidgetTest, GetTopLevelNativeWidget1) {
 
 // |toplevel_widget| has the toplevel NativeWidget.
 TEST_F(NativeWidgetTest, GetTopLevelNativeWidget2) {
-  // This test relies on GetContext(). http://crbug.com/663809.
-  if (IsMus())
-    return;
-
   internal::NativeWidgetPrivate* child_widget = CreateNativeSubWidget();
   {
     ScopedTestWidget toplevel_widget(CreateNativeWidget());

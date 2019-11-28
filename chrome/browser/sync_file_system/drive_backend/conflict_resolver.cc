@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/format_macros.h"
 #include "base/location.h"
@@ -28,8 +29,7 @@ namespace sync_file_system {
 namespace drive_backend {
 
 ConflictResolver::ConflictResolver(SyncEngineContext* sync_context)
-    : sync_context_(sync_context),
-      weak_ptr_factory_(this) {}
+    : sync_context_(sync_context) {}
 
 ConflictResolver::~ConflictResolver() {}
 

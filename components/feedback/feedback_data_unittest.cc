@@ -6,14 +6,15 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "components/feedback/feedback_report.h"
 #include "components/feedback/feedback_uploader.h"
 #include "components/feedback/feedback_uploader_factory.h"
 #include "components/prefs/testing_pref_service.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
@@ -23,9 +24,9 @@ namespace feedback {
 
 namespace {
 
-constexpr char kHistograms[] = "";
-constexpr char kImageData[] = "";
-constexpr char kFileData[] = "";
+constexpr char kHistograms[] = "Histogram Data";
+constexpr char kImageData[] = "Image Data";
+constexpr char kFileData[] = "File Data";
 
 class MockUploader : public FeedbackUploader {
  public:
@@ -33,10 +34,11 @@ class MockUploader : public FeedbackUploader {
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       content::BrowserContext* context,
       base::OnceClosure on_report_sent)
-      : FeedbackUploader(url_loader_factory,
-                         context,
+      : FeedbackUploader(context,
                          FeedbackUploaderFactory::CreateUploaderTaskRunner()),
-        on_report_sent_(std::move(on_report_sent)) {}
+        on_report_sent_(std::move(on_report_sent)) {
+    set_url_loader_factory_for_test(url_loader_factory);
+  }
   ~MockUploader() override {}
 
   // feedback::FeedbackUploader:
@@ -47,10 +49,6 @@ class MockUploader : public FeedbackUploader {
 
   DISALLOW_COPY_AND_ASSIGN(MockUploader);
 };
-
-std::unique_ptr<std::string> MakeScoped(const char* str) {
-  return std::make_unique<std::string>(str);
-}
 
 }  // namespace
 
@@ -88,7 +86,7 @@ class FeedbackDataTest : public testing::Test {
 
   base::Closure quit_closure_;
   std::unique_ptr<base::RunLoop> run_loop_;
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
   content::TestBrowserContext context_;
@@ -97,9 +95,9 @@ class FeedbackDataTest : public testing::Test {
 };
 
 TEST_F(FeedbackDataTest, ReportSending) {
-  data_->SetAndCompressHistograms(MakeScoped(kHistograms));
-  data_->set_image(MakeScoped(kImageData));
-  data_->AttachAndCompressFileData(MakeScoped(kFileData));
+  data_->SetAndCompressHistograms(kHistograms);
+  data_->set_image(kImageData);
+  data_->AttachAndCompressFileData(kFileData);
   Send();
   RunMessageLoop();
   EXPECT_TRUE(data_->IsDataComplete());

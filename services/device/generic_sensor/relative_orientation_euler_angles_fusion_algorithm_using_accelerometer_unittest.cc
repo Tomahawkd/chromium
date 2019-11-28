@@ -5,9 +5,9 @@
 #include <cmath>
 
 #include "base/memory/ref_counted.h"
-#include "services/device/device_service_test_base.h"
+#include "base/numerics/math_constants.h"
+#include "base/test/task_environment.h"
 #include "services/device/generic_sensor/fake_platform_sensor_fusion.h"
-#include "services/device/generic_sensor/generic_sensor_consts.h"
 #include "services/device/generic_sensor/relative_orientation_euler_angles_fusion_algorithm_using_accelerometer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -16,7 +16,7 @@ namespace device {
 namespace {
 
 class RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest
-    : public DeviceServiceTestBase {
+    : public testing::Test {
  public:
   RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest() {
     auto fusion_algorithm = std::make_unique<
@@ -55,6 +55,7 @@ class RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest
   }
 
  protected:
+  base::test::TaskEnvironment task_environment_;
   scoped_refptr<FakePlatformSensorFusion> fake_fusion_sensor_;
   RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometer*
       fusion_algorithm_;
@@ -78,7 +79,7 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        NeutralOrientation) {
   double acceleration_x = 0.0;
   double acceleration_y = 0.0;
-  double acceleration_z = kMeanGravity;
+  double acceleration_z = base::kMeanGravityDouble;
 
   double expected_beta_in_degrees = 0.0;
   double expected_gamma_in_degrees = 0.0;
@@ -94,7 +95,7 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        UpsideDown) {
   double acceleration_x = 0.0;
   double acceleration_y = 0.0;
-  double acceleration_z = -kMeanGravity;
+  double acceleration_z = -base::kMeanGravityDouble;
 
   double expected_beta_in_degrees = -180.0;
   double expected_gamma_in_degrees = 0.0;
@@ -108,8 +109,8 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        BeforeUpsideDownBoundary) {
   double acceleration_x = 0.0;
-  double acceleration_y = -kMeanGravity / 2.0;
-  double acceleration_z = -kMeanGravity / 2.0;
+  double acceleration_y = -base::kMeanGravityDouble / 2.0;
+  double acceleration_z = -base::kMeanGravityDouble / 2.0;
 
   double expected_beta_in_degrees = 135.0;
   double expected_gamma_in_degrees = 0.0;
@@ -123,7 +124,7 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        TopEdge) {
   double acceleration_x = 0.0;
-  double acceleration_y = kMeanGravity;
+  double acceleration_y = base::kMeanGravityDouble;
   double acceleration_z = 0.0;
 
   double expected_beta_in_degrees = -90.0;
@@ -138,8 +139,8 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        BeforeTopEdgeBoundary) {
   double acceleration_x = 0.0;
-  double acceleration_y = kMeanGravity / 2.0;
-  double acceleration_z = kMeanGravity / 2.0;
+  double acceleration_y = base::kMeanGravityDouble / 2.0;
+  double acceleration_z = base::kMeanGravityDouble / 2.0;
 
   double expected_beta_in_degrees = -45.0;
   double expected_gamma_in_degrees = 0.0;
@@ -153,7 +154,7 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        BottomEdge) {
   double acceleration_x = 0.0;
-  double acceleration_y = -kMeanGravity;
+  double acceleration_y = -base::kMeanGravityDouble;
   double acceleration_z = 0.0;
 
   double expected_beta_in_degrees = 90.0;
@@ -168,8 +169,8 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        BeforeBottomEdgeBoundary) {
   double acceleration_x = 0.0;
-  double acceleration_y = -kMeanGravity / 2.0;
-  double acceleration_z = kMeanGravity / 2.0;
+  double acceleration_y = -base::kMeanGravityDouble / 2.0;
+  double acceleration_z = base::kMeanGravityDouble / 2.0;
 
   double expected_beta_in_degrees = 45.0;
   double expected_gamma_in_degrees = 0.0;
@@ -182,7 +183,7 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 // Tests a device lying on its left-edge.
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        LeftEdge) {
-  double acceleration_x = -kMeanGravity;
+  double acceleration_x = -base::kMeanGravityDouble;
   double acceleration_y = 0.0;
   double acceleration_z = 0.0;
 
@@ -198,9 +199,9 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 // side.
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        BeforeLeftEdgeBoundary) {
-  double acceleration_x = -kMeanGravity / std::sqrt(2.0);
+  double acceleration_x = -base::kMeanGravityDouble / std::sqrt(2.0);
   double acceleration_y = 0.0;
-  double acceleration_z = kMeanGravity / std::sqrt(2.0);
+  double acceleration_z = base::kMeanGravityDouble / std::sqrt(2.0);
 
   double expected_beta_in_degrees = 0.0;
   double expected_gamma_in_degrees = -45.0;
@@ -214,7 +215,7 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 // causes the gamma value to become negative.
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        RightEdge) {
-  double acceleration_x = kMeanGravity;
+  double acceleration_x = base::kMeanGravityDouble;
   double acceleration_y = 0.0;
   double acceleration_z = 0.0;
 
@@ -230,9 +231,9 @@ TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
 // side.
 TEST_F(RelativeOrientationEulerAnglesFusionAlgorithmUsingAccelerometerTest,
        BeforeRightEdgeBoundary) {
-  double acceleration_x = kMeanGravity / std::sqrt(2.0);
+  double acceleration_x = base::kMeanGravityDouble / std::sqrt(2.0);
   double acceleration_y = 0.0;
-  double acceleration_z = kMeanGravity / std::sqrt(2.0);
+  double acceleration_z = base::kMeanGravityDouble / std::sqrt(2.0);
 
   double expected_beta_in_degrees = 0.0;
   double expected_gamma_in_degrees = 45.0;

@@ -7,7 +7,9 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "content/common/content_export.h"
 #include "services/network/public/mojom/cors_origin_pattern.mojom.h"
 #include "url/origin.h"
@@ -33,6 +35,8 @@ namespace content {
 class CONTENT_EXPORT SharedCorsOriginAccessList
     : public base::RefCountedThreadSafe<SharedCorsOriginAccessList> {
  public:
+  static scoped_refptr<SharedCorsOriginAccessList> Create();
+
   SharedCorsOriginAccessList() = default;
 
   // Sets the access list to an internal network::cors::OriginAccessList
@@ -49,14 +53,15 @@ class CONTENT_EXPORT SharedCorsOriginAccessList
 
   // Gets a shared OriginAccessList instance pointer. |this| should outlives
   // callers' OriginAccessList instance uses. Should be called on the IO thread.
-  virtual const network::cors::OriginAccessList& GetOriginAccessList()
-      const = 0;
+  virtual const network::cors::OriginAccessList& GetOriginAccessList() = 0;
 
  protected:
   virtual ~SharedCorsOriginAccessList() = default;
 
  private:
   friend class base::RefCountedThreadSafe<SharedCorsOriginAccessList>;
+
+  DISALLOW_COPY_AND_ASSIGN(SharedCorsOriginAccessList);
 };
 
 }  // namespace content

@@ -6,53 +6,21 @@
 
 #include <utility>
 
-#include "services/service_manager/public/cpp/connector.h"
+#include "base/bind.h"
+#include "base/trace_event/trace_log.h"
+#include "services/tracing/public/cpp/traced_process_impl.h"
 #include "services/tracing/public/mojom/constants.mojom.h"
 
 namespace tracing {
 
-BaseAgent::BaseAgent(service_manager::Connector* connector,
-                     const std::string& label,
-                     mojom::TraceDataType type,
-                     bool supports_explicit_clock_sync,
-                     base::ProcessId pid)
-    : binding_(this) {
-  // |connector| can be null in tests.
-  if (!connector)
-    return;
-  tracing::mojom::AgentRegistryPtr agent_registry;
-  connector->BindInterface(tracing::mojom::kServiceName, &agent_registry);
-
-  tracing::mojom::AgentPtr agent;
-  binding_.Bind(mojo::MakeRequest(&agent));
-  agent_registry->RegisterAgent(std::move(agent), label, type,
-                                supports_explicit_clock_sync, pid);
+BaseAgent::BaseAgent() {
+  TracedProcessImpl::GetInstance()->RegisterAgent(this);
 }
 
-BaseAgent::~BaseAgent() = default;
-
-void BaseAgent::StartTracing(const std::string& config,
-                             base::TimeTicks coordinator_time,
-                             Agent::StartTracingCallback callback) {
-  std::move(callback).Run(true /* success */);
+BaseAgent::~BaseAgent() {
+  TracedProcessImpl::GetInstance()->UnregisterAgent(this);
 }
 
-void BaseAgent::StopAndFlush(tracing::mojom::RecorderPtr recorder) {}
-
-void BaseAgent::RequestClockSyncMarker(
-    const std::string& sync_id,
-    Agent::RequestClockSyncMarkerCallback callback) {
-  NOTREACHED() << "The agent claims to support explicit clock sync but does "
-               << "not override BaseAgent::RequestClockSyncMarker()";
-}
-
-void BaseAgent::GetCategories(Agent::GetCategoriesCallback callback) {
-  std::move(callback).Run("" /* categories */);
-}
-
-void BaseAgent::RequestBufferStatus(
-    Agent::RequestBufferStatusCallback callback) {
-  std::move(callback).Run(0 /* capacity */, 0 /* count */);
-}
+void BaseAgent::GetCategories(std::set<std::string>* category_set) {}
 
 }  // namespace tracing

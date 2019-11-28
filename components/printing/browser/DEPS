@@ -1,7 +1,15 @@
 include_rules = [
-  "+components/services/pdf_compositor/public/cpp",
-  "+components/services/pdf_compositor/public/interfaces",
+  "+components/crash/core/common",
+  "+components/discardable_memory/service",
+  "+components/services/pdf_compositor/public",
+  "+components/strings/grit",
   "+content/public/browser",
-  "+mojo/public/cpp/system",
-  "+services/service_manager/public/cpp",
+  "+mojo/public",
+  "+ui/base/l10n",
 ]
+
+specific_include_rules = {
+  "printer_capabilities_unittest.cc": [
+    "+content/public/test",
+  ],
+}

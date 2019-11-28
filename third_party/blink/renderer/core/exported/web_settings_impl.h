@@ -34,7 +34,6 @@
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
 
 namespace blink {
 
@@ -66,6 +65,7 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetAutoZoomFocusedNodeToLegibleScale(bool) override;
   void SetClobberUserAgentInitialScaleQuirk(bool) override;
   void SetCookieEnabled(bool) override;
+  void SetCaretBrowsingEnabled(bool) override;
   void SetNavigateOnDragDrop(bool) override;
   void SetCursiveFontFamily(const WebString&,
                             UScriptCode = USCRIPT_COMMON) override;
@@ -78,10 +78,12 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetDeviceScaleAdjustment(float) override;
 
   void SetDisableReadingFromCanvas(bool) override;
+  void SetDontSendKeyEventsToJavascript(bool) override;
   void SetDoubleTapToZoomEnabled(bool) override;
   void SetDownloadableBinaryFontsEnabled(bool) override;
   void SetEditingBehavior(EditingBehavior) override;
   void SetEnableScrollAnimator(bool) override;
+  void SetPrefersReducedMotion(bool) override;
   void SetEnableTouchAdjustment(bool) override;
   void SetWebGL1Enabled(bool) override;
   void SetWebGL2Enabled(bool) override;
@@ -91,12 +93,11 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
                           UScriptCode = USCRIPT_COMMON) override;
   void SetNetworkQuietTimeout(double timeout) override;
   void SetForceMainWorldInitialization(bool) override;
-  void SetForcePreloadNoneForMediaElements(bool) override;
   void SetForceZeroLayoutHeight(bool) override;
   void SetFullscreenSupported(bool) override;
   void SetHideDownloadUI(bool) override;
   void SetPresentationReceiver(bool) override;
-  void SetHistoryEntryRequiresUserGesture(bool) override;
+  void SetHighlightAds(bool) override;
   void SetHyperlinkAuditingEnabled(bool) override;
   void SetIgnoreMainFrameOverflowHiddenQuirk(bool) override;
   void SetImageAnimationPolicy(ImageAnimationPolicy) override;
@@ -107,28 +108,23 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetLoadsImagesAutomatically(bool) override;
   void SetLoadWithOverviewMode(bool) override;
   void SetShouldReuseGlobalForUnownedMainFrame(bool) override;
-  void SetSavePreviousDocumentResources(SavePreviousDocumentResources) override;
   void SetLocalStorageEnabled(bool) override;
   void SetMainFrameClipsContent(bool) override;
   void SetMainFrameResizesAreOrientationChanges(bool) override;
   void SetMaxTouchPoints(int) override;
   void SetPictureInPictureEnabled(bool) override;
   void SetDataSaverHoldbackWebApi(bool) override;
-  void SetDataSaverHoldbackMediaApi(bool) override;
-  void SetMediaPlaybackGestureWhitelistScope(const WebString&) override;
+  void SetWebAppScope(const WebString&) override;
   void SetPresentationRequiresUserGesture(bool) override;
   void SetEmbeddedMediaExperienceEnabled(bool) override;
   void SetImmersiveModeEnabled(bool) override;
-  void SetMinimumAccelerated2dCanvasSize(int) override;
   void SetMinimumFontSize(int) override;
   void SetMinimumLogicalFontSize(int) override;
-  void SetMockScrollbarsEnabled(bool) override;
   void SetHideScrollbars(bool) override;
   void SetOfflineWebApplicationCacheEnabled(bool) override;
   void SetPassiveEventListenerDefault(PassiveEventListenerDefault) override;
   void SetPasswordEchoDurationInSeconds(double) override;
   void SetPasswordEchoEnabled(bool) override;
-  void SetPerTilePaintingEnabled(bool) override;
   void SetPictographFontFamily(const WebString&,
                                UScriptCode = USCRIPT_COMMON) override;
   void SetPluginsEnabled(bool) override;
@@ -152,8 +148,6 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetShouldClearDocumentBackground(bool) override;
   void SetShouldRespectImageOrientation(bool) override;
   void SetShowContextMenuOnMouseUp(bool) override;
-  void SetShowFPSCounter(bool) override;
-  void SetShowPaintRects(bool) override;
   void SetShrinksViewportContentToFit(bool) override;
   void SetSmartInsertDeleteEnabled(bool) override;
   void SetSmoothScrollForFindEnabled(bool) override;
@@ -180,28 +174,27 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetTextTrackTextColor(const WebString&) override;
   void SetTextTrackTextShadow(const WebString&) override;
   void SetTextTrackTextSize(const WebString&) override;
+  void SetTextTrackWindowColor(const WebString&) override;
+  void SetTextTrackWindowPadding(const WebString&) override;
+  void SetTextTrackWindowRadius(const WebString&) override;
   void SetThreadedScrollingEnabled(bool) override;
   void SetTouchDragDropEnabled(bool) override;
   void SetBarrelButtonForDragEnabled(bool) override;
   void SetUseLegacyBackgroundSizeShorthandBehavior(bool) override;
   void SetViewportStyle(WebViewportStyle) override;
-  void SetUseSolidColorScrollbars(bool) override;
   void SetUseWideViewport(bool) override;
   void SetV8CacheOptions(V8CacheOptions) override;
   void SetValidationMessageTimerMagnification(int) override;
   void SetViewportEnabled(bool) override;
   void SetViewportMetaEnabled(bool) override;
-  void SetViewportMetaLayoutSizeQuirk(bool) override;
   void SetViewportMetaMergeContentQuirk(bool) override;
   void SetViewportMetaNonUserScalableQuirk(bool) override;
   void SetViewportMetaZeroValuesQuirk(bool) override;
   void SetWebGLErrorsToConsoleEnabled(bool) override;
   void SetWebSecurityEnabled(bool) override;
   void SetWideViewportQuirkEnabled(bool) override;
-  void SetXSSAuditorEnabled(bool) override;
   void SetMediaControlsEnabled(bool) override;
   void SetDoNotUpdateSelectionOnMutatingSelectionRange(bool) override;
-  void SetMediaDownloadInProductHelpEnabled(bool) override;
   void SetLowPriorityIframesThreshold(WebEffectiveConnectionType) override;
 
   void SetLazyLoadEnabled(bool) override;
@@ -220,9 +213,15 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetLazyImageLoadingDistanceThresholdPx2G(int) override;
   void SetLazyImageLoadingDistanceThresholdPx3G(int) override;
   void SetLazyImageLoadingDistanceThresholdPx4G(int) override;
+  void SetLazyImageFirstKFullyLoadUnknown(int) override;
+  void SetLazyImageFirstKFullyLoadSlow2G(int) override;
+  void SetLazyImageFirstKFullyLoad2G(int) override;
+  void SetLazyImageFirstKFullyLoad3G(int) override;
+  void SetLazyImageFirstKFullyLoad4G(int) override;
 
-  bool ShowFPSCounter() const { return show_fps_counter_; }
-  bool ShowPaintRects() const { return show_paint_rects_; }
+  void SetForceDarkModeEnabled(bool) override;
+  void SetNavigationControls(NavigationControls) override;
+
   bool RenderVSyncNotificationEnabled() const {
     return render_v_sync_notification_enabled_;
   }
@@ -230,14 +229,10 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
     return auto_zoom_focused_node_to_legible_scale_;
   }
   bool DoubleTapToZoomEnabled() const;
-  bool PerTilePaintingEnabled() const { return per_tile_painting_enabled_; }
   bool SupportDeprecatedTargetDensityDPI() const {
     return support_deprecated_target_density_dpi_;
   }
   bool ViewportMetaEnabled() const;
-  bool ViewportMetaLayoutSizeQuirk() const {
-    return viewport_meta_layout_size_quirk_;
-  }
   bool ViewportMetaNonUserScalableQuirk() const {
     return viewport_meta_non_user_scalable_quirk_;
   }
@@ -251,16 +246,9 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
  private:
   Settings* settings_;
   UntracedMember<DevToolsEmulator> dev_tools_emulator_;
-  bool show_fps_counter_;
-  bool show_paint_rects_;
   bool render_v_sync_notification_enabled_;
   bool auto_zoom_focused_node_to_legible_scale_;
-  bool per_tile_painting_enabled_;
   bool support_deprecated_target_density_dpi_;
-  // This quirk is to maintain compatibility with Android apps built on
-  // the Android SDK prior to and including version 18. Presumably, this
-  // can be removed any time after 2015. See http://crbug.com/277369.
-  bool viewport_meta_layout_size_quirk_;
   // This quirk is to maintain compatibility with Android apps built on
   // the Android SDK prior to and including version 18. Presumably, this
   // can be removed any time after 2015. See http://crbug.com/312691.

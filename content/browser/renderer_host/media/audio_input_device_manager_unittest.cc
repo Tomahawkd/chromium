@@ -19,8 +19,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/public/common/media_stream_request.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "media/audio/audio_system_impl.h"
 #include "media/audio/audio_thread_impl.h"
 #include "media/audio/mock_audio_manager.h"
@@ -28,6 +27,7 @@
 #include "media/base/test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 using testing::InSequence;
 
@@ -39,9 +39,15 @@ class MockAudioInputDeviceManagerListener
   MockAudioInputDeviceManagerListener() {}
   ~MockAudioInputDeviceManagerListener() override {}
 
-  MOCK_METHOD2(Opened, void(MediaStreamType, const int));
-  MOCK_METHOD2(Closed, void(MediaStreamType, const int));
-  MOCK_METHOD2(Aborted, void(MediaStreamType, int));
+  MOCK_METHOD2(Opened,
+               void(blink::mojom::MediaStreamType,
+                    const base::UnguessableToken&));
+  MOCK_METHOD2(Closed,
+               void(blink::mojom::MediaStreamType,
+                    const base::UnguessableToken&));
+  MOCK_METHOD2(Aborted,
+               void(blink::mojom::MediaStreamType,
+                    const base::UnguessableToken&));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAudioInputDeviceManagerListener);
@@ -73,10 +79,10 @@ class MAYBE_AudioInputDeviceManagerTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
 
     // Use fake devices.
-    devices_.emplace_back(MEDIA_DEVICE_AUDIO_CAPTURE, "fake_device_1",
-                          "Fake Device 1");
-    devices_.emplace_back(MEDIA_DEVICE_AUDIO_CAPTURE, "fake_device_2",
-                          "Fake Device 2");
+    devices_.emplace_back(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                          "fake_device_1", "Fake Device 1");
+    devices_.emplace_back(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                          "fake_device_2", "Fake Device 2");
   }
 
   void SetUp() override {
@@ -108,12 +114,12 @@ class MAYBE_AudioInputDeviceManagerTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
-  TestBrowserThreadBundle thread_bundle_;
+  BrowserTaskEnvironment task_environment_;
   std::unique_ptr<media::AudioManager> audio_manager_;
   std::unique_ptr<media::AudioSystem> audio_system_;
   scoped_refptr<AudioInputDeviceManager> manager_;
   std::unique_ptr<MockAudioInputDeviceManagerListener> audio_input_listener_;
-  MediaStreamDevices devices_;
+  blink::MediaStreamDevices devices_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MAYBE_AudioInputDeviceManagerTest);
@@ -125,21 +131,23 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenAndCloseDevice) {
 
   InSequence s;
 
-  for (MediaStreamDevices::const_iterator iter = devices_.begin();
+  for (blink::MediaStreamDevices::const_iterator iter = devices_.begin();
        iter != devices_.end(); ++iter) {
     // Opens/closes the devices.
-    int session_id = manager_->Open(*iter);
+    base::UnguessableToken session_id = manager_->Open(*iter);
 
     // Expected mock call with expected return value.
-    EXPECT_CALL(*audio_input_listener_,
-                Opened(MEDIA_DEVICE_AUDIO_CAPTURE, session_id))
+    EXPECT_CALL(
+        *audio_input_listener_,
+        Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE, session_id))
         .Times(1);
     // Waits for the callback.
     WaitForOpenCompletion();
 
     manager_->Close(session_id);
-    EXPECT_CALL(*audio_input_listener_,
-                Closed(MEDIA_DEVICE_AUDIO_CAPTURE, session_id))
+    EXPECT_CALL(
+        *audio_input_listener_,
+        Closed(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE, session_id))
         .Times(1);
 
     // Waits for the callback.
@@ -154,17 +162,19 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenMultipleDevices) {
   InSequence s;
 
   int index = 0;
-  std::unique_ptr<int[]> session_id(new int[devices_.size()]);
+  std::unique_ptr<base::UnguessableToken[]> session_id(
+      new base::UnguessableToken[devices_.size()]);
 
   // Opens the devices in a loop.
-  for (MediaStreamDevices::const_iterator iter = devices_.begin();
+  for (blink::MediaStreamDevices::const_iterator iter = devices_.begin();
        iter != devices_.end(); ++iter, ++index) {
     // Opens the devices.
     session_id[index] = manager_->Open(*iter);
 
     // Expected mock call with expected returned value.
     EXPECT_CALL(*audio_input_listener_,
-                Opened(MEDIA_DEVICE_AUDIO_CAPTURE, session_id[index]))
+                Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                       session_id[index]))
         .Times(1);
 
     // Waits for the callback.
@@ -182,7 +192,8 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenMultipleDevices) {
     // Closes the devices.
     manager_->Close(session_id[i]);
     EXPECT_CALL(*audio_input_listener_,
-                Closed(MEDIA_DEVICE_AUDIO_CAPTURE, session_id[i]))
+                Closed(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                       session_id[i]))
         .Times(1);
 
     // Waits for the callback.
@@ -194,14 +205,16 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenMultipleDevices) {
 TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenNotExistingDevice) {
   InSequence s;
 
-  MediaStreamType stream_type = MEDIA_DEVICE_AUDIO_CAPTURE;
+  blink::mojom::MediaStreamType stream_type =
+      blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE;
   std::string device_name("device_doesnt_exist");
   std::string device_id("id_doesnt_exist");
-  MediaStreamDevice dummy_device(stream_type, device_id, device_name);
+  blink::MediaStreamDevice dummy_device(stream_type, device_id, device_name);
 
-  int session_id = manager_->Open(dummy_device);
-  EXPECT_CALL(*audio_input_listener_,
-              Opened(MEDIA_DEVICE_AUDIO_CAPTURE, session_id))
+  base::UnguessableToken session_id = manager_->Open(dummy_device);
+  EXPECT_CALL(
+      *audio_input_listener_,
+      Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE, session_id))
       .Times(1);
 
   // Waits for the callback.
@@ -215,16 +228,18 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenDeviceTwice) {
   InSequence s;
 
   // Opens and closes the default device twice.
-  int first_session_id = manager_->Open(devices_.front());
-  int second_session_id = manager_->Open(devices_.front());
+  base::UnguessableToken first_session_id = manager_->Open(devices_.front());
+  base::UnguessableToken second_session_id = manager_->Open(devices_.front());
 
   // Expected mock calls with expected returned values.
   EXPECT_NE(first_session_id, second_session_id);
   EXPECT_CALL(*audio_input_listener_,
-              Opened(MEDIA_DEVICE_AUDIO_CAPTURE, first_session_id))
+              Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                     first_session_id))
       .Times(1);
   EXPECT_CALL(*audio_input_listener_,
-              Opened(MEDIA_DEVICE_AUDIO_CAPTURE, second_session_id))
+              Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                     second_session_id))
       .Times(1);
   // Waits for the callback.
   WaitForOpenCompletion();
@@ -232,10 +247,12 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, OpenDeviceTwice) {
   manager_->Close(first_session_id);
   manager_->Close(second_session_id);
   EXPECT_CALL(*audio_input_listener_,
-              Closed(MEDIA_DEVICE_AUDIO_CAPTURE, first_session_id))
+              Closed(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                     first_session_id))
       .Times(1);
   EXPECT_CALL(*audio_input_listener_,
-              Closed(MEDIA_DEVICE_AUDIO_CAPTURE, second_session_id))
+              Closed(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                     second_session_id))
       .Times(1);
   // Waits for the callback.
   base::RunLoop().RunUntilIdle();
@@ -248,27 +265,30 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, AccessAndCloseSession) {
   InSequence s;
 
   int index = 0;
-  std::unique_ptr<int[]> session_id(new int[devices_.size()]);
+  std::unique_ptr<base::UnguessableToken[]> session_id(
+      new base::UnguessableToken[devices_.size()]);
 
   // Loops through the devices and calls Open()/Close()/GetOpenedDeviceById
   // for each device.
-  for (MediaStreamDevices::const_iterator iter = devices_.begin();
+  for (blink::MediaStreamDevices::const_iterator iter = devices_.begin();
        iter != devices_.end(); ++iter, ++index) {
     // Note that no DeviceStopped() notification for Event Handler as we have
     // stopped the device before calling close.
     session_id[index] = manager_->Open(*iter);
     EXPECT_CALL(*audio_input_listener_,
-                Opened(MEDIA_DEVICE_AUDIO_CAPTURE, session_id[index]))
+                Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                       session_id[index]))
         .Times(1);
     WaitForOpenCompletion();
 
-    const MediaStreamDevice* device =
+    const blink::MediaStreamDevice* device =
         manager_->GetOpenedDeviceById(session_id[index]);
     DCHECK(device);
     EXPECT_EQ(iter->id, device->id);
     manager_->Close(session_id[index]);
     EXPECT_CALL(*audio_input_listener_,
-                Closed(MEDIA_DEVICE_AUDIO_CAPTURE, session_id[index]))
+                Closed(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                       session_id[index]))
         .Times(1);
     base::RunLoop().RunUntilIdle();
   }
@@ -279,23 +299,25 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, AccessInvalidSession) {
   InSequence s;
 
   // Opens the first device.
-  MediaStreamDevices::const_iterator iter = devices_.begin();
-  int session_id = manager_->Open(*iter);
-  EXPECT_CALL(*audio_input_listener_,
-              Opened(MEDIA_DEVICE_AUDIO_CAPTURE, session_id))
+  blink::MediaStreamDevices::const_iterator iter = devices_.begin();
+  base::UnguessableToken session_id = manager_->Open(*iter);
+  EXPECT_CALL(
+      *audio_input_listener_,
+      Opened(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE, session_id))
       .Times(1);
   WaitForOpenCompletion();
 
   // Access a non-opened device.
-  // This should fail and return an empty MediaStreamDevice.
-  int invalid_session_id = session_id + 1;
-  const MediaStreamDevice* device =
+  // This should fail and return an empty blink::MediaStreamDevice.
+  base::UnguessableToken invalid_session_id = base::UnguessableToken::Create();
+  const blink::MediaStreamDevice* device =
       manager_->GetOpenedDeviceById(invalid_session_id);
   DCHECK(!device);
 
   manager_->Close(session_id);
-  EXPECT_CALL(*audio_input_listener_,
-              Closed(MEDIA_DEVICE_AUDIO_CAPTURE, session_id))
+  EXPECT_CALL(
+      *audio_input_listener_,
+      Closed(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE, session_id))
       .Times(1);
   base::RunLoop().RunUntilIdle();
 }
@@ -312,12 +334,13 @@ class AudioInputDeviceManagerNoDevicesTest
         std::make_unique<media::AudioThreadImpl>());
 
     // Devices to request from AudioInputDeviceManager.
-    devices_.emplace_back(MEDIA_GUM_TAB_AUDIO_CAPTURE, "tab_capture",
-                          "Tab capture");
-    devices_.emplace_back(MEDIA_GUM_DESKTOP_AUDIO_CAPTURE, "desktop_capture",
-                          "Desktop capture");
-    devices_.emplace_back(MEDIA_DEVICE_AUDIO_CAPTURE, "fake_device",
-                          "Fake Device");
+    devices_.emplace_back(blink::mojom::MediaStreamType::GUM_TAB_AUDIO_CAPTURE,
+                          "tab_capture", "Tab capture");
+    devices_.emplace_back(
+        blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE,
+        "desktop_capture", "Desktop capture");
+    devices_.emplace_back(blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
+                          "fake_device", "Fake Device");
   }
 
  private:
@@ -331,14 +354,15 @@ TEST_F(AudioInputDeviceManagerNoDevicesTest,
   InSequence s;
 
   for (const auto& device_request : devices_) {
-    int session_id = manager_->Open(device_request);
+    base::UnguessableToken session_id = manager_->Open(device_request);
 
     EXPECT_CALL(*audio_input_listener_, Opened(device_request.type, session_id))
         .Times(1);
     WaitForOpenCompletion();
 
     // Expects that device parameters stored by the manager are valid.
-    const MediaStreamDevice* device = manager_->GetOpenedDeviceById(session_id);
+    const blink::MediaStreamDevice* device =
+        manager_->GetOpenedDeviceById(session_id);
     EXPECT_TRUE(device->input.IsValid());
 
     manager_->Close(session_id);

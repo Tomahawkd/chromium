@@ -3,28 +3,29 @@
 <script src="../../../resources/testharnessreport.js"></script>
 <script src="../../assert_selection.js"></script>
 <script>
+
 selection_test(
   '<div contenteditable dir="ltr">|\u05D0\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1|<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
+  '<div contenteditable dir="ltr">\u05D0|\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
   '32-0 ltr right character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0|\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2|abc\u05D3\u05D4\u05D5</span></div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1|<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
   '32-1 ltr right character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1|<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0|\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2|abc\u05D3\u05D4\u05D5</span></div>',
   '32-2 ltr right character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1<span>|\u05D2abc\u05D3\u05D4\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0|\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5</span></div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2|abc\u05D3\u05D4\u05D5</span></div>',
   '32-3 ltr right character');
 
 selection_test(
@@ -48,19 +49,19 @@ selection_test(
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc|\u05D3\u05D4\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3\u05D4|\u05D5</span></div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3|\u05D4\u05D5</span></div>',
   '32-7 ltr right character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3|\u05D4\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5|</span></div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3\u05D4|\u05D5</span></div>',
   '32-8 ltr right character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3\u05D4|\u05D5</span></div>',
   selection => selection.modify('move', 'right', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3|\u05D4\u05D5</span></div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1<span>\u05D2abc\u05D3\u05D4\u05D5|</span></div>',
   '32-9 ltr right character');
 
 selection_test(

@@ -7,14 +7,20 @@
 #import <Cocoa/Cocoa.h>
 #include <stdint.h>
 
+#include <algorithm>
+#include <list>
 #include <map>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #import "base/mac/launch_services_util.h"
 #include "base/mac/mac_util.h"
@@ -23,21 +29,25 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/version.h"
 #import "chrome/browser/mac/dock.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #import "chrome/common/mac/app_mode_common.h"
@@ -55,12 +65,104 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_family.h"
 
+// A TerminationObserver observes a NSRunningApplication for when it
+// terminates. On termination, it will run the specified callback on the UI
+// thread and release itself.
+@interface TerminationObserver : NSObject {
+  base::scoped_nsobject<NSRunningApplication> app_;
+  base::OnceClosure callback_;
+}
+- (id)initWithRunningApplication:(NSRunningApplication*)app
+                        callback:(base::OnceClosure)callback;
+@end
+
+@implementation TerminationObserver
+- (id)initWithRunningApplication:(NSRunningApplication*)app
+                        callback:(base::OnceClosure)callback {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (self = [super init]) {
+    callback_ = std::move(callback);
+    app_.reset(app, base::scoped_policy::RETAIN);
+    // Note that |observeValueForKeyPath| will be called with the initial value
+    // within the |addObserver| call.
+    [app_ addObserver:self
+           forKeyPath:@"isTerminated"
+              options:NSKeyValueObservingOptionNew |
+                      NSKeyValueObservingOptionInitial
+              context:nullptr];
+  }
+  return self;
+}
+
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary*)change
+                       context:(void*)context {
+  NSNumber* newNumberValue = [change objectForKey:NSKeyValueChangeNewKey];
+  BOOL newValue = [newNumberValue boolValue];
+  if (newValue) {
+    base::scoped_nsobject<TerminationObserver> scoped_self(
+        self, base::scoped_policy::RETAIN);
+    base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                   base::BindOnce(
+                       [](base::scoped_nsobject<TerminationObserver> observer) {
+                         [observer onTerminated];
+                       },
+                       scoped_self));
+  }
+}
+
+- (void)onTerminated {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  // If |onTerminated| is called repeatedly (which in theory it should not),
+  // then ensure that we only call removeObserver and release once by doing an
+  // early-out if |callback_| has already been made.
+  if (!callback_)
+    return;
+  std::move(callback_).Run();
+  DCHECK(!callback_);
+  [app_ removeObserver:self forKeyPath:@"isTerminated" context:nullptr];
+  [self release];
+}
+@end
+
+// TODO(https://crbug.com/941909): Change all launch functions to take a single
+// callback that returns a NSRunningApplication, rather than separate launch and
+// termination callbacks.
+void RunAppLaunchCallbacks(
+    base::scoped_nsobject<NSRunningApplication> app,
+    base::OnceCallback<void(base::Process)> launch_callback,
+    base::OnceClosure termination_callback) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(app);
+
+  // If the app doesn't have a valid pid, or if the application has been
+  // terminated, then indicate failure in |launch_callback|.
+  base::Process process([app processIdentifier]);
+  if (!process.IsValid() || [app isTerminated]) {
+    std::move(launch_callback).Run(base::Process());
+    return;
+  }
+
+  // Otherwise, indicate successful launch, and watch for termination.
+  // TODO(https://crbug.com/941909): This watches for termination indefinitely,
+  // but we only need to watch for termination until the app establishes a
+  // (whereupon termination will be noticed by the mojo connection closing).
+  std::move(launch_callback).Run(std::move(process));
+  [[TerminationObserver alloc]
+      initWithRunningApplication:app
+                        callback:std::move(termination_callback)];
+}
+
 bool g_app_shims_allow_update_and_launch_in_tests = false;
+
+namespace web_app {
 
 namespace {
 
-// Launch Services Key to run as an agent app, which doesn't launch in the dock.
-NSString* const kLSUIElement = @"LSUIElement";
+// The maximum number to append to to an app name before giving up and using the
+// extension id.
+constexpr int kMaxConflictNumber = 999;
 
 // Writes |icons| to |path| in .icns format.
 bool WriteIconsToFile(const std::vector<gfx::Image>& icons,
@@ -110,7 +212,7 @@ bool IsImageValidForIcon(const gfx::Image& image) {
   return false;
 }
 
-bool AppShimsDisabledForTest() {
+bool AppShimCreationDisabledForTest() {
   // Disable app shims in tests because shims created in ~/Applications will not
   // be cleaned up.
   return base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType);
@@ -137,104 +239,193 @@ base::FilePath GetResourcesPath(const base::FilePath& app_path) {
   return app_path.Append("Contents").Append("Resources");
 }
 
-bool HasExistingExtensionShim(const base::FilePath& destination_directory,
-                              const std::string& extension_id,
-                              const base::FilePath& own_basename) {
-  // Check if there any any other shims for the same extension.
-  base::FileEnumerator enumerator(destination_directory, false /* recursive */,
-                                  base::FileEnumerator::DIRECTORIES);
-  for (base::FilePath shim_path = enumerator.Next(); !shim_path.empty();
-       shim_path = enumerator.Next()) {
-    if (shim_path.BaseName() != own_basename &&
-        base::EndsWith(shim_path.RemoveExtension().value(), extension_id,
-                       base::CompareCase::SENSITIVE)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 // Given the path to an app bundle, return the path to the Info.plist file.
 NSString* GetPlistPath(const base::FilePath& bundle_path) {
   return base::mac::FilePathToNSString(
       bundle_path.Append("Contents").Append("Info.plist"));
 }
 
-NSMutableDictionary* ReadPlist(NSString* plist_path) {
-  return [NSMutableDictionary dictionaryWithContentsOfFile:plist_path];
-}
-
-// Takes the path to an app bundle and checks that the CrAppModeUserDataDir in
-// the Info.plist starts with the current user_data_dir. This uses starts with
-// instead of equals because the CrAppModeUserDataDir could be the user_data_dir
-// or the |app_data_dir_|.
-bool HasSameUserDataDir(const base::FilePath& bundle_path) {
-  NSDictionary* plist = ReadPlist(GetPlistPath(bundle_path));
-  base::FilePath user_data_dir;
-  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
-  DCHECK(!user_data_dir.empty());
-  return base::StartsWith(base::SysNSStringToUTF8([plist
-                              valueForKey:app_mode::kCrAppModeUserDataDirKey]),
-                          user_data_dir.value(), base::CompareCase::SENSITIVE);
-}
-
-void LaunchShimOnFileThread(bool launched_after_rebuild,
-                            const web_app::ShortcutInfo& shortcut_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
-  base::FilePath shim_path = web_app::GetAppInstallPath(shortcut_info);
-
-  if (shim_path.empty() || !base::PathExists(shim_path) ||
-      !HasSameUserDataDir(shim_path)) {
-    // The user may have deleted the copy in the Applications folder, use the
-    // one in the web app's |app_data_dir_|.
-    base::FilePath app_data_dir = web_app::GetWebAppDataDirectory(
-        shortcut_info.profile_path, shortcut_info.extension_id, GURL());
-    shim_path = app_data_dir.Append(shim_path.BaseName());
+// Data and helpers for an Info.plist under a given bundle path.
+class BundleInfoPlist {
+ public:
+  // Retrieve info from all app shims found in |apps_path|.
+  static std::list<BundleInfoPlist> GetAllInPath(
+      const base::FilePath& apps_path,
+      bool recursive) {
+    std::list<BundleInfoPlist> bundles;
+    base::FileEnumerator enumerator(apps_path, recursive,
+                                    base::FileEnumerator::DIRECTORIES);
+    for (base::FilePath shim_path = enumerator.Next(); !shim_path.empty();
+         shim_path = enumerator.Next()) {
+      bundles.emplace_back(shim_path);
+    }
+    return bundles;
   }
 
-  if (!base::PathExists(shim_path))
-    return;
+  // Retrieve info from the specified app shim in |bundle_path|.
+  explicit BundleInfoPlist(const base::FilePath& bundle_path)
+      : bundle_path_(bundle_path) {
+    NSString* plist_path = GetPlistPath(bundle_path_);
+    plist_.reset([NSDictionary dictionaryWithContentsOfFile:plist_path],
+                 base::scoped_policy::RETAIN);
+  }
+  BundleInfoPlist(const BundleInfoPlist& other) = default;
+  BundleInfoPlist& operator=(const BundleInfoPlist& other) = default;
+  ~BundleInfoPlist() = default;
 
-  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
-  command_line.AppendSwitchASCII(app_mode::kLaunchedByChromeProcessId,
-                                 base::IntToString(base::GetCurrentProcId()));
-  if (launched_after_rebuild)
-    command_line.AppendSwitch(app_mode::kLaunchedAfterRebuild);
-  // Launch without activating (NSWorkspaceLaunchWithoutActivation).
-  base::mac::OpenApplicationWithPath(
-      shim_path, command_line,
-      NSWorkspaceLaunchDefault | NSWorkspaceLaunchWithoutActivation);
-}
+  const base::FilePath& bundle_path() const { return bundle_path_; }
 
-base::FilePath GetAppLoaderPath() {
-  return base::mac::PathForFrameworkBundleResource(
-      base::mac::NSToCFCast(@"app_mode_loader.app"));
-}
-
-void UpdatePlatformShortcutsInternal(
-    const base::FilePath& app_data_path,
-    const base::string16& old_app_title,
-    const web_app::ShortcutInfo& shortcut_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
-  if (AppShimsDisabledForTest() &&
-      !g_app_shims_allow_update_and_launch_in_tests) {
-    return;
+  // Checks that the CrAppModeUserDataDir in the Info.plist is, or is a subpath
+  // of the current user_data_dir. This uses starts with instead of equals
+  // because the CrAppModeUserDataDir could be the user_data_dir or the
+  // |app_data_dir_|.
+  bool IsForCurrentUserDataDir() const {
+    base::FilePath user_data_dir;
+    base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+    DCHECK(!user_data_dir.empty());
+    return base::StartsWith(
+        base::SysNSStringToUTF8(
+            [plist_ valueForKey:app_mode::kCrAppModeUserDataDirKey]),
+        user_data_dir.value(), base::CompareCase::SENSITIVE);
   }
 
-  web_app::WebAppShortcutCreator shortcut_creator(app_data_path,
-                                                  &shortcut_info);
-  shortcut_creator.UpdateShortcuts();
+  // Checks if kCrAppModeProfileDirKey corresponds to the specified profile
+  // path.
+  bool IsForProfile(const base::FilePath& test_profile_path) const {
+    std::string profile_path = base::SysNSStringToUTF8(
+        [plist_ valueForKey:app_mode::kCrAppModeProfileDirKey]);
+    return profile_path == test_profile_path.BaseName().value();
+  }
+
+  // Return the full profile path (as a subpath of the user_data_dir).
+  base::FilePath GetFullProfilePath() const {
+    // Figure out the profile_path. Since the user_data_dir could contain the
+    // path to the web app data dir.
+    base::FilePath user_data_dir = base::mac::NSStringToFilePath(
+        [plist_ valueForKey:app_mode::kCrAppModeUserDataDirKey]);
+    base::FilePath profile_base_name = base::mac::NSStringToFilePath(
+        [plist_ valueForKey:app_mode::kCrAppModeProfileDirKey]);
+    if (user_data_dir.DirName().DirName().BaseName() == profile_base_name)
+      return user_data_dir.DirName().DirName();
+    return user_data_dir.Append(profile_base_name);
+  }
+
+  std::string GetExtensionId() const {
+    return base::SysNSStringToUTF8(
+        [plist_ valueForKey:app_mode::kCrAppModeShortcutIDKey]);
+  }
+  std::string GetProfileName() const {
+    return base::SysNSStringToUTF8(
+        [plist_ valueForKey:app_mode::kCrAppModeProfileNameKey]);
+  }
+  GURL GetURL() const {
+    return GURL(base::SysNSStringToUTF8(
+        [plist_ valueForKey:app_mode::kCrAppModeShortcutURLKey]));
+  }
+  base::string16 GetTitle() const {
+    return base::SysNSStringToUTF16(
+        [plist_ valueForKey:app_mode::kCrAppModeShortcutNameKey]);
+  }
+  base::Version GetVersion() const {
+    NSString* version_string =
+        [plist_ valueForKey:app_mode::kCrBundleVersionKey];
+    if (!version_string) {
+      // Older bundles have the Chrome version in the following key.
+      version_string =
+          [plist_ valueForKey:app_mode::kCFBundleShortVersionStringKey];
+    }
+    return base::Version(base::SysNSStringToUTF8(version_string));
+  }
+  std::string GetBundleId() const {
+    return base::SysNSStringToUTF8(
+        [plist_ valueForKey:base::mac::CFToNSCast(kCFBundleIdentifierKey)]);
+  }
+
+ private:
+  // The path of the app bundle from this this info was read.
+  base::FilePath bundle_path_;
+
+  // Data read from the Info.plist.
+  base::scoped_nsobject<NSDictionary> plist_;
+};
+
+bool HasExistingExtensionShimForDifferentProfile(
+    const base::FilePath& destination_directory,
+    const std::string& extension_id,
+    const base::FilePath& profile_dir) {
+  std::list<BundleInfoPlist> bundles_info = BundleInfoPlist::GetAllInPath(
+      destination_directory, false /* recursive */);
+  for (const auto& info : bundles_info) {
+    if (info.GetExtensionId() == extension_id &&
+        !info.IsForProfile(profile_dir)) {
+      return true;
+    }
+  }
+  return false;
 }
 
-void UpdateAndLaunchShimOnFileThread(
-    const web_app::ShortcutInfo& shortcut_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
-  base::FilePath shortcut_data_dir = web_app::GetWebAppDataDirectory(
-      shortcut_info.profile_path, shortcut_info.extension_id, GURL());
-  UpdatePlatformShortcutsInternal(shortcut_data_dir, base::string16(),
-                                  shortcut_info);
-  LaunchShimOnFileThread(true, shortcut_info);
+void LaunchShimOnFileThread(LaunchShimUpdateBehavior update_behavior,
+                            ShimLaunchedCallback launched_callback,
+                            ShimTerminatedCallback terminated_callback,
+                            const ShortcutInfo& shortcut_info) {
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+
+  WebAppShortcutCreator shortcut_creator(
+      internals::GetShortcutDataDir(shortcut_info), &shortcut_info);
+
+  // Recreate shims if requested, and populate |shim_paths| with the paths to
+  // attempt to launch.
+  bool launched_after_rebuild = false;
+  std::vector<base::FilePath> shim_paths;
+  switch (update_behavior) {
+    case LaunchShimUpdateBehavior::DO_NOT_RECREATE:
+      // Attempt to locate the shim's path using LaunchServices.
+      shim_paths = shortcut_creator.GetAppBundlesById();
+      break;
+    case LaunchShimUpdateBehavior::RECREATE_IF_INSTALLED:
+      // Only attempt to launch shims that were updated.
+      launched_after_rebuild = true;
+      shortcut_creator.UpdateShortcuts(false /* create_if_needed */,
+                                       &shim_paths);
+      break;
+    case LaunchShimUpdateBehavior::RECREATE_UNCONDITIONALLY:
+      // Likewise, only attempt to launch shims that were updated.
+      launched_after_rebuild = true;
+      shortcut_creator.UpdateShortcuts(true /* create_if_needed */,
+                                       &shim_paths);
+      break;
+  }
+
+  // Attempt to launch the shim.
+  for (const auto& shim_path : shim_paths) {
+    if (!base::PathExists(shim_path))
+      continue;
+
+    base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+    command_line.AppendSwitchASCII(
+        app_mode::kLaunchedByChromeProcessId,
+        base::NumberToString(base::GetCurrentProcId()));
+    if (launched_after_rebuild)
+      command_line.AppendSwitch(app_mode::kLaunchedAfterRebuild);
+
+    // Launch without activating (NSWorkspaceLaunchWithoutActivation).
+    base::scoped_nsobject<NSRunningApplication> app(
+        base::mac::OpenApplicationWithPath(
+            shim_path, command_line,
+            NSWorkspaceLaunchDefault | NSWorkspaceLaunchWithoutActivation),
+        base::scoped_policy::RETAIN);
+    if (app) {
+      base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                     base::BindOnce(&RunAppLaunchCallbacks, app,
+                                    std::move(launched_callback),
+                                    std::move(terminated_callback)));
+      return;
+    }
+  }
+
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(std::move(launched_callback), base::Process()));
 }
 
 base::FilePath GetLocalizableAppShortcutsSubdirName() {
@@ -252,6 +443,11 @@ base::FilePath GetLocalizableAppShortcutsSubdirName() {
     default:
       return base::FilePath(kChromeAppDirName);
   }
+}
+
+base::FilePath* GetOverriddenApplicationsFolder() {
+  static base::NoDestructor<base::FilePath> overridden_path;
+  return overridden_path.get();
 }
 
 // Creates a canvas the same size as |overlay|, copies the appropriate
@@ -331,16 +527,17 @@ void GetImageResourcesOnUIThread(
     (*result)[id] = ImageRepForGFXImage(image);
   }
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
       base::BindOnce(std::move(io_task), std::move(result)));
 }
 
 void SetWorkspaceIconOnWorkerThread(const base::FilePath& apps_directory,
                                     std::unique_ptr<ResourceIDToImage> images) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   base::scoped_nsobject<NSImage> folder_icon_image([[NSImage alloc] init]);
   // Use complete assets for the small icon sizes. -[NSWorkspace setIcon:] has a
@@ -400,109 +597,133 @@ bool UpdateAppShortcutsSubdirLocalizedName(
       base::mac::FilePathToNSString(localized.Append(locale + ".strings"));
   [strings_dict writeToFile:strings_path atomically:YES];
 
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(
-          &GetImageResourcesOnUIThread,
-          base::BindOnce(&SetWorkspaceIconOnWorkerThread, apps_directory)));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&GetImageResourcesOnUIThread,
+                                base::BindOnce(&SetWorkspaceIconOnWorkerThread,
+                                               apps_directory)));
   return true;
 }
 
-void DeletePathAndParentIfEmpty(const base::FilePath& app_path) {
-  DCHECK(!app_path.empty());
-  base::DeleteFile(app_path, true);
-  base::FilePath apps_folder = app_path.DirName();
-  if (base::IsDirectoryEmpty(apps_folder))
-    base::DeleteFile(apps_folder, false);
-}
-
-bool IsShimForProfile(const base::FilePath& base_name,
-                      const std::string& profile_base_name) {
-  if (!base::StartsWith(base_name.value(), profile_base_name,
-                        base::CompareCase::SENSITIVE))
-    return false;
-
-  if (base_name.Extension() != ".app")
-    return false;
-
-  std::string app_id = base_name.RemoveExtension().value();
-  // Strip (profile_base_name + " ") from the start.
-  app_id = app_id.substr(profile_base_name.size() + 1);
-  return crx_file::id_util::IdIsValid(app_id);
-}
-
-std::vector<base::FilePath> GetAllAppBundlesInPath(
-    const base::FilePath& internal_shortcut_path,
-    const std::string& profile_base_name) {
-  std::vector<base::FilePath> bundle_paths;
-
-  base::FileEnumerator enumerator(internal_shortcut_path, true /* recursive */,
-                                  base::FileEnumerator::DIRECTORIES);
-  for (base::FilePath bundle_path = enumerator.Next(); !bundle_path.empty();
-       bundle_path = enumerator.Next()) {
-    if (IsShimForProfile(bundle_path.BaseName(), profile_base_name))
-      bundle_paths.push_back(bundle_path);
-  }
-
-  return bundle_paths;
-}
-
-std::unique_ptr<web_app::ShortcutInfo> BuildShortcutInfoFromBundle(
+std::unique_ptr<ShortcutInfo> BuildShortcutInfoFromBundle(
     const base::FilePath& bundle_path) {
-  NSDictionary* plist = ReadPlist(GetPlistPath(bundle_path));
-
-  std::unique_ptr<web_app::ShortcutInfo> shortcut_info(
-      new web_app::ShortcutInfo);
-  shortcut_info->extension_id = base::SysNSStringToUTF8(
-      [plist valueForKey:app_mode::kCrAppModeShortcutIDKey]);
-  shortcut_info->is_platform_app = true;
-  shortcut_info->url = GURL(base::SysNSStringToUTF8(
-      [plist valueForKey:app_mode::kCrAppModeShortcutURLKey]));
-  shortcut_info->title = base::SysNSStringToUTF16(
-      [plist valueForKey:app_mode::kCrAppModeShortcutNameKey]);
-  shortcut_info->profile_name = base::SysNSStringToUTF8(
-      [plist valueForKey:app_mode::kCrAppModeProfileNameKey]);
-
-  // Figure out the profile_path. Since the user_data_dir could contain the
-  // path to the web app data dir.
-  base::FilePath user_data_dir = base::mac::NSStringToFilePath(
-      [plist valueForKey:app_mode::kCrAppModeUserDataDirKey]);
-  base::FilePath profile_base_name = base::mac::NSStringToFilePath(
-      [plist valueForKey:app_mode::kCrAppModeProfileDirKey]);
-  if (user_data_dir.DirName().DirName().BaseName() == profile_base_name)
-    shortcut_info->profile_path = user_data_dir.DirName().DirName();
-  else
-    shortcut_info->profile_path = user_data_dir.Append(profile_base_name);
-
+  BundleInfoPlist bundle_info(bundle_path);
+  std::unique_ptr<ShortcutInfo> shortcut_info(new ShortcutInfo);
+  shortcut_info->extension_id = bundle_info.GetExtensionId();
+  shortcut_info->url = bundle_info.GetURL();
+  shortcut_info->title = bundle_info.GetTitle();
+  shortcut_info->profile_name = bundle_info.GetProfileName();
+  shortcut_info->profile_path = bundle_info.GetFullProfilePath();
   return shortcut_info;
+}
+
+base::FilePath GetMultiProfileAppDataDir(base::FilePath app_data_dir) {
+  // The kCrAppModeUserDataDirKey is expected to be a path in kWebAppDirname,
+  // and the true user data dir is extracted by going three directories up.
+  // For profile-agnostic apps, remove this reference to the profile name.
+  // TODO(https://crbug.com/1021237): Do not specify kCrAppModeUserDataDirKey
+  // if Chrome is using the default user data dir.
+
+  // Strip the app name directory.
+  base::FilePath app_name_dir = app_data_dir.BaseName();
+  app_data_dir = app_data_dir.DirName();
+
+  // Strip kWebAppDirname.
+  base::FilePath web_app_dir = app_data_dir.BaseName();
+  app_data_dir = app_data_dir.DirName();
+
+  // Strip the profile and replace it with kNewProfilePath.
+  app_data_dir = app_data_dir.DirName();
+  const std::string kNewProfilePath("-");
+  return app_data_dir.Append(kNewProfilePath)
+      .Append(web_app_dir)
+      .Append(app_name_dir);
+}
+
+// Returns the bundle identifier for an app. If |profile_path| is unset, then
+// the returned bundle id will be profile-agnostic.
+std::string GetBundleIdentifier(
+    const std::string& app_id,
+    const base::FilePath& profile_path = base::FilePath()) {
+  // Note that this matches APP_MODE_APP_BUNDLE_ID in chrome/chrome.gyp.
+  if (!profile_path.empty()) {
+    // Replace spaces in the profile path with hyphen.
+    std::string normalized_profile_path;
+    base::ReplaceChars(profile_path.BaseName().value(), " ", "-",
+                       &normalized_profile_path);
+    return base::mac::BaseBundleID() + std::string(".app.") +
+           normalized_profile_path + "-" + app_id;
+  }
+  return base::mac::BaseBundleID() + std::string(".app.") + app_id;
+}
+
+// Return all bundles with the specified |bundle_id| which are for the current
+// user data dir.
+std::list<BundleInfoPlist> SearchForBundlesById(const std::string& bundle_id) {
+  std::list<BundleInfoPlist> infos;
+
+  // First search using LaunchServices
+  base::ScopedCFTypeRef<CFStringRef> bundle_id_cf(
+      base::SysUTF8ToCFStringRef(bundle_id));
+  base::scoped_nsobject<NSArray> bundle_urls(base::mac::CFToNSCast(
+      LSCopyApplicationURLsForBundleIdentifier(bundle_id_cf.get(), nullptr)));
+  for (NSURL* url : bundle_urls.get()) {
+    NSString* path_string = [url path];
+    base::FilePath bundle_path([path_string fileSystemRepresentation]);
+    BundleInfoPlist info(bundle_path);
+    if (!info.IsForCurrentUserDataDir())
+      continue;
+    infos.push_back(info);
+  }
+  if (!infos.empty())
+    return infos;
+
+  // LaunchServices can fail to locate a recently-created bundle. Search
+  // for an app in the applications folder to handle this case.
+  // https://crbug.com/937703
+  infos = BundleInfoPlist::GetAllInPath(GetChromeAppsFolder(),
+                                        true /* recursive */);
+  for (auto it = infos.begin(); it != infos.end();) {
+    const BundleInfoPlist& info = *it;
+    if (info.GetBundleId() == bundle_id && info.IsForCurrentUserDataDir()) {
+      ++it;
+    } else {
+      infos.erase(it++);
+    }
+  }
+  return infos;
 }
 
 }  // namespace
 
-namespace web_app {
-
-void UpdateAndLaunchShim(std::unique_ptr<web_app::ShortcutInfo> shortcut_info) {
-  web_app::internals::PostShortcutIOTask(
-      base::BindOnce(&UpdateAndLaunchShimOnFileThread),
-      std::move(shortcut_info));
-}
-
-std::unique_ptr<web_app::ShortcutInfo> RecordAppShimErrorAndBuildShortcutInfo(
+std::unique_ptr<ShortcutInfo> RecordAppShimErrorAndBuildShortcutInfo(
     const base::FilePath& bundle_path) {
-  NSDictionary* plist = ReadPlist(GetPlistPath(bundle_path));
-  NSString* version_string = [plist valueForKey:app_mode::kCrBundleVersionKey];
-  if (!version_string) {
-    // Older bundles have the Chrome version in the following key.
-    version_string =
-        [plist valueForKey:app_mode::kCFBundleShortVersionStringKey];
-  }
-  base::Version full_version(base::SysNSStringToUTF8(version_string));
+  base::Version full_version = BundleInfoPlist(bundle_path).GetVersion();
   uint32_t major_version = 0;
   if (full_version.IsValid())
     major_version = full_version.components()[0];
   base::UmaHistogramSparse("Apps.AppShimErrorVersion", major_version);
 
   return BuildShortcutInfoFromBundle(bundle_path);
+}
+
+bool AppShimLaunchDisabled() {
+  return AppShimCreationDisabledForTest() &&
+         !g_app_shims_allow_update_and_launch_in_tests;
+}
+
+base::FilePath GetChromeAppsFolder() {
+  if (!GetOverriddenApplicationsFolder()->empty())
+    return *GetOverriddenApplicationsFolder();
+
+  base::FilePath path = GetWritableApplicationsDirectory();
+  if (path.empty())
+    return path;
+
+  return path.Append(GetLocalizableAppShortcutsSubdirName());
+}
+
+void SetChromeAppsFolderForTesting(const base::FilePath& path) {
+  *GetOverriddenApplicationsFolder() = path;
 }
 
 WebAppShortcutCreator::WebAppShortcutCreator(const base::FilePath& app_data_dir,
@@ -513,18 +734,59 @@ WebAppShortcutCreator::WebAppShortcutCreator(const base::FilePath& app_data_dir,
 
 WebAppShortcutCreator::~WebAppShortcutCreator() {}
 
-base::FilePath WebAppShortcutCreator::GetApplicationsShortcutPath() const {
-  base::FilePath applications_dir = GetApplicationsDirname();
-  return applications_dir.empty()
-             ? base::FilePath()
-             : applications_dir.Append(GetShortcutBasename());
+base::FilePath WebAppShortcutCreator::GetApplicationsShortcutPath(
+    bool avoid_conflicts) const {
+  if (g_app_shims_allow_update_and_launch_in_tests)
+    return app_data_dir_.Append(GetShortcutBasename());
+
+  base::FilePath applications_dir = GetChromeAppsFolder();
+  if (applications_dir.empty())
+    return base::FilePath();
+
+  if (!avoid_conflicts)
+    return applications_dir.Append(GetShortcutBasename());
+
+  // Attempt to use the application's title for the file name. Resolve conflicts
+  // by appending 1 through kMaxConflictNumber, before giving up and using the
+  // concatenated profile and extension for a name name.
+  for (int i = 1; i <= kMaxConflictNumber; ++i) {
+    base::FilePath path = applications_dir.Append(GetShortcutBasename(i));
+    if (base::DirectoryExists(path))
+      continue;
+    return path;
+  }
+
+  // If all of those are taken, then use the combination of profile and
+  // extension id.
+  return applications_dir.Append(GetFallbackBasename());
 }
 
-base::FilePath WebAppShortcutCreator::GetInternalShortcutPath() const {
-  return app_data_dir_.Append(GetShortcutBasename());
+base::FilePath WebAppShortcutCreator::GetShortcutBasename(
+    int copy_number) const {
+  // For profile-less shortcuts, use the fallback naming scheme to avoid change.
+  if (info_->profile_name.empty())
+    return GetFallbackBasename();
+
+  // Strip all preceding '.'s from the path.
+  base::string16 title = info_->title;
+  size_t first_non_dot = 0;
+  while (first_non_dot < title.size() && title[first_non_dot] == '.')
+    first_non_dot += 1;
+  title = title.substr(first_non_dot);
+  if (title.empty())
+    return GetFallbackBasename();
+
+  // Finder will display ':' as '/', so replace all '/' instances with ':'.
+  std::replace(title.begin(), title.end(), '/', ':');
+
+  // Append the copy number.
+  std::string title_utf8 = base::UTF16ToUTF8(title);
+  if (copy_number != 1)
+    title_utf8 += base::StringPrintf(" %d", copy_number);
+  return base::FilePath(title_utf8 + ".app");
 }
 
-base::FilePath WebAppShortcutCreator::GetShortcutBasename() const {
+base::FilePath WebAppShortcutCreator::GetFallbackBasename() const {
   std::string app_name;
   // Check if there should be a separate shortcut made for different profiles.
   // Such shortcuts will have a |profile_name| set on the ShortcutInfo,
@@ -539,11 +801,62 @@ base::FilePath WebAppShortcutCreator::GetShortcutBasename() const {
 
 bool WebAppShortcutCreator::BuildShortcut(
     const base::FilePath& staging_path) const {
-  // Update the app's plist and icon in a temp directory. This works around
-  // a Finder bug where the app's icon doesn't properly update.
-  if (!base::CopyDirectory(GetAppLoaderPath(), staging_path, true)) {
-    LOG(ERROR) << "Copying app to staging path: " << staging_path.value()
-               << " failed.";
+  if (!base::DirectoryExists(staging_path.DirName())) {
+    LOG(ERROR) << "Staging path directory does not exit: "
+               << staging_path.DirName();
+    return false;
+  }
+
+  const base::FilePath framework_bundle_path = base::mac::FrameworkBundlePath();
+
+  const base::FilePath executable_path =
+      framework_bundle_path.Append("Helpers").Append("app_mode_loader");
+  const base::FilePath plist_path =
+      framework_bundle_path.Append("Resources").Append("app_mode-Info.plist");
+
+  const base::FilePath destination_contents_path =
+      staging_path.Append("Contents");
+  const base::FilePath destination_executable_path =
+      destination_contents_path.Append("MacOS");
+
+  // First create the .app bundle directory structure.
+  // Use NSFileManager so that the permissions can be set appropriately. The
+  // base::CreateDirectory() routine forces mode 0700.
+  NSError* error = nil;
+  if (![[NSFileManager defaultManager]
+                 createDirectoryAtURL:base::mac::FilePathToNSURL(
+                                          destination_executable_path)
+          withIntermediateDirectories:YES
+                           attributes:@{
+                             NSFilePosixPermissions : @(0755)
+                           }
+                                error:&error]) {
+    LOG(ERROR) << "Failed to create destination executable path: "
+               << destination_executable_path
+               << ", error=" << base::SysNSStringToUTF8([error description]);
+    return false;
+  }
+
+  // Copy the executable file.
+  if (!base::CopyFile(executable_path, destination_executable_path.Append(
+                                           executable_path.BaseName()))) {
+    LOG(ERROR) << "Failed to copy executable: " << executable_path;
+    return false;
+  }
+
+  // Copy the Info.plist.
+  if (!base::CopyFile(plist_path,
+                      destination_contents_path.Append("Info.plist"))) {
+    LOG(ERROR) << "Failed to copy plist: " << plist_path;
+    return false;
+  }
+
+  // Write the PkgInfo file.
+  constexpr char kPkgInfoData[] = "APPL????";
+  constexpr size_t kPkgInfoDataSize = base::size(kPkgInfoData) - 1;
+  if (base::WriteFile(destination_contents_path.Append("PkgInfo"), kPkgInfoData,
+                      kPkgInfoDataSize) != kPkgInfoDataSize) {
+    LOG(ERROR) << "Failed to write PkgInfo file: " << destination_contents_path;
     return false;
   }
 
@@ -551,197 +864,102 @@ bool WebAppShortcutCreator::BuildShortcut(
          UpdateIcon(staging_path);
 }
 
-size_t WebAppShortcutCreator::CreateShortcutsIn(
-    const std::vector<base::FilePath>& folders) const {
-  size_t succeeded = 0;
+void WebAppShortcutCreator::CreateShortcutsAt(
+    const std::vector<base::FilePath>& dst_app_paths,
+    std::vector<base::FilePath>* updated_paths) const {
+  DCHECK(updated_paths && updated_paths->empty());
+  DCHECK(!dst_app_paths.empty());
 
   base::ScopedTempDir scoped_temp_dir;
   if (!scoped_temp_dir.CreateUniqueTempDir())
-    return 0;
+    return;
 
-  base::FilePath app_name = GetShortcutBasename();
-  base::FilePath staging_path = scoped_temp_dir.GetPath().Append(app_name);
+  // Create the bundle in |staging_path|. Note that the staging path will be
+  // encoded in CFBundleName, and only .apps with that exact name will have
+  // their display name overridden by localization. To that end, use the base
+  // name from dst_app_paths.front(), to ensure that the Applications copy has
+  // its display name set appropriately.
+  base::FilePath staging_path =
+      scoped_temp_dir.GetPath().Append(dst_app_paths.front().BaseName());
   if (!BuildShortcut(staging_path))
-    return 0;
+    return;
 
-  for (std::vector<base::FilePath>::const_iterator it = folders.begin();
-       it != folders.end(); ++it) {
-    const base::FilePath& dst_path = *it;
-    if (!base::CreateDirectory(dst_path)) {
-      LOG(ERROR) << "Creating directory " << dst_path.value() << " failed.";
-      return succeeded;
+  // Copy to each destination in |dst_app_paths|.
+  for (const auto& dst_app_path : dst_app_paths) {
+    // Create the parent directory for the app.
+    base::FilePath dst_parent_dir = dst_app_path.DirName();
+    if (!base::CreateDirectory(dst_parent_dir)) {
+      LOG(ERROR) << "Creating directory " << dst_parent_dir.value()
+                 << " failed.";
+      continue;
     }
 
-    // Ensure the copy does not merge with stale info.
-    base::DeleteFile(dst_path.Append(app_name), true);
+    // Delete any old copies that may exist.
+    base::DeleteFile(dst_app_path, true);
 
-    if (!base::CopyDirectory(staging_path, dst_path, true)) {
-      LOG(ERROR) << "Copying app to dst path: " << dst_path.value()
+    // Copy the bundle to |dst_app_path|.
+    if (!base::CopyDirectory(staging_path, dst_app_path, true)) {
+      LOG(ERROR) << "Copying app to dst dir: " << dst_parent_dir.value()
                  << " failed";
-      return succeeded;
+      continue;
     }
 
     // Remove the quarantine attribute from both the bundle and the executable.
-    base::mac::RemoveQuarantineAttribute(dst_path.Append(app_name));
-    base::mac::RemoveQuarantineAttribute(dst_path.Append(app_name)
-                                             .Append("Contents")
+    base::mac::RemoveQuarantineAttribute(dst_app_path);
+    base::mac::RemoveQuarantineAttribute(dst_app_path.Append("Contents")
                                              .Append("MacOS")
                                              .Append("app_mode_loader"));
-    ++succeeded;
+    updated_paths->push_back(dst_app_path);
   }
-
-  return succeeded;
 }
 
 bool WebAppShortcutCreator::CreateShortcuts(
     ShortcutCreationReason creation_reason,
     ShortcutLocations creation_locations) {
-  const base::FilePath applications_dir = GetApplicationsDirname();
-  if (applications_dir.empty() ||
-      !base::DirectoryExists(applications_dir.DirName())) {
-    LOG(ERROR) << "Couldn't find an Applications directory to copy app to.";
+  DCHECK_NE(creation_locations.applications_menu_location,
+            APP_MENU_LOCATION_HIDDEN);
+  std::vector<base::FilePath> updated_app_paths;
+  if (!UpdateShortcuts(true /* create_if_needed */, &updated_app_paths))
     return false;
-  }
-
-  // Only set folder icons and a localized name once. This avoids concurrent
-  // calls to -[NSWorkspace setIcon:..], which is not reentrant.
-  static bool once = UpdateAppShortcutsSubdirLocalizedName(applications_dir);
-  if (!once)
-    LOG(ERROR) << "Failed to localize " << applications_dir.value();
-
-  // If non-nil, this path is added to the OSX Dock after creating shortcuts.
-  NSString* path_to_add_to_dock = nil;
-
-  std::vector<base::FilePath> paths;
-
-  // The app list shim is not tied to a particular profile, so omit the copy
-  // placed under the profile path. For shims, this copy is used when the
-  // version under Applications is removed, and not needed for app list because
-  // setting LSUIElement means there is no Dock "running" status to show.
-  const bool is_app_list = info_->extension_id == app_mode::kAppListModeId;
-  if (is_app_list) {
-    path_to_add_to_dock = base::SysUTF8ToNSString(
-        applications_dir.Append(GetShortcutBasename()).AsUTF8Unsafe());
-  } else {
-    paths.push_back(app_data_dir_);
-  }
-
-  bool shortcut_visible =
-      creation_locations.applications_menu_location != APP_MENU_LOCATION_HIDDEN;
-  if (shortcut_visible)
-    paths.push_back(applications_dir);
-
-  DCHECK(!paths.empty());
-  size_t success_count = CreateShortcutsIn(paths);
-  if (success_count == 0)
-    return false;
-
-  if (!is_app_list)
-    UpdateInternalBundleIdentifier();
-
-  if (success_count != paths.size())
-    return false;
-
-  if (creation_locations.in_quick_launch_bar && path_to_add_to_dock &&
-      shortcut_visible) {
-    switch (dock::AddIcon(path_to_add_to_dock, nil)) {
-      case dock::IconAddFailure:
-        // If adding the icon failed, instead reveal the Finder window.
-        RevealAppShimInFinder();
-        break;
-      case dock::IconAddSuccess:
-      case dock::IconAlreadyPresent:
-        break;
-    }
-    return true;
-  }
-
   if (creation_reason == SHORTCUT_CREATION_BY_USER)
     RevealAppShimInFinder();
-
   return true;
 }
 
-void WebAppShortcutCreator::DeleteShortcuts() {
-  base::FilePath app_path = GetApplicationsShortcutPath();
-  if (!app_path.empty() && HasSameUserDataDir(app_path))
-    DeletePathAndParentIfEmpty(app_path);
+bool WebAppShortcutCreator::UpdateShortcuts(
+    bool create_if_needed,
+    std::vector<base::FilePath>* updated_paths) {
+  DCHECK(updated_paths && updated_paths->empty());
 
-  // In case the user has moved/renamed/copied the app bundle.
-  base::FilePath bundle_path = GetAppBundleById(GetBundleIdentifier());
-  if (!bundle_path.empty() && HasSameUserDataDir(bundle_path))
-    base::DeleteFile(bundle_path, true);
-
-  // Delete the internal one.
-  DeletePathAndParentIfEmpty(GetInternalShortcutPath());
-}
-
-bool WebAppShortcutCreator::UpdateShortcuts() {
-  std::vector<base::FilePath> paths;
-  paths.push_back(app_data_dir_);
-
-  // Remember whether the copy in the profile directory exists. If it doesn't
-  // and others do, it should be re-created. Otherwise, it's a signal that a
-  // shortcut has never been created.
-  bool profile_copy_exists = base::PathExists(GetInternalShortcutPath());
-
-  // Try to update the copy under ~/Applications. If that does not exist, check
-  // if a matching bundle can be found elsewhere.
-  base::FilePath app_path = GetApplicationsShortcutPath();
-
-  // Never look in ~/Applications or search the system for a bundle ID in a test
-  // since that relies on global system state and potentially cruft that may be
-  // leftover from prior/crashed test runs.
-  // TODO(tapted): Remove this check when tests that arrive here via setting
-  // |g_app_shims_allow_update_and_launch_in_tests| can properly mock out all
-  // the calls below.
-  if (!g_app_shims_allow_update_and_launch_in_tests) {
-    if (app_path.empty() || !base::PathExists(app_path))
-      app_path = GetAppBundleById(GetBundleIdentifier());
-
-    if (app_path.empty()) {
-      if (profile_copy_exists && info_->from_bookmark) {
-        // The bookmark app shortcut has been deleted by the user. Restore it,
-        // as the Mac UI for bookmark apps creates the expectation that the app
-        // will be added to Applications.
-        app_path = GetApplicationsDirname();
-        paths.push_back(app_path);
-      }
-    } else {
-      paths.push_back(app_path.DirName());
+  if (create_if_needed) {
+    const base::FilePath applications_dir = GetChromeAppsFolder();
+    if (applications_dir.empty() ||
+        !base::DirectoryExists(applications_dir.DirName())) {
+      LOG(ERROR) << "Couldn't find an Applications directory to copy app to.";
+      return false;
     }
-  } else {
-    // If a test has set g_app_shims_allow_update_and_launch_in_tests, it means
-    // it relies on UpdateShortcuts() to create shortcuts. (Tests can't rely on
-    // install-triggered shortcut creation because they can't synchronize with
-    // the UI thread). So, allow shortcuts to be created for this case, even if
-    // none currently exist. TODO(tapted): Remove this when tests are properly
-    // mocked.
-    profile_copy_exists = true;
+    // Only set folder icons and a localized name once. This avoids concurrent
+    // calls to -[NSWorkspace setIcon:..], which is not reentrant.
+    static bool once = UpdateAppShortcutsSubdirLocalizedName(applications_dir);
+    if (!once)
+      LOG(ERROR) << "Failed to localize " << applications_dir.value();
   }
 
-  // When upgrading, if no shim exists anywhere on disk, don't create the copy
-  // under the profile directory for the first time. The best way to tell
-  // whether a shortcut has been created is to poke around on disk, so the
-  // upgrade process must send all candidate extensions to the FILE thread.
-  // Then those without shortcuts will get culled here.
-  if (paths.size() == 1 && !profile_copy_exists)
+  // Get the list of paths to (re)create by bundle id (wherever it was moved
+  // or copied by the user).
+  std::vector<base::FilePath> app_paths = GetAppBundlesById();
+
+  // If that path does not exist, create a new entry in ~/Applications if
+  // requested.
+  if (app_paths.empty() && create_if_needed) {
+    app_paths.push_back(
+        GetApplicationsShortcutPath(true /* avoid_conflicts */));
+  }
+  if (app_paths.empty())
     return false;
 
-  size_t success_count = CreateShortcutsIn(paths);
-  if (success_count == 0)
-    return false;
-
-  UpdateInternalBundleIdentifier();
-  return success_count == paths.size() && !app_path.empty();
-}
-
-base::FilePath WebAppShortcutCreator::GetApplicationsDirname() const {
-  base::FilePath path = GetWritableApplicationsDirectory();
-  if (path.empty())
-    return path;
-
-  return path.Append(GetLocalizableAppShortcutsSubdirName());
+  CreateShortcutsAt(app_paths, updated_paths);
+  return updated_paths->size() == app_paths.size();
 }
 
 bool WebAppShortcutCreator::UpdatePlist(const base::FilePath& app_path) const {
@@ -758,7 +976,8 @@ bool WebAppShortcutCreator::UpdatePlist(const base::FilePath& app_path) const {
           app_mode::kShortcutBrowserBundleIDPlaceholder, nil];
 
   NSString* plist_path = GetPlistPath(app_path);
-  NSMutableDictionary* plist = ReadPlist(plist_path);
+  NSMutableDictionary* plist =
+      [NSMutableDictionary dictionaryWithContentsOfFile:plist_path];
   NSArray* keys = [plist allKeys];
 
   // 1. Fill in variables.
@@ -781,24 +1000,31 @@ bool WebAppShortcutCreator::UpdatePlist(const base::FilePath& app_path) const {
             forKey:app_mode::kCrBundleVersionKey];
   [plist setObject:base::SysUTF8ToNSString(info_->version_for_display)
             forKey:app_mode::kCFBundleShortVersionStringKey];
-  [plist setObject:base::SysUTF8ToNSString(GetBundleIdentifier())
-            forKey:base::mac::CFToNSCast(kCFBundleIdentifierKey)];
-  [plist setObject:base::mac::FilePathToNSString(app_data_dir_)
-            forKey:app_mode::kCrAppModeUserDataDirKey];
-  [plist setObject:base::mac::FilePathToNSString(info_->profile_path.BaseName())
-            forKey:app_mode::kCrAppModeProfileDirKey];
-  [plist setObject:base::SysUTF8ToNSString(info_->profile_name)
-            forKey:app_mode::kCrAppModeProfileNameKey];
+  if (IsMultiProfile()) {
+    [plist setObject:base::SysUTF8ToNSString(
+                         GetBundleIdentifier(info_->extension_id))
+              forKey:base::mac::CFToNSCast(kCFBundleIdentifierKey)];
+    base::FilePath data_dir = GetMultiProfileAppDataDir(app_data_dir_);
+    [plist setObject:base::mac::FilePathToNSString(data_dir)
+              forKey:app_mode::kCrAppModeUserDataDirKey];
+  } else {
+    [plist setObject:base::SysUTF8ToNSString(GetBundleIdentifier(
+                         info_->extension_id, info_->profile_path))
+              forKey:base::mac::CFToNSCast(kCFBundleIdentifierKey)];
+    [plist setObject:base::mac::FilePathToNSString(app_data_dir_)
+              forKey:app_mode::kCrAppModeUserDataDirKey];
+    [plist
+        setObject:base::mac::FilePathToNSString(info_->profile_path.BaseName())
+           forKey:app_mode::kCrAppModeProfileDirKey];
+    [plist setObject:base::SysUTF8ToNSString(info_->profile_name)
+              forKey:app_mode::kCrAppModeProfileNameKey];
+  }
   [plist setObject:[NSNumber numberWithBool:YES]
             forKey:app_mode::kLSHasLocalizedDisplayNameKey];
   [plist setObject:[NSNumber numberWithBool:YES]
             forKey:app_mode::kNSHighResolutionCapableKey];
-  if (info_->extension_id == app_mode::kAppListModeId) {
-    // Prevent the app list from bouncing in the dock, and getting a run light.
-    [plist setObject:[NSNumber numberWithBool:YES] forKey:kLSUIElement];
-  }
 
-  base::FilePath app_name = app_path.BaseName().RemoveExtension();
+  base::FilePath app_name = app_path.BaseName().RemoveFinalExtension();
   [plist setObject:base::mac::FilePathToNSString(app_name)
             forKey:base::mac::CFToNSCast(kCFBundleNameKey)];
 
@@ -819,8 +1045,9 @@ bool WebAppShortcutCreator::UpdateDisplayName(
 
   NSString* bundle_name = base::SysUTF16ToNSString(info_->title);
   NSString* display_name = base::SysUTF16ToNSString(info_->title);
-  if (HasExistingExtensionShim(GetApplicationsDirname(), info_->extension_id,
-                               app_path.BaseName())) {
+  if (!IsMultiProfile() &&
+      HasExistingExtensionShimForDifferentProfile(
+          GetChromeAppsFolder(), info_->extension_id, info_->profile_path)) {
     display_name = [bundle_name
         stringByAppendingString:base::SysUTF8ToNSString(
                                     " (" + info_->profile_name + ")")];
@@ -856,54 +1083,82 @@ bool WebAppShortcutCreator::UpdateIcon(const base::FilePath& app_path) const {
   return WriteIconsToFile(valid_icons, resources_path.Append("app.icns"));
 }
 
-bool WebAppShortcutCreator::UpdateInternalBundleIdentifier() const {
-  NSString* plist_path = GetPlistPath(GetInternalShortcutPath());
-  NSMutableDictionary* plist = ReadPlist(plist_path);
+std::vector<base::FilePath> WebAppShortcutCreator::GetAppBundlesByIdUnsorted()
+    const {
+  base::scoped_nsobject<NSMutableArray> urls([[NSMutableArray alloc] init]);
 
-  [plist setObject:base::SysUTF8ToNSString(GetInternalBundleIdentifier())
-            forKey:base::mac::CFToNSCast(kCFBundleIdentifierKey)];
-  return [plist writeToFile:plist_path atomically:YES];
+  // Search using LaunchServices using the default bundle id.
+  const std::string bundle_id = GetBundleIdentifier(
+      info_->extension_id,
+      IsMultiProfile() ? base::FilePath() : info_->profile_path);
+  auto bundle_infos = SearchForBundlesById(bundle_id);
+
+  // If in multi-profile mode, search using the profile-scoped bundle id, in
+  // case the user has an old shim hanging around.
+  if (bundle_infos.empty() && IsMultiProfile()) {
+    const std::string profile_scoped_bundle_id =
+        GetBundleIdentifier(info_->extension_id, info_->profile_path);
+    bundle_infos = SearchForBundlesById(profile_scoped_bundle_id);
+  }
+
+  std::vector<base::FilePath> bundle_paths;
+  for (const auto& bundle_info : bundle_infos)
+    bundle_paths.push_back(bundle_info.bundle_path());
+  return bundle_paths;
 }
 
-base::FilePath WebAppShortcutCreator::GetAppBundleById(
-    const std::string& bundle_id) const {
-  base::ScopedCFTypeRef<CFStringRef> bundle_id_cf(
-      base::SysUTF8ToCFStringRef(bundle_id));
-  CFURLRef url_ref = NULL;
-  OSStatus status = LSFindApplicationForInfo(
-      kLSUnknownCreator, bundle_id_cf.get(), NULL, NULL, &url_ref);
-  if (status != noErr)
-    return base::FilePath();
+std::vector<base::FilePath> WebAppShortcutCreator::GetAppBundlesById() const {
+  std::vector<base::FilePath> paths = GetAppBundlesByIdUnsorted();
 
-  base::ScopedCFTypeRef<CFURLRef> url(url_ref);
-  NSString* path_string = [base::mac::CFToNSCast(url.get()) path];
-  return base::FilePath([path_string fileSystemRepresentation]);
+  // Sort the matches by preference.
+  base::FilePath default_path =
+      GetApplicationsShortcutPath(false /* avoid_conflicts */);
+
+  // When testing, use only the default path.
+  if (g_app_shims_allow_update_and_launch_in_tests) {
+    paths.clear();
+    if (base::PathExists(default_path))
+      paths.push_back(default_path);
+    return paths;
+  }
+
+  base::FilePath apps_dir = GetChromeAppsFolder();
+  auto compare = [default_path, apps_dir](const base::FilePath& a,
+                                          const base::FilePath& b) {
+    if (a == b)
+      return false;
+    // The default install path is preferred above all others.
+    if (a == default_path)
+      return true;
+    if (b == default_path)
+      return false;
+    // Paths in ~/Applications are preferred to paths not in ~/Applications.
+    bool a_in_apps_dir = apps_dir.IsParent(a);
+    bool b_in_apps_dir = apps_dir.IsParent(b);
+    if (a_in_apps_dir != b_in_apps_dir)
+      return a_in_apps_dir > b_in_apps_dir;
+    return a < b;
+  };
+  std::sort(paths.begin(), paths.end(), compare);
+  return paths;
 }
 
-std::string WebAppShortcutCreator::GetBundleIdentifier() const {
-  // Replace spaces in the profile path with hyphen.
-  std::string normalized_profile_path;
-  base::ReplaceChars(info_->profile_path.BaseName().value(), " ", "-",
-                     &normalized_profile_path);
-
-  // This matches APP_MODE_APP_BUNDLE_ID in chrome/chrome.gyp.
-  std::string bundle_id = base::mac::BaseBundleID() + std::string(".app.") +
-                          normalized_profile_path + "-" + info_->extension_id;
-
-  return bundle_id;
-}
-
-std::string WebAppShortcutCreator::GetInternalBundleIdentifier() const {
-  return GetBundleIdentifier() + "-internal";
+bool WebAppShortcutCreator::IsMultiProfile() const {
+  // Only PWAs and bookmark apps are multi-profile capable.
+  if (!info_->url.is_valid())
+    return false;
+  return base::FeatureList::IsEnabled(features::kAppShimMultiProfile);
 }
 
 void WebAppShortcutCreator::RevealAppShimInFinder() const {
-  base::FilePath app_path = GetApplicationsShortcutPath();
-  if (app_path.empty())
-    return;
+  // Note that RevealAppShimInFinder is called immediately after requesting to
+  // build the app shim. This almost always happens before the app shim has
+  // completed building (and so we just open the Chrome apps folder).
 
   // Check if the app shim exists.
-  if (base::PathExists(app_path)) {
+  auto app_paths = GetAppBundlesById();
+  if (!app_paths.empty()) {
+    base::FilePath app_path = app_paths.front();
     // Use selectFile to show the contents of parent directory with the app
     // shim selected.
     [[NSWorkspace sharedWorkspace]
@@ -912,30 +1167,34 @@ void WebAppShortcutCreator::RevealAppShimInFinder() const {
     return;
   }
 
-  // Otherwise, go up a directory.
-  app_path = app_path.DirName();
-  // Check if the Chrome apps folder exists, otherwise go up to ~/Applications.
-  if (!base::PathExists(app_path))
-    app_path = app_path.DirName();
+  // Otherwise, open the Chrome apps folder, in the hopes that the app shim is
+  // being asynchronously created there.
+  base::FilePath apps_path = GetChromeAppsFolder();
+  if (!base::PathExists(apps_path))
+    return;
+
   // Since |app_path| is a directory, use openFile to show the contents of
   // that directory in Finder.
   [[NSWorkspace sharedWorkspace]
-      openFile:base::mac::FilePathToNSString(app_path)];
+      openFile:base::mac::FilePathToNSString(apps_path)];
 }
 
-base::FilePath GetAppInstallPath(const ShortcutInfo& shortcut_info) {
-  WebAppShortcutCreator shortcut_creator(base::FilePath(), &shortcut_info);
-  return shortcut_creator.GetApplicationsShortcutPath();
-}
-
-void MaybeLaunchShortcut(std::unique_ptr<ShortcutInfo> shortcut_info) {
-  if (AppShimsDisabledForTest() &&
-      !g_app_shims_allow_update_and_launch_in_tests) {
+void LaunchShim(LaunchShimUpdateBehavior update_behavior,
+                ShimLaunchedCallback launched_callback,
+                ShimTerminatedCallback terminated_callback,
+                std::unique_ptr<ShortcutInfo> shortcut_info) {
+  if (AppShimLaunchDisabled()) {
+    base::PostTask(
+        FROM_HERE, {content::BrowserThread::UI},
+        base::BindOnce(std::move(launched_callback), base::Process()));
     return;
   }
 
-  web_app::internals::PostShortcutIOTask(
-      base::BindOnce(&LaunchShimOnFileThread, false), std::move(shortcut_info));
+  internals::PostShortcutIOTask(
+      base::BindOnce(&LaunchShimOnFileThread, update_behavior,
+                     std::move(launched_callback),
+                     std::move(terminated_callback)),
+      std::move(shortcut_info));
 }
 
 namespace internals {
@@ -944,8 +1203,9 @@ bool CreatePlatformShortcuts(const base::FilePath& app_data_path,
                              const ShortcutLocations& creation_locations,
                              ShortcutCreationReason creation_reason,
                              const ShortcutInfo& shortcut_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
-  if (AppShimsDisabledForTest())
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+  if (AppShimCreationDisabledForTest())
     return true;
 
   WebAppShortcutCreator shortcut_creator(app_data_path, &shortcut_info);
@@ -954,29 +1214,54 @@ bool CreatePlatformShortcuts(const base::FilePath& app_data_path,
 
 void DeletePlatformShortcuts(const base::FilePath& app_data_path,
                              const ShortcutInfo& shortcut_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
-  WebAppShortcutCreator shortcut_creator(app_data_path, &shortcut_info);
-  shortcut_creator.DeleteShortcuts();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+  const std::string bundle_id = GetBundleIdentifier(shortcut_info.extension_id,
+                                                    shortcut_info.profile_path);
+  auto bundle_infos = SearchForBundlesById(bundle_id);
+  for (const auto& bundle_info : bundle_infos)
+    base::DeleteFile(bundle_info.bundle_path(), true /* recursive */);
+}
+
+void DeleteMultiProfileShortcutsForApp(const std::string& app_id) {
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+  const std::string bundle_id = GetBundleIdentifier(app_id);
+  auto bundle_infos = SearchForBundlesById(bundle_id);
+  for (const auto& bundle_info : bundle_infos) {
+    base::DeleteFile(bundle_info.bundle_path(), true /* recursive */);
+  }
 }
 
 void UpdatePlatformShortcuts(const base::FilePath& app_data_path,
                              const base::string16& old_app_title,
                              const ShortcutInfo& shortcut_info) {
-  UpdatePlatformShortcutsInternal(app_data_path, old_app_title, shortcut_info);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+  if (AppShimLaunchDisabled())
+    return;
+
+  WebAppShortcutCreator shortcut_creator(app_data_path, &shortcut_info);
+  std::vector<base::FilePath> updated_shim_paths;
+  bool create_if_needed = false;
+  // Tests use UpdateAllShortcuts to force shim creation (rather than
+  // relying on asynchronous creation at installation.
+  if (g_app_shims_allow_update_and_launch_in_tests)
+    create_if_needed = true;
+  shortcut_creator.UpdateShortcuts(create_if_needed, &updated_shim_paths);
 }
 
 void DeleteAllShortcutsForProfile(const base::FilePath& profile_path) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
-  const std::string profile_base_name = profile_path.BaseName().value();
-  std::vector<base::FilePath> bundles = GetAllAppBundlesInPath(
-      profile_path.Append(chrome::kWebAppDirname), profile_base_name);
-
-  for (std::vector<base::FilePath>::const_iterator it = bundles.begin();
-       it != bundles.end(); ++it) {
-    std::unique_ptr<web_app::ShortcutInfo> shortcut_info =
-        BuildShortcutInfoFromBundle(*it);
-    WebAppShortcutCreator shortcut_creator(it->DirName(), shortcut_info.get());
-    shortcut_creator.DeleteShortcuts();
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+  std::list<BundleInfoPlist> bundles_info = BundleInfoPlist::GetAllInPath(
+      GetChromeAppsFolder(), true /* recursive */);
+  for (const auto& info : bundles_info) {
+    if (!info.IsForCurrentUserDataDir())
+      continue;
+    if (!info.IsForProfile(profile_path))
+      continue;
+    base::DeleteFile(info.bundle_path(), true /* recursive */);
   }
 }
 

@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
@@ -220,11 +221,6 @@ int ThrottlingNetworkTransaction::Read(net::IOBuffer* buf,
 
 void ThrottlingNetworkTransaction::StopCaching() {
   network_transaction_->StopCaching();
-}
-
-bool ThrottlingNetworkTransaction::GetFullRequestHeaders(
-    net::HttpRequestHeaders* headers) const {
-  return network_transaction_->GetFullRequestHeaders(headers);
 }
 
 int64_t ThrottlingNetworkTransaction::GetTotalReceivedBytes() const {

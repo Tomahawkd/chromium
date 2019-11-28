@@ -4,11 +4,11 @@
 
 package org.chromium.chrome.browser.feed;
 
-import com.google.android.libraries.feed.common.functional.Consumer;
-
 import org.junit.Assert;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
+import org.chromium.chrome.browser.feed.library.common.functional.Consumer;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -49,10 +49,10 @@ class ConsumerSyncWrapper<T> implements Consumer<T> {
      * @param operation The operation that should feed its result to the consumer.
      * @param timeoutMs The timeout in milliseconds to wait for operation to execute
      */
-    static public <T> void waitForConsumer(
+    public static <T> void waitForConsumer(
             Consumer<T> consumer, Consumer<Consumer<T>> operation, long timeoutMs) {
         ConsumerSyncWrapper<T> wrapper = new ConsumerSyncWrapper<>(consumer);
-        ThreadUtils.postOnUiThread(() -> operation.accept(wrapper));
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, () -> operation.accept(wrapper));
         wrapper.blockAndWrappedAccept(timeoutMs);
     }
 }

@@ -5,6 +5,11 @@ include_rules = [
   "+components/proxy_config",
   "+components/variations",
   "+components/version_info",
+  "+ios/web/common",
   "+ios/web/public",
   "+net",
+
+  # Temporarily allow WebThreadImpl until TaskExecutor functionality is moved
+  # into a new file in ios/web/public.
+  "+ios/web/web_thread_impl.h"
 ]

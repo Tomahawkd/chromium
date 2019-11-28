@@ -4,21 +4,20 @@
 
 #include "chrome/browser/extensions/external_component_loader.h"
 
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/component_extensions_whitelist/whitelist.h"
 #include "chrome/browser/media/router/media_router_feature.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
-#include "chromeos/chromeos_switches.h"
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chromeos/constants/chromeos_switches.h"
 #endif
 
 namespace extensions {
@@ -31,14 +30,14 @@ ExternalComponentLoader::~ExternalComponentLoader() {}
 
 void ExternalComponentLoader::StartLoading() {
   auto prefs = std::make_unique<base::DictionaryValue>();
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   AddExternalExtension(extension_misc::kInAppPaymentsSupportAppId, prefs.get());
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 #if defined(OS_CHROMEOS)
   {
     // Only load the Assessment Assistant if the current session is managed.
-    if (policy::ProfilePolicyConnectorFactory::IsProfileManaged(profile_))
+    if (profile_->GetProfilePolicyConnector()->IsManaged())
       AddExternalExtension(extension_misc::kAssessmentAssistantExtensionId,
                            prefs.get());
   }

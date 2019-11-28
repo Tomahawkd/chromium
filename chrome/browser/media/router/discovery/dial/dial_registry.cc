@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
@@ -49,7 +50,7 @@ DialRegistry::DialRegistry()
       clock_(base::DefaultClock::GetInstance()) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK_GT(max_devices_, 0U);
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&content::GetNetworkConnectionTracker),
       base::BindOnce(&DialRegistry::SetNetworkConnectionTracker,
@@ -291,7 +292,7 @@ void DialRegistry::SendEvent() {
 
 std::string DialRegistry::NextLabel() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return base::IntToString(++label_count_);
+  return base::NumberToString(++label_count_);
 }
 
 void DialRegistry::OnDiscoveryRequest(DialService* service) {

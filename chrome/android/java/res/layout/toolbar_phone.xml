@@ -13,37 +13,19 @@
     android:layout_width="match_parent"
     android:layout_height="@dimen/toolbar_height_no_shadow" >
 
-    <org.chromium.chrome.browser.toolbar.NewTabButton
-        android:id="@+id/new_tab_button"
-        style="@style/ToolbarButton"
-        android:layout_width="wrap_content"
-        android:layout_gravity="start|top"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:visibility="invisible"
-        android:contentDescription="@string/accessibility_toolbar_btn_new_tab" />
-
     <org.chromium.chrome.browser.toolbar.HomeButton
         android:id="@+id/home_button"
         style="@style/ToolbarButton"
         android:src="@drawable/btn_toolbar_home"
         android:contentDescription="@string/accessibility_toolbar_btn_home"
         android:visibility="gone"
-        app:tint="@color/dark_mode_tint" />
+        app:tint="@color/standard_mode_tint" />
 
     <org.chromium.chrome.browser.omnibox.LocationBarPhone
         android:id="@+id/location_bar"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_gravity="top" />
-
-    <ViewStub
-        android:id="@+id/incognito_tabs_stub"
-        android:inflatedId="@+id/incognito_toggle_tabs"
-        android:layout="@layout/incognito_toggle_tabs"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:layout_gravity="center" />
 
     <LinearLayout android:id="@+id/toolbar_buttons"
         android:orientation="horizontal"
@@ -56,7 +38,7 @@
             android:inflatedId="@+id/experimental_toolbar_button"
             android:layout="@layout/experimental_toolbar_button"
             style="@style/ToolbarButton"
-            android:paddingStart="8dp"
+            android:paddingStart="12dp"
             android:visibility="gone" />
 
         <org.chromium.chrome.browser.toolbar.top.ToggleTabStackButton
@@ -64,7 +46,9 @@
             style="@style/ToolbarButton"
             android:paddingStart="8dp"
             android:layout_gravity="top"
-            android:contentDescription="@string/accessibility_toolbar_btn_tabswitcher_toggle_default" />
+            android:contentDescription="@string/accessibility_toolbar_btn_tabswitcher_toggle_default"
+            app:menuMaxWidth="@dimen/tab_switcher_menu_width"
+            app:menuVerticalOverlapAnchor="false" />
 
         <include layout="@layout/menu_button"/>
 

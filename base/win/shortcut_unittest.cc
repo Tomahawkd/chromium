@@ -11,7 +11,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_shortcut_win.h"
 #include "base/win/scoped_com_initializer.h"
@@ -31,12 +31,13 @@ class ShortcutTest : public testing::Test {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     ASSERT_TRUE(temp_dir_2_.CreateUniqueTempDir());
 
-    link_file_ = temp_dir_.GetPath().Append(L"My Link.lnk");
+    link_file_ = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("My Link.lnk"));
 
     // Shortcut 1's properties
     {
-      const FilePath target_file(temp_dir_.GetPath().Append(L"Target 1.txt"));
-      WriteFile(target_file, kFileContents, arraysize(kFileContents));
+      const FilePath target_file(
+          temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Target 1.txt")));
+      WriteFile(target_file, kFileContents, base::size(kFileContents));
 
       link_properties_.set_target(target_file);
       link_properties_.set_working_dir(temp_dir_.GetPath());
@@ -57,8 +58,9 @@ class ShortcutTest : public testing::Test {
 
     // Shortcut 2's properties (all different from properties of shortcut 1).
     {
-      const FilePath target_file_2(temp_dir_.GetPath().Append(L"Target 2.txt"));
-      WriteFile(target_file_2, kFileContents2, arraysize(kFileContents2));
+      const FilePath target_file_2(
+          temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Target 2.txt")));
+      WriteFile(target_file_2, kFileContents2, base::size(kFileContents2));
 
       FilePath icon_path_2;
       CreateTemporaryFileInDir(temp_dir_.GetPath(), &icon_path_2);
@@ -92,7 +94,7 @@ class ShortcutTest : public testing::Test {
 
 TEST_F(ShortcutTest, CreateAndResolveShortcutProperties) {
   // Test all properties.
-  FilePath file_1(temp_dir_.GetPath().Append(L"Link1.lnk"));
+  FilePath file_1(temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Link1.lnk")));
   ASSERT_TRUE(CreateOrUpdateShortcutLink(
       file_1, link_properties_, SHORTCUT_CREATE_ALWAYS));
 
@@ -114,7 +116,7 @@ TEST_F(ShortcutTest, CreateAndResolveShortcutProperties) {
             properties_read_1.toast_activator_clsid);
 
   // Test simple shortcut with no special properties set.
-  FilePath file_2(temp_dir_.GetPath().Append(L"Link2.lnk"));
+  FilePath file_2(temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Link2.lnk")));
   ShortcutProperties only_target_properties;
   only_target_properties.set_target(link_properties_.target);
   ASSERT_TRUE(CreateOrUpdateShortcutLink(
@@ -147,8 +149,8 @@ TEST_F(ShortcutTest, CreateAndResolveShortcut) {
   FilePath resolved_name;
   EXPECT_TRUE(ResolveShortcut(link_file_, &resolved_name, NULL));
 
-  char read_contents[arraysize(kFileContents)];
-  base::ReadFile(resolved_name, read_contents, arraysize(read_contents));
+  char read_contents[base::size(kFileContents)];
+  base::ReadFile(resolved_name, read_contents, base::size(read_contents));
   EXPECT_STREQ(kFileContents, read_contents);
 }
 
@@ -157,11 +159,11 @@ TEST_F(ShortcutTest, ResolveShortcutWithArgs) {
       link_file_, link_properties_, SHORTCUT_CREATE_ALWAYS));
 
   FilePath resolved_name;
-  string16 args;
+  std::wstring args;
   EXPECT_TRUE(ResolveShortcut(link_file_, &resolved_name, &args));
 
-  char read_contents[arraysize(kFileContents)];
-  base::ReadFile(resolved_name, read_contents, arraysize(read_contents));
+  char read_contents[base::size(kFileContents)];
+  base::ReadFile(resolved_name, read_contents, base::size(read_contents));
   EXPECT_STREQ(kFileContents, read_contents);
   EXPECT_EQ(link_properties_.arguments, args);
 }
@@ -213,8 +215,8 @@ TEST_F(ShortcutTest, UpdateShortcutUpdateOnlyTargetAndResolve) {
   FilePath resolved_name;
   EXPECT_TRUE(ResolveShortcut(link_file_, &resolved_name, NULL));
 
-  char read_contents[arraysize(kFileContents2)];
-  base::ReadFile(resolved_name, read_contents, arraysize(read_contents));
+  char read_contents[base::size(kFileContents2)];
+  base::ReadFile(resolved_name, read_contents, base::size(read_contents));
   EXPECT_STREQ(kFileContents2, read_contents);
 }
 
@@ -255,14 +257,14 @@ TEST_F(ShortcutTest, UpdateShortcutClearArguments) {
       link_file_, link_properties_, SHORTCUT_CREATE_ALWAYS));
 
   ShortcutProperties clear_arguments_properties;
-  clear_arguments_properties.set_arguments(string16());
+  clear_arguments_properties.set_arguments(std::wstring());
 
   ASSERT_TRUE(CreateOrUpdateShortcutLink(
       link_file_, clear_arguments_properties,
       SHORTCUT_UPDATE_EXISTING));
 
   ShortcutProperties expected_properties = link_properties_;
-  expected_properties.set_arguments(string16());
+  expected_properties.set_arguments(std::wstring());
   ValidateShortcut(link_file_, expected_properties);
 }
 
@@ -298,7 +300,7 @@ TEST_F(ShortcutTest, ReplaceShortcutSomeProperties) {
   ShortcutProperties expected_properties(new_properties);
   expected_properties.set_working_dir(FilePath());
   expected_properties.set_icon(FilePath(), 0);
-  expected_properties.set_app_id(string16());
+  expected_properties.set_app_id(std::wstring());
   expected_properties.set_dual_mode(false);
   ValidateShortcut(link_file_, expected_properties);
 }

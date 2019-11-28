@@ -11,8 +11,9 @@
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
 #include "base/i18n/time_formatting.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
+#include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/icu_test_util.h"
@@ -51,13 +52,7 @@ class StringWrapper {
 class L10nUtilTest : public PlatformTest {
 };
 
-#if defined(OS_ANDROID)
-// TODO(http://crbug.com/911191): Android resources don't load properly.
-#define MAYBE_GetString DISABLED_GetString
-#else
-#define MAYBE_GetString GetString
-#endif
-TEST_F(L10nUtilTest, MAYBE_GetString) {
+TEST_F(L10nUtilTest, GetString) {
   std::string s = l10n_util::GetStringUTF8(IDS_SIMPLE);
   EXPECT_EQ(std::string("Hello World!"), s);
 
@@ -117,7 +112,7 @@ TEST_F(L10nUtilTest, GetAppLocale) {
       "fr", "he", "nb",          "pt-BR", "pt-PT", "zh-CN", "zh-TW",
   };
 
-  for (size_t i = 0; i < arraysize(filenames); ++i) {
+  for (size_t i = 0; i < base::size(filenames); ++i) {
     base::FilePath filename = new_locale_dir.AppendASCII(
         filenames[i] + ".pak");
     base::WriteFile(filename, "", 0);
@@ -436,12 +431,18 @@ void CheckUiDisplayNameForLocale(const std::string& locale,
 TEST_F(L10nUtilTest, GetDisplayNameForLocale) {
   // TODO(jungshik): Make this test more extensive.
   // Test zh-CN and zh-TW are treated as zh-Hans and zh-Hant.
+  // Displays as "Chinese, Simplified" on iOS 13+ and as "Chinese (Simplified)"
+  // on other platforms.
   base::string16 result =
       l10n_util::GetDisplayNameForLocale("zh-CN", "en", false);
-  EXPECT_EQ(ASCIIToUTF16("Chinese (Simplified)"), result);
+  EXPECT_TRUE(
+      base::MatchPattern(base::UTF16ToUTF8(result), "Chinese*Simplified*"));
 
+  // Displays as "Chinese, Traditional" on iOS 13+ and as
+  // "Chinese (Traditional)" on other platforms.
   result = l10n_util::GetDisplayNameForLocale("zh-TW", "en", false);
-  EXPECT_EQ(ASCIIToUTF16("Chinese (Traditional)"), result);
+  EXPECT_TRUE(
+      base::MatchPattern(base::UTF16ToUTF8(result), "Chinese*Traditional*"));
 
   // tl and fil are not identical to be strict, but we treat them as
   // synonyms.

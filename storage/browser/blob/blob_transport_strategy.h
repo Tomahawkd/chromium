@@ -6,8 +6,9 @@
 #define STORAGE_BROWSER_BLOB_BLOB_TRANSPORT_STRATEGY_H_
 
 #include "base/callback.h"
+#include "base/component_export.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "storage/browser/blob/blob_memory_controller.h"
-#include "storage/browser/storage_browser_export.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom.h"
 
 namespace storage {
@@ -17,7 +18,7 @@ class BlobDataBuilder;
 // This class is responsible for transporting bytes for an under-construction
 // blob, using a specified transport strategy. This is used by BlobRegistryImpl
 // for the actual transportation of bytes.
-class STORAGE_EXPORT BlobTransportStrategy {
+class COMPONENT_EXPORT(STORAGE_BROWSER) BlobTransportStrategy {
  public:
   using ResultCallback = base::OnceCallback<void(BlobStatus)>;
 
@@ -35,8 +36,9 @@ class STORAGE_EXPORT BlobTransportStrategy {
   // outlive the BlobTransportStrategy instance. If |data| is bound, this call
   // may use it to acquire the bytes asynchronously rather than reading from
   // |bytes|.
-  virtual void AddBytesElement(blink::mojom::DataElementBytes* bytes,
-                               const blink::mojom::BytesProviderPtr& data) = 0;
+  virtual void AddBytesElement(
+      blink::mojom::DataElementBytes* bytes,
+      const mojo::Remote<blink::mojom::BytesProvider>& data) = 0;
 
   // Called when quota has been allocated and transportation should begin.
   // Implementations will call the |result_callback_| when transportation has

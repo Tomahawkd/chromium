@@ -4,7 +4,7 @@
 
 package org.chromium.chrome.browser.feed;
 
-import com.google.android.libraries.feed.host.scheduler.SchedulerApi;
+import org.chromium.chrome.browser.feed.library.api.host.scheduler.SchedulerApi;
 
 /**
  * An extension of the {@link SchedulerApi} with additional methods needed for scheduling logic
@@ -30,6 +30,7 @@ public interface FeedScheduler extends SchedulerApi {
      * To be called when articles are cleared.
      * @param suppressRefreshes whether the scheduler should temporarily avoid kicking off
      * refreshes. This is used, for example, when history data is deleted.
+     * @return If a refresh should be made by the caller.
      */
-    void onArticlesCleared(boolean suppressRefreshes);
+    boolean onArticlesCleared(boolean suppressRefreshes);
 }

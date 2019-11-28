@@ -8,37 +8,11 @@
 #include <sstream>
 #include <string>
 
+#include "third_party/webrtc/api/scoped_refptr.h"
 #include "third_party/webrtc/rtc_base/checks.h"
-#include "third_party/webrtc/rtc_base/scoped_ref_ptr.h"
+#include "third_party/webrtc/rtc_base/system/rtc_export.h"
 
 namespace rtc {
-
-///////////////////////////////////////////////////////////////////////////////
-// ConstantLabel can be used to easily generate string names from constant
-// values.  This can be useful for logging descriptive names of error messages.
-// Usage:
-//   const ConstantLabel LIBRARY_ERRORS[] = {
-//     KLABEL(SOME_ERROR),
-//     KLABEL(SOME_OTHER_ERROR),
-//     ...
-//     LASTLABEL
-//   }
-//
-//   int err = LibraryFunc();
-//   LOG(LS_ERROR) << "LibraryFunc returned: "
-//                 << ErrorName(err, LIBRARY_ERRORS);
-
-struct ConstantLabel {
-  int value;
-  const char* label;
-};
-#define KLABEL(x) \
-  { x, #x }
-#define LASTLABEL \
-  { 0, 0 }
-
-const char* FindLabel(int value, const ConstantLabel entries[]);
-std::string ErrorName(int err, const ConstantLabel* err_table);
 
 //////////////////////////////////////////////////////////////////////
 // Note that the non-standard LoggingSeverity aliases exist because they are
@@ -87,7 +61,7 @@ enum LogErrorContext {
 
 // Class that writes a log message to the logging delegate ("WebRTC logging
 // stream" in Chrome) and to Chrome's logging stream.
-class DiagnosticLogMessage {
+class RTC_EXPORT DiagnosticLogMessage {
  public:
   DiagnosticLogMessage(const char* file,
                        int line,
@@ -141,7 +115,7 @@ class LogMessage {
 // TODO(grunell): Change name to InitDiagnosticLoggingDelegate or
 // InitDiagnosticLogging. Change also in init_webrtc.h/cc.
 // TODO(grunell): typedef the delegate function.
-void InitDiagnosticLoggingDelegateFunction(
+RTC_EXPORT void InitDiagnosticLoggingDelegateFunction(
     void (*delegate)(const std::string&));
 
 void SetExtraLoggingInit(

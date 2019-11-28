@@ -40,15 +40,14 @@ class MEDIA_EXPORT FFmpegAudioDecoder : public AudioDecoder {
 
   // AudioDecoder implementation.
   std::string GetDisplayName() const override;
-  void Initialize(
-      const AudioDecoderConfig& config,
-      CdmContext* cdm_context,
-      const InitCB& init_cb,
-      const OutputCB& output_cb,
-      const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb) override;
+  void Initialize(const AudioDecoderConfig& config,
+                  CdmContext* cdm_context,
+                  InitCB init_cb,
+                  const OutputCB& output_cb,
+                  const WaitingCB& waiting_cb) override;
   void Decode(scoped_refptr<DecoderBuffer> buffer,
               const DecodeCB& decode_cb) override;
-  void Reset(const base::Closure& closure) override;
+  void Reset(base::OnceClosure closure) override;
 
   // Callback called from within FFmpeg to allocate a buffer based on the
   // properties of |codec_context| and |frame|. See AVCodecContext.get_buffer2

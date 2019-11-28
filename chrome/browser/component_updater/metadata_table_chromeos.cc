@@ -6,10 +6,11 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 #include <vector>
 
+#include "base/hash/sha1.h"
 #include "base/memory/ptr_util.h"
-#include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "components/component_updater/component_updater_paths.h"
@@ -75,15 +76,24 @@ std::string HashUsername(const std::string& username) {
   return result;
 }
 
+const std::string& GetRequiredStringFromDict(const base::Value& dict,
+                                             base::StringPiece key) {
+  const base::Value* str = dict.FindKeyOfType(key, base::Value::Type::STRING);
+  DCHECK(str);
+  return str->GetString();
+}
+
 }  // namespace
 
-MetadataTable::~MetadataTable() = default;
+MetadataTable::MetadataTable(PrefService* pref_service)
+    : pref_service_(pref_service) {
+  DCHECK(pref_service_);
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-// static
-std::unique_ptr<component_updater::MetadataTable> MetadataTable::Create(
-    PrefService* pref_service) {
-  return base::WrapUnique(new MetadataTable(pref_service));
+  Load();
 }
+
+MetadataTable::~MetadataTable() = default;
 
 // static
 std::unique_ptr<component_updater::MetadataTable>
@@ -130,19 +140,10 @@ bool MetadataTable::HasComponentForAnyUser(
   return std::any_of(
       installed_items_.GetList().begin(), installed_items_.GetList().end(),
       [&component_name](const base::Value& item) {
-        const base::Value* name = item.FindKeyOfType(
-            kMetadataContentItemComponentKey, base::Value::Type::STRING);
-        DCHECK(name);
-        return name->GetString() == component_name;
+        const std::string& name =
+            GetRequiredStringFromDict(item, kMetadataContentItemComponentKey);
+        return name == component_name;
       });
-}
-
-MetadataTable::MetadataTable(PrefService* pref_service)
-    : pref_service_(pref_service) {
-  DCHECK(pref_service_);
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  Load();
 }
 
 MetadataTable::MetadataTable()
@@ -154,12 +155,11 @@ void MetadataTable::Load() {
   DCHECK(pref_service_);
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  const base::DictionaryValue* dict =
-      pref_service_->GetDictionary(kMetadataPrefPath);
+  const base::Value* dict = pref_service_->GetDictionary(kMetadataPrefPath);
   DCHECK(dict);
-  const base::Value* installed_items;
-  if (dict->Get(kMetadataContentKey, &installed_items) &&
-      installed_items->is_list()) {
+  const base::Value* installed_items =
+      dict->FindKeyOfType(kMetadataContentKey, base::Value::Type::LIST);
+  if (installed_items) {
     installed_items_ = installed_items->Clone();
     return;
   }
@@ -183,14 +183,15 @@ void MetadataTable::AddItem(const std::string& hashed_user_id,
   base::Value item(base::Value::Type::DICTIONARY);
   item.SetKey(kMetadataContentItemHashedUserIdKey, base::Value(hashed_user_id));
   item.SetKey(kMetadataContentItemComponentKey, base::Value(component_name));
-  installed_items_.GetList().emplace_back(item.Clone());
+  installed_items_.Append(std::move(item));
 }
 
 bool MetadataTable::DeleteItem(const std::string& hashed_user_id,
                                const std::string& component_name) {
-  auto item = GetInstalledItemIndex(hashed_user_id, component_name);
-  if (item != installed_items_.GetList().end()) {
-    installed_items_.GetList().erase(item);
+  size_t index = GetInstalledItemIndex(hashed_user_id, component_name);
+  if (index != installed_items_.GetList().size()) {
+    installed_items_.GetList().erase(installed_items_.GetList().begin() +
+                                     index);
     return true;
   }
   return false;
@@ -200,26 +201,25 @@ bool MetadataTable::HasComponentForUser(
     const std::string& hashed_user_id,
     const std::string& component_name) const {
   return GetInstalledItemIndex(hashed_user_id, component_name) !=
-         installed_items_.GetList().end();
+         installed_items_.GetList().size();
 }
 
-base::Value::ListStorage::const_iterator MetadataTable::GetInstalledItemIndex(
+size_t MetadataTable::GetInstalledItemIndex(
     const std::string& hashed_user_id,
     const std::string& component_name) const {
-  for (auto it = installed_items_.GetList().begin();
-       it != installed_items_.GetList().end(); ++it) {
-    const base::Value* user_id = it->FindKeyOfType(
-        kMetadataContentItemHashedUserIdKey, base::Value::Type::STRING);
-    const base::Value* name = it->FindKeyOfType(
-        kMetadataContentItemComponentKey, base::Value::Type::STRING);
-    DCHECK(user_id);
-    DCHECK(name);
-    if (user_id->GetString() == hashed_user_id &&
-        name->GetString() == component_name) {
-      return it;
-    }
+  for (size_t i = 0; i < installed_items_.GetList().size(); ++i) {
+    const auto& dict = installed_items_.GetList()[i];
+    const std::string& user_id =
+        GetRequiredStringFromDict(dict, kMetadataContentItemHashedUserIdKey);
+    if (user_id != hashed_user_id)
+      continue;
+    const std::string& name =
+        GetRequiredStringFromDict(dict, kMetadataContentItemComponentKey);
+    if (name != component_name)
+      continue;
+    return i;
   }
-  return installed_items_.GetList().end();
+  return installed_items_.GetList().size();
 }
 
 }  // namespace component_updater

@@ -30,8 +30,6 @@
 
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
 
-#include "SkPixelRef.h"  // FIXME: qualify this skia header file.
-
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -47,16 +45,18 @@
 #include "third_party/blink/renderer/platform/graphics/color_correction_test_utils.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
-#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_gles2_interface.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_web_graphics_context_3d_provider.h"
+#include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/image-decoders/image_decoder.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkPixelRef.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
 namespace blink {
@@ -75,8 +75,9 @@ class ImageBitmapTest : public testing::Test {
     image2_ = surface2->makeImageSnapshot();
 
     // Save the global memory cache to restore it upon teardown.
-    global_memory_cache_ = ReplaceMemoryCacheForTesting(MemoryCache::Create(
-        blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
+    global_memory_cache_ =
+        ReplaceMemoryCacheForTesting(MakeGarbageCollected<MemoryCache>(
+            blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
 
     auto factory = [](FakeGLES2Interface* gl, bool* gpu_compositing_disabled)
         -> std::unique_ptr<WebGraphicsContext3DProvider> {
@@ -90,9 +91,8 @@ class ImageBitmapTest : public testing::Test {
     // Garbage collection is required prior to switching out the
     // test's memory cache; image resources are released, evicting
     // them from the cache.
-    ThreadState::Current()->CollectGarbage(
-        BlinkGC::kNoHeapPointersOnStack, BlinkGC::kAtomicMarking,
-        BlinkGC::kEagerSweeping, BlinkGC::GCReason::kForcedGC);
+    ThreadState::Current()->CollectAllGarbageForTesting(
+        BlinkGC::kNoHeapPointersOnStack);
 
     ReplaceMemoryCacheForTesting(global_memory_cache_.Release());
     SharedGpuContext::ResetForTesting();
@@ -106,8 +106,8 @@ class ImageBitmapTest : public testing::Test {
 
 TEST_F(ImageBitmapTest, ImageResourceConsistency) {
   const ImageBitmapOptions* default_options = ImageBitmapOptions::Create();
-  HTMLImageElement* image_element =
-      HTMLImageElement::Create(*Document::CreateForTest());
+  auto* image_element =
+      MakeGarbageCollected<HTMLImageElement>(*MakeGarbageCollected<Document>());
   sk_sp<SkColorSpace> src_rgb_color_space = SkColorSpace::MakeSRGB();
   SkImageInfo raster_image_info =
       SkImageInfo::MakeN32Premul(5, 5, src_rgb_color_space);
@@ -115,7 +115,7 @@ TEST_F(ImageBitmapTest, ImageResourceConsistency) {
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   ImageResourceContent* original_image_resource =
       ImageResourceContent::CreateLoaded(
-          StaticBitmapImage::Create(image).get());
+          UnacceleratedStaticBitmapImage::Create(image).get());
   image_element->SetImageForTest(original_image_resource);
 
   base::Optional<IntRect> crop_rect =
@@ -177,8 +177,8 @@ TEST_F(ImageBitmapTest, ImageResourceConsistency) {
 // Verifies that ImageBitmaps constructed from HTMLImageElements hold a
 // reference to the original Image if the HTMLImageElement src is changed.
 TEST_F(ImageBitmapTest, ImageBitmapSourceChanged) {
-  HTMLImageElement* image =
-      HTMLImageElement::Create(*Document::CreateForTest());
+  auto* image =
+      MakeGarbageCollected<HTMLImageElement>(*MakeGarbageCollected<Document>());
   sk_sp<SkColorSpace> src_rgb_color_space = SkColorSpace::MakeSRGB();
   SkImageInfo raster_image_info =
       SkImageInfo::MakeN32Premul(5, 5, src_rgb_color_space);
@@ -186,7 +186,7 @@ TEST_F(ImageBitmapTest, ImageBitmapSourceChanged) {
   sk_sp<SkImage> raster_image = raster_surface->makeImageSnapshot();
   ImageResourceContent* original_image_resource =
       ImageResourceContent::CreateLoaded(
-          StaticBitmapImage::Create(raster_image).get());
+          UnacceleratedStaticBitmapImage::Create(raster_image).get());
   image->SetImageForTest(original_image_resource);
 
   const ImageBitmapOptions* default_options = ImageBitmapOptions::Create();
@@ -202,7 +202,7 @@ TEST_F(ImageBitmapTest, ImageBitmapSourceChanged) {
           .GetSkImage());
 
   ImageResourceContent* new_image_resource = ImageResourceContent::CreateLoaded(
-      StaticBitmapImage::Create(image2_).get());
+      UnacceleratedStaticBitmapImage::Create(image2_).get());
   image->SetImageForTest(new_image_resource);
 
   {
@@ -267,7 +267,6 @@ TEST_F(ImageBitmapTest, AvoidGPUReadback) {
   scoped_refptr<AcceleratedStaticBitmapImage> bitmap =
       AcceleratedStaticBitmapImage::CreateFromSkImage(image,
                                                       context_provider_wrapper);
-  EXPECT_TRUE(bitmap->TextureHolderForTesting()->IsSkiaTextureHolder());
 
   ImageBitmap* image_bitmap = ImageBitmap::Create(bitmap);
   EXPECT_TRUE(image_bitmap);
@@ -316,8 +315,8 @@ TEST_F(ImageBitmapTest, AvoidGPUReadback) {
 }
 
 TEST_F(ImageBitmapTest, ImageBitmapColorSpaceConversionHTMLImageElement) {
-  HTMLImageElement* image_element =
-      HTMLImageElement::Create(*Document::CreateForTest());
+  auto* image_element =
+      MakeGarbageCollected<HTMLImageElement>(*MakeGarbageCollected<Document>());
 
   SkPaint p;
   p.setColor(SK_ColorRED);
@@ -333,7 +332,7 @@ TEST_F(ImageBitmapTest, ImageBitmapColorSpaceConversionHTMLImageElement) {
 
   ImageResourceContent* original_image_resource =
       ImageResourceContent::CreateLoaded(
-          StaticBitmapImage::Create(source_image).get());
+          UnacceleratedStaticBitmapImage::Create(source_image).get());
   image_element->SetImageForTest(original_image_resource);
 
   base::Optional<IntRect> crop_rect =
@@ -406,7 +405,7 @@ TEST_F(ImageBitmapTest, ImageBitmapColorSpaceConversionImageBitmap) {
       ColorCorrectionTestUtils::ColorSpaceConversionToString(
           kColorSpaceConversion_Preserve));
   ImageBitmap* source_image_bitmap = ImageBitmap::Create(
-      StaticBitmapImage::Create(source_image), crop_rect, options);
+      UnacceleratedStaticBitmapImage::Create(source_image), crop_rect, options);
   ASSERT_TRUE(source_image_bitmap);
 
   for (int conversion_iterator = kColorSpaceConversion_Default;
@@ -479,7 +478,8 @@ TEST_F(ImageBitmapTest, ImageBitmapColorSpaceConversionStaticBitmapImage) {
         ColorCorrectionTestUtils::ColorSpaceConversionToString(
             static_cast<ColorSpaceConversion>(conversion_iterator)));
     ImageBitmap* image_bitmap = ImageBitmap::Create(
-        StaticBitmapImage::Create(source_image), crop_rect, options);
+        UnacceleratedStaticBitmapImage::Create(source_image), crop_rect,
+        options);
     ASSERT_TRUE(image_bitmap);
     sk_sp<SkImage> converted_image =
         image_bitmap->BitmapImage()->PaintImageForCurrentFrame().GetSkImage();
@@ -587,7 +587,7 @@ TEST_F(ImageBitmapTest, ImageBitmapPixelFormat) {
   sk_sp<SkSurface> surface(SkSurface::MakeRaster(info));
   sk_sp<SkImage> sk_image = surface->makeImageSnapshot();
   scoped_refptr<StaticBitmapImage> bitmap_image =
-      StaticBitmapImage::Create(sk_image);
+      UnacceleratedStaticBitmapImage::Create(sk_image);
 
   // source: uint8, bitmap pixel format: default
   ImageBitmapOptions* options = ImageBitmapOptions::Create();
@@ -614,14 +614,14 @@ TEST_F(ImageBitmapTest, ImageBitmapPixelFormat) {
   // internal SkImage back storage.
   ASSERT_EQ(sk_image_internal, sk_image_internal_8888);
 
-  sk_sp<SkColorSpace> p3_color_space = SkColorSpace::MakeRGB(
-      SkColorSpace::kLinear_RenderTargetGamma, SkColorSpace::kDCIP3_D65_Gamut);
+  sk_sp<SkColorSpace> p3_color_space =
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, SkNamedGamut::kDCIP3);
   SkImageInfo info_f16 = SkImageInfo::Make(10, 10, kRGBA_F16_SkColorType,
                                            kPremul_SkAlphaType, p3_color_space);
   sk_sp<SkSurface> surface_f16(SkSurface::MakeRaster(info_f16));
   sk_sp<SkImage> sk_image_f16 = surface_f16->makeImageSnapshot();
   scoped_refptr<StaticBitmapImage> bitmap_image_f16 =
-      StaticBitmapImage::Create(sk_image_f16);
+      UnacceleratedStaticBitmapImage::Create(sk_image_f16);
 
   // source: f16, bitmap pixel format: default
   ImageBitmapOptions* options_f16 = ImageBitmapOptions::Create();

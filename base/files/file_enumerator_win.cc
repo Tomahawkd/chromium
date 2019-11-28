@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/win/shlwapi.h"
 
@@ -24,7 +25,7 @@ FilePath BuildSearchFilter(FileEnumerator::FolderSearchPolicy policy,
     case FileEnumerator::FolderSearchPolicy::MATCH_ONLY:
       return root_path.Append(pattern);
     case FileEnumerator::FolderSearchPolicy::ALL:
-      return root_path.Append(L"*");
+      return root_path.Append(FILE_PATH_LITERAL("*"));
   }
   NOTREACHED();
   return {};
@@ -55,8 +56,8 @@ int64_t FileEnumerator::FileInfo::GetSize() const {
   return static_cast<int64_t>(size.QuadPart);
 }
 
-base::Time FileEnumerator::FileInfo::GetLastModifiedTime() const {
-  return base::Time::FromFileTime(find_data_.ftLastWriteTime);
+Time FileEnumerator::FileInfo::GetLastModifiedTime() const {
+  return Time::FromFileTime(find_data_.ftLastWriteTime);
 }
 
 // FileEnumerator --------------------------------------------------------------
@@ -87,7 +88,7 @@ FileEnumerator::FileEnumerator(const FilePath& root_path,
                                FolderSearchPolicy folder_search_policy)
     : recursive_(recursive),
       file_type_(file_type),
-      pattern_(!pattern.empty() ? pattern : L"*"),
+      pattern_(!pattern.empty() ? pattern : FILE_PATH_LITERAL("*")),
       folder_search_policy_(folder_search_policy) {
   // INCLUDE_DOT_DOT must not be specified if recursive.
   DCHECK(!(recursive && (INCLUDE_DOT_DOT & file_type_)));
@@ -111,7 +112,7 @@ FileEnumerator::FileInfo FileEnumerator::GetInfo() const {
 }
 
 FilePath FileEnumerator::Next() {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 
   while (has_find_data_ || !pending_paths_.empty()) {
     if (!has_find_data_) {
@@ -146,7 +147,7 @@ FilePath FileEnumerator::Next() {
         // files in the root search directory, but for those directories which
         // were matched, we want to enumerate all files inside them. This will
         // happen when the handle is empty.
-        pattern_ = L"*";
+        pattern_ = FILE_PATH_LITERAL("*");
       }
 
       continue;

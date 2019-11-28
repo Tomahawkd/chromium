@@ -8,9 +8,11 @@
 
 #include <utility>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -47,7 +49,7 @@ TEST(AutocompleteMatchTest, MoreRelevant) {
   AutocompleteMatch m2(nullptr, 0, false,
                        AutocompleteMatchType::URL_WHAT_YOU_TYPED);
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     m1.relevance = cases[i].r1;
     m2.relevance = cases[i].r2;
     EXPECT_EQ(cases[i].expected_result,
@@ -135,6 +137,11 @@ TEST(AutocompleteMatchTest, InlineTailPrefix) {
        // should prepend ellipsis, and offset remainder
        {{0, ACMatchClassification::NONE}, {2, ACMatchClassification::MATCH}},
        {{0, ACMatchClassification::NONE}, {6, ACMatchClassification::MATCH}}},
+      {"90123456",
+       "... 90123456",
+       // should prepend ellipsis
+       {},
+       {{0, ACMatchClassification::NONE}}},
   };
   for (const auto& test_case : cases) {
     AutocompleteMatch match;
@@ -288,13 +295,38 @@ TEST(AutocompleteMatchTest, SupportsDeletion) {
   EXPECT_TRUE(m.SupportsDeletion());
 }
 
+// Structure containing URL pairs for deduping-related tests.
+struct DuplicateCase {
+  const wchar_t* input;
+  const std::string url1;
+  const std::string url2;
+  const bool expected_duplicate;
+};
+
+// Runs deduping logic against URLs in |duplicate_case| and makes sure they are
+// unique or matched as duplicates as expected.
+void CheckDuplicateCase(const DuplicateCase& duplicate_case) {
+  SCOPED_TRACE("input=" + base::WideToUTF8(duplicate_case.input) +
+               " url1=" + duplicate_case.url1 + " url2=" + duplicate_case.url2);
+  AutocompleteInput input(base::WideToUTF16(duplicate_case.input),
+                          metrics::OmniboxEventProto::OTHER,
+                          TestSchemeClassifier());
+  AutocompleteMatch m1(nullptr, 100, false,
+                       AutocompleteMatchType::URL_WHAT_YOU_TYPED);
+  m1.destination_url = GURL(duplicate_case.url1);
+  m1.ComputeStrippedDestinationURL(input, nullptr);
+  AutocompleteMatch m2(nullptr, 100, false,
+                       AutocompleteMatchType::URL_WHAT_YOU_TYPED);
+  m2.destination_url = GURL(duplicate_case.url2);
+  m2.ComputeStrippedDestinationURL(input, nullptr);
+  EXPECT_EQ(duplicate_case.expected_duplicate,
+            m1.stripped_destination_url == m2.stripped_destination_url);
+  EXPECT_TRUE(m1.stripped_destination_url.is_valid());
+  EXPECT_TRUE(m2.stripped_destination_url.is_valid());
+}
+
 TEST(AutocompleteMatchTest, Duplicates) {
-  struct DuplicateCases {
-    const wchar_t* input;
-    const std::string url1;
-    const std::string url2;
-    const bool expected_duplicate;
-  } cases[] = {
+  DuplicateCase cases[] = {
     { L"g", "http://www.google.com/",  "https://www.google.com/",    true },
     { L"g", "http://www.google.com/",  "http://www.google.com",      true },
     { L"g", "http://google.com/",      "http://www.google.com/",     true },
@@ -341,23 +373,27 @@ TEST(AutocompleteMatchTest, Duplicates) {
     { L"http://www./", "http://www./", "http://google.com/", false },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
-    SCOPED_TRACE("input=" + base::WideToUTF8(cases[i].input) +
-                 " url1=" + cases[i].url1 + " url2=" + cases[i].url2);
-    AutocompleteInput input(base::WideToUTF16(cases[i].input),
-                            metrics::OmniboxEventProto::OTHER,
-                            TestSchemeClassifier());
-    AutocompleteMatch m1(nullptr, 100, false,
-                         AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-    m1.destination_url = GURL(cases[i].url1);
-    m1.ComputeStrippedDestinationURL(input, nullptr);
-    AutocompleteMatch m2(nullptr, 100, false,
-                         AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-    m2.destination_url = GURL(cases[i].url2);
-    m2.ComputeStrippedDestinationURL(input, nullptr);
-    EXPECT_EQ(cases[i].expected_duplicate,
-              m1.stripped_destination_url == m2.stripped_destination_url);
-    EXPECT_TRUE(m1.stripped_destination_url.is_valid());
-    EXPECT_TRUE(m2.stripped_destination_url.is_valid());
+  for (size_t i = 0; i < base::size(cases); ++i) {
+    CheckDuplicateCase(cases[i]);
+  }
+}
+
+TEST(AutocompleteMatchTest, DedupeDriveURLs) {
+  DuplicateCase cases[] = {
+      // Document URLs pointing to the same document, perhaps with different
+      // /edit points, hashes, or cgiargs, are deduped.
+      {L"docs", "https://docs.google.com/spreadsheets/d/the_doc-id/preview?x=1",
+       "https://docs.google.com/spreadsheets/d/the_doc-id/edit?x=2#y=3", true},
+      {L"report", "https://drive.google.com/open?id=the-doc-id",
+       "https://docs.google.com/spreadsheets/d/the-doc-id/edit?x=2#y=3", true},
+      // Similar but different URLs should not be deduped.
+      {L"docs", "https://docs.google.com/spreadsheets/d/the_doc-id/preview",
+       "https://docs.google.com/spreadsheets/d/another_doc-id/preview", false},
+      {L"report", "https://drive.google.com/open?id=the-doc-id",
+       "https://drive.google.com/open?id=another-doc-id", false},
+  };
+
+  for (size_t i = 0; i < base::size(cases); ++i) {
+    CheckDuplicateCase(cases[i]);
   }
 }

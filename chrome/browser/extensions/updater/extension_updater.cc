@@ -21,7 +21,7 @@
 #include "chrome/browser/extensions/api/module/module.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/forced_extensions/installation_failures.h"
+#include "chrome/browser/extensions/forced_extensions/installation_reporter.h"
 #include "chrome/browser/extensions/pending_extension_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/prefs/pref_service.h"
@@ -52,19 +52,15 @@ typedef extensions::ExtensionDownloaderDelegate::PingResult PingResult;
 
 namespace {
 
-// Wait at least 60 seconds after browser startup before we do any checks. If
-// you change this value, make sure to update comments where it is used.
-const int kStartupWaitSeconds = 60;
-
-// The minimum number of seconds there should be for the delay passed to
-// ScheduleNextCheck.
-const int kScheduleNextCheckMinGapSecs = 1;
+bool g_should_immediately_update = false;
 
 // For sanity checking on update frequency - enforced in release mode only.
 #if defined(NDEBUG)
 const int kMinUpdateFrequencySeconds = 30;
 #endif
 const int kMaxUpdateFrequencySeconds = 60 * 60 * 24 * 7;  // 7 days
+
+bool g_skip_scheduled_checks_for_tests = false;
 
 // When we've computed a days value, we want to make sure we don't send a
 // negative value (due to the system clock being set backwards, etc.), since -1
@@ -146,22 +142,22 @@ ExtensionUpdater::ExtensionUpdater(
       service_(service),
       downloader_factory_(downloader_factory),
       update_service_(nullptr),
-      frequency_seconds_(frequency_seconds),
+      frequency_(base::TimeDelta::FromSeconds(frequency_seconds)),
       will_check_soon_(false),
       extension_prefs_(extension_prefs),
       prefs_(prefs),
       profile_(profile),
+      registry_(ExtensionRegistry::Get(profile)),
       next_request_id_(0),
       crx_install_is_running_(false),
-      extension_cache_(cache),
-      weak_ptr_factory_(this) {
-  DCHECK_GE(frequency_seconds_, 5);
-  DCHECK_LE(frequency_seconds_, kMaxUpdateFrequencySeconds);
+      extension_cache_(cache) {
+  DCHECK_LE(frequency_seconds, kMaxUpdateFrequencySeconds);
 #if defined(NDEBUG)
   // In Release mode we enforce that update checks don't happen too often.
-  frequency_seconds_ = std::max(frequency_seconds_, kMinUpdateFrequencySeconds);
+  frequency_seconds = std::max(frequency_seconds, kMinUpdateFrequencySeconds);
 #endif
-  frequency_seconds_ = std::min(frequency_seconds_, kMaxUpdateFrequencySeconds);
+  frequency_seconds = std::min(frequency_seconds, kMaxUpdateFrequencySeconds);
+  frequency_ = base::TimeDelta::FromSeconds(frequency_seconds);
 }
 
 ExtensionUpdater::~ExtensionUpdater() {
@@ -177,38 +173,6 @@ void ExtensionUpdater::EnsureDownloaderCreated() {
   }
 }
 
-// The overall goal here is to balance keeping clients up to date while
-// avoiding a thundering herd against update servers.
-base::TimeDelta ExtensionUpdater::DetermineFirstCheckDelay() {
-  DCHECK(alive_);
-  // If someone's testing with a quick frequency, just allow it.
-  if (frequency_seconds_ < kStartupWaitSeconds)
-    return base::TimeDelta::FromSeconds(frequency_seconds_);
-
-  // If we've never scheduled a check before, start at a random time up to
-  // frequency_seconds_ away.
-  if (!prefs_->HasPrefPath(pref_names::kNextUpdateCheck))
-    return base::TimeDelta::FromSeconds(
-        RandInt(kStartupWaitSeconds, frequency_seconds_));
-
-  // Read the persisted next check time, and use that if it isn't in the past
-  // or too far in the future (this can happen with system clock changes).
-  base::Time saved_next = base::Time::FromInternalValue(
-      prefs_->GetInt64(pref_names::kNextUpdateCheck));
-  base::Time now = base::Time::Now();
-  base::Time earliest =
-      now + base::TimeDelta::FromSeconds(kScheduleNextCheckMinGapSecs);
-  base::Time latest = now + base::TimeDelta::FromSeconds(frequency_seconds_);
-  if (saved_next > earliest && saved_next < latest) {
-    return saved_next - now;
-  }
-
-  // In most cases we'll get here because the persisted next check time passed
-  // while we weren't running, so pick something soon.
-  return base::TimeDelta::FromSeconds(
-      RandInt(kStartupWaitSeconds, kStartupWaitSeconds * 5));
-}
-
 void ExtensionUpdater::Start() {
   DCHECK(!alive_);
   // If these are NULL, then that means we've been called after Stop()
@@ -218,77 +182,59 @@ void ExtensionUpdater::Start() {
   DCHECK(prefs_);
   DCHECK(profile_);
   DCHECK(!weak_ptr_factory_.HasWeakPtrs());
+  DCHECK(registry_);
   alive_ = true;
-  // Make sure our prefs are registered, then schedule the first check.
-  ScheduleNextCheck(DetermineFirstCheckDelay());
+  // Check soon, and set up the first delayed check.
+  if (!g_skip_scheduled_checks_for_tests) {
+    if (g_should_immediately_update)
+      CheckNow({});
+    else
+      CheckSoon();
+    ScheduleNextCheck();
+  }
 }
 
 void ExtensionUpdater::Stop() {
   weak_ptr_factory_.InvalidateWeakPtrs();
   alive_ = false;
-  service_ = NULL;
-  extension_prefs_ = NULL;
-  prefs_ = NULL;
-  profile_ = NULL;
-  timer_.Stop();
+  service_ = nullptr;
+  extension_prefs_ = nullptr;
+  prefs_ = nullptr;
+  profile_ = nullptr;
   will_check_soon_ = false;
   downloader_.reset();
   update_service_ = nullptr;
+  registry_ = nullptr;
 }
 
-void ExtensionUpdater::ScheduleNextCheck(const base::TimeDelta& target_delay) {
+void ExtensionUpdater::ScheduleNextCheck() {
   DCHECK(alive_);
-  DCHECK(!timer_.IsRunning());
-  DCHECK(target_delay >=
-         base::TimeDelta::FromSeconds(kScheduleNextCheckMinGapSecs));
-
-  // Add +/- 10% random jitter.
-  double delay_ms = target_delay.InMillisecondsF();
-  double jitter_factor = (RandDouble() * .2) - 0.1;
-  delay_ms += delay_ms * jitter_factor;
-  base::TimeDelta actual_delay =
-      base::TimeDelta::FromMilliseconds(static_cast<int64_t>(delay_ms));
-
-  // Save the time of next check.
-  base::Time next = base::Time::Now() + actual_delay;
-  prefs_->SetInt64(pref_names::kNextUpdateCheck, next.ToInternalValue());
-
-  timer_.Start(FROM_HERE, actual_delay, this, &ExtensionUpdater::TimerFired);
+  // Jitter the frequency by +/- 20%.
+  const double jitter_factor = RandDouble() * 0.4 + 0.8;
+  base::TimeDelta delay = base::TimeDelta::FromMilliseconds(
+      static_cast<int64_t>(frequency_.InMilliseconds() * jitter_factor));
+  base::PostDelayedTask(FROM_HERE,
+                        {base::TaskPriority::BEST_EFFORT, BrowserThread::UI},
+                        base::BindOnce(&ExtensionUpdater::NextCheck,
+                                       weak_ptr_factory_.GetWeakPtr()),
+                        delay);
 }
 
-void ExtensionUpdater::TimerFired() {
-  DCHECK(alive_);
+void ExtensionUpdater::NextCheck() {
+  if (!alive_)
+    return;
   CheckNow(CheckParams());
-
-  // If the user has overridden the update frequency, don't bother reporting
-  // this.
-  if (frequency_seconds_ == kDefaultUpdateFrequencySeconds) {
-    base::Time last = base::Time::FromInternalValue(
-        prefs_->GetInt64(pref_names::kLastUpdateCheck));
-    if (last.ToInternalValue() != 0) {
-      // Use counts rather than time so we can use minutes rather than millis.
-      UMA_HISTOGRAM_CUSTOM_COUNTS(
-          "Extensions.UpdateCheckGap", (base::Time::Now() - last).InMinutes(),
-          base::TimeDelta::FromSeconds(kStartupWaitSeconds).InMinutes(),
-          base::TimeDelta::FromDays(40).InMinutes(),
-          50);  // 50 buckets seems to be the default.
-    }
-  }
-
-  // Save the last check time, and schedule the next check.
-  int64_t now = base::Time::Now().ToInternalValue();
-  prefs_->SetInt64(pref_names::kLastUpdateCheck, now);
-  ScheduleNextCheck(base::TimeDelta::FromSeconds(frequency_seconds_));
+  ScheduleNextCheck();
 }
 
 void ExtensionUpdater::CheckSoon() {
   DCHECK(alive_);
   if (will_check_soon_)
     return;
-  if (base::PostTaskWithTraits(
-          FROM_HERE, {BrowserThread::UI},
-          base::BindOnce(&ExtensionUpdater::DoCheckSoon,
-                         weak_ptr_factory_.GetWeakPtr()))) {
+  if (base::PostTask(FROM_HERE,
+                     {base::TaskPriority::BEST_EFFORT, BrowserThread::UI},
+                     base::BindOnce(&ExtensionUpdater::DoCheckSoon,
+                                    weak_ptr_factory_.GetWeakPtr()))) {
     will_check_soon_ = true;
   } else {
     NOTREACHED();
@@ -304,8 +250,14 @@ void ExtensionUpdater::SetExtensionCacheForTesting(
   extension_cache_ = extension_cache;
 }
 
-void ExtensionUpdater::StopTimerForTesting() {
-  timer_.Stop();
+void ExtensionUpdater::SetExtensionDownloaderForTesting(
+    std::unique_ptr<ExtensionDownloader> downloader) {
+  downloader_.swap(downloader);
+}
+
+// static
+void ExtensionUpdater::UpdateImmediatelyForFirstRun() {
+  g_should_immediately_update = true;
 }
 
 void ExtensionUpdater::DoCheckSoon() {
@@ -333,7 +285,7 @@ void ExtensionUpdater::AddToDownloader(
     // An extension might be overwritten by policy, and have its update url
     // changed. Make sure existing extensions aren't fetched again, if a
     // pending fetch for an extension with the same id already exists.
-    if (!base::ContainsValue(pending_ids, extension_id)) {
+    if (!base::Contains(pending_ids, extension_id)) {
       if (update_service_->CanUpdate(extension_id)) {
         update_check_params->update_info[extension_id] = ExtensionUpdateData();
       } else if (downloader_->AddExtension(extension, request_id,
@@ -390,17 +342,23 @@ void ExtensionUpdater::CheckNow(CheckParams params) {
                      pending_id, info->update_url(), info->install_source(),
                      is_corrupt_reinstall, request_id, params.fetch_priority)) {
         request.in_progress_ids_.insert(pending_id);
+        InstallationReporter::Get(profile_)->ReportInstallationStage(
+            pending_id, InstallationReporter::Stage::DOWNLOADING);
+      } else {
+        InstallationReporter::Get(profile_)->ReportFailure(
+            pending_id,
+            InstallationReporter::FailureReason::DOWNLOADER_ADD_FAILED);
       }
     }
 
-    ExtensionRegistry* registry = ExtensionRegistry::Get(profile_);
-    AddToDownloader(&registry->enabled_extensions(), pending_ids, request_id,
+    AddToDownloader(&registry_->enabled_extensions(), pending_ids, request_id,
                     params.fetch_priority, &update_check_params);
-    AddToDownloader(&registry->disabled_extensions(), pending_ids, request_id,
+    AddToDownloader(&registry_->disabled_extensions(), pending_ids, request_id,
                     params.fetch_priority, &update_check_params);
   } else {
     for (const std::string& id : params.ids) {
-      const Extension* extension = service_->GetExtensionById(id, true);
+      const Extension* extension = registry_->GetExtensionById(
+          id, extensions::ExtensionRegistry::EVERYTHING);
       if (extension) {
         if (update_service_->CanUpdate(id)) {
           update_check_params.update_info[id] = ExtensionUpdateData();
@@ -411,10 +369,6 @@ void ExtensionUpdater::CheckNow(CheckParams params) {
       }
     }
   }
-
-  UMA_HISTOGRAM_COUNTS_100(
-      "Extensions.ExtensionUpdaterRawUpdateCalls",
-      request.in_progress_ids_.size() + update_check_params.update_info.size());
 
   // StartAllPending() might call OnExtensionDownloadFailed/Finished before
   // it returns, which would cause NotifyIfFinished to incorrectly try to
@@ -445,20 +399,26 @@ void ExtensionUpdater::CheckNow(CheckParams params) {
   }
 }
 
-void ExtensionUpdater::CheckExtensionSoon(const std::string& extension_id,
-                                          FinishedCallback callback) {
-  CheckParams params;
-  params.ids = {extension_id};
-  params.callback = std::move(callback);
-  CheckNow(std::move(params));
+void ExtensionUpdater::OnExtensionDownloadStageChanged(const ExtensionId& id,
+                                                       Stage stage) {
+  InstallationReporter::Get(profile_)->ReportDownloadingStage(id, stage);
+}
+
+void ExtensionUpdater::OnExtensionDownloadCacheStatusRetrieved(
+    const ExtensionId& id,
+    CacheStatus cache_status) {
+  InstallationReporter::Get(profile_)->ReportDownloadingCacheStatus(
+      id, cache_status);
 }
 
 void ExtensionUpdater::OnExtensionDownloadFailed(
-    const std::string& id,
+    const ExtensionId& id,
     Error error,
     const PingResult& ping,
     const std::set<int>& request_ids) {
   DCHECK(alive_);
+  InstallationReporter* installation_reporter =
+      InstallationReporter::Get(profile_);
 
   switch (error) {
     case Error::CRX_FETCH_FAILED:
@@ -466,28 +426,28 @@ void ExtensionUpdater::OnExtensionDownloadFailed(
           "Extensions.ExtensionUpdaterUpdateResults",
           ExtensionUpdaterUpdateResult::UPDATE_DOWNLOAD_ERROR,
           ExtensionUpdaterUpdateResult::UPDATE_RESULT_COUNT);
-      InstallationFailures::ReportFailure(
-          profile_, id, InstallationFailures::Reason::CRX_FETCH_FAILED);
+      installation_reporter->ReportFailure(
+          id, InstallationReporter::FailureReason::CRX_FETCH_FAILED);
       break;
     case Error::MANIFEST_FETCH_FAILED:
-      InstallationFailures::ReportFailure(
-          profile_, id, InstallationFailures::Reason::MANIFEST_FETCH_FAILED);
+      installation_reporter->ReportFailure(
+          id, InstallationReporter::FailureReason::MANIFEST_FETCH_FAILED);
       UMA_HISTOGRAM_ENUMERATION(
           "Extensions.ExtensionUpdaterUpdateResults",
           ExtensionUpdaterUpdateResult::UPDATE_CHECK_ERROR,
           ExtensionUpdaterUpdateResult::UPDATE_RESULT_COUNT);
       break;
     case Error::MANIFEST_INVALID:
-      InstallationFailures::ReportFailure(
-          profile_, id, InstallationFailures::Reason::MANIFEST_INVALID);
+      installation_reporter->ReportFailure(
+          id, InstallationReporter::FailureReason::MANIFEST_INVALID);
       UMA_HISTOGRAM_ENUMERATION(
           "Extensions.ExtensionUpdaterUpdateResults",
           ExtensionUpdaterUpdateResult::UPDATE_CHECK_ERROR,
           ExtensionUpdaterUpdateResult::UPDATE_RESULT_COUNT);
       break;
     case Error::NO_UPDATE_AVAILABLE:
-      InstallationFailures::ReportFailure(
-          profile_, id, InstallationFailures::Reason::NO_UPDATE);
+      installation_reporter->ReportFailure(
+          id, InstallationReporter::FailureReason::NO_UPDATE);
       UMA_HISTOGRAM_ENUMERATION(
           "Extensions.ExtensionUpdaterUpdateResults",
           ExtensionUpdaterUpdateResult::NO_UPDATE,
@@ -528,6 +488,8 @@ void ExtensionUpdater::OnExtensionDownloadFinished(
     const std::set<int>& request_ids,
     const InstallCallback& callback) {
   DCHECK(alive_);
+  InstallationReporter::Get(profile_)->ReportInstallationStage(
+      file.extension_id, InstallationReporter::Stage::INSTALLING);
   UpdatePingData(file.extension_id, ping);
 
   VLOG(2) << download_url << " written to " << file.path.value();
@@ -541,7 +503,7 @@ void ExtensionUpdater::OnExtensionDownloadFinished(
 }
 
 bool ExtensionUpdater::GetPingDataForExtension(
-    const std::string& id,
+    const ExtensionId& id,
     ManifestFetchData::PingData* ping_data) {
   DCHECK(alive_);
   ping_data->rollcall_days =
@@ -555,20 +517,21 @@ bool ExtensionUpdater::GetPingDataForExtension(
   return true;
 }
 
-std::string ExtensionUpdater::GetUpdateUrlData(const std::string& id) {
+std::string ExtensionUpdater::GetUpdateUrlData(const ExtensionId& id) {
   DCHECK(alive_);
   return extension::GetUpdateURLData(extension_prefs_, id);
 }
 
-bool ExtensionUpdater::IsExtensionPending(const std::string& id) {
+bool ExtensionUpdater::IsExtensionPending(const ExtensionId& id) {
   DCHECK(alive_);
   return service_->pending_extension_manager()->IsIdPending(id);
 }
 
-bool ExtensionUpdater::GetExtensionExistingVersion(const std::string& id,
+bool ExtensionUpdater::GetExtensionExistingVersion(const ExtensionId& id,
                                                    std::string* version) {
   DCHECK(alive_);
-  const Extension* extension = service_->GetExtensionById(id, true);
+  const Extension* extension = registry_->GetExtensionById(
+      id, extensions::ExtensionRegistry::EVERYTHING);
   if (!extension)
     return false;
   const Extension* update = service_->GetPendingExtensionUpdate(id);
@@ -579,7 +542,7 @@ bool ExtensionUpdater::GetExtensionExistingVersion(const std::string& id,
   return true;
 }
 
-void ExtensionUpdater::UpdatePingData(const std::string& id,
+void ExtensionUpdater::UpdatePingData(const ExtensionId& id,
                                       const PingResult& ping_result) {
   DCHECK(alive_);
   if (ping_result.did_ping)
@@ -597,7 +560,7 @@ void ExtensionUpdater::MaybeInstallCRXFile() {
   std::set<int> request_ids;
 
   while (!fetched_crx_files_.empty() && !crx_install_is_running_) {
-    const FetchedCRXFile& crx_file = fetched_crx_files_.top();
+    const FetchedCRXFile& crx_file = fetched_crx_files_.front();
 
     VLOG(2) << "updating " << crx_file.info.extension_id
             << " with " << crx_file.info.path.value();
@@ -688,7 +651,7 @@ void ExtensionUpdater::NotifyStarted() {
 }
 
 void ExtensionUpdater::OnUpdateServiceFinished(int request_id) {
-  DCHECK(base::ContainsKey(requests_in_progress_, request_id));
+  DCHECK(base::Contains(requests_in_progress_, request_id));
   InProgressCheck& request = requests_in_progress_[request_id];
   DCHECK(request.awaiting_update_service);
   request.awaiting_update_service = false;
@@ -696,7 +659,7 @@ void ExtensionUpdater::OnUpdateServiceFinished(int request_id) {
 }
 
 void ExtensionUpdater::NotifyIfFinished(int request_id) {
-  DCHECK(base::ContainsKey(requests_in_progress_, request_id));
+  DCHECK(base::Contains(requests_in_progress_, request_id));
   InProgressCheck& request = requests_in_progress_[request_id];
   if (!request.in_progress_ids_.empty() || request.awaiting_update_service)
     return;  // This request is not done yet.
@@ -704,6 +667,17 @@ void ExtensionUpdater::NotifyIfFinished(int request_id) {
   if (!request.callback.is_null())
     std::move(request.callback).Run();
   requests_in_progress_.erase(request_id);
+}
+
+ExtensionUpdater::ScopedSkipScheduledCheckForTest::
+    ScopedSkipScheduledCheckForTest() {
+  DCHECK(!g_skip_scheduled_checks_for_tests);
+  g_skip_scheduled_checks_for_tests = true;
+}
+
+ExtensionUpdater::ScopedSkipScheduledCheckForTest::
+    ~ScopedSkipScheduledCheckForTest() {
+  g_skip_scheduled_checks_for_tests = false;
 }
 
 }  // namespace extensions

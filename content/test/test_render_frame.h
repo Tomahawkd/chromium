@@ -10,7 +10,12 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "content/common/frame.mojom.h"
+#include "content/common/input/input_handler.mojom.h"
+#include "content/common/navigation_params.mojom.h"
 #include "content/renderer/render_frame_impl.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 
 namespace blink {
@@ -19,9 +24,7 @@ class WebHistoryItem;
 
 namespace content {
 
-struct CommonNavigationParams;
 class MockFrameHost;
-struct RequestNavigationParams;
 
 // A test class to use in RenderViewTests.
 class TestRenderFrame : public RenderFrameImpl {
@@ -34,14 +37,20 @@ class TestRenderFrame : public RenderFrameImpl {
     return current_history_item_;
   }
 
-  // Overrides the URL in the next WebURLRequest originating from the frame.
-  // This will also short-circuit browser-side navigation for main resource
-  // loads, FrameLoader will always carry out the load renderer-side.
-  void SetURLOverrideForNextWebURLRequest(const GURL& url);
+  // Overrides the content in the next navigation originating from the frame.
+  // This will also short-circuit browser-side navigation,
+  // FrameLoader will always carry out the load renderer-side.
+  void SetHTMLOverrideForNextNavigation(const std::string& html);
 
-  void WillSendRequest(blink::WebURLRequest& request) override;
-  void Navigate(const CommonNavigationParams& common_params,
-                const RequestNavigationParams& request_params);
+  void Navigate(network::mojom::URLResponseHeadPtr head,
+                mojom::CommonNavigationParamsPtr common_params,
+                mojom::CommitNavigationParamsPtr commit_params);
+  void Navigate(mojom::CommonNavigationParamsPtr common_params,
+                mojom::CommitNavigationParamsPtr commit_params);
+  void NavigateWithError(mojom::CommonNavigationParamsPtr common_params,
+                         mojom::CommitNavigationParamsPtr request_params,
+                         int error_code,
+                         const base::Optional<std::string>& error_page_content);
   void SwapOut(int proxy_routing_id,
                bool is_loading,
                const FrameReplicationState& replicated_frame_state);
@@ -61,8 +70,16 @@ class TestRenderFrame : public RenderFrameImpl {
   std::unique_ptr<FrameHostMsg_DidCommitProvisionalLoad_Params>
   TakeLastCommitParams();
 
-  service_manager::mojom::InterfaceProviderRequest
-  TakeLastInterfaceProviderRequest();
+  // Sets a callback to be run the next time DidAddMessageToConsole
+  // is called (e.g. window.console.log() is called).
+  void SetDidAddMessageToConsoleCallback(
+      base::OnceCallback<void(const base::string16& msg)> callback);
+
+  mojo::PendingReceiver<service_manager::mojom::InterfaceProvider>
+  TakeLastInterfaceProviderReceiver();
+
+  mojo::PendingReceiver<blink::mojom::BrowserInterfaceBroker>
+  TakeLastBrowserInterfaceBrokerReceiver();
 
  private:
   explicit TestRenderFrame(RenderFrameImpl::CreateParams params);
@@ -72,8 +89,10 @@ class TestRenderFrame : public RenderFrameImpl {
   mojom::FrameInputHandler* GetFrameInputHandler();
 
   std::unique_ptr<MockFrameHost> mock_frame_host_;
-  base::Optional<GURL> next_request_url_override_;
-  mojom::FrameInputHandlerPtr frame_input_handler_;
+  base::Optional<std::string> next_navigation_html_override_;
+  mojo::Remote<mojom::FrameInputHandler> frame_input_handler_;
+
+  mojo::AssociatedRemote<mojom::NavigationClient> mock_navigation_client_;
 
   DISALLOW_COPY_AND_ASSIGN(TestRenderFrame);
 };

@@ -14,7 +14,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -22,8 +21,9 @@ import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.SadTab;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabImpl;
 import org.chromium.chrome.browser.tab.TabObserver;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
@@ -31,6 +31,7 @@ import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Tests for Tab class.
@@ -54,7 +55,7 @@ public class TabTest {
     };
 
     private boolean isShowingSadTab() throws Exception {
-        return ThreadUtils.runOnUiThreadBlocking(() -> SadTab.isShowing(mTab));
+        return TestThreadUtils.runOnUiThreadBlocking(() -> SadTab.isShowing(mTab));
     }
 
     @Before
@@ -68,7 +69,7 @@ public class TabTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
-    public void testTabContext() throws Throwable {
+    public void testTabContext() {
         Assert.assertFalse("The tab context cannot be an activity",
                 mTab.getContentView().getContext() instanceof Activity);
         Assert.assertNotSame("The tab context's theme should have been updated",
@@ -103,21 +104,22 @@ public class TabTest {
     @Feature({"Tab"})
     public void testTabRestoredIfKilledWhileActivityStopped() throws Exception {
         // Ensure the tab is showing before stopping the activity.
-        ThreadUtils.runOnUiThreadBlocking(() -> mTab.show(TabSelectionType.FROM_NEW));
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> ((TabImpl) mTab).show(TabSelectionType.FROM_NEW));
 
         Assert.assertFalse(mTab.needsReload());
-        Assert.assertFalse(mTab.isHidden());
+        Assert.assertFalse(((TabImpl) mTab).isHidden());
         Assert.assertFalse(isShowingSadTab());
 
         // Stop the activity and simulate a killed renderer.
         ApplicationTestUtils.fireHomeScreenIntent(InstrumentationRegistry.getTargetContext());
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> ChromeTabUtils.simulateRendererKilledForTesting(mTab, false));
 
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return mTab.isHidden();
+                return ((TabImpl) mTab).isHidden();
             }
         });
         Assert.assertTrue(mTab.needsReload());
@@ -129,7 +131,7 @@ public class TabTest {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                return !mTab.isHidden();
+                return !((TabImpl) mTab).isHidden();
             }
         });
         Assert.assertFalse(mTab.needsReload());
@@ -140,8 +142,9 @@ public class TabTest {
     @SmallTest
     @Feature({"Tab"})
     public void testTabSecurityLevel() {
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> Assert.assertEquals(ConnectionSecurityLevel.NONE,
-                        mTab.getSecurityLevel()));
+        TestThreadUtils.runOnUiThreadBlocking(
+                (Runnable) ()
+                        -> Assert.assertEquals(
+                                ConnectionSecurityLevel.NONE, ((TabImpl) mTab).getSecurityLevel()));
     }
 }

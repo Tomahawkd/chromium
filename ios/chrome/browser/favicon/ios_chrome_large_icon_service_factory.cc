@@ -4,7 +4,8 @@
 
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
 
-#include "base/memory/singleton.h"
+#include "base/bind.h"
+#include "base/no_destructor.h"
 #include "components/favicon/core/large_icon_service_impl.h"
 #include "components/image_fetcher/core/image_fetcher_impl.h"
 #include "components/image_fetcher/ios/ios_image_decoder_impl.h"
@@ -16,6 +17,12 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace {
+
+const int kDipForServerRequests = 32;
+const favicon_base::IconType kIconTypeForServerRequests =
+    favicon_base::IconType::kTouchIcon;
+const char kGoogleServerClientParam[] = "chrome";
+
 std::unique_ptr<KeyedService> BuildLargeIconService(
     web::BrowserState* context) {
   ios::ChromeBrowserState* browser_state =
@@ -25,8 +32,11 @@ std::unique_ptr<KeyedService> BuildLargeIconService(
           browser_state, ServiceAccessType::EXPLICIT_ACCESS),
       std::make_unique<image_fetcher::ImageFetcherImpl>(
           image_fetcher::CreateIOSImageDecoder(),
-          browser_state->GetSharedURLLoaderFactory()));
+          browser_state->GetSharedURLLoaderFactory()),
+      kDipForServerRequests, kIconTypeForServerRequests,
+      kGoogleServerClientParam);
 }
+
 }  // namespace
 
 // static
@@ -39,7 +49,8 @@ favicon::LargeIconService* IOSChromeLargeIconServiceFactory::GetForBrowserState(
 // static
 IOSChromeLargeIconServiceFactory*
 IOSChromeLargeIconServiceFactory::GetInstance() {
-  return base::Singleton<IOSChromeLargeIconServiceFactory>::get();
+  static base::NoDestructor<IOSChromeLargeIconServiceFactory> instance;
+  return instance.get();
 }
 
 // static

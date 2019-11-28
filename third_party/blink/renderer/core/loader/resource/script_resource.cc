@@ -28,23 +28,27 @@
 
 #include <utility>
 
-#include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/loader/subresource_integrity_helper.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/web_memory_allocator_dump.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/web_process_memory_dump.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
+#include "third_party/blink/renderer/platform/loader/fetch/data_pipe_bytes_consumer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client_walker.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
+#include "third_party/blink/renderer/platform/loader/fetch/response_body_loader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/script_cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/loader/fetch/text_resource_decoder_options.h"
 #include "third_party/blink/renderer/platform/loader/subresource_integrity.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 
 namespace blink {
 
@@ -75,8 +79,6 @@ ScriptResource* ScriptResource::Fetch(FetchParameters& params,
                                       ResourceFetcher* fetcher,
                                       ResourceClient* client,
                                       StreamingAllowed streaming_allowed) {
-  DCHECK_EQ(params.GetResourceRequest().GetFrameType(),
-            network::mojom::RequestContextFrameType::kNone);
   DCHECK(IsRequestContextSupported(
       params.GetResourceRequest().GetRequestContext()));
   ScriptResource* resource = ToScriptResource(
@@ -85,7 +87,7 @@ ScriptResource* ScriptResource::Fetch(FetchParameters& params,
   if (streaming_allowed == kAllowStreaming) {
     // Start streaming the script as soon as we get it.
     if (RuntimeEnabledFeatures::ScriptStreamingOnPreloadEnabled()) {
-      resource->StartStreaming(fetcher->Context().GetLoadingTaskRunner());
+      resource->StartStreaming(fetcher->GetTaskRunner());
     }
   } else {
     // Advance the |streaming_state_| to kStreamingNotAllowed by calling
@@ -99,12 +101,24 @@ ScriptResource* ScriptResource::Fetch(FetchParameters& params,
     // clients were already finished. If this behaviour becomes necessary, we
     // would have to either check that streaming wasn't started (if that would
     // be a logic error), or cancel any existing streaming.
-    fetcher->Context().GetLoadingTaskRunner()->PostTask(
+    fetcher->GetTaskRunner()->PostTask(
         FROM_HERE, WTF::Bind(&ScriptResource::SetClientIsWaitingForFinished,
                              WrapWeakPersistent(resource)));
   }
 
   return resource;
+}
+
+ScriptResource* ScriptResource::CreateForTest(
+    const KURL& url,
+    const WTF::TextEncoding& encoding) {
+  ResourceRequest request(url);
+  request.SetCredentialsMode(network::mojom::CredentialsMode::kOmit);
+  ResourceLoaderOptions options;
+  TextResourceDecoderOptions decoder_options(
+      TextResourceDecoderOptions::kPlainTextContent, encoding);
+  return MakeGarbageCollected<ScriptResource>(request, options,
+                                              decoder_options);
 }
 
 ScriptResource::ScriptResource(
@@ -118,8 +132,17 @@ ScriptResource::ScriptResource(
 
 ScriptResource::~ScriptResource() = default;
 
+void ScriptResource::Prefinalize() {
+  // Reset and cancel the watcher. This has to be called in the prefinalizer,
+  // rather than relying on the destructor, as accesses by the watcher of the
+  // script resource between prefinalization and destruction are invalid. See
+  // https://crbug.com/905975#c34 for more details.
+  watcher_.reset();
+}
+
 void ScriptResource::Trace(blink::Visitor* visitor) {
   visitor->Trace(streamer_);
+  visitor->Trace(response_body_loader_client_);
   TextResource::Trace(visitor);
 }
 
@@ -127,10 +150,7 @@ void ScriptResource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
                                   WebProcessMemoryDump* memory_dump) const {
   Resource::OnMemoryDump(level_of_detail, memory_dump);
   const String name = GetMemoryDumpName() + "/decoded_script";
-  auto* dump = memory_dump->CreateMemoryAllocatorDump(name);
-  dump->AddScalar("size", "bytes", source_text_.CharactersSizeInBytes());
-  memory_dump->AddSuballocation(
-      dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
+  source_text_.OnMemoryDump(memory_dump, name);
 }
 
 const ParkableString& ScriptResource::SourceText() {
@@ -156,7 +176,6 @@ String ScriptResource::TextForInspector() const {
   // the assumptions are confirmed.
 
   if (IsLoaded()) {
-    CHECK(IsFinishedInternal());
     if (!source_text_.IsNull()) {
       // 1. We have finished loading, and have already decoded the buffer into
       //    the source text and cleared the resource buffer to save space.
@@ -164,15 +183,19 @@ String ScriptResource::TextForInspector() const {
     }
 
     // 2. We have finished loading with no data received, so no streaming ever
-    //    happened or streaming was suppressed.
+    //    happened or streaming was suppressed. Note that the finished
+    //    notification may not have come through yet because of task posting, so
+    //    NotifyFinished may not have been called yet. Regardless, there was no
+    //    data, so the text should be empty.
     //
     // TODO(crbug/909858) Currently this CHECK can occasionally fail, but this
     // doesn't seem to cause real issues immediately. For now, we suppress the
     // crashes on release builds by making this a DCHECK and continue baking the
     // script streamer control (crbug/865098) on beta, while investigating the
     // failure reason on canary.
-    DCHECK(!streamer_ || streamer_->StreamingSuppressedReason() ==
-                             ScriptStreamer::kScriptTooSmall);
+    DCHECK(!IsFinishedInternal() || !streamer_ ||
+           streamer_->StreamingSuppressedReason() ==
+               ScriptStreamer::kScriptTooSmall);
     return "";
   }
 
@@ -191,13 +214,13 @@ CachedMetadataHandler* ScriptResource::CreateCachedMetadataHandler(
       Encoding(), std::move(send_callback));
 }
 
-void ScriptResource::SetSerializedCachedMetadata(const char* data,
-                                                 size_t size) {
-  Resource::SetSerializedCachedMetadata(data, size);
+void ScriptResource::SetSerializedCachedMetadata(mojo_base::BigBuffer data) {
+  // Resource ignores the cached metadata.
+  Resource::SetSerializedCachedMetadata(mojo_base::BigBuffer());
   ScriptCachedMetadataHandler* cache_handler =
       static_cast<ScriptCachedMetadataHandler*>(Resource::CacheHandler());
   if (cache_handler) {
-    cache_handler->SetSerializedCachedMetadata(data, size);
+    cache_handler->SetSerializedCachedMetadata(std::move(data));
   }
 }
 
@@ -238,13 +261,103 @@ bool ScriptResource::CanUseCacheValidator() const {
   return Resource::CanUseCacheValidator();
 }
 
-void ScriptResource::NotifyDataReceived(const char* data, size_t size) {
+void ScriptResource::ResponseBodyReceived(
+    ResponseBodyLoaderDrainableInterface& body_loader,
+    scoped_refptr<base::SingleThreadTaskRunner> loader_task_runner) {
+  ResponseBodyLoaderClient* response_body_loader_client;
+  CHECK(!data_pipe_);
+  data_pipe_ = body_loader.DrainAsDataPipe(&response_body_loader_client);
+  if (!data_pipe_)
+    return;
+
+  response_body_loader_client_ = response_body_loader_client;
+  watcher_ = std::make_unique<mojo::SimpleWatcher>(
+      FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL, loader_task_runner);
+
+  watcher_->Watch(data_pipe_.get(), MOJO_HANDLE_SIGNAL_READABLE,
+                  MOJO_TRIGGER_CONDITION_SIGNALS_SATISFIED,
+                  WTF::BindRepeating(&ScriptResource::OnDataPipeReadable,
+                                     WrapWeakPersistent(this)));
+  CHECK(data_pipe_);
+
+  MojoResult ready_result;
+  mojo::HandleSignalsState ready_state;
+  MojoResult rv = watcher_->Arm(&ready_result, &ready_state);
+  if (rv == MOJO_RESULT_OK)
+    return;
+
+  DCHECK_EQ(MOJO_RESULT_FAILED_PRECONDITION, rv);
+  OnDataPipeReadable(ready_result, ready_state);
+}
+
+void ScriptResource::OnDataPipeReadable(MojoResult result,
+                                        const mojo::HandleSignalsState& state) {
+  switch (result) {
+    case MOJO_RESULT_OK:
+      // All good, so read the data that we were notified that we received.
+      break;
+
+    case MOJO_RESULT_CANCELLED:
+      // The consumer handle got closed, which means this script resource is
+      // done loading, and did so without streaming (otherwise the watcher
+      // wouldn't have been armed, and the handle ownership would have passed to
+      // the streamer).
+      CHECK(streaming_state_ == StreamingState::kFinishedNotificationSent ||
+            streaming_state_ == StreamingState::kStreamingNotAllowed);
+      return;
+
+    case MOJO_RESULT_FAILED_PRECONDITION:
+      // This means the producer finished and streamed to completion.
+      watcher_.reset();
+      response_body_loader_client_->DidFinishLoadingBody();
+      response_body_loader_client_ = nullptr;
+      return;
+
+    case MOJO_RESULT_SHOULD_WAIT:
+      NOTREACHED();
+      return;
+
+    default:
+      // Some other error occurred.
+      watcher_.reset();
+      response_body_loader_client_->DidFailLoadingBody();
+      response_body_loader_client_ = nullptr;
+      return;
+  }
+  CHECK(state.readable());
+  CHECK(data_pipe_);
+
+  const void* data;
+  uint32_t data_size;
+  MojoReadDataFlags flags_to_pass = MOJO_READ_DATA_FLAG_NONE;
+  MojoResult begin_read_result =
+      data_pipe_->BeginReadData(&data, &data_size, flags_to_pass);
+  // There should be data, so this read should succeed.
+  CHECK_EQ(begin_read_result, MOJO_RESULT_OK);
+
+  response_body_loader_client_->DidReceiveData(
+      base::make_span(reinterpret_cast<const char*>(data), data_size));
+
+  MojoResult end_read_result = data_pipe_->EndReadData(data_size);
+
+  CHECK_EQ(end_read_result, MOJO_RESULT_OK);
+
   CheckStreamingState();
   if (streamer_) {
     DCHECK_EQ(streaming_state_, StreamingState::kStreaming);
-    streamer_->NotifyAppendData();
+    if (streamer_->TryStartStreaming(&data_pipe_,
+                                     response_body_loader_client_.Get())) {
+      CHECK(!data_pipe_);
+      // This reset will also cancel the watcher.
+      watcher_.reset();
+      return;
+    }
   }
-  TextResource::NotifyDataReceived(data, size);
+
+  // TODO(leszeks): Depending on how small the chunks are, we may want to
+  // loop until a certain number of bytes are synchronously read rather than
+  // going back to the scheduler.
+  watcher_->ArmOrNotify();
 }
 
 void ScriptResource::NotifyFinished() {
@@ -265,6 +378,9 @@ void ScriptResource::NotifyFinished() {
       // call)
       break;
     case StreamingState::kStreamingNotAllowed:
+      watcher_.reset();
+      data_pipe_.reset();
+      response_body_loader_client_ = nullptr;
       AdvanceStreamingState(StreamingState::kFinishedNotificationSent);
       TextResource::NotifyFinished();
       break;
@@ -284,31 +400,37 @@ bool ScriptResource::IsFinishedInternal() const {
 void ScriptResource::StreamingFinished() {
   CHECK(streamer_);
   CHECK_EQ(streaming_state_, StreamingState::kWaitingForStreamingToEnd);
+  CHECK(!data_pipe_ || streamer_->StreamingSuppressed());
+  // We may still have a watcher if a) streaming never started (e.g. script too
+  // small) and b) an external error triggered the finished notification.
+  watcher_.reset();
+  data_pipe_.reset();
+  response_body_loader_client_ = nullptr;
   AdvanceStreamingState(StreamingState::kFinishedNotificationSent);
   TextResource::NotifyFinished();
 }
 
-bool ScriptResource::StartStreaming(
+void ScriptResource::StartStreaming(
     scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner) {
   CheckStreamingState();
 
   if (streamer_) {
-    return !streamer_->IsStreamingFinished();
+    return;
   }
 
   if (streaming_state_ != StreamingState::kCanStartStreaming) {
-    return false;
+    return;
   }
 
   // Don't bother streaming if there was an error, it won't work anyway.
   if (ErrorOccurred()) {
-    return false;
+    return;
   }
 
-  static bool script_streaming_enabled =
+  static const bool script_streaming_enabled =
       base::FeatureList::IsEnabled(features::kScriptStreaming);
   if (!script_streaming_enabled) {
-    return false;
+    return;
   }
 
   CHECK(!IsCacheValidator());
@@ -323,7 +445,16 @@ bool ScriptResource::StartStreaming(
       // Note that we don't need to iterate through the segments of the data, as
       // the streamer will do that itself.
       CHECK_GT(Data()->size(), 0u);
-      streamer_->NotifyAppendData();
+      if (data_pipe_) {
+        if (streamer_->TryStartStreaming(&data_pipe_,
+                                         response_body_loader_client_.Get())) {
+          CHECK(!data_pipe_);
+          // This reset will also cancel the watcher.
+          watcher_.reset();
+        } else {
+          CHECK(data_pipe_);
+        }
+      }
     }
     // If the we're is already loaded, notify the streamer about that too.
     if (IsLoaded()) {
@@ -341,7 +472,7 @@ bool ScriptResource::StartStreaming(
   }
 
   CheckStreamingState();
-  return streamer_ && !streamer_->IsStreamingFinished();
+  return;
 }
 
 void ScriptResource::SetClientIsWaitingForFinished() {
@@ -354,6 +485,9 @@ void ScriptResource::SetClientIsWaitingForFinished() {
   not_streaming_reason_ = ScriptStreamer::kStreamingDisabled;
   // Trigger the finished notification if needed.
   if (IsLoaded()) {
+    watcher_.reset();
+    data_pipe_.reset();
+    response_body_loader_client_ = nullptr;
     AdvanceStreamingState(StreamingState::kFinishedNotificationSent);
     TextResource::NotifyFinished();
   }
@@ -425,6 +559,9 @@ void ScriptResource::CheckStreamingState() const {
       break;
     case StreamingState::kFinishedNotificationSent:
       CHECK(!streamer_ || streamer_->IsFinished());
+      CHECK(!watcher_ || !watcher_->IsWatching());
+      CHECK(!data_pipe_);
+      CHECK(!response_body_loader_client_);
       CHECK(IsLoaded());
       break;
   }

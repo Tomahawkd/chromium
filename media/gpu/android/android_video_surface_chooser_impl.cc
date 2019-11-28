@@ -18,9 +18,7 @@ constexpr base::TimeDelta MinimumDelayAfterFailedOverlay =
 AndroidVideoSurfaceChooserImpl::AndroidVideoSurfaceChooserImpl(
     bool allow_dynamic,
     const base::TickClock* tick_clock)
-    : allow_dynamic_(allow_dynamic),
-      tick_clock_(tick_clock),
-      weak_factory_(this) {
+    : allow_dynamic_(allow_dynamic), tick_clock_(tick_clock) {
   // Use a DefaultTickClock if one wasn't provided.
   if (!tick_clock_)
     tick_clock_ = base::DefaultTickClock::GetInstance();
@@ -111,6 +109,11 @@ void AndroidVideoSurfaceChooserImpl::Choose() {
 
   // If the compositor won't promote, then don't.
   if (!current_state_.is_compositor_promotable)
+    new_overlay_state = kUsingTextureOwner;
+
+  // If we're PIP'd, then don't use an overlay unless it is required.  It isn't
+  // positioned exactly right in some cases (crbug.com/917984).
+  if (current_state_.is_persistent_video)
     new_overlay_state = kUsingTextureOwner;
 
   // If we're expecting a relayout, then don't transition to overlay if we're

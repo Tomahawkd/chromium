@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// An implementation of buzz::AsyncSocket that uses Chrome Network Service
+// An implementation of jingle_xmpp::AsyncSocket that uses Chrome Network Service
 // sockets.
 
 #ifndef JINGLE_GLUE_NETWORK_SERVICE_ASYNC_SOCKET_H_
@@ -18,16 +18,21 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "jingle/glue/network_service_config.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
+#include "net/base/host_port_pair.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/mojom/proxy_resolving_socket.mojom.h"
+#include "services/network/public/mojom/tcp_socket.mojom.h"
+#include "services/network/public/mojom/tls_socket.mojom.h"
 #include "third_party/libjingle_xmpp/xmpp/asyncsocket.h"
 
 namespace jingle_glue {
 
-class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
+class NetworkServiceAsyncSocket : public jingle_xmpp::AsyncSocket,
                                   public network::mojom::SocketObserver {
  public:
   NetworkServiceAsyncSocket(
@@ -40,9 +45,9 @@ class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
   // Does not raise any signals.
   ~NetworkServiceAsyncSocket() override;
 
-  // buzz::AsyncSocket implementation.
+  // jingle_xmpp::AsyncSocket implementation.
 
-  // The current state (see buzz::AsyncSocket::State; all but
+  // The current state (see jingle_xmpp::AsyncSocket::State; all but
   // STATE_CLOSING is used).
   State state() override;
 
@@ -68,7 +73,7 @@ class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
   // Otherwise, starts the connection process and returns true.
   // SignalConnected will be raised when the connection is successful;
   // otherwise, SignalClosed will be raised with a net error set.
-  bool Connect(const rtc::SocketAddress& address) override;
+  bool Connect(const net::HostPortPair& address) override;
 
   // Tries to read at most |len| bytes into |data|.
   //
@@ -162,13 +167,13 @@ class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
   void OnWriteError(int32_t net_error) override;
 
   // Connection functions.
-  void ProcessConnectDone(
-      network::mojom::SocketObserverRequest socket_observer_request,
-      int status,
-      const base::Optional<net::IPEndPoint>& local_addr,
-      const base::Optional<net::IPEndPoint>& peer_addr,
-      mojo::ScopedDataPipeConsumerHandle receive_stream,
-      mojo::ScopedDataPipeProducerHandle send_stream);
+  void ProcessConnectDone(mojo::PendingReceiver<network::mojom::SocketObserver>
+                              socket_observer_receiver,
+                          int status,
+                          const base::Optional<net::IPEndPoint>& local_addr,
+                          const base::Optional<net::IPEndPoint>& peer_addr,
+                          mojo::ScopedDataPipeConsumerHandle receive_stream,
+                          mojo::ScopedDataPipeProducerHandle send_stream);
 
   // Read loop functions.
   void WatchForReadReady();
@@ -185,7 +190,8 @@ class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
 
   // SSL/TLS connection functions.
   void ProcessSSLConnectDone(
-      network::mojom::SocketObserverRequest socket_observer_request,
+      mojo::PendingReceiver<network::mojom::SocketObserver>
+          socket_observer_receiver,
       int status,
       mojo::ScopedDataPipeConsumerHandle receive_stream,
       mojo::ScopedDataPipeProducerHandle send_stream);
@@ -195,27 +201,28 @@ class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
 
   void ConnectPipes(mojo::ScopedDataPipeConsumerHandle receive_stream,
                     mojo::ScopedDataPipeProducerHandle send_stream);
-  void BindSocketObserver(
-      network::mojom::SocketObserverRequest socket_observer_request);
+  void BindSocketObserver(mojo::PendingReceiver<network::mojom::SocketObserver>
+                              socket_observer_receiver);
 
   // |socket_factory_| is recreated every time via |get_socket_factory_callback|
   // to handle network service restarts after crashes.
   GetProxyResolvingSocketFactoryCallback get_socket_factory_callback_;
-  network::mojom::ProxyResolvingSocketFactoryPtr socket_factory_;
+  mojo::Remote<network::mojom::ProxyResolvingSocketFactory> socket_factory_;
   // The handle to the proxy resolving socket for the current connection, if one
   // exists.
-  network::mojom::ProxyResolvingSocketPtr socket_;
+  mojo::Remote<network::mojom::ProxyResolvingSocket> socket_;
   // TLS socket, if StartTls has been called.
-  network::mojom::TLSClientSocketPtr tls_socket_;
+  mojo::Remote<network::mojom::TLSClientSocket> tls_socket_;
 
   // Used to route error notifications here.
-  mojo::Binding<network::mojom::SocketObserver> socket_observer_binding_;
+  mojo::Receiver<network::mojom::SocketObserver> socket_observer_receiver_{
+      this};
 
   bool use_fake_tls_handshake_;
 
-  // buzz::AsyncSocket state.
-  buzz::AsyncSocket::State state_;
-  buzz::AsyncSocket::Error error_;
+  // jingle_xmpp::AsyncSocket state.
+  jingle_xmpp::AsyncSocket::State state_;
+  jingle_xmpp::AsyncSocket::Error error_;
   net::Error net_error_;
 
   // State for the read loop.  |read_start_| <= |read_end_| <=
@@ -228,7 +235,7 @@ class NetworkServiceAsyncSocket : public buzz::AsyncSocket,
   std::unique_ptr<mojo::SimpleWatcher> read_watcher_;
 
   // Handling read errors is a bit tricky since the status is reported via
-  // |socket_observer_binding_|, which is unordered compared to |read_pipe_|,
+  // |socket_observer_receiver_|, which is unordered compared to |read_pipe_|,
   // so it's possible to see an end of file (or an error) there while there is
   // still useful data pending.  As a result, the code waits to see both happen
   // before reporting error statuses (including EOF). Likewise for write pipes.

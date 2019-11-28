@@ -9,6 +9,8 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "ui/views/widget/root_view.h"
 
+class ToolbarView;
+
 namespace ui {
 class OSExchangeData;
 }
@@ -58,9 +60,8 @@ class BrowserRootView : public views::internal::RootView {
   ~BrowserRootView() override;
 
   // views::View:
-  bool GetDropFormats(
-      int* formats,
-      std::set<ui::Clipboard::FormatType>* format_types) override;
+  bool GetDropFormats(int* formats,
+                      std::set<ui::ClipboardFormatType>* format_types) override;
   bool AreDropTypesRequired() override;
   bool CanDrop(const ui::OSExchangeData& data) override;
   void OnDragEntered(const ui::DropTargetEvent& event) override;
@@ -128,7 +129,7 @@ class BrowserRootView : public views::internal::RootView {
 
   std::unique_ptr<DropInfo> drop_info_;
 
-  base::WeakPtrFactory<BrowserRootView> weak_ptr_factory_;
+  base::WeakPtrFactory<BrowserRootView> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowserRootView);
 };

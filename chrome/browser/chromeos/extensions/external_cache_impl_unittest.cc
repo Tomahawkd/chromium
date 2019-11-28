@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -20,9 +21,10 @@
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/common/extension_urls.h"
+#include "extensions/common/verifier_formats.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
@@ -44,7 +46,7 @@ class ExternalCacheImplTest : public testing::Test,
                               public ExternalCacheDelegate {
  public:
   ExternalCacheImplTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD),
+      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD),
         test_shared_loader_factory_(
             base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
                 &test_url_loader_factory_)) {}
@@ -117,7 +119,7 @@ class ExternalCacheImplTest : public testing::Test,
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
@@ -136,9 +138,8 @@ TEST_F(ExternalCacheImplTest, Basic) {
   base::FilePath cache_dir(CreateCacheDir(false));
   ExternalCacheImpl external_cache(
       cache_dir, url_loader_factory(),
-      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()}), this, true,
-      false);
-  external_cache.use_null_connector_for_test();
+      base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock()}),
+      this, true, false);
 
   std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
   prefs->Set(kTestExtensionId1, CreateEntryWithUpdateUrl(true));
@@ -183,8 +184,10 @@ TEST_F(ExternalCacheImplTest, Basic) {
   base::FilePath temp_file2 = temp_dir.Append("b.crx");
   CreateFile(temp_file2);
   external_cache.OnExtensionDownloadFinished(
-      extensions::CRXFileInfo(kTestExtensionId2, temp_file2), true, GURL(), "2",
-      extensions::ExtensionDownloaderDelegate::PingResult(), std::set<int>(),
+      extensions::CRXFileInfo(kTestExtensionId2,
+                              extensions::GetTestVerifierFormat(), temp_file2),
+      true, GURL(), "2", extensions::ExtensionDownloaderDelegate::PingResult(),
+      std::set<int>(),
       extensions::ExtensionDownloaderDelegate::InstallCallback());
 
   content::RunAllTasksUntilIdle();
@@ -208,8 +211,10 @@ TEST_F(ExternalCacheImplTest, Basic) {
   base::FilePath temp_file4 = temp_dir.Append("d.crx");
   CreateFile(temp_file4);
   external_cache.OnExtensionDownloadFinished(
-      extensions::CRXFileInfo(kTestExtensionId4, temp_file4), true, GURL(), "4",
-      extensions::ExtensionDownloaderDelegate::PingResult(), std::set<int>(),
+      extensions::CRXFileInfo(kTestExtensionId4,
+                              extensions::GetTestVerifierFormat(), temp_file4),
+      true, GURL(), "4", extensions::ExtensionDownloaderDelegate::PingResult(),
+      std::set<int>(),
       extensions::ExtensionDownloaderDelegate::InstallCallback());
 
   content::RunAllTasksUntilIdle();
@@ -255,9 +260,8 @@ TEST_F(ExternalCacheImplTest, PreserveInstalled) {
   base::FilePath cache_dir(CreateCacheDir(false));
   ExternalCacheImpl external_cache(
       cache_dir, url_loader_factory(),
-      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()}), this, true,
-      false);
-  external_cache.use_null_connector_for_test();
+      base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock()}),
+      this, true, false);
 
   std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
   prefs->Set(kTestExtensionId1, CreateEntryWithUpdateUrl(true));

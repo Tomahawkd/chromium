@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -17,11 +18,13 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process.h"
 #include "base/rand_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "base/trace_event/traced_value.h"
 #include "build/build_config.h"
@@ -29,9 +32,11 @@
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/memory/oom_memory_details.h"
+#include "chrome/browser/performance_manager/performance_manager_features.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resource_coordinator/background_tab_navigation_throttle.h"
-#include "chrome/browser/resource_coordinator/tab_activity_watcher.h"
+#include "chrome/browser/resource_coordinator/local_site_characteristics_webcontents_observer.h"
+#include "chrome/browser/resource_coordinator/resource_coordinator_parts.h"
 #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
 #include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/resource_coordinator/tab_manager_features.h"
@@ -50,8 +55,9 @@
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
-#include "components/metrics/system_memory_stats_recorder.h"
+#include "components/performance_manager/performance_manager_impl.h"
 #include "components/variations/variations_associated_data.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_controller.h"
@@ -63,7 +69,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/page_importance_signals.h"
 #include "net/base/network_change_notifier.h"
-#include "third_party/blink/public/platform/web_sudden_termination_disabler_type.h"
+#include "third_party/blink/public/common/sudden_termination_disabler_type.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/resource_coordinator/tab_manager_delegate_chromeos.h"
@@ -88,47 +94,6 @@ constexpr TimeDelta kDefaultBackgroundTabLoadTimeout =
 // The number of loading slots for background tabs. TabManager will start to
 // load the next background tab when the loading slots free up.
 constexpr size_t kNumOfLoadingSlots = 1;
-
-// The default interval in seconds after which to adjust the oom_score_adj
-// value.
-constexpr int kAdjustmentIntervalSeconds = 10;
-
-struct LifecycleUnitAndSortKey {
-  explicit LifecycleUnitAndSortKey(LifecycleUnit* lifecycle_unit)
-      : lifecycle_unit(lifecycle_unit),
-        sort_key(lifecycle_unit->GetSortKey()) {}
-
-  LifecycleUnitAndSortKey(LifecycleUnit* lifecycle_unit,
-                          const LifecycleUnit::SortKey& key)
-      : lifecycle_unit(lifecycle_unit), sort_key(key) {}
-
-  bool operator<(const LifecycleUnitAndSortKey& other) const {
-    return sort_key < other.sort_key;
-  }
-  bool operator>(const LifecycleUnitAndSortKey& other) const {
-    return sort_key > other.sort_key;
-  }
-
-  LifecycleUnit* lifecycle_unit;
-  LifecycleUnit::SortKey sort_key;
-};
-
-// Helper function that sorts |lifecycle_units_and_sort_keys|, and returns
-// a LifecycleUnitVector.
-LifecycleUnitVector SortedLifecycleUnitsFrom(
-    std::vector<LifecycleUnitAndSortKey>* lifecycle_units_and_sort_keys) {
-  std::sort(lifecycle_units_and_sort_keys->begin(),
-            lifecycle_units_and_sort_keys->end());
-
-  LifecycleUnitVector sorted_lifecycle_units;
-  sorted_lifecycle_units.reserve(lifecycle_units_and_sort_keys->size());
-  for (auto& lifecycle_unit_and_sort_key : *lifecycle_units_and_sort_keys) {
-    sorted_lifecycle_units.push_back(
-        lifecycle_unit_and_sort_key.lifecycle_unit);
-  }
-
-  return sorted_lifecycle_units;
-}
 
 std::unique_ptr<base::trace_event::ConvertableToTraceFormat> DataAsTraceValue(
     TabManager::BackgroundTabLoadingMode mode,
@@ -186,10 +151,7 @@ class TabManager::TabManagerSessionRestoreObserver final
   TabManager* tab_manager_;
 };
 
-constexpr base::TimeDelta TabManager::kDefaultMinTimeToPurge;
-
-TabManager::TabManager(PageSignalReceiver* page_signal_receiver,
-                       TabLoadTracker* tab_load_tracker)
+TabManager::TabManager(TabLoadTracker* tab_load_tracker)
     : state_transitions_callback_(
           base::BindRepeating(&TabManager::PerformStateTransitions,
                               base::Unretained(this))),
@@ -198,22 +160,17 @@ TabManager::TabManager(PageSignalReceiver* page_signal_receiver,
       restored_tab_count_(0u),
       background_tab_loading_mode_(BackgroundTabLoadingMode::kStaggered),
       loading_slots_(kNumOfLoadingSlots),
-      tab_load_tracker_(tab_load_tracker),
-      weak_ptr_factory_(this) {
+      tab_load_tracker_(tab_load_tracker) {
 #if defined(OS_CHROMEOS)
   delegate_.reset(new TabManagerDelegate(weak_ptr_factory_.GetWeakPtr()));
 #endif
   browser_tab_strip_tracker_.Init();
   session_restore_observer_.reset(new TabManagerSessionRestoreObserver(this));
-  if (PageSignalReceiver::IsEnabled()) {
-    resource_coordinator_signal_observer_.reset(
-        new ResourceCoordinatorSignalObserver(page_signal_receiver));
-  }
+
   stats_collector_.reset(new TabManagerStatsCollector());
   proactive_freeze_discard_params_ =
       GetStaticProactiveTabFreezeAndDiscardParams();
   tab_load_tracker_->AddObserver(this);
-  intervention_policy_database_.reset(new InterventionPolicyDatabase());
 
   // TabManager works in the absence of DesktopSessionDurationTracker for tests.
   if (metrics::DesktopSessionDurationTracker::IsInitialized())
@@ -222,8 +179,6 @@ TabManager::TabManager(PageSignalReceiver* page_signal_receiver,
 
 TabManager::~TabManager() {
   tab_load_tracker_->RemoveObserver(this);
-  resource_coordinator_signal_observer_.reset();
-  Stop();
 
   if (metrics::DesktopSessionDurationTracker::IsInitialized())
     metrics::DesktopSessionDurationTracker::Get()->RemoveObserver(this);
@@ -232,19 +187,9 @@ TabManager::~TabManager() {
 void TabManager::Start() {
   background_tab_loading_mode_ = BackgroundTabLoadingMode::kStaggered;
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
-  // Note that discarding is now enabled by default. This check is kept as a
-  // kill switch.
-  // TODO(georgesak): remote this when deemed not needed anymore.
-  if (!base::FeatureList::IsEnabled(features::kAutomaticTabDiscarding))
-    return;
+#if defined(OS_CHROMEOS)
+  delegate_->StartPeriodicOOMScoreUpdate();
 #endif
-
-  if (!update_timer_.IsRunning()) {
-    update_timer_.Start(FROM_HERE,
-                        TimeDelta::FromSeconds(kAdjustmentIntervalSeconds),
-                        this, &TabManager::UpdateTimerCallback);
-  }
 
 // MemoryPressureMonitor is not implemented on Linux so far and tabs are never
 // discarded.
@@ -253,9 +198,8 @@ void TabManager::Start() {
   // MemoryCoordinator is disabled. When MemoryCoordinator is enabled
   // it asks TabManager to do tab discarding.
   base::MemoryPressureMonitor* monitor = base::MemoryPressureMonitor::Get();
-  if (monitor && !base::FeatureList::IsEnabled(features::kMemoryCoordinator)) {
-    memory_pressure_listener_.reset(new base::MemoryPressureListener(
-        base::Bind(&TabManager::OnMemoryPressure, base::Unretained(this))));
+  if (monitor) {
+    RegisterMemoryPressureListener();
     base::MemoryPressureListener::MemoryPressureLevel level =
         monitor->GetCurrentPressureLevel();
     if (level == base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
@@ -263,57 +207,48 @@ void TabManager::Start() {
     }
   }
 #endif
-  // purge-and-suspend param is used for Purge+Suspend finch experiment
-  // in the following way:
-  // https://docs.google.com/document/d/1hPHkKtXXBTlsZx9s-9U17XC-ofEIzPo9FYbBEc7PPbk/edit?usp=sharing
-  std::string purge_and_suspend_time = variations::GetVariationParamValue(
-      "PurgeAndSuspendAggressive", "purge-and-suspend-time");
-  unsigned int min_time_to_purge_sec = 0;
-  if (purge_and_suspend_time.empty() ||
-      !base::StringToUint(purge_and_suspend_time, &min_time_to_purge_sec))
-    min_time_to_purge_ = kDefaultMinTimeToPurge;
-  else
-    min_time_to_purge_ = base::TimeDelta::FromSeconds(min_time_to_purge_sec);
 
-  std::string max_purge_and_suspend_time = variations::GetVariationParamValue(
-      "PurgeAndSuspendAggressive", "max-purge-and-suspend-time");
-  unsigned int max_time_to_purge_sec = 0;
-  // If max-purge-and-suspend-time is not specified or
-  // max-purge-and-suspend-time is not valid (not number or smaller than
-  // min-purge-and-suspend-time), use default max-time-to-purge, i.e.
-  // min-time-to-purge times kDefaultMinMaxTimeToPurgeRatio.
-  if (max_purge_and_suspend_time.empty() ||
-      !base::StringToUint(max_purge_and_suspend_time, &max_time_to_purge_sec) ||
-      max_time_to_purge_sec < min_time_to_purge_.InSeconds())
-    max_time_to_purge_ = min_time_to_purge_ * kDefaultMinMaxTimeToPurgeRatio;
-  else
-    max_time_to_purge_ = base::TimeDelta::FromSeconds(max_time_to_purge_sec);
-}
+  // Create the graph observer. This is the source of page almost idle data and
+  // EQT measurements.
+  // TODO(sebmarchand): Remove the "IsAvailable" check, or merge the TM into the
+  // PM. The TM and PM must always exist together.
+  if (performance_manager::PerformanceManagerImpl::IsAvailable()) {
+    performance_manager::PerformanceManagerImpl::CallOnGraphImpl(
+        FROM_HERE, base::BindOnce(
+                       [](std::unique_ptr<ResourceCoordinatorSignalObserver>
+                              rc_signal_observer,
+                          performance_manager::GraphImpl* graph) {
+                         graph->PassToGraph(std::move(rc_signal_observer));
+                       },
+                       std::make_unique<ResourceCoordinatorSignalObserver>(
+                           weak_ptr_factory_.GetWeakPtr())));
+  }
 
-void TabManager::Stop() {
-  update_timer_.Stop();
-  force_load_timer_.reset();
-  memory_pressure_listener_.reset();
+  LocalSiteCharacteristicsWebContentsObserver::MaybeCreateGraphObserver();
+
+  g_browser_process->resource_coordinator_parts()
+      ->tab_lifecycle_unit_source()
+      ->Start();
 }
 
 LifecycleUnitVector TabManager::GetSortedLifecycleUnits() {
-  std::vector<LifecycleUnitAndSortKey> lifecycle_units_and_sort_keys;
-  lifecycle_units_and_sort_keys.reserve(lifecycle_units_.size());
-  for (auto* lifecycle_unit : lifecycle_units_)
-    lifecycle_units_and_sort_keys.emplace_back(lifecycle_unit);
-
-  return SortedLifecycleUnitsFrom(&lifecycle_units_and_sort_keys);
+  LifecycleUnitVector sorted_lifecycle_units(lifecycle_units_.begin(),
+                                             lifecycle_units_.end());
+  // Sort lifecycle_units with ascending importance.
+  std::sort(sorted_lifecycle_units.begin(), sorted_lifecycle_units.end(),
+            [](LifecycleUnit* a, LifecycleUnit* b) {
+              return a->GetSortKey() < b->GetSortKey();
+            });
+  return sorted_lifecycle_units;
 }
 
-void TabManager::DiscardTab(LifecycleUnitDiscardReason reason) {
-  if (reason == LifecycleUnitDiscardReason::URGENT)
-    stats_collector_->RecordWillDiscardUrgently(GetNumAliveTabs());
-
+void TabManager::DiscardTab(LifecycleUnitDiscardReason reason,
+                            TabDiscardDoneCB tab_discard_done) {
 #if defined(OS_CHROMEOS)
   // Call Chrome OS specific low memory handling process.
-  delegate_->LowMemoryKill(reason);
+  delegate_->LowMemoryKill(reason, std::move(tab_discard_done));
 #else
-  DiscardTabImpl(reason);
+  DiscardTabImpl(reason, std::move(tab_discard_done));
 #endif  // defined(OS_CHROMEOS)
 }
 
@@ -334,7 +269,15 @@ void TabManager::LogMemoryAndDiscardTab(LifecycleUnitDiscardReason reason) {
   // Discard immediately without waiting for LogMemory() (https://crbug/850545).
   // Consider removing LogMemory() at all if nobody cares about the log.
   LogMemory("Tab Discards Memory details");
-  PurgeMemoryAndDiscardTab(reason);
+
+  // Start handling memory pressure. Suppress further notifications before
+  // completion in case a slow handler queues up multiple dispatches of this
+  // method and inadvertently discards more than necessary tabs/apps in a burst.
+  UnregisterMemoryPressureListener();
+
+  TabDiscardDoneCB tab_discard_done(base::BindOnce(
+      &TabManager::OnTabDiscardDone, weak_ptr_factory_.GetWeakPtr()));
+  DiscardTab(reason, std::move(tab_discard_done));
 }
 
 void TabManager::LogMemory(const std::string& title) {
@@ -348,26 +291,6 @@ void TabManager::AddObserver(TabLifecycleObserver* observer) {
 
 void TabManager::RemoveObserver(TabLifecycleObserver* observer) {
   TabLifecycleUnitExternal::RemoveTabLifecycleObserver(observer);
-}
-
-bool TabManager::CanPurgeBackgroundedRenderer(int render_process_id) const {
-  for (LifecycleUnit* lifecycle_unit : lifecycle_units_) {
-    TabLifecycleUnitExternal* tab_lifecycle_unit_external =
-        lifecycle_unit->AsTabLifecycleUnitExternal();
-    // For now, all LifecycleUnits are TabLifecycleUnitExternals.
-    DCHECK(tab_lifecycle_unit_external);
-    content::WebContents* content =
-        tab_lifecycle_unit_external->GetWebContents();
-    DCHECK(content);
-
-    if (content->IsCrashed())
-      continue;
-    if (content->GetMainFrame()->GetProcess()->GetID() != render_process_id)
-      continue;
-    if (!lifecycle_unit->CanPurge())
-      return false;
-  }
-  return true;
 }
 
 size_t TabManager::GetBackgroundTabLoadingCount() const {
@@ -405,13 +328,6 @@ bool TabManager::IsTabRestoredInForeground(WebContents* web_contents) {
 // TabManager, private:
 
 // static
-void TabManager::PurgeMemoryAndDiscardTab(LifecycleUnitDiscardReason reason) {
-  TabManager* manager = g_browser_process->GetTabManager();
-  manager->PurgeBrowserMemory();
-  manager->DiscardTab(reason);
-}
-
-// static
 bool TabManager::IsInternalPage(const GURL& url) {
   // There are many chrome:// UI URLs, but only look for the ones that users
   // are likely to have open. Most of the benefit is the from NTP URL.
@@ -420,99 +336,12 @@ bool TabManager::IsInternalPage(const GURL& url) {
       chrome::kChromeUINewTabURL, chrome::kChromeUISettingsURL};
   // Prefix-match against the table above. Use strncmp to avoid allocating
   // memory to convert the URL prefix constants into std::strings.
-  for (size_t i = 0; i < arraysize(kInternalPagePrefixes); ++i) {
+  for (size_t i = 0; i < base::size(kInternalPagePrefixes); ++i) {
     if (!strncmp(url.spec().c_str(), kInternalPagePrefixes[i],
                  strlen(kInternalPagePrefixes[i])))
       return true;
   }
   return false;
-}
-
-void TabManager::PurgeBrowserMemory() {
-  // Based on experimental evidence, attempts to free memory from renderers
-  // have been too slow to use in OOM situations (V8 garbage collection) or
-  // do not lead to persistent decreased usage (image/bitmap caches). This
-  // function therefore only targets large blocks of memory in the browser.
-  // Note that other objects will listen to MemoryPressureListener events
-  // to release memory.
-  for (auto* web_contents : AllTabContentses()) {
-    // Screenshots can consume ~5 MB per web contents for platforms that do
-    // touch back/forward.
-    web_contents->GetController().ClearAllScreenshots();
-  }
-}
-
-// This function is called when |update_timer_| fires. It will adjust the clock
-// if needed (if it detects that the machine was asleep) and will fire the stats
-// updating on ChromeOS via the delegate. This function also tries to purge
-// cache memory.
-void TabManager::UpdateTimerCallback() {
-  // If Chrome is shutting down, do not do anything.
-  if (g_browser_process->IsShuttingDown())
-    return;
-
-  if (BrowserList::GetInstance()->empty())
-    return;
-
-#if defined(OS_CHROMEOS)
-  // This starts the CrOS specific OOM adjustments in /proc/<pid>/oom_score_adj.
-  delegate_->AdjustOomPriorities();
-#endif
-
-  PurgeBackgroundedTabsIfNeeded();
-}
-
-base::TimeDelta TabManager::GetTimeToPurge(
-    base::TimeDelta min_time_to_purge,
-    base::TimeDelta max_time_to_purge) const {
-  return base::TimeDelta::FromSeconds(base::RandInt(
-      min_time_to_purge.InSeconds(), max_time_to_purge.InSeconds()));
-}
-
-bool TabManager::ShouldPurgeNow(content::WebContents* content) const {
-  if (GetWebContentsData(content)->is_purged())
-    return false;
-  if (TabLifecycleUnitExternal::FromWebContents(content)->IsDiscarded())
-    return false;
-
-  base::TimeDelta time_passed =
-      NowTicks() - GetWebContentsData(content)->LastInactiveTime();
-  return time_passed > GetWebContentsData(content)->time_to_purge();
-}
-
-void TabManager::PurgeBackgroundedTabsIfNeeded() {
-  for (LifecycleUnit* lifecycle_unit : lifecycle_units_) {
-    TabLifecycleUnitExternal* tab_lifecycle_unit_external =
-        lifecycle_unit->AsTabLifecycleUnitExternal();
-    // For now, all LifecycleUnits are TabLifecycleUnitExternals.
-    DCHECK(tab_lifecycle_unit_external);
-    content::WebContents* content =
-        tab_lifecycle_unit_external->GetWebContents();
-    DCHECK(content);
-
-    if (content->IsCrashed())
-      continue;
-
-    content::RenderProcessHost* render_process_host =
-        content->GetMainFrame()->GetProcess();
-    int render_process_id = render_process_host->GetID();
-
-    if (!render_process_host->IsProcessBackgrounded())
-      continue;
-    if (!CanPurgeBackgroundedRenderer(render_process_id))
-      continue;
-
-    bool purge_now = ShouldPurgeNow(content);
-    if (!purge_now)
-      continue;
-
-    // Since |content|'s tab is kept inactive and background for more than
-    // time-to-purge time, its purged state changes: false => true.
-    GetWebContentsData(content)->set_is_purged(true);
-    // TODO(tasak): rename PurgeAndSuspend with a better name, e.g.
-    // RequestPurgeCache, because we don't suspend any renderers.
-    render_process_host->PurgeAndSuspend();
-  }
 }
 
 void TabManager::PauseBackgroundTabOpeningIfNeeded() {
@@ -555,25 +384,38 @@ void TabManager::OnMemoryPressure(
       return;
   }
   NOTREACHED();
-  // TODO(skuhne): If more memory pressure levels are introduced, consider
-  // calling PurgeBrowserMemory() before CRITICAL is reached.
+}
+
+void TabManager::OnTabDiscardDone() {
+  base::MemoryPressureMonitor* monitor = base::MemoryPressureMonitor::Get();
+  if (!monitor)
+    return;
+
+  // Create a MemoryPressureListener instance to re-register to the observer.
+  // Note that we've just finished handling memory pressure and async
+  // tab/app discard might haven't taken effect yet. Don't check memory pressure
+  // level or act on it, or we might over-discard tabs or apps.
+  RegisterMemoryPressureListener();
+}
+
+void TabManager::RegisterMemoryPressureListener() {
+  DCHECK(!memory_pressure_listener_);
+  // Use sync memory pressure listener.
+  memory_pressure_listener_ =
+      std::make_unique<base::MemoryPressureListener>(base::BindRepeating(
+          &TabManager::OnMemoryPressure, weak_ptr_factory_.GetWeakPtr()));
+}
+
+void TabManager::UnregisterMemoryPressureListener() {
+  // Destroying the memory pressure listener to unregister from the observer.
+  memory_pressure_listener_.reset();
 }
 
 void TabManager::OnActiveTabChanged(content::WebContents* old_contents,
                                     content::WebContents* new_contents) {
-  // An active tab is not purged.
-  // Calling GetWebContentsData() early ensures that the WebContentsData is
-  // created for |new_contents|, which |stats_collector_| expects.
-  GetWebContentsData(new_contents)->set_is_purged(false);
-
   // If |old_contents| is set, that tab has switched from being active to
   // inactive, so record the time of that transition.
   if (old_contents) {
-    GetWebContentsData(old_contents)->SetLastInactiveTime(NowTicks());
-    // Re-setting time-to-purge every time a tab becomes inactive.
-    GetWebContentsData(old_contents)
-        ->set_time_to_purge(
-            GetTimeToPurge(min_time_to_purge_, max_time_to_purge_));
     // Only record switch-to-tab metrics when a switch happens, i.e.
     // |old_contents| is set.
     stats_collector_->RecordSwitchToTab(old_contents, new_contents);
@@ -582,35 +424,13 @@ void TabManager::OnActiveTabChanged(content::WebContents* old_contents,
   ResumeTabNavigationIfNeeded(new_contents);
 }
 
-void TabManager::OnTabInserted(content::WebContents* contents,
-                               bool foreground) {
-  // Only interested in background tabs, as foreground tabs get taken care of by
-  // OnActiveTabChanged.
-  if (foreground)
-    return;
-
-  // A new background tab is similar to having a tab switch from being active to
-  // inactive.
-  GetWebContentsData(contents)->SetLastInactiveTime(NowTicks());
-  // Re-setting time-to-purge every time a tab becomes inactive.
-  GetWebContentsData(contents)->set_time_to_purge(
-      GetTimeToPurge(min_time_to_purge_, max_time_to_purge_));
-}
-
 void TabManager::OnTabStripModelChanged(
     TabStripModel* tab_strip_model,
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
-  if (change.type() == TabStripModelChange::kInserted) {
-    for (const auto& delta : change.deltas()) {
-      OnTabInserted(delta.insert.contents,
-                    delta.insert.contents == selection.new_contents);
-    }
-  } else if (change.type() == TabStripModelChange::kReplaced) {
-    for (const auto& delta : change.deltas()) {
-      WebContentsData::CopyState(delta.replace.old_contents,
-                                 delta.replace.new_contents);
-    }
+  if (change.type() == TabStripModelChange::kReplaced) {
+    auto* replace = change.GetReplace();
+    WebContentsData::CopyState(replace->old_contents, replace->new_contents);
   }
 
   if (selection.active_tab_changed() && !tab_strip_model->empty())
@@ -667,15 +487,11 @@ TabManager::WebContentsData* TabManager::GetWebContentsData(
 // such as tabs created with JavaScript window.open(). Potentially consider
 // discarding the entire set together, or use that in the priority computation.
 content::WebContents* TabManager::DiscardTabImpl(
-    LifecycleUnitDiscardReason reason) {
+    LifecycleUnitDiscardReason reason,
+    TabDiscardDoneCB tab_discard_done) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  const LifecycleUnitVector sorted_lifecycle_units =
-      base::FeatureList::IsEnabled(features::kTabRanker)
-          ? GetSortedLifecycleUnitsFromTabRanker()
-          : GetSortedLifecycleUnits();
-
-  for (LifecycleUnit* lifecycle_unit : sorted_lifecycle_units) {
+  for (LifecycleUnit* lifecycle_unit : GetSortedLifecycleUnits()) {
     DecisionDetails decision_details;
     if (lifecycle_unit->CanDiscard(reason, &decision_details) &&
         lifecycle_unit->Discard(reason)) {
@@ -905,25 +721,8 @@ bool TabManager::ComparePendingNavigations(
   return false;
 }
 
-int TabManager::GetNumAliveTabs() const {
-  int tab_count = 0;
-  for (auto* browser : *BrowserList::GetInstance()) {
-    TabStripModel* tab_strip_model = browser->tab_strip_model();
-    for (int index = 0; index < tab_strip_model->count(); ++index) {
-      content::WebContents* contents = tab_strip_model->GetWebContentsAt(index);
-      if (!TabLifecycleUnitExternal::FromWebContents(contents)->IsDiscarded())
-        ++tab_count;
-    }
-  }
-
-  tab_count -= pending_navigations_.size();
-  DCHECK_GE(tab_count, 0);
-
-  return tab_count;
-}
-
 bool TabManager::IsTabLoadingForTest(content::WebContents* contents) const {
-  if (base::ContainsKey(loading_contents_, contents))
+  if (base::Contains(loading_contents_, contents))
     return true;
   DCHECK_NE(LoadingState::LOADING,
             GetWebContentsData(contents)->tab_loading_state());
@@ -979,6 +778,11 @@ void TabManager::SchedulePerformStateTransitions(base::TimeDelta delay) {
 void TabManager::PerformStateTransitions() {
   if (!base::FeatureList::IsEnabled(features::kProactiveTabFreezeAndDiscard))
     return;
+
+  if (base::FeatureList::IsEnabled(
+          features::kPageFreezingFromPerformanceManager)) {
+    return;
+  }
 
   base::TimeTicks next_state_transition_time = base::TimeTicks::Max();
   const base::TimeTicks now = NowTicks();
@@ -1176,36 +980,6 @@ bool TabManager::ShouldProactivelyDiscardTabs() {
     return false;
 
   return true;
-}
-
-LifecycleUnitVector TabManager::GetSortedLifecycleUnitsFromTabRanker() {
-  // Set query_id if TabRanker is enabled.
-  const int64_t query_id = static_cast<int64_t>(base::RandUint64());
-  resource_coordinator::TabActivityWatcher::GetInstance()
-      ->SetQueryIdForTabMetricsLogger(query_id);
-
-  std::vector<LifecycleUnitAndSortKey> lifecycle_units_and_sort_keys;
-  lifecycle_units_and_sort_keys.reserve(lifecycle_units_.size());
-  for (auto* lifecycle_unit : lifecycle_units_) {
-    TabLifecycleUnitExternal* tab_lifecycle_unit_external =
-        lifecycle_unit->AsTabLifecycleUnitExternal();
-    // For now, all LifecycleUnits are TabLifecycleUnitExternals.
-    DCHECK(tab_lifecycle_unit_external);
-
-    base::Optional<float> reactivation_score =
-        resource_coordinator::TabActivityWatcher::GetInstance()
-            ->CalculateReactivationScore(
-                tab_lifecycle_unit_external->GetWebContents(), true);
-
-    float score = reactivation_score.has_value()
-                      ? reactivation_score.value()
-                      : LifecycleUnit::SortKey::kMaxScore;
-    lifecycle_units_and_sort_keys.emplace_back(
-        lifecycle_unit,
-        LifecycleUnit::SortKey(score, lifecycle_unit->GetLastFocusedTime()));
-  }
-
-  return SortedLifecycleUnitsFrom(&lifecycle_units_and_sort_keys);
 }
 
 }  // namespace resource_coordinator

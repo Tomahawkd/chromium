@@ -15,7 +15,7 @@
 namespace ui {
 
 class DrmDisplayHostManager;
-class DrmOverlayManager;
+class DrmOverlayManagerHost;
 class GpuThreadObserver;
 
 // Provides the services that the various host components need
@@ -37,16 +37,18 @@ class GpuThreadAdapter {
   virtual bool GpuTakeDisplayControl() = 0;
   virtual bool GpuRefreshNativeDisplays() = 0;
   virtual bool GpuRelinquishDisplayControl() = 0;
-  virtual bool GpuAddGraphicsDevice(const base::FilePath& path,
-                                    base::ScopedFD fd) = 0;
+  virtual bool GpuAddGraphicsDeviceOnUIThread(const base::FilePath& path,
+                                              base::ScopedFD fd) = 0;
+  virtual void GpuAddGraphicsDeviceOnIOThread(const base::FilePath& path,
+                                              base::ScopedFD fd) = 0;
   virtual bool GpuRemoveGraphicsDevice(const base::FilePath& path) = 0;
 
-  // Methods for DrmOverlayManager.
+  // Methods for DrmOverlayManagerHost.
   virtual void RegisterHandlerForDrmOverlayManager(
-      DrmOverlayManager* handler) = 0;
+      DrmOverlayManagerHost* handler) = 0;
   virtual void UnRegisterHandlerForDrmOverlayManager() = 0;
 
-  // Services needed by DrmOverlayManager
+  // Services needed by DrmOverlayManagerHost
   virtual bool GpuCheckOverlayCapabilities(
       gfx::AcceleratedWidget widget,
       const OverlaySurfaceCandidateList& overlays) = 0;
@@ -69,7 +71,8 @@ class GpuThreadAdapter {
 
   // Services needed by DrmWindowHost
   virtual bool GpuDestroyWindow(gfx::AcceleratedWidget widget) = 0;
-  virtual bool GpuCreateWindow(gfx::AcceleratedWidget widget) = 0;
+  virtual bool GpuCreateWindow(gfx::AcceleratedWidget widget,
+                               const gfx::Rect& initial_bounds) = 0;
   virtual bool GpuWindowBoundsChanged(gfx::AcceleratedWidget widget,
                                       const gfx::Rect& bounds) = 0;
 };

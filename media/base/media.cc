@@ -13,10 +13,6 @@
 #include "media/media_buildflags.h"
 #include "third_party/libyuv/include/libyuv.h"
 
-#if defined(OS_ANDROID)
-#include "base/android/build_info.h"
-#endif
-
 #if BUILDFLAG(ENABLE_FFMPEG)
 #include "third_party/ffmpeg/ffmpeg_features.h"  // nogncheck
 extern "C" {
@@ -32,9 +28,6 @@ namespace media {
 class MediaInitializer {
  public:
   MediaInitializer() {
-    TRACE_EVENT_WARMUP_CATEGORY("audio");
-    TRACE_EVENT_WARMUP_CATEGORY("media");
-
     // Initializing the CPU flags may query /proc for details on the current CPU
     // for NEON, VFP, etc optimizations. If in a sandboxed process, they should
     // have been forced (see InitializeMediaLibraryInSandbox).
@@ -101,11 +94,6 @@ void EnablePlatformDecoderSupport() {
 
 bool HasPlatformDecoderSupport() {
   return GetMediaInstance()->has_platform_decoder_support();
-}
-
-bool PlatformHasOpusSupport() {
-  return base::android::BuildInfo::GetInstance()->sdk_int() >=
-         base::android::SDK_VERSION_LOLLIPOP;
 }
 #endif  // defined(OS_ANDROID)
 

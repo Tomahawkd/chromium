@@ -24,6 +24,13 @@ SyntheticGesture::Result SyntheticSmoothScrollGesture::ForwardInputEvents(
   return move_gesture_->ForwardInputEvents(timestamp, target);
 }
 
+void SyntheticSmoothScrollGesture::WaitForTargetAck(
+    base::OnceClosure callback,
+    SyntheticGestureTarget* target) const {
+  target->WaitForTargetAck(params_.GetGestureType(),
+                           params_.gesture_source_type, std::move(callback));
+}
+
 SyntheticSmoothMoveGestureParams::InputType
 SyntheticSmoothScrollGesture::GetInputSourceType(
     SyntheticGestureParams::GestureSourceType gesture_source_type) {
@@ -50,8 +57,7 @@ bool SyntheticSmoothScrollGesture::InitializeMoveGesture(
     move_params.prevent_fling = params_.prevent_fling;
     move_params.input_type = GetInputSourceType(gesture_type);
     move_params.add_slop = true;
-    move_params.precise_scrolling_deltas = params_.precise_scrolling_deltas;
-    move_params.scroll_by_page = params_.scroll_by_page;
+    move_params.granularity = params_.granularity;
     move_gesture_.reset(new SyntheticSmoothMoveGesture(move_params));
     return true;
   }

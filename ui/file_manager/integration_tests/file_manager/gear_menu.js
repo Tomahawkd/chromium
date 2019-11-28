@@ -5,68 +5,6 @@
 'use strict';
 
 /**
- * Expected files shown in Downloads with hidden enabled
- *
- * @type {!Array<!TestEntryInfo>}
- */
-const BASIC_LOCAL_ENTRY_SET_WITH_HIDDEN = [
-  ENTRIES.hello,
-  ENTRIES.world,
-  ENTRIES.desktop,
-  ENTRIES.beautiful,
-  ENTRIES.photos,
-  ENTRIES.hiddenFile,
-];
-
-/**
- * Expected files shown in Drive with hidden enabled
- *
- * @type {!Array<!TestEntryInfo>}
- */
-const BASIC_DRIVE_ENTRY_SET_WITH_HIDDEN = [
-  ENTRIES.hello,
-  ENTRIES.world,
-  ENTRIES.desktop,
-  ENTRIES.beautiful,
-  ENTRIES.photos,
-  ENTRIES.unsupported,
-  ENTRIES.testDocument,
-  ENTRIES.testSharedDocument,
-  ENTRIES.hiddenFile,
-];
-
-const BASIC_ANDROID_ENTRY_SET = [
-  ENTRIES.directoryDocuments,
-  ENTRIES.directoryMovies,
-  ENTRIES.directoryMusic,
-  ENTRIES.directoryPictures,
-];
-
-const BASIC_ANDROID_ENTRY_SET_WITH_HIDDEN = [
-  ENTRIES.directoryDocuments,
-  ENTRIES.directoryMovies,
-  ENTRIES.directoryMusic,
-  ENTRIES.directoryPictures,
-  ENTRIES.hello,
-  ENTRIES.world,
-  ENTRIES.directoryA,
-];
-
-/**
- * Expected files shown in Drive with Google Docs disabled
- *
- * @type {!Array<!TestEntryInfo>}
- */
-const BASIC_DRIVE_ENTRY_SET_WITHOUT_GDOCS = [
-  ENTRIES.hello,
-  ENTRIES.world,
-  ENTRIES.desktop,
-  ENTRIES.beautiful,
-  ENTRIES.photos,
-  ENTRIES.unsupported,
-];
-
-/**
  * Gets the common steps to toggle hidden files in the Files app
  * @param {!Array<!TestEntryInfo>} basicSet Files expected before showing hidden
  * @param {!Array<!TestEntryInfo>} hiddenEntrySet Files expected after showing
@@ -150,7 +88,7 @@ async function runHiddenFilesTestWithMenuItem(
 /**
  * Tests toggling the show-hidden-files menu option on Downloads.
  */
-testcase.showHiddenFilesDownloads = async function() {
+testcase.showHiddenFilesDownloads = async () => {
   const appId = await setupAndWaitUntilReady(
       RootPath.DOWNLOADS, BASIC_LOCAL_ENTRY_SET_WITH_HIDDEN, []);
 
@@ -161,7 +99,7 @@ testcase.showHiddenFilesDownloads = async function() {
 /**
  * Tests toggling the show-hidden-files menu option on Drive.
  */
-testcase.showHiddenFilesDrive = async function() {
+testcase.showHiddenFilesDrive = async () => {
   const appId = await setupAndWaitUntilReady(
       RootPath.DRIVE, [], BASIC_DRIVE_ENTRY_SET_WITH_HIDDEN);
 
@@ -173,21 +111,22 @@ testcase.showHiddenFilesDrive = async function() {
  * Tests that toggle-hidden-android-folders menu item exists when "Play files"
  * is selected, but hidden in Recents.
  */
-testcase.showToggleHiddenAndroidFoldersGearMenuItemsInMyFiles =
-    async function() {
+testcase.showToggleHiddenAndroidFoldersGearMenuItemsInMyFiles = async () => {
   // Open Files.App on Play Files.
   const appId = await openNewWindow(RootPath.ANDROID_FILES);
   await addEntries(['android_files'], BASIC_ANDROID_ENTRY_SET);
 
   // Wait for the file list to appear.
   await remoteCall.waitForElement(appId, '#file-list');
-
-  // Wait for the gear menu button to appear.
-  await remoteCall.waitForElement(appId, '#gear-button:not([hidden])');
+  await remoteCall.waitForFiles(
+      appId, TestEntryInfo.getExpectedRows(BASIC_ANDROID_ENTRY_SET));
 
   // Click the gear menu button.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'fakeMouseClick', appId, ['#gear-button']));
+  const gearButton =
+      await remoteCall.waitAndClickElement(appId, '#gear-button:not([hidden])');
+
+  // Check: gear-button has aria-haspopup set to true
+  chrome.test.assertEq(gearButton.attributes['aria-haspopup'], 'true');
 
   // Wait for the gear menu to appear.
   await remoteCall.waitForElement(appId, '#gear-menu:not([hidden])');
@@ -226,7 +165,7 @@ testcase.showToggleHiddenAndroidFoldersGearMenuItemsInMyFiles =
  * Tests that "Play files" shows the full set of files after
  * toggle-hidden-android-folders is enabled.
  */
-testcase.enableToggleHiddenAndroidFoldersShowsHiddenFiles = async function() {
+testcase.enableToggleHiddenAndroidFoldersShowsHiddenFiles = async () => {
   // Open Files.App on Play Files.
   const appId = await openNewWindow(RootPath.ANDROID_FILES);
   await addEntries(['android_files'], BASIC_ANDROID_ENTRY_SET_WITH_HIDDEN);
@@ -244,20 +183,18 @@ testcase.enableToggleHiddenAndroidFoldersShowsHiddenFiles = async function() {
  * Tests that the current directory is changed to "Play files" after the
  * current directory is hidden by toggle-hidden-android-folders option.
  */
-testcase.hideCurrentDirectoryByTogglingHiddenAndroidFolders = async function() {
+testcase.hideCurrentDirectoryByTogglingHiddenAndroidFolders = async () => {
   const MENU_ITEM_SELECTOR = '#gear-menu-toggle-hidden-android-folders';
   const appId = await openNewWindow(RootPath.ANDROID_FILES);
   await addEntries(['android_files'], BASIC_ANDROID_ENTRY_SET_WITH_HIDDEN);
 
   // Wait for the file list to appear.
   await remoteCall.waitForElement(appId, '#file-list');
+  await remoteCall.waitForFiles(
+      appId, TestEntryInfo.getExpectedRows(BASIC_ANDROID_ENTRY_SET));
 
   // Wait for the gear menu button to appear.
-  await remoteCall.waitForElement(appId, '#gear-button:not([hidden])');
-
-  // Open the gear menu by clicking the gear button.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'fakeMouseClick', appId, ['#gear-button']));
+  await remoteCall.waitAndClickElement(appId, '#gear-button:not([hidden])');
 
   // Wait for menu to not be hidden.
   await remoteCall.waitForElement(appId, '#gear-menu:not([hidden])');
@@ -311,7 +248,7 @@ testcase.hideCurrentDirectoryByTogglingHiddenAndroidFolders = async function() {
 /**
  * Tests the paste-into-current-folder menu item.
  */
-testcase.showPasteIntoCurrentFolder = async function() {
+testcase.showPasteIntoCurrentFolder = async () => {
   const entrySet = [ENTRIES.hello, ENTRIES.world];
 
   // Add files to Downloads volume.
@@ -389,7 +326,7 @@ testcase.showPasteIntoCurrentFolder = async function() {
 /**
  * Tests the "select-all" menu item.
  */
-testcase.showSelectAllInCurrentFolder = async function() {
+testcase.showSelectAllInCurrentFolder = async () => {
   const entrySet = [ENTRIES.newlyAdded];
 
   // Open Files.App on Downloads.
@@ -449,7 +386,7 @@ testcase.showSelectAllInCurrentFolder = async function() {
  * Tests that new folder appears in the gear menu with Downloads focused in the
  * directory tree.
  */
-testcase.newFolderInDownloads = async function() {
+testcase.newFolderInDownloads = async () => {
   const appId =
       await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.hello], []);
 
@@ -469,4 +406,32 @@ testcase.newFolderInDownloads = async function() {
   // Wait for menu to appear, containing new folder.
   await remoteCall.waitForElement(
       appId, '#gear-menu-newfolder:not([disabled]):not([hidden])');
+};
+
+/**
+ * Tests that Send feedback appears in the gear menu.
+ */
+testcase.showSendFeedbackAction = async () => {
+  const entrySet = [ENTRIES.newlyAdded];
+
+  // Open Files.App on Downloads.
+  const appId = await openNewWindow(RootPath.DOWNLOADS);
+  await remoteCall.waitForElement(appId, '#file-list');
+
+  // Wait for the gear menu button to appear.
+  await remoteCall.waitForElement(appId, '#gear-button');
+
+  // Click the gear menu button.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'fakeMouseClick', appId, ['#gear-button']));
+
+  // Wait for the gear menu to appear.
+  await remoteCall.waitForElement(appId, '#gear-menu:not([hidden])');
+
+  // Check #send-feedback is shown and it's enabled.
+  await remoteCall.waitForElement(
+      appId,
+      '#gear-menu:not([hidden]) cr-menu-item' +
+          '[command=\'#send-feedback\']' +
+          ':not([disabled]):not([hidden])');
 };

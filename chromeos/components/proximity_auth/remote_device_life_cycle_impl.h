@@ -61,9 +61,6 @@ class RemoteDeviceLifeCycleImpl
   // |connection_finder_|.
   void FindConnection();
 
-  // Called when |connection_finder_| finds a connection.
-  void OnConnectionFound(std::unique_ptr<cryptauth::Connection> connection);
-
   // Creates the messenger which parses status updates.
   void CreateMessenger();
 
@@ -107,7 +104,7 @@ class RemoteDeviceLifeCycleImpl
   // retrying the connection.
   base::OneShotTimer authentication_recovery_timer_;
 
-  base::WeakPtrFactory<RemoteDeviceLifeCycleImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<RemoteDeviceLifeCycleImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RemoteDeviceLifeCycleImpl);
 };

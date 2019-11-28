@@ -4,6 +4,7 @@
 
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 
+#include "base/bind.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
@@ -22,7 +23,7 @@ BitmapFetcher::~BitmapFetcher() {
 
 void BitmapFetcher::Init(const std::string& referrer,
                          net::URLRequest::ReferrerPolicy referrer_policy,
-                         int load_flags) {
+                         network::mojom::CredentialsMode credentials_mode) {
   if (simple_loader_ != NULL)
     return;
 
@@ -30,7 +31,7 @@ void BitmapFetcher::Init(const std::string& referrer,
   resource_request->url = url_;
   resource_request->referrer = GURL(referrer);
   resource_request->referrer_policy = referrer_policy;
-  resource_request->load_flags = load_flags;
+  resource_request->credentials_mode = credentials_mode;
   simple_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                                     traffic_annotation_);
 }

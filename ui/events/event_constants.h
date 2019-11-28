@@ -118,14 +118,17 @@ enum EventFlags {
 };
 
 // Flags specific to key events.
+// WARNING: If you add or remove values make sure traits for serializing these
+// values are updated.
 enum KeyEventFlags {
   EF_IME_FABRICATED_KEY = 1 << 15,  // Key event fabricated by the underlying
                                     // IME without a user action.
                                     // (Linux X11 only)
-  EF_IS_REPEAT          = 1 << 16,
-  EF_FINAL              = 1 << 17,  // Do not remap; the event was created with
-                                    // the desired final values.
-  EF_IS_EXTENDED_KEY    = 1 << 18,  // Windows extended key (see WM_KEYDOWN doc)
+  EF_IS_REPEAT = 1 << 16,
+  EF_FINAL = 1 << 17,            // Do not remap; the event was created with
+                                 // the desired final values.
+  EF_IS_EXTENDED_KEY = 1 << 18,  // Windows extended key (see WM_KEYDOWN doc)
+  EF_MAX_KEY_EVENT_FLAGS_VALUE = (1 << 19) - 1,
 };
 
 // Flags specific to mouse events.
@@ -146,6 +149,9 @@ enum MouseEventFlags {
   EF_SCROLL_BY_PAGE = 1 << 22,       // Indicates this mouse event is generated
                                      // when users is requesting to scroll by
                                      // pages.
+  EF_UNADJUSTED_MOUSE = 1 << 23,     // Indicates this mouse event is unadjusted
+                                  // mouse events that has unadjusted movement
+                                  // delta, i.e. is from WM_INPUT on Windows.
 };
 
 // Result of dispatching an event.
@@ -217,6 +223,13 @@ enum class EventMomentumPhase {
   // for events that are not a "stream", but indicate both the start and end of
   // the event (e.g. a mouse wheel tick).
   END,
+
+  // EventMomentumPhase can only be BLOCKED when ScrollEventPhase is kEnd. Event
+  // marks the end of the current event stream, when there will be no inertia
+  // scrolling after the user gesture. ScrollEventPhase must simultaneously be
+  // kEnd because that is when it is determined if an event stream that results
+  // in momentum will begin or not. This phase is only used on Windows.
+  BLOCKED,
 };
 
 // Device ID for Touch and Key Events.

@@ -51,6 +51,8 @@ class FakeExternalBeginFrameSource : public BeginFrameSource {
 
   size_t num_observers() const { return observers_.size(); }
 
+  using BeginFrameSource::RequestCallbackOnGpuAvailable;
+
  private:
   void PostTestOnBeginFrame();
 
@@ -61,11 +63,11 @@ class FakeExternalBeginFrameSource : public BeginFrameSource {
   BeginFrameArgs current_args_;
   uint64_t next_begin_frame_number_ = BeginFrameArgs::kStartingFrameNumber;
   std::set<BeginFrameObserver*> observers_;
-  base::CancelableCallback<void(const BeginFrameArgs&)> begin_frame_task_;
+  base::CancelableOnceClosure begin_frame_task_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<FakeExternalBeginFrameSource> weak_ptr_factory_;
+  base::WeakPtrFactory<FakeExternalBeginFrameSource> weak_ptr_factory_{this};
 };
 
 }  // namespace viz

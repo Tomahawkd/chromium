@@ -11,13 +11,17 @@
 
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "ios/web/common/features.h"
 #import "ios/web/navigation/crw_session_controller+private_constructors.h"
 #import "ios/web/navigation/legacy_navigation_manager_impl.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
-#include "ios/web/public/referrer.h"
+#include "ios/web/public/navigation/referrer.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#import "ios/web/public/test/fakes/test_web_state.h"
+#include "ios/web/public/test/web_task_environment.h"
+#import "ios/web/test/fakes/crw_fake_session_controller_delegate.h"
 #include "ios/web/test/fakes/fake_navigation_manager_delegate.h"
 #import "net/base/mac/url_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -54,6 +58,9 @@ class CRWSessionControllerTest : public PlatformTest {
   void SetUp() override {
     session_controller_ =
         [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+    session_controller_delegate_ =
+        [[CRWFakeSessionControllerDelegate alloc] init];
+    session_controller_.delegate = session_controller_delegate_;
     CreateNavigationManagerForSessionController(session_controller_);
   }
 
@@ -67,19 +74,24 @@ class CRWSessionControllerTest : public PlatformTest {
     auto navigation_manager =
         std::make_unique<web::LegacyNavigationManagerImpl>();
     navigation_manager->SetBrowserState(&browser_state_);
-    navigation_manager->SetDelegate(&delegate_);
+    navigation_manager->SetDelegate(&navigation_manager_delegate_);
     navigation_manager->SetSessionController(session_controller);
     navigation_managers_.push_back(std::move(navigation_manager));
+
+    navigation_manager_delegate_.SetWebState(&web_state_);
   }
 
   web::Referrer MakeReferrer(const std::string& url) {
     return web::Referrer(GURL(url), web::ReferrerPolicyDefault);
   }
 
-  web::TestWebThreadBundle thread_bundle_;
+  base::test::ScopedFeatureList feature_list_;
+  web::WebTaskEnvironment task_environment_;
   web::TestBrowserState browser_state_;
-  web::FakeNavigationManagerDelegate delegate_;
+  web::TestWebState web_state_;
+  web::FakeNavigationManagerDelegate navigation_manager_delegate_;
   CRWSessionController* session_controller_;
+  CRWFakeSessionControllerDelegate* session_controller_delegate_ = nil;
   // Implements RAII pattern for navigation manager objects created by
   // CreateNavigationManagerForSessionController.
   std::vector<std::unique_ptr<web::LegacyNavigationManagerImpl>>
@@ -91,8 +103,42 @@ TEST_F(CRWSessionControllerTest, Init) {
   EXPECT_FALSE([session_controller_ currentItem]);
 }
 
+// Tests that [session_controller_ pendingItem] returns item provided by the
+// delegate.
+TEST_F(CRWSessionControllerTest, GetPendingItemFromDelegate) {
+  feature_list_.InitAndDisableFeature(web::features::kSlimNavigationManager);
+
+  ASSERT_FALSE([session_controller_ pendingItem]);
+  auto item = std::make_unique<web::NavigationItemImpl>();
+  session_controller_delegate_.pendingItem = item.get();
+  EXPECT_EQ(item.get(), [session_controller_ pendingItem]);
+}
+
+// Tests that [session_controller_ pendingItem] ignores item provided by
+// the delegate if session controller has own pending item.
+TEST_F(CRWSessionControllerTest, GetPendingItemIgnoringDelegate) {
+  ASSERT_FALSE([session_controller_ pendingItem]);
+  auto item = std::make_unique<web::NavigationItemImpl>();
+  session_controller_delegate_.pendingItem = item.get();
+
+  GURL url("http://www.url.test");
+  [session_controller_
+               addPendingItem:url
+                     referrer:web::Referrer()
+                   transition:ui::PAGE_TRANSITION_TYPED
+               initiationType:web::NavigationInitiationType::BROWSER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+
+  EXPECT_NE(item.get(), [session_controller_ pendingItem]);
+  ASSERT_TRUE([session_controller_ pendingItem]);
+  EXPECT_EQ(url, [session_controller_ pendingItem] -> GetURL());
+}
+
 // Tests session controller state after setting a pending index.
 TEST_F(CRWSessionControllerTest, SetPendingIndex) {
+  auto delegate_item = std::make_unique<web::NavigationItemImpl>();
+  session_controller_delegate_.pendingItem = delegate_item.get();
+
   [session_controller_
                addPendingItem:GURL("http://www.example.com")
                      referrer:web::Referrer()
@@ -459,6 +505,54 @@ TEST_F(CRWSessionControllerTest, commitPendingItemIndex) {
   EXPECT_EQ(0, [session_controller_ lastCommittedItemIndex]);
   EXPECT_EQ(1, [session_controller_ previousItemIndex]);
   EXPECT_EQ(3U, [session_controller_ items].size());
+}
+
+// Tests that -[CRWSessionController commitPendingItem:] is no-op when called
+// with null.
+TEST_F(CRWSessionControllerTest, CommitNilPendingItem) {
+  ASSERT_TRUE([session_controller_ items].empty());
+  [session_controller_ commitPendingItem:nil];
+  EXPECT_TRUE([session_controller_ items].empty());
+}
+
+// Tests -[CRWSessionController commitPendingItem:] with a valid pending item.
+TEST_F(CRWSessionControllerTest, CommitNonNilPendingItem) {
+  // Create session controller with a single forward item and no back items.
+  [session_controller_
+               addPendingItem:GURL("http://www.example.test/0")
+                     referrer:web::Referrer()
+                   transition:ui::PAGE_TRANSITION_TYPED
+               initiationType:web::NavigationInitiationType::BROWSER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+  [session_controller_ commitPendingItem];
+  [session_controller_
+               addPendingItem:GURL("http://www.example.test/1")
+                     referrer:web::Referrer()
+                   transition:ui::PAGE_TRANSITION_TYPED
+               initiationType:web::NavigationInitiationType::BROWSER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+  [session_controller_ commitPendingItem];
+  [session_controller_ goToItemAtIndex:0 discardNonCommittedItems:NO];
+  ASSERT_EQ(2U, session_controller_.items.size());
+  ASSERT_EQ(0, session_controller_.lastCommittedItemIndex);
+
+  // Call commitPendingItem: with a valid pending item.
+  auto item = std::make_unique<web::NavigationItemImpl>();
+  item->SetNavigationInitiationType(
+      web::NavigationInitiationType::BROWSER_INITIATED);
+  [session_controller_ commitPendingItem:std::move(item)];
+
+  // Verify session controller and navigation item states.
+  EXPECT_EQ(0, session_controller_.previousItemIndex);
+  EXPECT_EQ(1, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(-1, session_controller_.pendingItemIndex);
+  ASSERT_TRUE(session_controller_.lastCommittedItem);
+  EXPECT_FALSE(session_controller_.lastCommittedItem->GetTimestamp().is_null());
+  EXPECT_EQ(web::NavigationInitiationType::NONE,
+            session_controller_.lastCommittedItem->NavigationInitiationType());
+  ASSERT_EQ(2U, session_controller_.items.size());
+  EXPECT_EQ(session_controller_.lastCommittedItem,
+            [session_controller_ itemAtIndex:1]);
 }
 
 TEST_F(CRWSessionControllerTest,
@@ -1083,6 +1177,7 @@ TEST_F(CRWSessionControllerTest, VisibleItemWithCommittedAndTransientItems) {
 // Tests that visible URL is the same as pending URL if it was user-initiated.
 TEST_F(CRWSessionControllerTest,
        VisibleItemWithSingleUserInitiatedPendingItem) {
+  web_state_.SetLoading(true);
   [session_controller_
                addPendingItem:GURL("http://www.example.com/0")
                      referrer:MakeReferrer("http://www.example.com/a")
@@ -1098,6 +1193,7 @@ TEST_F(CRWSessionControllerTest,
 // and there is a committed item.
 TEST_F(CRWSessionControllerTest,
        VisibleItemWithCommittedAndUserInitiatedPendingItem) {
+  web_state_.SetLoading(true);
   [session_controller_
                addPendingItem:GURL("http://www.example.com")
                      referrer:MakeReferrer("http://www.example.com/a")
@@ -1268,6 +1364,19 @@ TEST_F(CRWSessionControllerTest, BackwardItemsShouldBeEmptyIfFirstIsTransient) {
 
   web::NavigationItemList back_items = [session_controller_ backwardItems];
   EXPECT_TRUE(back_items.empty());
+}
+
+// Tests setPendingItem: and releasePendingItem methods.
+TEST_F(CRWSessionControllerTest, TransferPendingItem) {
+  auto item = std::make_unique<web::NavigationItemImpl>();
+  web::NavigationItemImpl* item_ptr = item.get();
+
+  [session_controller_ setPendingItem:std::move(item)];
+  EXPECT_EQ(item_ptr, [session_controller_ pendingItem]);
+
+  auto extracted_item = [session_controller_ releasePendingItem];
+  EXPECT_FALSE([session_controller_ pendingItem]);
+  EXPECT_EQ(item_ptr, extracted_item.get());
 }
 
 }  // anonymous namespace

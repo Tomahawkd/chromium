@@ -3,6 +3,7 @@
 <script src="../../../resources/testharnessreport.js"></script>
 <script src="../../assert_selection.js"></script>
 <script>
+
 selection_test(
   '<div contenteditable dir="rtl">|\u05D0\u05D1\u05D2a\u05D3\u05D4\u05D5</div>',
   selection => selection.modify('move', 'left', 'character'),

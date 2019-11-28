@@ -15,7 +15,7 @@ cr.exportPath('settings');
 Polymer({
   is: 'settings-multidevice-feature-item',
 
-  behaviors: [MultiDeviceFeatureBehavior],
+  behaviors: [MultiDeviceFeatureBehavior, settings.RouteOriginBehavior],
 
   properties: {
     /** @type {!settings.MultiDeviceFeature} */
@@ -25,7 +25,7 @@ Polymer({
      * If it is truthy, the item should be actionable and clicking on it should
      * navigate to the provided route. Otherwise, the item is simply not
      * actionable.
-     * @type {settings.Route|undefined}
+     * @type {!settings.Route|undefined}
      */
     subpageRoute: Object,
 
@@ -35,6 +35,13 @@ Polymer({
      * @type {URLSearchParams|undefined}
      */
     subpageRouteUrlSearchParams: Object,
+  },
+
+  /** settings.RouteOriginBehavior override */
+  route_: settings.routes.MULTIDEVICE_FEATURES,
+
+  ready: function() {
+    this.addFocusConfig_(this.subpageRoute, '#subpageButton');
   },
 
   /**
@@ -47,8 +54,9 @@ Polymer({
 
   /** @private */
   handleItemClick_: function(event) {
-    if (!this.hasSubpageClickHandler_())
+    if (!this.hasSubpageClickHandler_()) {
       return;
+    }
 
     // We do not navigate away if the click was on a link.
     if (event.path[0].tagName === 'A') {
@@ -56,6 +64,11 @@ Polymer({
       return;
     }
 
-    settings.navigateTo(this.subpageRoute, this.subpageRouteUrlSearchParams);
+    // Remove the search term when navigating to avoid potentially having any
+    // visible search term reappear at a later time. See
+    // https://crbug.com/989119.
+    settings.navigateTo(
+        this.subpageRoute, this.subpageRouteUrlSearchParams,
+        true /* opt_removeSearch */);
   },
 });

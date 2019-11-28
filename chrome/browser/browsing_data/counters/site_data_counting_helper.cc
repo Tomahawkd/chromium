@@ -4,7 +4,9 @@
 
 #include "chrome/browser/browsing_data/counters/site_data_counting_helper.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
+#include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_flash_lso_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -16,24 +18,30 @@
 #include "content/public/browser/session_storage_usage_info.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/storage_usage_info.h"
+#include "media/media_buildflags.h"
 #include "net/cookies/cookie_util.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+#if defined(OS_ANDROID)
+#include "components/cdm/browser/media_drm_storage_impl.h"
+#endif
 
 using content::BrowserThread;
 
 SiteDataCountingHelper::SiteDataCountingHelper(
     Profile* profile,
     base::Time begin,
-    base::Callback<void(int)> completion_callback)
+    base::OnceCallback<void(int)> completion_callback)
     : profile_(profile),
       begin_(begin),
-      completion_callback_(completion_callback),
+      completion_callback_(std::move(completion_callback)),
       tasks_(0) {}
 
 SiteDataCountingHelper::~SiteDataCountingHelper() {}
@@ -65,7 +73,7 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
         blink::mojom::StorageType::kSyncable};
     for (auto type : types) {
       tasks_ += 1;
-      base::PostTaskWithTraits(
+      base::PostTask(
           FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&storage::QuotaManager::GetOriginsModifiedSince,
                          quota_manager, type, begin_, origins_callback));
@@ -76,10 +84,10 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   content::DOMStorageContext* dom_storage = partition->GetDOMStorageContext();
   if (dom_storage) {
     tasks_ += 1;
-    auto local_callback =
-        base::Bind(&SiteDataCountingHelper::GetLocalStorageUsageInfoCallback,
-                   base::Unretained(this), special_storage_policy);
-    dom_storage->GetLocalStorageUsage(local_callback);
+    auto local_callback = base::BindOnce(
+        &SiteDataCountingHelper::GetLocalStorageUsageInfoCallback,
+        base::Unretained(this), special_storage_policy);
+    dom_storage->GetLocalStorageUsage(std::move(local_callback));
     // TODO(772337): Enable session storage counting when deletion is fixed.
   }
 
@@ -89,15 +97,42 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   if (flash_lso_helper_) {
     tasks_ += 1;
     flash_lso_helper_->StartFetching(
-        base::Bind(&SiteDataCountingHelper::SitesWithFlashDataCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&SiteDataCountingHelper::SitesWithFlashDataCallback,
+                       base::Unretained(this)));
+  }
+#endif
+
+#if defined(OS_ANDROID)
+  // Count origins with media licenses on Android.
+  tasks_ += 1;
+  Done(cdm::MediaDrmStorageImpl::GetOriginsModifiedSince(profile_->GetPrefs(),
+                                                         begin_));
+#endif  // defined(OS_ANDROID)
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  // Count origins with media licenses.
+  storage::FileSystemContext* file_system_context =
+      content::BrowserContext::GetDefaultStoragePartition(profile_)
+          ->GetFileSystemContext();
+  media_license_helper_ =
+      BrowsingDataMediaLicenseHelper::Create(file_system_context);
+  if (media_license_helper_) {
+    tasks_ += 1;
+    media_license_helper_->StartFetching(base::BindRepeating(
+        &SiteDataCountingHelper::SitesWithMediaLicensesCallback,
+        base::Unretained(this)));
   }
 #endif
 
   // Counting site usage data and durable permissions.
   auto* hcsm = HostContentSettingsMapFactory::GetForProfile(profile_);
   const ContentSettingsType content_settings[] = {
-      CONTENT_SETTINGS_TYPE_DURABLE_STORAGE, CONTENT_SETTINGS_TYPE_APP_BANNER};
+    ContentSettingsType::DURABLE_STORAGE,
+    ContentSettingsType::APP_BANNER,
+#if !defined(OS_ANDROID)
+    ContentSettingsType::INSTALLED_WEB_APP_METADATA,
+#endif
+  };
   for (auto type : content_settings) {
     tasks_ += 1;
     GetOriginsFromHostContentSettignsMap(hcsm, type);
@@ -129,9 +164,9 @@ void SiteDataCountingHelper::GetCookiesCallback(
       origins.push_back(url);
     }
   }
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(&SiteDataCountingHelper::Done,
-                                          base::Unretained(this), origins));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&SiteDataCountingHelper::Done,
+                                base::Unretained(this), origins));
 }
 
 void SiteDataCountingHelper::GetQuotaOriginsCallback(
@@ -142,10 +177,9 @@ void SiteDataCountingHelper::GetQuotaOriginsCallback(
   urls.resize(origins.size());
   for (const url::Origin& origin : origins)
     urls.push_back(origin.GetURL());
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&SiteDataCountingHelper::Done, base::Unretained(this),
-                     std::move(urls)));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&SiteDataCountingHelper::Done,
+                                base::Unretained(this), std::move(urls)));
 }
 
 void SiteDataCountingHelper::GetLocalStorageUsageInfoCallback(
@@ -154,8 +188,8 @@ void SiteDataCountingHelper::GetLocalStorageUsageInfoCallback(
   std::vector<GURL> origins;
   for (const auto& info : infos) {
     if (info.last_modified >= begin_ &&
-        (!policy || !policy->IsStorageProtected(info.origin))) {
-      origins.push_back(info.origin);
+        (!policy || !policy->IsStorageProtected(info.origin.GetURL()))) {
+      origins.push_back(info.origin.GetURL());
     }
   }
   Done(origins);
@@ -183,6 +217,17 @@ void SiteDataCountingHelper::SitesWithFlashDataCallback(
   Done(origins);
 }
 
+void SiteDataCountingHelper::SitesWithMediaLicensesCallback(
+    const std::list<BrowsingDataMediaLicenseHelper::MediaLicenseInfo>&
+        media_license_info_list) {
+  std::vector<GURL> origins;
+  for (const auto& info : media_license_info_list) {
+    if (info.last_modified_time >= begin_)
+      origins.push_back(info.origin);
+  }
+  Done(origins);
+}
+
 void SiteDataCountingHelper::Done(const std::vector<GURL>& origins) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(tasks_ > 0);
@@ -193,6 +238,7 @@ void SiteDataCountingHelper::Done(const std::vector<GURL>& origins) {
   if (--tasks_ > 0)
     return;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(completion_callback_, unique_hosts_.size()));
+      FROM_HERE,
+      base::BindOnce(std::move(completion_callback_), unique_hosts_.size()));
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }

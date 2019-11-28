@@ -17,6 +17,7 @@ class Size;
 namespace content {
 
 class GuestHost;
+class RenderFrameHost;
 class RenderWidgetHost;
 class SiteInstance;
 
@@ -54,14 +55,14 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   virtual void ElementSizeChanged(const gfx::Size& size) {}
 
   // Returns the WebContents that currently owns this guest.
-  virtual WebContents* GetOwnerWebContents() const;
+  virtual WebContents* GetOwnerWebContents();
 
   // Asks the delegate if the given guest can lock the pointer.
   // Invoking the |callback| synchronously is OK.
   virtual void RequestPointerLockPermission(
       bool user_gesture,
       bool last_unlocked_by_target,
-      const base::Callback<void(bool)>& callback) {}
+      const base::OnceCallback<void(bool)> callback) {}
 
   // Provides the delegate with an interface with which to communicate with the
   // content module.
@@ -81,6 +82,9 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   // Returns true if the corresponding guest is allowed to be embedded inside an
   // <iframe> which is cross process.
   virtual bool CanBeEmbeddedInsideCrossProcessFrames();
+
+  // Returns the embedder frame for this guest.
+  virtual RenderFrameHost* GetEmbedderFrame();
 };
 
 }  // namespace content

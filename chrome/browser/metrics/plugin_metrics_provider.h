@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
+#include "base/time/time.h"
 #include "components/metrics/metrics_provider.h"
 #include "content/public/browser/browser_child_process_observer.h"
 
@@ -76,15 +77,6 @@ class PluginMetricsProvider : public metrics::MetricsProvider,
   // Saves plugin information to local state.
   void RecordCurrentState();
 
-  // Posts a delayed task for RecordCurrentState. Returns true if new task is
-  // posted and false if there was one already waiting for execution.
-  // The param delay_sec is for unit tests.
-  bool RecordCurrentStateWithDelay(int delay_ms);
-
-  // If a delayed RecordCurrnetState task exists then cancels it, calls
-  // RecordCurrentState immediately and returns true. Otherwise returns false.
-  bool RecordCurrentStateIfPending();
-
   // content::BrowserChildProcessObserver:
   void BrowserChildProcessHostConnected(
       const content::ChildProcessData& data) override;
@@ -95,6 +87,17 @@ class PluginMetricsProvider : public metrics::MetricsProvider,
       const content::ChildProcessData& data,
       const content::ChildProcessTerminationInfo& info) override;
 
+  // Posts a delayed task for RecordCurrentState. Returns true if new task is
+  // posted and false if there was one already waiting for execution.
+  bool RecordCurrentStateWithDelay();
+
+  // If a delayed RecordCurrnetState task exists then cancels it, calls
+  // RecordCurrentState immediately and returns true. Otherwise returns false.
+  bool RecordCurrentStateIfPending();
+
+  // Records the delay used internally by RecordCurrentStateWithDelay().
+  static base::TimeDelta GetRecordStateDelay();
+
   PrefService* local_state_;
 
   // The list of plugins which was retrieved on the file thread.
@@ -103,7 +106,7 @@ class PluginMetricsProvider : public metrics::MetricsProvider,
   // Buffer of child process notifications for quick access.
   std::map<base::string16, ChildProcessStats> child_process_stats_buffer_;
 
-  base::WeakPtrFactory<PluginMetricsProvider> weak_ptr_factory_;
+  base::WeakPtrFactory<PluginMetricsProvider> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PluginMetricsProvider);
 };

@@ -8,9 +8,8 @@
 
 namespace notifier {
 
-WeakXmppClient::WeakXmppClient(rtc::TaskParent* parent)
-    : buzz::XmppClient(parent),
-      weak_ptr_factory_(this) {}
+WeakXmppClient::WeakXmppClient(jingle_xmpp::TaskParent* parent)
+    : jingle_xmpp::XmppClient(parent) {}
 
 WeakXmppClient::~WeakXmppClient() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -35,7 +34,7 @@ void WeakXmppClient::Stop() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // We don't want XmppClient used after it has been stopped.
   Invalidate();
-  buzz::XmppClient::Stop();
+  jingle_xmpp::XmppClient::Stop();
 }
 
 }  // namespace notifier

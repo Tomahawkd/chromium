@@ -4,36 +4,12 @@
 
 #include "components/ntp_tiles/constants.h"
 
-#include "base/feature_list.h"
-#include "build/build_config.h"
-#include "ui/base/ui_base_features.h"
-
 namespace ntp_tiles {
 
-const char kPopularSitesFieldTrialName[] = "NTPPopularSites";
+const size_t kMaxNumCustomLinks = 10;
 
-const base::Feature kPopularSitesBakedInContentFeature{
-    "NTPPopularSitesBakedInContent", base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kNtpMostLikelyFaviconsFromServerFeature{
-    "NTPMostLikelyFaviconsFromServer", base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kSiteExplorationUiFeature{
-    "SiteExplorationUi", base::FEATURE_DISABLED_BY_DEFAULT};
-
-const base::Feature kUsePopularSitesSuggestions{
-    "UsePopularSitesSuggestions", base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kNtpCustomLinks{"NewTabPageCustomLinks",
-                                    base::FEATURE_ENABLED_BY_DEFAULT};
-
-bool IsCustomLinksEnabled() {
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
-  return base::FeatureList::IsEnabled(kNtpCustomLinks) ||
-         base::FeatureList::IsEnabled(features::kExperimentalUi);
-#else
-  return false;
-#endif
-}
+// Because the custom links feature has an additional "Add shortcut" button, 9
+// tiles are required to balance the Most Visited rows on the NTP.
+const int kMaxNumMostVisited = 9;
 
 }  // namespace ntp_tiles

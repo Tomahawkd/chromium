@@ -72,7 +72,7 @@ class WebInputMethodController {
 
   // Fetches the character range of the current composition, also called the
   // "marked range."
-  virtual WebRange CompositionRange() { return WebRange(); };
+  virtual WebRange CompositionRange() { return WebRange(); }
 
   // Populate |bounds| with the composition character bounds for the ongoing
   // composition. Returns false if there is no focused input or any ongoing
@@ -80,6 +80,13 @@ class WebInputMethodController {
   virtual bool GetCompositionCharacterBounds(WebVector<WebRect>& bounds) {
     return false;
   }
+
+  // Populate |control_bounds| and |selection_bounds| with the bounds fetched
+  // from the active EditContext
+  virtual void GetLayoutBounds(WebRect& control_bounds,
+                               WebRect& selection_bounds) = 0;
+  // Returns true if there is an active EditContext
+  virtual bool IsEditContextActive() const = 0;
 };
 
 }  // namespace blink

@@ -8,12 +8,10 @@
 
 #include "base/bind.h"
 #include "components/feature_engagement/internal/stats.h"
+#include "components/leveldb_proto/public/proto_database.h"
 
 namespace feature_engagement {
 namespace {
-// Corresponds to a UMA suffix "LevelDBOpenResults" in histograms.xml.
-// Please do not change.
-const char kDBUMAName[] = "FeatureEngagementTrackerEventStore";
 
 using KeyEventPair = std::pair<std::string, Event>;
 using KeyEventList = std::vector<KeyEventPair>;
@@ -26,15 +24,14 @@ void NoopUpdateCallback(bool success) {
 
 PersistentEventStore::PersistentEventStore(
     std::unique_ptr<leveldb_proto::ProtoDatabase<Event>> db)
-    : db_(std::move(db)), ready_(false), weak_ptr_factory_(this) {}
+    : db_(std::move(db)), ready_(false) {}
 
 PersistentEventStore::~PersistentEventStore() = default;
 
 void PersistentEventStore::Load(const OnLoadedCallback& callback) {
   DCHECK(!ready_);
 
-  db_->Init(kDBUMAName,
-            base::BindOnce(&PersistentEventStore::OnInitComplete,
+  db_->Init(base::BindOnce(&PersistentEventStore::OnInitComplete,
                            weak_ptr_factory_.GetWeakPtr(), callback));
 }
 
@@ -62,8 +59,10 @@ void PersistentEventStore::DeleteEvent(const std::string& event_name) {
                      base::BindOnce(&NoopUpdateCallback));
 }
 
-void PersistentEventStore::OnInitComplete(const OnLoadedCallback& callback,
-                                          bool success) {
+void PersistentEventStore::OnInitComplete(
+    const OnLoadedCallback& callback,
+    leveldb_proto::Enums::InitStatus status) {
+  bool success = status == leveldb_proto::Enums::InitStatus::kOK;
   stats::RecordDbInitEvent(success, stats::StoreType::EVENTS_STORE);
 
   if (!success) {

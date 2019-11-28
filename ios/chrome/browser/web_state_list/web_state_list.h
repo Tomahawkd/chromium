@@ -11,6 +11,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "url/gurl.h"
 
 class WebStateListDelegate;
 class WebStateListObserver;
@@ -70,6 +71,9 @@ class WebStateList {
   // Returns true if the specified index is contained by the model.
   bool ContainsIndex(int index) const;
 
+  // Returns true if the list is currently mutating.
+  bool IsMutating() const;
+
   // Returns the currently active WebState or null if there is none.
   web::WebState* GetActiveWebState() const;
 
@@ -80,6 +84,15 @@ class WebStateList {
   // Returns the index of the specified WebState or kInvalidIndex if the
   // WebState is not in the model.
   int GetIndexOfWebState(const web::WebState* web_state) const;
+
+  // Returns the index of the first WebState in the model whose visible URL is
+  // |url| or kInvalidIndex if no WebState with that URL exists.
+  int GetIndexOfWebStateWithURL(const GURL& url) const;
+
+  // Returns the index of the first WebState, ignoring the currently active
+  // WebState, in the model whose visible URL is |url| or kInvalidIndex if no
+  // non-active WebState with that URL exists.
+  int GetIndexOfInactiveWebStateWithURL(const GURL& url) const;
 
   // Returns information about the opener of the WebState at the specified
   // index. The structure |opener| will be null if there is no opener.
@@ -145,6 +158,12 @@ class WebStateList {
 
   // Removes an observer from the model.
   void RemoveObserver(WebStateListObserver* observer);
+
+  // Performs mutating operations on the WebStateList as batched operation.
+  // The observers will be notified by WillBeginBatchOperation() before the
+  // |operation| callback is executed and by BatchOperationEnded() after it
+  // has completed.
+  void PerformBatchOperation(base::OnceCallback<void(WebStateList*)> operation);
 
   // Invalid index.
   static const int kInvalidIndex = -1;

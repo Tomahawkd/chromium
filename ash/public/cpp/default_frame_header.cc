@@ -7,6 +7,7 @@
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/caption_buttons/caption_button_model.h"
 #include "ash/public/cpp/caption_buttons/frame_caption_button_container_view.h"
+#include "ash/public/cpp/window_properties.h"
 #include "base/logging.h"  // DCHECK
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/gfx/canvas.h"
@@ -23,12 +24,6 @@ using views::Widget;
 
 namespace {
 
-// Color for the window title text.
-constexpr SkColor kTitleTextColor = SkColorSetRGB(40, 40, 40);
-constexpr SkColor kLightTitleTextColor = SK_ColorWHITE;
-// This is 2x of the slide ainmation duration.
-constexpr int kColorUpdateDurationMs = 240;
-
 // Tiles an image into an area, rounding the top corners.
 void TileRoundRect(gfx::Canvas* canvas,
                    const cc::PaintFlags& flags,
@@ -44,8 +39,12 @@ void TileRoundRect(gfx::Canvas* canvas,
                        0,  // bottom-right
                        0,
                        0};  // bottom-left
+  // Antialiasing can result in blending a transparent pixel and
+  // leave non opaque alpha between the frame and the client area.
+  // Extend 1dp to make sure it's fully opaque.
+  rect.fBottom += 1;
   SkPath path;
-  path.addRoundRect(rect, radii, SkPath::kCW_Direction);
+  path.addRoundRect(rect, radii, SkPathDirection::kCW);
   canvas->DrawPath(path, flags);
 }
 
@@ -56,7 +55,7 @@ namespace ash {
 DefaultFrameHeader::ColorAnimator::ColorAnimator(
     gfx::AnimationDelegate* delegate)
     : animation_(delegate) {
-  animation_.SetSlideDuration(kColorUpdateDurationMs);
+  animation_.SetSlideDuration(base::TimeDelta::FromMilliseconds(240));
   animation_.SetTweenType(gfx::Tween::EASE_IN);
   animation_.Reset(1);
 }
@@ -77,8 +76,9 @@ void DefaultFrameHeader::ColorAnimator::SetTargetColor(SkColor target) {
 }
 
 SkColor DefaultFrameHeader::ColorAnimator::GetCurrentColor() {
-  current_color_ = color_utils::AlphaBlend(
-      target_color_, start_color_, animation_.CurrentValueBetween(0, 255));
+  current_color_ =
+      color_utils::AlphaBlend(target_color_, start_color_,
+                              static_cast<float>(animation_.GetCurrentValue()));
   return current_color_;
 }
 
@@ -105,6 +105,28 @@ void DefaultFrameHeader::SetWidthInPixels(int width_in_pixels) {
   SchedulePaintForTitle();
 }
 
+void DefaultFrameHeader::UpdateFrameColors() {
+  const SkColor active_frame_color =
+      target_widget()->GetNativeWindow()->GetProperty(kFrameActiveColorKey);
+  const SkColor inactive_frame_color =
+      target_widget()->GetNativeWindow()->GetProperty(kFrameInactiveColorKey);
+
+  bool updated = false;
+  if (active_frame_color_.target_color() != active_frame_color) {
+    active_frame_color_.SetTargetColor(active_frame_color);
+    updated = true;
+  }
+  if (inactive_frame_color_.target_color() != inactive_frame_color) {
+    inactive_frame_color_.SetTargetColor(inactive_frame_color);
+    updated = true;
+  }
+
+  if (updated) {
+    UpdateCaptionButtonColors();
+    view()->SchedulePaint();
+  }
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // DefaultFrameHeader, protected:
 
@@ -115,10 +137,10 @@ void DefaultFrameHeader::DoPaintHeader(gfx::Canvas* canvas) {
           : kTopCornerRadiusWhenRestored;
 
   cc::PaintFlags flags;
-  int active_alpha = activation_animation().CurrentValueBetween(0, 255);
   flags.setColor(color_utils::AlphaBlend(
       active_frame_color_.GetCurrentColor(),
-      inactive_frame_color_.GetCurrentColor(), active_alpha));
+      inactive_frame_color_.GetCurrentColor(),
+      static_cast<float>(activation_animation().GetCurrentValue())));
   flags.setAntiAlias(true);
   if (width_in_pixels_ > 0) {
     canvas->Save();
@@ -137,31 +159,21 @@ void DefaultFrameHeader::DoPaintHeader(gfx::Canvas* canvas) {
   PaintTitleBar(canvas);
 }
 
-void DefaultFrameHeader::DoSetFrameColors(SkColor active_frame_color,
-                                          SkColor inactive_frame_color) {
-  bool updated = false;
-  if (active_frame_color_.target_color() != active_frame_color) {
-    active_frame_color_.SetTargetColor(active_frame_color);
-    updated = true;
-  }
-  if (inactive_frame_color_.target_color() != inactive_frame_color) {
-    inactive_frame_color_.SetTargetColor(inactive_frame_color);
-    updated = true;
-  }
-
-  if (updated) {
-    UpdateCaptionButtonColors();
-    view()->SchedulePaint();
-  }
-}
-
 views::CaptionButtonLayoutSize DefaultFrameHeader::GetButtonLayoutSize() const {
   return views::CaptionButtonLayoutSize::kNonBrowserCaption;
 }
 
 SkColor DefaultFrameHeader::GetTitleColor() const {
-  return color_utils::IsDark(GetCurrentFrameColor()) ? kLightTitleTextColor
-                                                     : kTitleTextColor;
+  // Use IsDark() to change target colors instead of PickContrastingColor(), so
+  // that FrameCaptionButton::GetButtonColor() (which uses different target
+  // colors) can change between light/dark targets at the same time.  It looks
+  // bad when the title and caption buttons disagree about whether to be light
+  // or dark.
+  const SkColor frame_color = GetCurrentFrameColor();
+  const SkColor desired_color = color_utils::IsDark(frame_color)
+                                    ? SK_ColorWHITE
+                                    : SkColorSetRGB(40, 40, 40);
+  return color_utils::BlendForMinContrast(desired_color, frame_color).color;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -11,7 +11,6 @@
 #include "cc/layers/surface_layer.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "third_party/blink/public/platform/web_common.h"
-#include "third_party/blink/public/platform/web_layer_tree_view.h"
 
 namespace blink {
 
@@ -21,8 +20,10 @@ class BLINK_PLATFORM_EXPORT WebSurfaceLayerBridgeObserver {
   // Triggered by resizing or surface layer creation.
   virtual void OnWebLayerUpdated() = 0;
 
-  // Called when new a SurfaceLayer is created.
+  // Called when a new contents cc layer is created.
   virtual void RegisterContentsLayer(cc::Layer*) = 0;
+
+  // Called when a contents cc layer will be destroyed.
   virtual void UnregisterContentsLayer(cc::Layer*) = 0;
 
   // Called when a SurfaceLayer is activated.
@@ -32,8 +33,9 @@ class BLINK_PLATFORM_EXPORT WebSurfaceLayerBridgeObserver {
 // Maintains and exposes the SurfaceLayer.
 class BLINK_PLATFORM_EXPORT WebSurfaceLayerBridge {
  public:
+  // |parent_frame_sink_id| identifies the local root widget's FrameSinkId.
   static std::unique_ptr<WebSurfaceLayerBridge> Create(
-      WebLayerTreeView*,
+      viz::FrameSinkId parent_frame_sink_id,
       WebSurfaceLayerBridgeObserver*,
       cc::UpdateSubmissionStateCB);
   virtual ~WebSurfaceLayerBridge();
@@ -41,9 +43,9 @@ class BLINK_PLATFORM_EXPORT WebSurfaceLayerBridge {
   virtual const viz::FrameSinkId& GetFrameSinkId() const = 0;
   virtual const viz::SurfaceId& GetSurfaceId() const = 0;
   virtual base::TimeTicks GetLocalSurfaceIdAllocationTime() const = 0;
-  virtual void ClearSurfaceId() = 0;
   virtual void SetContentsOpaque(bool) = 0;
   virtual void CreateSurfaceLayer() = 0;
+  virtual void ClearObserver() = 0;
 };
 
 }  // namespace blink

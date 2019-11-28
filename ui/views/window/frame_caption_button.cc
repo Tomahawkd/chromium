@@ -16,6 +16,7 @@
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
 #include "ui/views/animation/ink_drop_ripple.h"
+#include "ui/views/window/caption_button_layout_constants.h"
 #include "ui/views/window/hit_test_utils.h"
 
 namespace views {
@@ -24,28 +25,13 @@ namespace {
 
 // Ink drop parameters.
 constexpr float kInkDropVisibleOpacity = 0.06f;
-constexpr int kInkDropCornerRadius = 14;
-
-// The duration of the crossfade animation when swapping the button's images.
-const int kSwapImagesAnimationDurationMs = 200;
 
 // The duration of the fade out animation of the old icon during a crossfade
-// animation as a ratio of |kSwapImagesAnimationDurationMs|.
-const float kFadeOutRatio = 0.5f;
+// animation as a ratio of the duration of |swap_images_animation_|.
+constexpr float kFadeOutRatio = 0.5f;
 
 // The ratio applied to the button's alpha when the button is disabled.
-const float kDisabledButtonAlphaRatio = 0.5f;
-
-// Returns the amount by which the inkdrop ripple and mask should be insetted
-// from the button size in order to achieve a circular inkdrop with a size
-// equals to kInkDropHighlightSize.
-gfx::Insets GetInkdropInsets(const gfx::Size& button_size) {
-  constexpr gfx::Size kInkDropHighlightSize{2 * kInkDropCornerRadius,
-                                            2 * kInkDropCornerRadius};
-  return gfx::Insets(
-      (button_size.height() - kInkDropHighlightSize.height()) / 2,
-      (button_size.width() - kInkDropHighlightSize.width()) / 2);
-}
+constexpr float kDisabledButtonAlphaRatio = 0.5f;
 
 }  // namespace
 
@@ -58,9 +44,9 @@ FrameCaptionButton::FrameCaptionButton(views::ButtonListener* listener,
     : Button(listener),
       icon_(icon),
       background_color_(SK_ColorWHITE),
-      color_mode_(ColorMode::kDefault),
       paint_as_active_(false),
       alpha_(255),
+      ink_drop_corner_radius_(kCaptionButtonInkDropDefaultCornerRadius),
       swap_images_animation_(new gfx::SlideAnimation(this)) {
   views::SetHitTestComponent(this, hit_test_type);
 
@@ -80,14 +66,23 @@ FrameCaptionButton::FrameCaptionButton(views::ButtonListener* listener,
 FrameCaptionButton::~FrameCaptionButton() = default;
 
 // static
-SkColor FrameCaptionButton::GetButtonColor(ColorMode color_mode,
-                                           SkColor background_color) {
-  if (color_mode == ColorMode::kThemed)
-    return color_utils::GetThemedAssetColor(background_color);
-
-  DCHECK_EQ(color_mode, ColorMode::kDefault);
-  return color_utils::IsDark(background_color) ? gfx::kGoogleGrey200
-                                               : gfx::kGoogleGrey700;
+SkColor FrameCaptionButton::GetButtonColor(SkColor background_color) {
+  // Use IsDark() to change target colors instead of PickContrastingColor(), so
+  // that DefaultFrameHeader::GetTitleColor() (which uses different target
+  // colors) can change between light/dark targets at the same time.  It looks
+  // bad when the title and caption buttons disagree about whether to be light
+  // or dark.
+  const SkColor default_foreground = color_utils::IsDark(background_color)
+                                         ? gfx::kGoogleGrey200
+                                         : gfx::kGoogleGrey700;
+  const SkColor high_contrast_foreground =
+      color_utils::GetColorWithMaxContrast(background_color);
+  // Guarantee the caption buttons reach at least contrast ratio 3; this ratio
+  // matches that used for focus indicators, large text, and other "have to see
+  // it but perhaps don't have to read fine detail" cases.
+  return color_utils::BlendForMinContrast(default_foreground, background_color,
+                                          high_contrast_foreground, 3.0f)
+      .color;
 }
 
 // static
@@ -98,8 +93,8 @@ float FrameCaptionButton::GetInactiveButtonColorAlphaRatio() {
 void FrameCaptionButton::SetImage(CaptionButtonIcon icon,
                                   Animate animate,
                                   const gfx::VectorIcon& icon_definition) {
-  gfx::ImageSkia new_icon_image = gfx::CreateVectorIcon(
-      icon_definition, GetButtonColor(color_mode_, background_color_));
+  gfx::ImageSkia new_icon_image =
+      gfx::CreateVectorIcon(icon_definition, GetButtonColor(background_color_));
 
   // The early return is dependent on |animate| because callers use SetImage()
   // with ANIMATE_NO to progress the crossfade animation to the end.
@@ -118,7 +113,8 @@ void FrameCaptionButton::SetImage(CaptionButtonIcon icon,
 
   if (animate == ANIMATE_YES) {
     swap_images_animation_->Reset(0);
-    swap_images_animation_->SetSlideDuration(kSwapImagesAnimationDurationMs);
+    swap_images_animation_->SetSlideDuration(
+        base::TimeDelta::FromMilliseconds(200));
     swap_images_animation_->Show();
   } else {
     swap_images_animation_->Reset(1);
@@ -186,7 +182,7 @@ std::unique_ptr<views::InkDropRipple> FrameCaptionButton::CreateInkDropRipple()
 std::unique_ptr<views::InkDropMask> FrameCaptionButton::CreateInkDropMask()
     const {
   return std::make_unique<views::RoundRectInkDropMask>(
-      size(), GetInkdropInsets(size()), kInkDropCornerRadius);
+      size(), GetInkdropInsets(size()), ink_drop_corner_radius_);
 }
 
 void FrameCaptionButton::SetBackgroundColor(SkColor background_color) {
@@ -197,11 +193,6 @@ void FrameCaptionButton::SetBackgroundColor(SkColor background_color) {
   // Refresh the icon since the color may have changed.
   if (icon_definition_)
     SetImage(icon_, ANIMATE_NO, *icon_definition_);
-  UpdateInkDropBaseColor();
-}
-
-void FrameCaptionButton::SetColorMode(ColorMode color_mode) {
-  color_mode_ = color_mode;
   UpdateInkDropBaseColor();
 }
 
@@ -227,7 +218,7 @@ void FrameCaptionButton::PaintButtonContents(gfx::Canvas* canvas) {
     flags.setColor(GetInkDropBaseColor());
     flags.setAlpha(highlight_alpha);
     const gfx::Point center(GetMirroredRect(GetContentsBounds()).CenterPoint());
-    canvas->DrawCircle(center, kInkDropCornerRadius, flags);
+    canvas->DrawCircle(center, ink_drop_corner_radius_, flags);
   }
 
   int icon_alpha = swap_images_animation_->CurrentValueBetween(0, 255);
@@ -261,7 +252,7 @@ void FrameCaptionButton::PaintButtonContents(gfx::Canvas* canvas) {
 }
 
 int FrameCaptionButton::GetAlphaForIcon(int base_alpha) const {
-  if (!enabled())
+  if (!GetEnabled())
     return base_alpha * kDisabledButtonAlphaRatio;
 
   if (paint_as_active_)
@@ -279,11 +270,27 @@ int FrameCaptionButton::GetAlphaForIcon(int base_alpha) const {
   return base_alpha * inactive_alpha;
 }
 
+gfx::Insets FrameCaptionButton::GetInkdropInsets(
+    const gfx::Size& button_size) const {
+  const gfx::Size kInkDropHighlightSize{2 * ink_drop_corner_radius_,
+                                        2 * ink_drop_corner_radius_};
+  return gfx::Insets(
+      (button_size.height() - kInkDropHighlightSize.height()) / 2,
+      (button_size.width() - kInkDropHighlightSize.width()) / 2);
+}
+
 void FrameCaptionButton::UpdateInkDropBaseColor() {
+  using color_utils::GetColorWithMaxContrast;
+  // A typical implementation would simply do
+  // GetColorWithMaxContrast(background_color_).  However, this could look odd
+  // if we use a light button glyph and dark ink drop or vice versa.  So
+  // instead, use the lightest/darkest color in the same direction as the button
+  // glyph color.
+  // TODO(pkasting): It would likely be better to make the button glyph always
+  // be an alpha-blended version of GetColorWithMaxContrast(background_color_).
+  const SkColor button_color = GetButtonColor(background_color_);
   set_ink_drop_base_color(
-      color_utils::IsDark(GetButtonColor(color_mode_, background_color_))
-          ? SK_ColorBLACK
-          : SK_ColorWHITE);
+      GetColorWithMaxContrast(GetColorWithMaxContrast(button_color)));
 }
 
 }  // namespace views

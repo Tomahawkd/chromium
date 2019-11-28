@@ -49,7 +49,7 @@ class BookmarkModelTypeProcessor : public syncer::ModelTypeProcessor,
       const sync_pb::ModelTypeState& type_state,
       const syncer::CommitResponseDataList& response_list) override;
   void OnUpdateReceived(const sync_pb::ModelTypeState& type_state,
-                        const syncer::UpdateResponseDataList& updates) override;
+                        syncer::UpdateResponseDataList updates) override;
 
   // ModelTypeControllerDelegate implementation.
   void OnSyncStarting(const syncer::DataTypeActivationRequest& request,
@@ -83,6 +83,7 @@ class BookmarkModelTypeProcessor : public syncer::ModelTypeProcessor,
   size_t EstimateMemoryUsage() const;
 
   const SyncedBookmarkTracker* GetTrackerForTest() const;
+  bool IsConnectedForTest() const;
 
   base::WeakPtr<syncer::ModelTypeControllerDelegate> GetWeakPtr();
 
@@ -100,11 +101,17 @@ class BookmarkModelTypeProcessor : public syncer::ModelTypeProcessor,
   // Performs the required clean up when bookmark model is being deleted.
   void OnBookmarkModelBeingDeleted();
 
+  // Process specifically calls to OnUpdateReceived() that correspond to the
+  // initial merge of bookmarks (e.g. was just enabled).
+  void OnInitialUpdateReceived(const sync_pb::ModelTypeState& type_state,
+                               syncer::UpdateResponseDataList updates);
+
   // Instantiates the required objects to track metadata and starts observing
   // changes from the bookmark model.
   void StartTrackingMetadata(
       std::vector<NodeMetadataPair> nodes_metadata,
       std::unique_ptr<sync_pb::ModelTypeState> model_type_state);
+  void StopTrackingMetadata();
 
   // Creates a DictionaryValue for local and remote debugging information about
   // |node| and appends it to |all_nodes|. It does the same for child nodes
@@ -157,9 +164,17 @@ class BookmarkModelTypeProcessor : public syncer::ModelTypeProcessor,
   // engine.
   std::string cache_guid_;
 
+  syncer::ModelErrorHandler error_handler_;
+
   std::unique_ptr<BookmarkModelObserverImpl> bookmark_model_observer_;
 
-  base::WeakPtrFactory<BookmarkModelTypeProcessor> weak_ptr_factory_;
+  // WeakPtrFactory for this processor for ModelTypeController.
+  base::WeakPtrFactory<BookmarkModelTypeProcessor>
+      weak_ptr_factory_for_controller_{this};
+
+  // WeakPtrFactory for this processor which will be sent to sync thread.
+  base::WeakPtrFactory<BookmarkModelTypeProcessor> weak_ptr_factory_for_worker_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkModelTypeProcessor);
 };

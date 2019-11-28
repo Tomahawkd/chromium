@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media/router/media_router_dialog_controller.h"
+
 #include <memory>
 #include <vector>
 
-#include "chrome/browser/media/router/media_router_dialog_controller.h"
+#include "base/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/media_router/media_route.h"
-#include "chrome/common/media_router/media_source_helper.h"
+#include "chrome/common/media_router/media_source.h"
 #include "chrome/common/media_router/route_request_result.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/browser/render_process_host.h"
@@ -74,13 +76,15 @@ class MediaRouterDialogControllerTest : public ChromeRenderViewHostTestHarness {
 
   bool ShowMediaRouterDialogForPresentation() {
     return dialog_controller_->ShowMediaRouterDialogForPresentation(
-        content::PresentationRequest(
-            {1, 2}, {GURL("http://example.com"), GURL("http://example2.com")},
-            url::Origin::Create(GURL("http://google.com"))),
-        base::BindOnce(&MediaRouterDialogControllerTest::RequestSuccess,
-                       base::Unretained(this)),
-        base::BindOnce(&MediaRouterDialogControllerTest::RequestError,
-                       base::Unretained(this)));
+        std::make_unique<StartPresentationContext>(
+            content::PresentationRequest(
+                {1, 2},
+                {GURL("http://example.com"), GURL("http://example2.com")},
+                url::Origin::Create(GURL("http://google.com"))),
+            base::BindOnce(&MediaRouterDialogControllerTest::RequestSuccess,
+                           base::Unretained(this)),
+            base::BindOnce(&MediaRouterDialogControllerTest::RequestError,
+                           base::Unretained(this))));
   }
 
   std::unique_ptr<TestMediaRouterDialogController> dialog_controller_;
@@ -139,7 +143,7 @@ TEST_F(MediaRouterDialogControllerTest, StartPresentationContext) {
       base::BindOnce(&MediaRouterDialogControllerTest::RequestError,
                      base::Unretained(this)));
 
-  MediaRoute route("routeId", MediaSourceForTab(1), "sinkId", "Description",
+  MediaRoute route("routeId", MediaSource::ForTab(1), "sinkId", "Description",
                    false, false);
   auto result = RouteRequestResult::FromSuccess(route, "presentationId");
 

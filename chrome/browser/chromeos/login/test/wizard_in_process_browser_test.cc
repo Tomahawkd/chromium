@@ -6,7 +6,6 @@
 
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -16,12 +15,12 @@
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "content/public/browser/notification_service.h"
 
 namespace chromeos {
 
-WizardInProcessBrowserTest::WizardInProcessBrowserTest(OobeScreen screen)
+WizardInProcessBrowserTest::WizardInProcessBrowserTest(OobeScreenId screen)
     : screen_(screen) {}
 
 void WizardInProcessBrowserTest::SetUp() {

@@ -13,21 +13,26 @@
 #include "components/infobars/core/infobar.h"
 #include "components/infobars/core/infobar_manager.h"
 #include "components/sessions/core/tab_restore_service.h"
-#include "components/sessions/ios/ios_live_tab.h"
+#include "components/sessions/ios/ios_restore_live_tab.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_google_chrome_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/crash_report/breakpad_helper.h"
+#include "ios/chrome/browser/infobars/confirm_infobar_controller.h"
+#include "ios/chrome/browser/infobars/confirm_infobar_metrics_recorder.h"
+#include "ios/chrome/browser/infobars/infobar.h"
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
+#include "ios/chrome/browser/infobars/infobar_utils.h"
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_factory.h"
 #import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
-#import "ios/chrome/browser/tabs/tab.h"
-#import "ios/chrome/browser/tabs/tab_model.h"
+#import "ios/chrome/browser/sessions/session_window_restoring.h"
+#import "ios/chrome/browser/ui/infobars/infobar_feature.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
+#import "ios/web/public/web_state.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -57,14 +62,13 @@ namespace {
 
 class InfoBarManagerObserverBridge : infobars::InfoBarManager::Observer {
  public:
-  InfoBarManagerObserverBridge(
-      infobars::InfoBarManager* infoBarManager,
-      id<InfoBarManagerObserverBridgeProtocol> observer)
+  InfoBarManagerObserverBridge(infobars::InfoBarManager* infoBarManager,
+                               id<InfoBarManagerObserverBridgeProtocol> owner)
       : infobars::InfoBarManager::Observer(),
         manager_(infoBarManager),
-        observer_(observer) {
+        owner_(owner) {
     DCHECK(infoBarManager);
-    DCHECK(observer);
+    DCHECK(owner);
     manager_->AddObserver(this);
   }
 
@@ -74,12 +78,12 @@ class InfoBarManagerObserverBridge : infobars::InfoBarManager::Observer {
   }
 
   void OnInfoBarRemoved(infobars::InfoBar* infobar, bool animate) override {
-    [observer_ infoBarRemoved:infobar];
+    [owner_ infoBarRemoved:infobar];
   }
 
   void OnInfoBarReplaced(infobars::InfoBar* old_infobar,
                          infobars::InfoBar* new_infobar) override {
-    [observer_ infoBarRemoved:old_infobar];
+    [owner_ infoBarRemoved:old_infobar];
   }
 
   void OnManagerShuttingDown(infobars::InfoBarManager* manager) override {
@@ -89,7 +93,7 @@ class InfoBarManagerObserverBridge : infobars::InfoBarManager::Observer {
 
  private:
   infobars::InfoBarManager* manager_;
-  id<InfoBarManagerObserverBridgeProtocol> observer_;
+  __weak id<InfoBarManagerObserverBridgeProtocol> owner_;
 };
 
 // SessionCrashedInfoBarDelegate ----------------------------------------------
@@ -113,6 +117,7 @@ class SessionCrashedInfoBarDelegate : public ConfirmInfoBarDelegate {
   int GetButtons() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
+  void InfoBarDismissed() override;
   int GetIconId() const override;
 
   // The CrashRestoreHelper to restore sessions.
@@ -134,8 +139,17 @@ bool SessionCrashedInfoBarDelegate::Create(
   DCHECK(infobar_manager);
   std::unique_ptr<ConfirmInfoBarDelegate> delegate(
       new SessionCrashedInfoBarDelegate(crash_restore_helper));
-  return !!infobar_manager->AddInfoBar(
-      infobar_manager->CreateConfirmInfoBar(std::move(delegate)));
+
+  if (IsCrashRestoreInfobarMessagesUIEnabled()) {
+    return !!infobar_manager->AddInfoBar(
+        ::CreateHighPriorityConfirmInfoBar(std::move(delegate)));
+  } else {
+    ConfirmInfoBarController* controller = [[ConfirmInfoBarController alloc]
+        initWithInfoBarDelegate:delegate.get()];
+    std::unique_ptr<infobars::InfoBar> infobar =
+        std::make_unique<InfoBarIOS>(controller, std::move(delegate));
+    return !!infobar_manager->AddInfoBar(std::move(infobar));
+  }
 }
 
 infobars::InfoBarDelegate::InfoBarIdentifier
@@ -158,10 +172,19 @@ base::string16 SessionCrashedInfoBarDelegate::GetButtonLabel(
 }
 
 bool SessionCrashedInfoBarDelegate::Accept() {
+  [ConfirmInfobarMetricsRecorder
+      recordConfirmInfobarEvent:MobileMessagesConfirmInfobarEvents::Accepted
+          forInfobarConfirmType:InfobarConfirmType::kInfobarConfirmTypeRestore];
   // Accept should return NO if the infobar is going to be dismissed.
   // Since |restoreSessionAfterCrash| returns YES if a single NTP tab is closed,
   // which will dismiss the infobar, invert the bool.
   return ![crash_restore_helper_ restoreSessionsAfterCrash];
+}
+
+void SessionCrashedInfoBarDelegate::InfoBarDismissed() {
+  [ConfirmInfobarMetricsRecorder
+      recordConfirmInfobarEvent:MobileMessagesConfirmInfobarEvents::Dismissed
+          forInfobarConfirmType:InfobarConfirmType::kInfobarConfirmTypeRestore];
 }
 
 int SessionCrashedInfoBarDelegate::GetIconId() const {
@@ -174,8 +197,8 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   ios::ChromeBrowserState* _browserState;
   BOOL _needRestoration;
   std::unique_ptr<InfoBarManagerObserverBridge> _infoBarBridge;
-  // The TabModel to restore sessions to.
-  TabModel* _tabModel;
+  // Object that will handle session restoration.
+  id<SessionWindowRestoring> _restorer;
 
   // Indicate that the session has been restored to tabs or to recently closed
   // and should not be rerestored.
@@ -189,20 +212,23 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   return self;
 }
 
-- (void)showRestoreIfNeeded:(TabModel*)tabModel {
+- (void)showRestoreIfNeededUsingWebState:(web::WebState*)webState
+                         sessionRestorer:(id<SessionWindowRestoring>)restorer {
   if (!_needRestoration)
     return;
 
   // The last session didn't exit cleanly. Show an infobar to the user so
   // that they can restore if they want. The delegate deletes itself when
   // it is closed.
-  DCHECK(tabModel);
-  web::WebState* webState = tabModel.webStateList->GetActiveWebState();
+
   DCHECK(webState);
   infobars::InfoBarManager* infoBarManager =
       InfoBarManagerImpl::FromWebState(webState);
-  _tabModel = tabModel;
+  _restorer = restorer;
   SessionCrashedInfoBarDelegate::Create(infoBarManager, self);
+  [ConfirmInfobarMetricsRecorder
+      recordConfirmInfobarEvent:MobileMessagesConfirmInfobarEvents::Presented
+          forInfobarConfirmType:InfobarConfirmType::kInfobarConfirmTypeRestore];
   _infoBarBridge.reset(new InfoBarManagerObserverBridge(infoBarManager, self));
 }
 
@@ -274,7 +300,8 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
 
   DCHECK_EQ(session.sessionWindows.count, 1u);
   breakpad_helper::WillStartCrashRestoration();
-  return [_tabModel restoreSessionWindow:session.sessionWindows[0]];
+  return [_restorer restoreSessionWindow:session.sessionWindows[0]
+                       forInitialRestore:NO];
 }
 
 - (void)infoBarRemoved:(infobars::InfoBar*)infobar {
@@ -304,12 +331,10 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
 
   web::WebState::CreateParams params(_browserState);
   for (CRWSessionStorage* session in sessions) {
-    std::unique_ptr<web::WebState> webState =
-        web::WebState::CreateWithStorageSession(params, session);
+    auto live_tab = std::make_unique<sessions::RestoreIOSLiveTab>(session);
     // Add all tabs at the 0 position as the position is relative to an old
     // tabModel.
-    tabRestoreService->CreateHistoricalTab(
-        sessions::IOSLiveTab::GetForWebState(webState.get()), 0);
+    tabRestoreService->CreateHistoricalTab(live_tab.get(), 0);
   }
   return;
 }

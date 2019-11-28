@@ -10,6 +10,8 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
+namespace metrics {
+
 TEST(CpuIdentityTest, CpuUarchTableIsSorted) {
   EXPECT_TRUE(std::is_sorted(
       internal::kCpuUarchTable,
@@ -37,11 +39,21 @@ TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_SandyBridge) {
   EXPECT_EQ("SandyBridge", GetCpuUarch(cpuid));
 }
 
+TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_GoldmontPlus) {
+  CPUIdentity cpuid;
+  cpuid.arch = "x86_64";
+  cpuid.vendor = "GenuineIntel";
+  cpuid.family = 0x06;
+  cpuid.model = 0x7a;  // Gemini Lake
+  cpuid.model_name = "";
+  EXPECT_EQ("GoldmontPlus", GetCpuUarch(cpuid));
+}
+
 TEST(CpuIdentityTest, DefaultCommandsBasedOnUarch_Excavator) {
   CPUIdentity cpuid;
   cpuid.arch = "x86_64";
   cpuid.vendor = "AuthenticAMD";
-  cpuid.family = 0x0f;
+  cpuid.family = 0x15;
   cpuid.model = 0x70;  // Excavator
   cpuid.model_name = "";
   EXPECT_EQ("Excavator", GetCpuUarch(cpuid));
@@ -67,6 +79,16 @@ TEST(CpuIdentityTest, DefaultCommandsBasedOnArch_Unknown) {
   EXPECT_EQ("", GetCpuUarch(cpuid));
 }
 
+TEST(CpuIdentityTest, DefaultCommandsBasedOnArch_UnknownUpperBound) {
+  CPUIdentity cpuid;
+  cpuid.arch = "x86_64";
+  cpuid.vendor = "GenuineIntel";
+  cpuid.family = 0xff;
+  cpuid.model = 0xff;
+  cpuid.model_name = "";
+  EXPECT_EQ("", GetCpuUarch(cpuid));
+}
+
 TEST(CpuIdentityTest, SimplifyCPUModelName) {
   EXPECT_EQ("", SimplifyCPUModelName(""));
   EXPECT_EQ("intel-celeron-2955u-@-1.40ghz",
@@ -74,3 +96,5 @@ TEST(CpuIdentityTest, SimplifyCPUModelName) {
   EXPECT_EQ("armv7-processor-rev-3-(v7l)",
             SimplifyCPUModelName("ARMv7 Processor rev 3 (v7l)"));
 }
+
+}  // namespace metrics

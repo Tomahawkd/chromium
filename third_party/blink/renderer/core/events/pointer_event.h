@@ -14,22 +14,29 @@ class CORE_EXPORT PointerEvent final : public MouseEvent {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static PointerEvent* Create(const AtomicString& type,
-                              const PointerEventInit* initializer,
-                              TimeTicks platform_time_stamp) {
-    return MakeGarbageCollected<PointerEvent>(type, initializer,
-                                              platform_time_stamp);
+  static PointerEvent* Create(
+      const AtomicString& type,
+      const PointerEventInit* initializer,
+      base::TimeTicks platform_time_stamp,
+      MouseEvent::SyntheticEventType synthetic_event_type =
+          kRealOrIndistinguishable,
+      WebMenuSourceType menu_source_type = kMenuSourceNone) {
+    return MakeGarbageCollected<PointerEvent>(
+        type, initializer, platform_time_stamp, synthetic_event_type,
+        menu_source_type);
   }
   static PointerEvent* Create(const AtomicString& type,
                               const PointerEventInit* initializer) {
-    return PointerEvent::Create(type, initializer, CurrentTimeTicks());
+    return PointerEvent::Create(type, initializer, base::TimeTicks::Now());
   }
 
   PointerEvent(const AtomicString&,
                const PointerEventInit*,
-               TimeTicks platform_time_stamp);
+               base::TimeTicks platform_time_stamp,
+               MouseEvent::SyntheticEventType synthetic_event_type,
+               WebMenuSourceType menu_source_type);
 
-  int32_t pointerId() const { return pointer_id_; }
+  PointerId pointerId() const { return pointer_id_; }
   double width() const { return width_; }
   double height() const { return height_; }
   float pressure() const { return pressure_; }
@@ -40,7 +47,7 @@ class CORE_EXPORT PointerEvent final : public MouseEvent {
   const String& pointerType() const { return pointer_type_; }
   bool isPrimary() const { return is_primary_; }
 
-  short button() const override { return RawButton(); }
+  int16_t button() const override { return RawButton(); }
   bool IsMouseEvent() const override;
   bool IsPointerEvent() const override;
 
@@ -63,14 +70,14 @@ class CORE_EXPORT PointerEvent final : public MouseEvent {
 
   HeapVector<Member<PointerEvent>> getCoalescedEvents();
   HeapVector<Member<PointerEvent>> getPredictedEvents();
-  TimeTicks OldestPlatformTimeStamp() const;
+  base::TimeTicks OldestPlatformTimeStamp() const;
 
   DispatchEventResult DispatchEvent(EventDispatcher&) override;
 
   void Trace(blink::Visitor*) override;
 
  private:
-  int32_t pointer_id_;
+  PointerId pointer_id_;
   double width_;
   double height_;
   float pressure_;

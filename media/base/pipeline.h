@@ -8,24 +8,26 @@
 #include <memory>
 
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/buffering_state.h"
 #include "media/base/cdm_context.h"
 #include "media/base/media_export.h"
+#include "media/base/media_status.h"
 #include "media/base/media_track.h"
 #include "media/base/pipeline_metadata.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/ranges.h"
 #include "media/base/text_track.h"
 #include "media/base/video_decoder_config.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
+#include "media/base/waiting.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
 
 class Demuxer;
-class Renderer;
 
 class MEDIA_EXPORT Pipeline {
  public:
@@ -43,11 +45,12 @@ class MEDIA_EXPORT Pipeline {
     // Executed when the content duration, container video size, start time,
     // and whether the content has audio and/or video in supported formats are
     // known.
-    virtual void OnMetadata(PipelineMetadata metadata) = 0;
+    virtual void OnMetadata(const PipelineMetadata& metadata) = 0;
 
     // Executed whenever there are changes in the buffering state of the
-    // pipeline.
-    virtual void OnBufferingStateChange(BufferingState state) = 0;
+    // pipeline. |reason| indicates the cause of the state change, when known.
+    virtual void OnBufferingStateChange(BufferingState state,
+                                        BufferingStateChangeReason reason) = 0;
 
     // Executed whenever the presentation duration changes.
     virtual void OnDurationChange() = 0;
@@ -57,8 +60,8 @@ class MEDIA_EXPORT Pipeline {
     virtual void OnAddTextTrack(const TextTrackConfig& config,
                                 const AddTextTrackDoneCB& done_cb) = 0;
 
-    // Executed whenever the key needed to decrypt the stream is not available.
-    virtual void OnWaitingForDecryptionKey() = 0;
+    // Executed whenever the pipeline is waiting because of |reason|.
+    virtual void OnWaiting(WaitingReason reason) = 0;
 
     // Executed for the first video frame and whenever natural size changes.
     virtual void OnVideoNaturalSizeChange(const gfx::Size& size) = 0;
@@ -76,8 +79,8 @@ class MEDIA_EXPORT Pipeline {
 
     // Executed whenever the underlying AudioDecoder or VideoDecoder changes
     // during playback.
-    virtual void OnAudioDecoderChange(const std::string& name) = 0;
-    virtual void OnVideoDecoderChange(const std::string& name) = 0;
+    virtual void OnAudioDecoderChange(const PipelineDecoderInfo& info) = 0;
+    virtual void OnVideoDecoderChange(const PipelineDecoderInfo& info) = 0;
   };
 
   virtual ~Pipeline() {}
@@ -92,17 +95,16 @@ class MEDIA_EXPORT Pipeline {
     kSuspendAfterMetadata,              // Always suspend after metadata.
   };
 
-  // Build a pipeline to using the given |demuxer| and |renderer| to construct
-  // a filter chain, executing |seek_cb| when the initial seek has completed.
-  // Methods on PipelineClient may be called up until Stop() has completed.
-  // It is an error to call this method after the pipeline has already started.
+  // Build a pipeline to using the given |demuxer| to construct a filter chain,
+  // executing |seek_cb| when the initial seek has completed. Methods on
+  // PipelineClient may be called up until Stop() has completed. It is an error
+  // to call this method after the pipeline has already started.
   //
   // If a |start_type| is specified which allows suspension, pipeline startup
   // will halt after metadata has been retrieved and the pipeline will be in a
   // suspended state.
   virtual void Start(StartType start_type,
                      Demuxer* demuxer,
-                     std::unique_ptr<Renderer> renderer,
                      Client* client,
                      const PipelineStatusCB& seek_cb) = 0;
 
@@ -172,12 +174,11 @@ class MEDIA_EXPORT Pipeline {
   // seeking.
   virtual void Suspend(const PipelineStatusCB& suspend_cb) = 0;
 
-  // Resume the pipeline with a new renderer, and initialize it with a seek.
+  // Resume the pipeline and seek to |timestamp|.
   //
   // It is an error to call this method if the pipeline has not finished
   // suspending.
-  virtual void Resume(std::unique_ptr<Renderer> renderer,
-                      base::TimeDelta timestamp,
+  virtual void Resume(base::TimeDelta timestamp,
                       const PipelineStatusCB& seek_cb) = 0;
 
   // Returns true if the pipeline has been started via Start().  If IsRunning()
@@ -213,6 +214,12 @@ class MEDIA_EXPORT Pipeline {
   // channels proportionately for multi-channel audio streams.
   virtual void SetVolume(float volume) = 0;
 
+  // Hint from player about target latency as a guide for the desired amount of
+  // post-decode buffering required to start playback or resume from
+  // seek/underflow. A null option indicates the hint is unset and the pipeline
+  // can choose its own default.
+  virtual void SetLatencyHint(base::Optional<base::TimeDelta> latency_hint) = 0;
+
   // Returns the current media playback time, which progresses from 0 until
   // GetMediaDuration().
   virtual base::TimeDelta GetMediaTime() const = 0;
@@ -232,7 +239,7 @@ class MEDIA_EXPORT Pipeline {
   virtual PipelineStatistics GetStatistics() const = 0;
 
   virtual void SetCdm(CdmContext* cdm_context,
-                      const CdmAttachedCB& cdm_attached_cb) = 0;
+                      CdmAttachedCB cdm_attached_cb) = 0;
 };
 
 }  // namespace media

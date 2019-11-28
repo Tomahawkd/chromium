@@ -9,8 +9,8 @@
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/tether/host_scan_cache.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -59,8 +59,7 @@ CrashRecoveryManagerImpl::CrashRecoveryManagerImpl(
     HostScanCache* host_scan_cache)
     : network_state_handler_(network_state_handler),
       active_host_(active_host),
-      host_scan_cache_(host_scan_cache),
-      weak_ptr_factory_(this) {}
+      host_scan_cache_(host_scan_cache) {}
 
 CrashRecoveryManagerImpl::~CrashRecoveryManagerImpl() = default;
 

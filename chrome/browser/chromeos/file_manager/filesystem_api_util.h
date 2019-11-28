@@ -14,7 +14,7 @@
 
 #include "base/callback_forward.h"
 #include "base/optional.h"
-#include "storage/common/fileapi/file_system_types.h"
+#include "storage/common/file_system/file_system_types.h"
 
 class Profile;
 
@@ -31,6 +31,10 @@ bool IsNonNativeFileSystemType(storage::FileSystemType type);
 // Checks whether the given |path| points to a non-local filesystem that
 // requires special handling.
 bool IsUnderNonNativeLocalPath(Profile* profile, const base::FilePath& path);
+
+// Checks whether |path| points to a filesystem that requires special handling
+// for retrieving mime types.
+bool HasNonNativeMimeTypeProvider(Profile* profile, const base::FilePath& path);
 
 // Returns the mime type of the file pointed by |path|, and asynchronously sends
 // the result to |callback|.

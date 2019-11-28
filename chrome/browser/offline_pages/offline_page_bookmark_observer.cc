@@ -4,6 +4,7 @@
 
 #include "chrome/browser/offline_pages/offline_page_bookmark_observer.h"
 
+#include "base/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
@@ -14,9 +15,7 @@ namespace offline_pages {
 
 OfflinePageBookmarkObserver::OfflinePageBookmarkObserver(
     content::BrowserContext* context)
-    : context_(context),
-      offline_page_model_(nullptr),
-      weak_ptr_factory_(this) {}
+    : context_(context), offline_page_model_(nullptr) {}
 
 OfflinePageBookmarkObserver::~OfflinePageBookmarkObserver() {}
 
@@ -25,7 +24,7 @@ void OfflinePageBookmarkObserver::BookmarkModelChanged() {}
 void OfflinePageBookmarkObserver::BookmarkNodeRemoved(
     bookmarks::BookmarkModel* model,
     const bookmarks::BookmarkNode* parent,
-    int old_index,
+    size_t old_index,
     const bookmarks::BookmarkNode* node,
     const std::set<GURL>& removed_urls) {
   if (!offline_page_model_) {
@@ -41,8 +40,10 @@ void OfflinePageBookmarkObserver::BookmarkNodeRemoved(
 
 void OfflinePageBookmarkObserver::DoDeleteRemovedBookmarkPages(
     const MultipleOfflineIdResult& offline_ids) {
-  offline_page_model_->DeletePagesByOfflineId(
-      offline_ids,
+  PageCriteria criteria;
+  criteria.offline_ids = offline_ids;
+  offline_page_model_->DeletePagesWithCriteria(
+      criteria,
       base::Bind(&OfflinePageBookmarkObserver::OnDeleteRemovedBookmarkPagesDone,
                  weak_ptr_factory_.GetWeakPtr()));
 }

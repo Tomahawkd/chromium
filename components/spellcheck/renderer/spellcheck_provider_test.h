@@ -9,9 +9,10 @@
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "components/spellcheck/renderer/empty_local_interface_provider.h"
 #include "components/spellcheck/renderer/spellcheck_provider.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_text_checking_completion.h"
@@ -21,18 +22,22 @@ namespace base {
 class MessageLoop;
 }
 
+struct FakeTextCheckingResult {
+  size_t completion_count_ = 0;
+  size_t cancellation_count_ = 0;
+};
+
 // A fake completion object for verification.
 class FakeTextCheckingCompletion : public blink::WebTextCheckingCompletion {
  public:
-  FakeTextCheckingCompletion();
-  ~FakeTextCheckingCompletion();
+  explicit FakeTextCheckingCompletion(FakeTextCheckingResult*);
+  ~FakeTextCheckingCompletion() override;
 
   void DidFinishCheckingText(
       const blink::WebVector<blink::WebTextCheckingResult>& results) override;
   void DidCancelCheckingText() override;
 
-  size_t completion_count_;
-  size_t cancellation_count_;
+  FakeTextCheckingResult* result_;
 };
 
 // Faked test target, which stores sent message for verification.
@@ -46,8 +51,9 @@ class TestingSpellCheckProvider : public SpellCheckProvider,
 
   ~TestingSpellCheckProvider() override;
 
-  void RequestTextChecking(const base::string16& text,
-                           blink::WebTextCheckingCompletion* completion);
+  void RequestTextChecking(
+      const base::string16& text,
+      std::unique_ptr<blink::WebTextCheckingCompletion> completion);
 
   void SetLastResults(
       const base::string16 last_request,
@@ -55,7 +61,7 @@ class TestingSpellCheckProvider : public SpellCheckProvider,
   bool SatisfyRequestFromCache(const base::string16& text,
                                blink::WebTextCheckingCompletion* completion);
 
-#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+#if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
   void ResetResult();
 
   // Variables logging CallSpellingService() mojo calls.
@@ -78,7 +84,7 @@ class TestingSpellCheckProvider : public SpellCheckProvider,
   void RequestDictionary() override;
   void NotifyChecked(const base::string16& word, bool misspelled) override;
 
-#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+#if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
   void CallSpellingService(const base::string16& text,
                            CallSpellingServiceCallback callback) override;
   void OnCallSpellingService(const base::string16& text);
@@ -88,7 +94,6 @@ class TestingSpellCheckProvider : public SpellCheckProvider,
   void RequestTextCheck(const base::string16&,
                         int,
                         RequestTextCheckCallback) override;
-  void ToggleSpellCheck(bool, bool) override;
   using SpellCheckProvider::CheckSpelling;
   void CheckSpelling(const base::string16&,
                      int,
@@ -97,11 +102,15 @@ class TestingSpellCheckProvider : public SpellCheckProvider,
                           FillSuggestionListCallback) override;
 #endif
 
+#if defined(OS_ANDROID)
+  void DisconnectSessionBridge() override;
+#endif
+
   // Message loop (if needed) to deliver the SpellCheckHost request flow.
   std::unique_ptr<base::MessageLoop> loop_;
 
-  // Binding to receive the SpellCheckHost request flow.
-  mojo::Binding<spellcheck::mojom::SpellCheckHost> binding_;
+  // Receiver to receive the SpellCheckHost request flow.
+  mojo::Receiver<spellcheck::mojom::SpellCheckHost> receiver_{this};
 };
 
 // SpellCheckProvider test fixture.

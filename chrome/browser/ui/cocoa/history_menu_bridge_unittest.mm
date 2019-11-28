@@ -20,8 +20,9 @@
 #include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/favicon_base/favicon_types.h"
-#include "components/sessions/core/persistent_tab_restore_service.h"
+#include "components/sessions/content/content_test_helper.h"
 #include "components/sessions/core/serialized_navigation_entry_test_helper.h"
+#include "components/sessions/core/tab_restore_service_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -30,11 +31,12 @@
 
 namespace {
 
-class MockTRS : public sessions::PersistentTabRestoreService {
+class MockTRS : public sessions::TabRestoreServiceImpl {
  public:
   MockTRS(Profile* profile)
-      : sessions::PersistentTabRestoreService(
+      : sessions::TabRestoreServiceImpl(
             base::WrapUnique(new ChromeTabRestoreServiceClient(profile)),
+            profile->GetPrefs(),
             nullptr) {}
   MOCK_CONST_METHOD0(entries, const sessions::TabRestoreService::Entries&());
 };
@@ -58,7 +60,7 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
     ASSERT_TRUE(profile()->CreateHistoryService(/*delete_file=*/true,
                                                 /*no_db=*/false));
     profile()->CreateFaviconService();
-    bridge_.reset(new MockBridge(profile()));
+    bridge_ = std::make_unique<MockBridge>(profile());
   }
 
   // We are a friend of HistoryMenuBridge (and have access to
@@ -114,8 +116,7 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
     tab->id = SessionID::FromSerializedValue(id);
     tab->current_navigation_index = 0;
     tab->navigations.push_back(
-        sessions::SerializedNavigationEntryTestHelper::CreateNavigation(url,
-                                                                        title));
+        sessions::ContentTestHelper::CreateNavigation(url, title));
     return tab;
   }
 
@@ -137,6 +138,10 @@ class HistoryMenuBridgeTest : public CocoaProfileTest {
   void GotFaviconData(HistoryMenuBridge::HistoryItem* item,
                       const favicon_base::FaviconImageResult& image_result) {
     bridge_->GotFaviconData(item, image_result);
+  }
+
+  void CancelFaviconRequest(HistoryMenuBridge::HistoryItem* item) {
+    bridge_->CancelFaviconRequest(item);
   }
 
   std::unique_ptr<MockBridge> bridge_;
@@ -346,6 +351,9 @@ TEST_F(HistoryMenuBridgeTest, GetFaviconForHistoryItem) {
   // Make sure the item was modified properly.
   EXPECT_TRUE(item.icon_requested);
   EXPECT_NE(base::CancelableTaskTracker::kBadTaskId, item.icon_task_id);
+
+  // Cancel the request.
+  CancelFaviconRequest(&item);
 }
 
 TEST_F(HistoryMenuBridgeTest, GotFaviconData) {
@@ -358,6 +366,9 @@ TEST_F(HistoryMenuBridgeTest, GotFaviconData) {
   HistoryMenuBridge::HistoryItem item;
   item.menu_item.reset([[NSMenuItem alloc] init]);
   GetFaviconForHistoryItem(&item);
+
+  // Cancel the request so there will be no race.
+  CancelFaviconRequest(&item);
 
   // Pretend to be called back.
   favicon_base::FaviconImageResult image_result;

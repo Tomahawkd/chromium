@@ -15,25 +15,21 @@
 #include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/cookie_manager.mojom-forward.h"
+#include "services/network/public/mojom/restricted_cookie_manager.mojom-forward.h"
 
-class ChromeURLRequestContextGetter;
 class GURL;
 
 namespace base {
 class Time;
 }
 
-namespace cast {
-class CastTransportHostFilter;
-}
-
 namespace storage {
 class FileSystemContext;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace leveldb_proto {
+class ProtoDatabaseProvider;
 }
 
 namespace network {
@@ -55,11 +51,15 @@ class DatabaseTracker;
 namespace content {
 
 class AppCacheService;
+class BackgroundSyncContext;
 class BrowserContext;
 class CacheStorageContext;
+class ContentIndexContext;
 class DOMStorageContext;
+class DevToolsBackgroundServicesContext;
 class IndexedDBContext;
 class GeneratedCodeCacheContext;
+class NativeFileSystemEntryFactory;
 class PlatformNotificationContext;
 class ServiceWorkerContext;
 class SharedWorkerService;
@@ -70,18 +70,6 @@ class HostZoomMap;
 class ZoomLevelDelegate;
 #endif  // !defined(OS_ANDROID)
 
-// See comment below on GetURLRequestContext.
-class CONTENT_EXPORT ScopedAllowGetURLRequestContext {
- private:
-  // https://crbug.com/806817
-  friend class cast::CastTransportHostFilter;
-  // Uses URLRequestContextGetter to cast to a derived class.
-  friend class ::ChromeURLRequestContextGetter;
-  ScopedAllowGetURLRequestContext();
-  ~ScopedAllowGetURLRequestContext();
-  DISALLOW_COPY_AND_ASSIGN(ScopedAllowGetURLRequestContext);
-};
-
 // Defines what persistent state a child process can access.
 //
 // The StoragePartition defines the view each child process has of the
@@ -91,12 +79,6 @@ class CONTENT_EXPORT ScopedAllowGetURLRequestContext {
 class CONTENT_EXPORT StoragePartition {
  public:
   virtual base::FilePath GetPath() = 0;
-  // http://crbug.com/837753 these methods shouldn't be called when the network
-  // service is enabled. There are a few remaining callers which have to
-  // instantiate a ScopedAllowGetURLRequestContext object while they make this
-  // call.
-  virtual net::URLRequestContextGetter* GetURLRequestContext() = 0;
-  virtual net::URLRequestContextGetter* GetMediaURLRequestContext() = 0;
 
   // Returns a raw mojom::NetworkContext pointer. When network service crashes
   // or restarts, the raw pointer will not be valid or safe to use. Therefore,
@@ -114,26 +96,56 @@ class CONTENT_EXPORT StoragePartition {
   // network process restarts.
   virtual scoped_refptr<network::SharedURLLoaderFactory>
   GetURLLoaderFactoryForBrowserProcess() = 0;
+  virtual scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactoryForBrowserProcessWithCORBEnabled() = 0;
   virtual std::unique_ptr<network::SharedURLLoaderFactoryInfo>
   GetURLLoaderFactoryForBrowserProcessIOThread() = 0;
   virtual network::mojom::CookieManager*
   GetCookieManagerForBrowserProcess() = 0;
+
+  // See documentation for
+  // ContentBrowserClient::WillCreateRestrictedCookieManager for description of
+  // the parameters. The method here is expected pass things through that hook
+  // and then go to the NetworkContext if needed.
+  virtual void CreateRestrictedCookieManager(
+      network::mojom::RestrictedCookieManagerRole role,
+      const url::Origin& origin,
+      const GURL& site_for_cookies,
+      const url::Origin& top_frame_origin,
+      bool is_service_worker,
+      int process_id,
+      int routing_id,
+      mojo::PendingReceiver<network::mojom::RestrictedCookieManager>
+          receiver) = 0;
+
   virtual storage::QuotaManager* GetQuotaManager() = 0;
   virtual AppCacheService* GetAppCacheService() = 0;
+  virtual BackgroundSyncContext* GetBackgroundSyncContext() = 0;
   virtual storage::FileSystemContext* GetFileSystemContext() = 0;
   virtual storage::DatabaseTracker* GetDatabaseTracker() = 0;
   virtual DOMStorageContext* GetDOMStorageContext() = 0;
   virtual IndexedDBContext* GetIndexedDBContext() = 0;
+  virtual NativeFileSystemEntryFactory* GetNativeFileSystemEntryFactory() = 0;
   virtual ServiceWorkerContext* GetServiceWorkerContext() = 0;
   virtual SharedWorkerService* GetSharedWorkerService() = 0;
   virtual CacheStorageContext* GetCacheStorageContext() = 0;
   virtual GeneratedCodeCacheContext* GetGeneratedCodeCacheContext() = 0;
+  virtual DevToolsBackgroundServicesContext*
+  GetDevToolsBackgroundServicesContext() = 0;
+  virtual ContentIndexContext* GetContentIndexContext() = 0;
 #if !defined(OS_ANDROID)
   virtual HostZoomMap* GetHostZoomMap() = 0;
   virtual HostZoomLevelContext* GetHostZoomLevelContext() = 0;
   virtual ZoomLevelDelegate* GetZoomLevelDelegate() = 0;
 #endif  // !defined(OS_ANDROID)
   virtual PlatformNotificationContext* GetPlatformNotificationContext() = 0;
+
+  virtual leveldb_proto::ProtoDatabaseProvider* GetProtoDatabaseProvider() = 0;
+  // Must be set before the first call to GetProtoDatabaseProvider(), or a new
+  // one will be created by get.
+  virtual void SetProtoDatabaseProvider(
+      std::unique_ptr<leveldb_proto::ProtoDatabaseProvider>
+          optional_proto_db_provider) = 0;
 
   enum : uint32_t {
     REMOVE_DATA_MASK_APPCACHE = 1 << 0,
@@ -177,8 +189,8 @@ class CONTENT_EXPORT StoragePartition {
   // A callback type to check if a given origin matches a storage policy.
   // Can be passed empty/null where used, which means the origin will always
   // match.
-  typedef base::Callback<bool(const GURL&, storage::SpecialStoragePolicy*)>
-      OriginMatcherFunction;
+  using OriginMatcherFunction =
+      base::Callback<bool(const url::Origin&, storage::SpecialStoragePolicy*)>;
 
   // Similar to ClearDataForOrigin().
   // Deletes all data out for the StoragePartition if |storage_origin| is empty.
@@ -202,10 +214,10 @@ class CONTENT_EXPORT StoragePartition {
   //   (created_after_time/created_before_time), so when deleting cookies
   //   |begin| and |end| will be used ignoring the interval in
   //   |cookie_deletion_filter|.
-  //   If |perform_cleanup| is true, the storage will try to remove traces
-  //   about deleted data from disk. This is an expensive operation that should
-  //   only be performed if we are sure that almost all data will be deleted
-  //   anyway.
+  //   If |perform_storage_cleanup| is true, the storage will try to remove
+  //   traces about deleted data from disk. This is an expensive operation that
+  //   should only be performed if we are sure that almost all data will be
+  //   deleted anyway.
   // * |callback| is called when data deletion is done or at least the deletion
   //   is scheduled.
   // Note: Make sure you know what you are doing before clearing cookies
@@ -215,25 +227,20 @@ class CONTENT_EXPORT StoragePartition {
       uint32_t quota_storage_remove_mask,
       const OriginMatcherFunction& origin_matcher,
       network::mojom::CookieDeletionFilterPtr cookie_deletion_filter,
-      bool perform_cleanup,
+      bool perform_storage_cleanup,
       const base::Time begin,
       const base::Time end,
-      base::OnceClosure callback) = 0;
-
-  // Clears the HTTP and media caches associated with this StoragePartition's
-  // request contexts. If |begin| and |end| are not null, only entries with
-  // timestamps inbetween are deleted. If |url_matcher| is not null, only
-  // entries with matching URLs are deleted.
-  virtual void ClearHttpAndMediaCaches(
-      const base::Time begin,
-      const base::Time end,
-      const base::Callback<bool(const GURL&)>& url_matcher,
       base::OnceClosure callback) = 0;
 
   // Clears code caches associated with this StoragePartition.
-  // TODO(crbug.com/866419): Currently we just clear entire caches.
-  // Change it to conditionally clear entries based on the filters.
-  virtual void ClearCodeCaches(base::OnceClosure callback) = 0;
+  // If |begin| and |end| are not null, only entries with
+  // timestamps inbetween are deleted. If |url_matcher| is not null, only
+  // entries with URLs for which the |url_matcher| returns true are deleted.
+  virtual void ClearCodeCaches(
+      base::Time begin,
+      base::Time end,
+      const base::RepeatingCallback<bool(const GURL&)>& url_matcher,
+      base::OnceClosure callback) = 0;
 
   // Write any unwritten data to disk.
   // Note: this method does not sync the data - it only ensures that any
@@ -252,6 +259,9 @@ class CONTENT_EXPORT StoragePartition {
 
   // Wait until all deletions tasks are finished. For test use only.
   virtual void WaitForDeletionTasksForTesting() = 0;
+
+  // Wait until code cache's shutdown is complete. For test use only.
+  virtual void WaitForCodeCacheShutdownForTesting() = 0;
 
  protected:
   virtual ~StoragePartition() {}

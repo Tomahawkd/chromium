@@ -30,9 +30,9 @@ class NegotiatingClientAuthenticator : public NegotiatingAuthenticatorBase {
   ~NegotiatingClientAuthenticator() override;
 
   // Overriden from Authenticator.
-  void ProcessMessage(const buzz::XmlElement* message,
+  void ProcessMessage(const jingle_xmpp::XmlElement* message,
                       const base::Closure& resume_callback) override;
-  std::unique_ptr<buzz::XmlElement> GetNextMessage() override;
+  std::unique_ptr<jingle_xmpp::XmlElement> GetNextMessage() override;
 
  private:
   // (Asynchronously) creates an authenticator, and stores it in
@@ -69,7 +69,7 @@ class NegotiatingClientAuthenticator : public NegotiatingAuthenticatorBase {
 
   // Internal NegotiatingClientAuthenticator data.
   bool method_set_by_host_ = false;
-  base::WeakPtrFactory<NegotiatingClientAuthenticator> weak_factory_;
+  base::WeakPtrFactory<NegotiatingClientAuthenticator> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NegotiatingClientAuthenticator);
 };

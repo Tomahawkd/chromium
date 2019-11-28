@@ -4,12 +4,15 @@
 
 #include "ash/magnifier/magnification_controller.h"
 
-#include "ash/magnifier/magnifier_scale_utils.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
 #include "ash/magnifier/magnifier_test_utils.h"
+#include "ash/magnifier/magnifier_utils.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/command_line.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "ui/aura/env.h"
 #include "ui/aura/test/aura_test_utils.h"
@@ -20,8 +23,6 @@
 #include "ui/events/event_handler.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/widget/widget.h"
@@ -278,7 +279,7 @@ TEST_F(MagnificationControllerTest, FollowFocusChanged) {
 }
 
 TEST_F(MagnificationControllerTest, PanWindow2xLeftToRight) {
-  const aura::Env* env = Shell::Get()->aura_env();
+  const aura::Env* env = aura::Env::GetInstance();
 
   ui::test::EventGenerator* event_generator = GetEventGenerator();
   event_generator->MoveMouseToInHost(gfx::Point(0, 0));
@@ -382,7 +383,7 @@ TEST_F(MagnificationControllerTest, PanWindow2xLeftToRight) {
 }
 
 TEST_F(MagnificationControllerTest, PanWindow2xRightToLeft) {
-  const aura::Env* env = Shell::Get()->aura_env();
+  const aura::Env* env = aura::Env::GetInstance();
 
   ui::test::EventGenerator* event_generator = GetEventGenerator();
   event_generator->MoveMouseToInHost(gfx::Point(799, 300));
@@ -435,7 +436,7 @@ TEST_F(MagnificationControllerTest, PanWindow2xRightToLeft) {
 }
 
 TEST_F(MagnificationControllerTest, PanWindowToRight) {
-  const aura::Env* env = Shell::Get()->aura_env();
+  const aura::Env* env = aura::Env::GetInstance();
 
   ui::test::EventGenerator* event_generator = GetEventGenerator();
   event_generator->MoveMouseToInHost(gfx::Point(400, 300));
@@ -449,7 +450,7 @@ TEST_F(MagnificationControllerTest, PanWindowToRight) {
   GetMagnificationController()->SetEnabled(true);
   EXPECT_FLOAT_EQ(2.f, GetMagnificationController()->GetScale());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.3784142, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(400, 300));
@@ -458,21 +459,21 @@ TEST_F(MagnificationControllerTest, PanWindowToRight) {
   EXPECT_EQ("566,299", env->last_mouse_location().ToString());
   EXPECT_EQ("705,300", GetHostMouseLocation());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.8284268, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("599,299", env->last_mouse_location().ToString());
   EXPECT_EQ("702,300", GetHostMouseLocation());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(3.3635852, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(799, 300));
   EXPECT_EQ("627,298", env->last_mouse_location().ToString());
   EXPECT_EQ("707,300", GetHostMouseLocation());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(4.f, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(799, 300));
@@ -481,7 +482,7 @@ TEST_F(MagnificationControllerTest, PanWindowToRight) {
 }
 
 TEST_F(MagnificationControllerTest, PanWindowToLeft) {
-  const aura::Env* env = Shell::Get()->aura_env();
+  const aura::Env* env = aura::Env::GetInstance();
 
   ui::test::EventGenerator* event_generator = GetEventGenerator();
   event_generator->MoveMouseToInHost(gfx::Point(400, 300));
@@ -495,7 +496,7 @@ TEST_F(MagnificationControllerTest, PanWindowToLeft) {
   GetMagnificationController()->SetEnabled(true);
   EXPECT_FLOAT_EQ(2.f, GetMagnificationController()->GetScale());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.3784142, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(400, 300));
@@ -504,21 +505,21 @@ TEST_F(MagnificationControllerTest, PanWindowToLeft) {
   EXPECT_EQ("231,299", env->last_mouse_location().ToString());
   EXPECT_EQ("100,300", GetHostMouseLocation());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(2.8284268, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("194,299", env->last_mouse_location().ToString());
   EXPECT_EQ("99,300", GetHostMouseLocation());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(3.3635852, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(0, 300));
   EXPECT_EQ("164,298", env->last_mouse_location().ToString());
   EXPECT_EQ("98,300", GetHostMouseLocation());
 
-  scale *= magnifier_scale_utils::kMagnificationScaleFactor;
+  scale *= magnifier_utils::kMagnificationScaleFactor;
   GetMagnificationController()->SetScale(scale, false);
   EXPECT_FLOAT_EQ(4.f, GetMagnificationController()->GetScale());
   event_generator->MoveMouseToInHost(gfx::Point(0, 300));
@@ -649,7 +650,7 @@ TEST_F(MagnificationControllerTest, CenterTextCaretNotInsideViewport) {
 
   // Focus on the text input field.
   text_input_helper_.FocusOnTextInputView();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   // Verify the view port has been moved to the place where the text field is
   // contained in the view port and the caret is at the center of the view port.
   gfx::Rect view_port = GetViewport();
@@ -662,7 +663,7 @@ TEST_F(MagnificationControllerTest, CenterTextCaretNotInsideViewport) {
   ui::test::EventGenerator* event_generator = GetEventGenerator();
   event_generator->PressKey(ui::VKEY_A, 0);
   event_generator->ReleaseKey(ui::VKEY_A, 0);
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   gfx::Rect new_caret_bounds = text_input_helper_.GetCaretBounds();
   EXPECT_NE(caret_bounds, new_caret_bounds);
 
@@ -689,7 +690,7 @@ TEST_F(MagnificationControllerTest, CenterTextCaretInViewport) {
 
   // Focus on the text input field.
   text_input_helper_.FocusOnTextInputView();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   // Verify the view port has been moved to the place where the text field is
   // contained in the view port and the caret is at the center of the view port.
@@ -948,7 +949,7 @@ TEST_F(MagnificationControllerTest, ZoomsIntoCenter) {
 TEST_F(MagnificationControllerTest, KeyboardOverscrollDisabled) {
   GetMagnificationController()->SetEnabled(false);
 
-  auto* keyboard_controller = keyboard::KeyboardController::Get();
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
   bool old_keyboard_overscroll_value =
       keyboard_controller->IsKeyboardOverscrollEnabled();
 
@@ -963,7 +964,8 @@ TEST_F(MagnificationControllerTest, KeyboardOverscrollDisabled) {
             old_keyboard_overscroll_value);
 }
 
-TEST_F(MagnificationControllerTest, TextfieldFocusedWithKeyboard) {
+// Disabled due to https://crbug.com/917113.
+TEST_F(MagnificationControllerTest, DISABLED_TextfieldFocusedWithKeyboard) {
   // Set up text input view.
   text_input_helper_.CreateAndShowTextInputView(gfx::Rect(500, 200, 80, 80));
   gfx::Rect text_input_bounds = text_input_helper_.GetTextInputViewBounds();
@@ -978,8 +980,7 @@ TEST_F(MagnificationControllerTest, TextfieldFocusedWithKeyboard) {
 
   // Set up and show the keyboard.
   keyboard::SetAccessibilityKeyboardEnabled(true);
-  ash::Shell::Get()->EnableKeyboard();
-  auto* keyboard_controller = keyboard::KeyboardController::Get();
+  auto* keyboard_controller = keyboard::KeyboardUIController::Get();
   keyboard_controller->ShowKeyboard(true);
 
   // Focus on the text input field.
@@ -990,7 +991,7 @@ TEST_F(MagnificationControllerTest, TextfieldFocusedWithKeyboard) {
   gfx::Rect viewport_outside_keyboard_bounds = GetViewport();
   viewport_outside_keyboard_bounds.set_height(
       viewport_outside_keyboard_bounds.height() -
-      keyboard_controller->visual_bounds_in_screen().height() /
+      keyboard_controller->GetVisualBoundsInScreen().height() /
           GetMagnificationController()->GetScale());
 
   gfx::Rect caret_bounds = text_input_helper_.GetCaretBounds();

@@ -4,10 +4,10 @@
 
 package org.chromium.chrome.browser.download.home.empty;
 
-import android.support.annotation.IntDef;
+import androidx.annotation.IntDef;
 
-import org.chromium.chrome.browser.modelutil.PropertyKey;
-import org.chromium.chrome.browser.modelutil.PropertyModel.WritableIntPropertyKey;
+import org.chromium.ui.modelutil.PropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -28,9 +28,5 @@ interface EmptyProperties {
     /** The current text resource to use for the empty view. */
     public static final WritableIntPropertyKey EMPTY_TEXT_RES_ID = new WritableIntPropertyKey();
 
-    /** The current icon resource to use for the empty view. */
-    public static final WritableIntPropertyKey EMPTY_ICON_RES_ID = new WritableIntPropertyKey();
-
-    public static final PropertyKey[] ALL_KEYS =
-            new PropertyKey[] {STATE, EMPTY_TEXT_RES_ID, EMPTY_ICON_RES_ID};
+    public static final PropertyKey[] ALL_KEYS = new PropertyKey[] {STATE, EMPTY_TEXT_RES_ID};
 }

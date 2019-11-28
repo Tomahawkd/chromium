@@ -8,12 +8,13 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "media/base/android/android_cdm_factory.h"
 #include "media/base/audio_decoder.h"
 #include "media/base/cdm_factory.h"
 #include "media/filters/android/media_codec_audio_decoder.h"
-#include "media/mojo/interfaces/media_drm_storage.mojom.h"
-#include "media/mojo/interfaces/provision_fetcher.mojom.h"
+#include "media/mojo/mojom/media_drm_storage.mojom.h"
+#include "media/mojo/mojom/provision_fetcher.mojom.h"
 #include "media/mojo/services/android_mojo_util.h"
 #include "services/service_manager/public/cpp/connect.h"
 

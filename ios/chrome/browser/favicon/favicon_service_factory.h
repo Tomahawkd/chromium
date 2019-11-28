@@ -8,12 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
-
-namespace base {
-template <typename T>
-struct DefaultSingletonTraits;
-}  // namespace base
 
 enum class ServiceAccessType;
 
@@ -33,9 +29,12 @@ class FaviconServiceFactory : public BrowserStateKeyedServiceFactory {
       ios::ChromeBrowserState* browser_state,
       ServiceAccessType access_type);
   static FaviconServiceFactory* GetInstance();
+  // Returns the default factory used to build FaviconService. Can be
+  // registered with SetTestingFactory to use real instances during testing.
+  static TestingFactory GetDefaultFactory();
 
  private:
-  friend struct base::DefaultSingletonTraits<FaviconServiceFactory>;
+  friend class base::NoDestructor<FaviconServiceFactory>;
 
   FaviconServiceFactory();
   ~FaviconServiceFactory() override;

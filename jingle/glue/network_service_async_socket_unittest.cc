@@ -10,18 +10,24 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/containers/circular_deque.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_pump_default.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/unique_receiver_set.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
 #include "net/base/address_list.h"
+#include "net/base/host_port_pair.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/cert/mock_cert_verifier.h"
@@ -35,8 +41,6 @@
 #include "services/network/proxy_resolving_socket_factory_mojo.h"
 #include "services/network/public/mojom/proxy_resolving_socket.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/webrtc/rtc_base/ipaddress.h"
-#include "third_party/webrtc/rtc_base/socketaddress.h"
 #include "third_party/webrtc/rtc_base/third_party/sigslot/sigslot.h"
 
 namespace jingle_glue {
@@ -142,13 +146,13 @@ class MockProxyResolvingSocket : public network::mojom::ProxyResolvingSocket {
   MockProxyResolvingSocket() {}
   ~MockProxyResolvingSocket() override {}
 
-  void Connect(network::mojom::SocketObserverPtr observer,
+  void Connect(mojo::PendingRemote<network::mojom::SocketObserver> observer,
                network::mojom::ProxyResolvingSocketFactory::
                    CreateProxyResolvingSocketCallback callback) {
     mojo::DataPipe send_pipe;
     mojo::DataPipe receive_pipe;
 
-    observer_ = std::move(observer);
+    observer_.Bind(std::move(observer));
     receive_pipe_handle_ = std::move(receive_pipe.producer_handle);
     send_pipe_handle_ = std::move(send_pipe.consumer_handle);
 
@@ -163,15 +167,15 @@ class MockProxyResolvingSocket : public network::mojom::ProxyResolvingSocket {
   void UpgradeToTLS(
       const net::HostPortPair& host_port_pair,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
-      network::mojom::TLSClientSocketRequest request,
-      network::mojom::SocketObserverPtr observer,
+      mojo::PendingReceiver<network::mojom::TLSClientSocket> receiver,
+      mojo::PendingRemote<network::mojom::SocketObserver> observer,
       network::mojom::ProxyResolvingSocket::UpgradeToTLSCallback callback)
       override {
     NOTREACHED();
   }
 
  private:
-  network::mojom::SocketObserverPtr observer_;
+  mojo::Remote<network::mojom::SocketObserver> observer_;
   mojo::ScopedDataPipeProducerHandle receive_pipe_handle_;
   mojo::ScopedDataPipeConsumerHandle send_pipe_handle_;
 
@@ -189,23 +193,23 @@ class MockProxyResolvingSocketFactory
       const GURL& url,
       network::mojom::ProxyResolvingSocketOptionsPtr options,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
-      network::mojom::ProxyResolvingSocketRequest request,
-      network::mojom::SocketObserverPtr observer,
+      mojo::PendingReceiver<network::mojom::ProxyResolvingSocket> receiver,
+      mojo::PendingRemote<network::mojom::SocketObserver> observer,
       CreateProxyResolvingSocketCallback callback) override {
     auto socket = std::make_unique<MockProxyResolvingSocket>();
     socket_raw_ = socket.get();
-    proxy_resolving_socket_bindings_.AddBinding(std::move(socket),
-                                                std::move(request));
+    proxy_resolving_socket_receivers_.Add(std::move(socket),
+                                          std::move(receiver));
     socket_raw_->Connect(std::move(observer), std::move(callback));
   }
 
   MockProxyResolvingSocket* socket() { return socket_raw_; }
 
  private:
-  mojo::StrongBindingSet<network::mojom::ProxyResolvingSocket>
-      proxy_resolving_socket_bindings_;
+  mojo::UniqueReceiverSet<network::mojom::ProxyResolvingSocket>
+      proxy_resolving_socket_receivers_;
 
-  // Owned by |proxy_resolving_socket_bindings_|.
+  // Owned by |proxy_resolving_socket_receivers_|.
   MockProxyResolvingSocket* socket_raw_;
 
   DISALLOW_COPY_AND_ASSIGN(MockProxyResolvingSocketFactory);
@@ -274,7 +278,7 @@ class NetworkServiceAsyncSocketTest : public testing::Test,
       : ssl_socket_data_provider_(net::ASYNC, net::OK),
         use_mojo_level_mock_(use_mojo_level_mock),
         mock_proxy_resolving_socket_factory_(nullptr),
-        addr_("localhost", 35) {
+        addr_({"localhost", 35}) {
     // GTest death tests by default execute in a fork()ed but not exec()ed
     // process. On macOS, a CoreFoundation-backed MessageLoop will exit with a
     // __THE_PROCESS_HAS_FORKED_AND_YOU_CANNOT_USE_THIS_COREFOUNDATION_FUNCTIONALITY___YOU_MUST_EXEC__
@@ -341,11 +345,12 @@ class NetworkServiceAsyncSocketTest : public testing::Test,
   }
 
   void BindToProxyResolvingSocketFactory(
-      network::mojom::ProxyResolvingSocketFactoryRequest request) {
-    proxy_resolving_socket_factory_binding_ = std::make_unique<
-        mojo::Binding<network::mojom::ProxyResolvingSocketFactory>>(
+      mojo::PendingReceiver<network::mojom::ProxyResolvingSocketFactory>
+          receiver) {
+    proxy_resolving_socket_factory_receiver_ = std::make_unique<
+        mojo::Receiver<network::mojom::ProxyResolvingSocketFactory>>(
         proxy_resolving_socket_factory_.get());
-    proxy_resolving_socket_factory_binding_->Bind(std::move(request));
+    proxy_resolving_socket_factory_receiver_->Bind(std::move(receiver));
   }
 
   enum Signal {
@@ -377,22 +382,23 @@ class NetworkServiceAsyncSocketTest : public testing::Test,
     }
 
     static SignalSocketState FromAsyncSocket(Signal signal,
-                                             buzz::AsyncSocket* async_socket) {
+                                             jingle_xmpp::AsyncSocket* async_socket) {
       return SignalSocketState(
           signal, async_socket->state(), async_socket->error(),
           static_cast<net::Error>(async_socket->GetError()));
     }
 
     static SignalSocketState NoError(Signal signal,
-                                     buzz::AsyncSocket::State state) {
-      return SignalSocketState(signal, state, buzz::AsyncSocket::ERROR_NONE,
+                                     jingle_xmpp::AsyncSocket::State state) {
+      return SignalSocketState(signal, state, jingle_xmpp::AsyncSocket::ERROR_NONE,
                                net::OK);
     }
 
     std::string ToString() const {
-      return base::StrCat(
-          {"(", base::IntToString(signal), ",", base::IntToString(state), ",",
-           base::IntToString(error), ",", base::IntToString(net_error), ")"});
+      return base::StrCat({"(", base::NumberToString(signal), ",",
+                           base::NumberToString(state), ",",
+                           base::NumberToString(error), ",",
+                           base::NumberToString(net_error), ")"});
     }
 
     Signal signal;
@@ -552,7 +558,7 @@ class NetworkServiceAsyncSocketTest : public testing::Test,
   }
 
   // Need a message loop for both the socket and Mojo.
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   AsyncSocketDataProvider async_socket_data_provider_;
   net::SSLSocketDataProvider ssl_socket_data_provider_;
@@ -565,12 +571,12 @@ class NetworkServiceAsyncSocketTest : public testing::Test,
   MockProxyResolvingSocketFactory* mock_proxy_resolving_socket_factory_;
   std::unique_ptr<network::mojom::ProxyResolvingSocketFactory>
       proxy_resolving_socket_factory_;
-  std::unique_ptr<mojo::Binding<network::mojom::ProxyResolvingSocketFactory>>
-      proxy_resolving_socket_factory_binding_;
+  std::unique_ptr<mojo::Receiver<network::mojom::ProxyResolvingSocketFactory>>
+      proxy_resolving_socket_factory_receiver_;
 
   std::unique_ptr<NetworkServiceAsyncSocket> ns_async_socket_;
   base::circular_deque<SignalSocketState> signal_socket_states_;
-  const rtc::SocketAddress addr_;
+  const net::HostPortPair addr_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkServiceAsyncSocketTest);
@@ -610,20 +616,8 @@ TEST_F(NetworkServiceAsyncSocketTest, DoubleClose) {
   ExpectClosed();
 }
 
-TEST_F(NetworkServiceAsyncSocketTest, NoHostnameConnect) {
-  rtc::IPAddress ip_address;
-  EXPECT_TRUE(rtc::IPFromString("127.0.0.1", &ip_address));
-  const rtc::SocketAddress no_hostname_addr(ip_address, addr_.port());
-  EXPECT_FALSE(ns_async_socket_->Connect(no_hostname_addr));
-  ExpectErrorState(NetworkServiceAsyncSocket::STATE_CLOSED,
-                   NetworkServiceAsyncSocket::ERROR_DNS);
-
-  EXPECT_TRUE(ns_async_socket_->Close());
-  ExpectClosed();
-}
-
 TEST_F(NetworkServiceAsyncSocketTest, ZeroPortConnect) {
-  const rtc::SocketAddress zero_port_addr(addr_.hostname(), 0);
+  const net::HostPortPair zero_port_addr({addr_.host(), 0});
   EXPECT_FALSE(ns_async_socket_->Connect(zero_port_addr));
   ExpectErrorState(NetworkServiceAsyncSocket::STATE_CLOSED,
                    NetworkServiceAsyncSocket::ERROR_DNS);
@@ -912,7 +906,7 @@ TEST_F(NetworkServiceAsyncSocketTest, SyncWrite) {
   async_socket_data_provider_.AddWrite(
       net::MockWrite(net::SYNCHRONOUS, kWriteData + 3, 5));
   async_socket_data_provider_.AddWrite(net::MockWrite(
-      net::SYNCHRONOUS, kWriteData + 8, arraysize(kWriteData) - 8));
+      net::SYNCHRONOUS, kWriteData + 8, base::size(kWriteData) - 8));
   DoOpenClosed();
 
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData, 3));
@@ -920,7 +914,7 @@ TEST_F(NetworkServiceAsyncSocketTest, SyncWrite) {
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData + 3, 5));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(
-      ns_async_socket_->Write(kWriteData + 8, arraysize(kWriteData) - 8));
+      ns_async_socket_->Write(kWriteData + 8, base::size(kWriteData) - 8));
   base::RunLoop().RunUntilIdle();
 
   ExpectNoSignal();
@@ -936,14 +930,14 @@ TEST_F(NetworkServiceAsyncSocketTest, AsyncWrite) {
   async_socket_data_provider_.AddWrite(
       net::MockWrite(net::ASYNC, kWriteData + 3, 5));
   async_socket_data_provider_.AddWrite(
-      net::MockWrite(net::ASYNC, kWriteData + 8, arraysize(kWriteData) - 8));
+      net::MockWrite(net::ASYNC, kWriteData + 8, base::size(kWriteData) - 8));
 
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData, 3));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData + 3, 5));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(
-      ns_async_socket_->Write(kWriteData + 8, arraysize(kWriteData) - 8));
+      ns_async_socket_->Write(kWriteData + 8, base::size(kWriteData) - 8));
   base::RunLoop().RunUntilIdle();
 
   ExpectNoSignal();
@@ -966,7 +960,7 @@ TEST_F(NetworkServiceAsyncSocketTest, AsyncWriteError) {
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData + 3, 5));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(
-      ns_async_socket_->Write(kWriteData + 8, arraysize(kWriteData) - 8));
+      ns_async_socket_->Write(kWriteData + 8, base::size(kWriteData) - 8));
   base::RunLoop().RunUntilIdle();
 
   ExpectSignalSocketState(SignalSocketState(
@@ -1164,7 +1158,7 @@ TEST_F(NetworkServiceAsyncSocketTest, SSLSyncWrite) {
   async_socket_data_provider_.AddWrite(
       net::MockWrite(net::SYNCHRONOUS, kWriteData + 3, 5));
   async_socket_data_provider_.AddWrite(net::MockWrite(
-      net::SYNCHRONOUS, kWriteData + 8, arraysize(kWriteData) - 8));
+      net::SYNCHRONOUS, kWriteData + 8, base::size(kWriteData) - 8));
   DoSSLOpenClosed();
 
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData, 3));
@@ -1172,7 +1166,7 @@ TEST_F(NetworkServiceAsyncSocketTest, SSLSyncWrite) {
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData + 3, 5));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(
-      ns_async_socket_->Write(kWriteData + 8, arraysize(kWriteData) - 8));
+      ns_async_socket_->Write(kWriteData + 8, base::size(kWriteData) - 8));
   base::RunLoop().RunUntilIdle();
 
   ExpectNoSignal();
@@ -1188,14 +1182,14 @@ TEST_F(NetworkServiceAsyncSocketTest, SSLAsyncWrite) {
   async_socket_data_provider_.AddWrite(
       net::MockWrite(net::ASYNC, kWriteData + 3, 5));
   async_socket_data_provider_.AddWrite(
-      net::MockWrite(net::ASYNC, kWriteData + 8, arraysize(kWriteData) - 8));
+      net::MockWrite(net::ASYNC, kWriteData + 8, base::size(kWriteData) - 8));
 
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData, 3));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(ns_async_socket_->Write(kWriteData + 3, 5));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(
-      ns_async_socket_->Write(kWriteData + 8, arraysize(kWriteData) - 8));
+      ns_async_socket_->Write(kWriteData + 8, base::size(kWriteData) - 8));
   base::RunLoop().RunUntilIdle();
 
   ExpectNoSignal();

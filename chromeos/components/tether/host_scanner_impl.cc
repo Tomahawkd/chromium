@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/connection_preserver.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/device_status_util.h"
@@ -17,7 +17,6 @@
 #include "chromeos/components/tether/master_host_scan_cache.h"
 #include "chromeos/components/tether/tether_host_fetcher.h"
 #include "chromeos/network/network_state.h"
-#include "components/cryptauth/remote_device_loader.h"
 #include "components/session_manager/core/session_manager.h"
 
 namespace chromeos {
@@ -51,8 +50,7 @@ HostScannerImpl::HostScannerImpl(
       device_id_tether_network_guid_map_(device_id_tether_network_guid_map),
       host_scan_cache_(host_scan_cache),
       connection_preserver_(connection_preserver),
-      clock_(clock),
-      weak_ptr_factory_(this) {
+      clock_(clock) {
   session_manager_->AddObserver(this);
 }
 

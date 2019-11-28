@@ -24,9 +24,12 @@
 #include "chrome/test/chromedriver/chrome/ui_events.h"
 #include "chrome/test/chromedriver/chrome/web_view.h"
 #include "chrome/test/chromedriver/command_listener.h"
+#include "chrome/test/chromedriver/constants/version.h"
 #include "chrome/test/chromedriver/key_converter.h"
 #include "chrome/test/chromedriver/session.h"
 #include "third_party/zlib/google/zip.h"
+
+const char kWindowHandlePrefix[] = "CDwindow-";
 
 std::string GenerateId() {
   uint64_t msb = base::RandUint64();
@@ -44,8 +47,10 @@ Status FlattenStringArray(const base::ListValue* src, base::string16* dest) {
       return Status(kUnknownError, "keys should be a string");
     for (size_t j = 0; j < keys_list_part.size(); ++j) {
       if (CBU16_IS_SURROGATE(keys_list_part[j])) {
-        return Status(kUnknownError,
-                      "ChromeDriver only supports characters in the BMP");
+        return Status(
+            kUnknownError,
+            base::StringPrintf("%s only supports characters in the BMP",
+                               kChromeDriverProductShortName));
       }
     }
     keys.append(keys_list_part);
@@ -71,7 +76,7 @@ Status SendKeysOnWindow(
       keys, release_modifiers, &sticky_modifiers_tmp, &events);
   if (status.IsError())
     return status;
-  status = web_view->DispatchKeyEvents(events);
+  status = web_view->DispatchKeyEvents(events, false);
   if (status.IsOk())
     *sticky_modifiers = sticky_modifiers_tmp;
   return status;
@@ -429,4 +434,135 @@ Status NotifyCommandListenersBeforeCommand(Session* session,
     }
   }
   return Status(kOk);
+}
+
+namespace {
+
+template <typename T>
+bool GetOptionalValue(const base::DictionaryValue* dict,
+                      base::StringPiece path,
+                      T* out_value,
+                      bool* has_value,
+                      bool (base::Value::*getter)(T*) const) {
+  if (has_value != nullptr)
+    *has_value = false;
+  const base::Value* value;
+  if (!dict->Get(path, &value))
+    return true;
+  if ((value->*getter)(out_value)) {
+    if (has_value != nullptr)
+      *has_value = true;
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool GetOptionalBool(const base::DictionaryValue* dict,
+                     base::StringPiece path,
+                     bool* out_value,
+                     bool* has_value) {
+  return GetOptionalValue(dict, path, out_value, has_value,
+                          &base::Value::GetAsBoolean);
+}
+
+bool GetOptionalInt(const base::DictionaryValue* dict,
+                    base::StringPiece path,
+                    int* out_value,
+                    bool* has_value) {
+  if (GetOptionalValue(dict, path, out_value, has_value,
+                       &base::Value::GetAsInteger)) {
+    return true;
+  }
+  // See if we have a double that contains an int value.
+  double d;
+  if (!dict->GetDouble(path, &d))
+    return false;
+  int i = static_cast<int>(d);
+  if (i == d) {
+    *out_value = i;
+    if (has_value != nullptr)
+      *has_value = true;
+    return true;
+  }
+  return false;
+}
+
+bool GetOptionalDouble(const base::DictionaryValue* dict,
+                       base::StringPiece path,
+                       double* out_value,
+                       bool* has_value) {
+  // base::Value::GetAsDouble already converts int to double if needed.
+  return GetOptionalValue(dict, path, out_value, has_value,
+                          &base::Value::GetAsDouble);
+}
+
+bool GetOptionalString(const base::DictionaryValue* dict,
+                       base::StringPiece path,
+                       std::string* out_value,
+                       bool* has_value) {
+  return GetOptionalValue(dict, path, out_value, has_value,
+                          &base::Value::GetAsString);
+}
+
+bool GetOptionalSafeInt(const base::DictionaryValue* dict,
+                        base::StringPiece path,
+                        int64_t* out_value,
+                        bool* has_value) {
+  // Check if we have a normal int, which is always a safe int.
+  int temp_int;
+  bool temp_has_value;
+  if (GetOptionalValue(dict, path, &temp_int, &temp_has_value,
+                       &base::Value::GetAsInteger)) {
+    if (has_value != nullptr)
+      *has_value = temp_has_value;
+    if (temp_has_value)
+      *out_value = temp_int;
+    return true;
+  }
+
+  // Check if we have a double, which may or may not contain a safe int value.
+  double temp_double;
+  if (!dict->GetDouble(path, &temp_double))
+    return false;
+
+  // Verify that the value is an integer.
+  int64_t temp_int64 = static_cast<int64_t>(temp_double);
+  if (temp_int64 != temp_double)
+    return false;
+
+  // Verify that the value is in the range for safe integer.
+  if (temp_int64 >= (1ll << 53) || temp_int64 <= -(1ll << 53))
+    return false;
+
+  // Got a good value.
+  *out_value = temp_int64;
+  if (has_value != nullptr)
+    *has_value = true;
+  return true;
+}
+
+bool SetSafeInt(base::DictionaryValue* dict,
+                const base::StringPiece path,
+                int64_t in_value_64) {
+  int int_value = static_cast<int>(in_value_64);
+  if (in_value_64 == int_value)
+    return dict->SetInteger(path, in_value_64);
+  else
+    return dict->SetDouble(path, in_value_64);
+}
+
+std::string WebViewIdToWindowHandle(const std::string& web_view_id) {
+  return kWindowHandlePrefix + web_view_id;
+}
+
+bool WindowHandleToWebViewId(const std::string& window_handle,
+                             std::string* web_view_id) {
+  if (!base::StartsWith(window_handle, kWindowHandlePrefix,
+                        base::CompareCase::SENSITIVE)) {
+    return false;
+  }
+  *web_view_id = window_handle.substr(sizeof(kWindowHandlePrefix) - 1);
+  return true;
 }

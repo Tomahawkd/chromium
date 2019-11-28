@@ -11,22 +11,20 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
-import android.support.annotation.Nullable;
+
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import com.google.ipc.invalidation.util.Preconditions;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.download.DownloadNotificationService.DownloadStatus;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -52,9 +50,6 @@ public class DownloadForegroundServiceManager {
     private static final String TAG = "DownloadFg";
     // Delay to ensure start/stop foreground doesn't happen too quickly (b/74236718).
     private static final int WAIT_TIME_MS = 200;
-
-    // Used to track existing notifications for UMA stats.
-    private final List<Integer> mExistingNotifications = new ArrayList<>();
 
     // Variables used to ensure start/stop foreground doesn't happen too quickly (b/74236718).
     private final Handler mHandler = new Handler();
@@ -92,15 +87,6 @@ public class DownloadForegroundServiceManager {
         mDownloadUpdateQueue.put(notificationId,
                 new DownloadUpdate(notificationId, notification, downloadStatus, context));
         processDownloadUpdateQueue(false /* not isProcessingPending */);
-
-        // Record instance where notification is being launched for the first time.
-        if (!mExistingNotifications.contains(notificationId)) {
-            mExistingNotifications.add(notificationId);
-            if (Build.VERSION.SDK_INT < 24) {
-                DownloadNotificationUmaHelper.recordNotificationFlickerCountHistogram(
-                        DownloadNotificationUmaHelper.LaunchType.LAUNCH);
-            }
-        }
     }
 
     /**
@@ -274,41 +260,33 @@ public class DownloadForegroundServiceManager {
         int stopForegroundNotification;
         if (downloadStatus == DownloadNotificationService.DownloadStatus.CANCELLED) {
             stopForegroundNotification = DownloadForegroundService.StopForegroundNotification.KILL;
-        } else if (downloadStatus == DownloadNotificationService.DownloadStatus.PAUSED) {
-            stopForegroundNotification =
-                    DownloadForegroundService.StopForegroundNotification.DETACH_OR_PERSIST;
         } else {
             stopForegroundNotification =
-                    DownloadForegroundService.StopForegroundNotification.DETACH_OR_ADJUST;
+                    DownloadForegroundService.StopForegroundNotification.DETACH;
         }
 
         DownloadUpdate downloadUpdate = mDownloadUpdateQueue.get(mPinnedNotificationId);
         Notification oldNotification =
                 (downloadUpdate == null) ? null : downloadUpdate.mNotification;
 
-        boolean notificationHandledProperly = stopAndUnbindServiceInternal(
+        stopAndUnbindServiceInternal(
                 stopForegroundNotification, mPinnedNotificationId, oldNotification);
 
         mBoundService = null;
 
-        // Only if the notification was handled properly (ie. detached or killed), reset stored ID.
-        if (notificationHandledProperly) mPinnedNotificationId = INVALID_NOTIFICATION_ID;
+        mPinnedNotificationId = INVALID_NOTIFICATION_ID;
     }
 
     @VisibleForTesting
-    boolean stopAndUnbindServiceInternal(
+    void stopAndUnbindServiceInternal(
             @DownloadForegroundService.StopForegroundNotification int stopForegroundStatus,
             int pinnedNotificationId, Notification pinnedNotification) {
-        boolean notificationHandledProperly = mBoundService.stopDownloadForegroundService(
+        mBoundService.stopDownloadForegroundService(
                 stopForegroundStatus, pinnedNotificationId, pinnedNotification);
         ContextUtils.getApplicationContext().unbindService(mConnection);
 
-        if (notificationHandledProperly) {
-            DownloadForegroundServiceObservers.removeObserver(
-                    DownloadNotificationServiceObserver.class);
-        }
-
-        return notificationHandledProperly;
+        DownloadForegroundServiceObservers.removeObserver(
+                DownloadNotificationServiceObserver.class);
     }
 
     /** Helper code for testing. */

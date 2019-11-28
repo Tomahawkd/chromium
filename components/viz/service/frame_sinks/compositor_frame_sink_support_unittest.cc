@@ -4,7 +4,9 @@
 
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 
-#include "base/macros.h"
+#include "base/bind.h"
+#include "base/stl_util.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/compositor_frame.h"
@@ -13,14 +15,15 @@
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+#include "components/viz/service/surfaces/surface.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/fake_compositor_frame_sink_client.h"
 #include "components/viz/test/fake_external_begin_frame_source.h"
 #include "components/viz/test/fake_surface_observer.h"
 #include "components/viz/test/mock_compositor_frame_sink_client.h"
-#include "services/viz/privileged/interfaces/compositing/frame_sink_manager.mojom.h"
-#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
+#include "services/viz/privileged/mojom/compositing/frame_sink_manager.mojom.h"
+#include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -41,7 +44,8 @@ constexpr bool kNeedsSyncPoints = true;
 constexpr FrameSinkId kArbitraryFrameSinkId(1, 1);
 constexpr FrameSinkId kAnotherArbitraryFrameSinkId(2, 2);
 
-const base::UnguessableToken kArbitraryToken = base::UnguessableToken::Create();
+const base::UnguessableToken kArbitraryToken =
+    base::UnguessableToken::Deserialize(1, 2);
 const base::UnguessableToken kArbitrarySourceId1 =
     base::UnguessableToken::Deserialize(0xdead, 0xbeef);
 const base::UnguessableToken kArbitrarySourceId2 =
@@ -59,6 +63,12 @@ gpu::SyncToken GenTestSyncToken(int id) {
   token.Set(gpu::CommandBufferNamespace::GPU_IO,
             gpu::CommandBufferId::FromUnsafeValue(id), 1);
   return token;
+}
+
+bool BeginFrameArgsAreEquivalent(const BeginFrameArgs& first,
+                                 const BeginFrameArgs& second) {
+  return first.source_id == second.source_id &&
+         first.sequence_number == second.sequence_number;
 }
 
 }  // namespace
@@ -88,6 +98,8 @@ class CompositorFrameSinkSupportTest : public testing::Test {
         frame_sync_token_(GenTestSyncToken(4)),
         consumer_sync_token_(GenTestSyncToken(5)) {
     manager_.SetLocalClient(&frame_sink_manager_client_);
+    now_src_ = std::make_unique<base::SimpleTestTickClock>();
+    manager_.surface_manager()->SetTickClockForTesting(now_src_.get());
     manager_.surface_manager()->AddObserver(&surface_observer_);
     manager_.RegisterFrameSinkId(kArbitraryFrameSinkId,
                                  true /* report_activation */);
@@ -206,13 +218,33 @@ class CompositorFrameSinkSupportTest : public testing::Test {
     manager_.surface_manager()->ExpireOldTemporaryReferences();
   }
 
+  const BeginFrameArgs& GetLastUsedBeginFrameArgs(
+      const CompositorFrameSinkSupport* support) const {
+    return support->LastUsedBeginFrameArgs();
+  }
+
+  void SendPresentationFeedback(CompositorFrameSinkSupport* support,
+                                uint32_t frame_token) {
+    base::TimeTicks draw_time = base::TimeTicks::Now();
+
+    base::TimeTicks swap_time = base::TimeTicks::Now();
+    gfx::SwapTimings timings = {swap_time, swap_time};
+
+    support->DidPresentCompositorFrame(
+        frame_token, draw_time, timings,
+        gfx::PresentationFeedback(base::TimeTicks::Now(),
+                                  base::TimeDelta::FromMilliseconds(16),
+                                  /*flags=*/0));
+  }
+
  protected:
+  std::unique_ptr<base::SimpleTestTickClock> now_src_;
   ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl manager_;
   MockFrameSinkManagerClient frame_sink_manager_client_;
   FakeCompositorFrameSinkClient fake_support_client_;
-  std::unique_ptr<CompositorFrameSinkSupport> support_;
   FakeExternalBeginFrameSource begin_frame_source_;
+  std::unique_ptr<CompositorFrameSinkSupport> support_;
   LocalSurfaceId local_surface_id_;
   FakeSurfaceObserver surface_observer_;
 
@@ -230,7 +262,7 @@ class CompositorFrameSinkSupportTest : public testing::Test {
 TEST_F(CompositorFrameSinkSupportTest, ResourceLifetimeSimple) {
   ResourceId first_frame_ids[] = {1, 2, 3};
   SubmitCompositorFrameWithResources(first_frame_ids,
-                                     arraysize(first_frame_ids));
+                                     base::size(first_frame_ids));
 
   // All of the resources submitted in the first frame are still in use at this
   // time by virtue of being in the pending frame, so none can be returned to
@@ -247,11 +279,11 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetimeSimple) {
   // Resources were never consumed so no sync token should be set.
   CheckReturnedResourcesMatchExpected(
       expected_returned_ids, expected_returned_counts,
-      arraysize(expected_returned_counts), gpu::SyncToken());
+      base::size(expected_returned_counts), gpu::SyncToken());
 
   ResourceId third_frame_ids[] = {4, 5, 6};
   SubmitCompositorFrameWithResources(third_frame_ids,
-                                     arraysize(third_frame_ids));
+                                     base::size(third_frame_ids));
 
   // All of the resources submitted in the third frame are still in use at this
   // time by virtue of being in the pending frame, so none can be returned to
@@ -263,14 +295,14 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetimeSimple) {
   // make all resources of third frame available to be returned.
   ResourceId forth_frame_ids[] = {7, 8, 9};
   SubmitCompositorFrameWithResources(forth_frame_ids,
-                                     arraysize(forth_frame_ids));
+                                     base::size(forth_frame_ids));
 
   ResourceId forth_expected_returned_ids[] = {4, 5, 6};
   int forth_expected_returned_counts[] = {1, 1, 1};
   // Resources were never consumed so no sync token should be set.
   CheckReturnedResourcesMatchExpected(
       forth_expected_returned_ids, forth_expected_returned_counts,
-      arraysize(forth_expected_returned_counts), gpu::SyncToken());
+      base::size(forth_expected_returned_counts), gpu::SyncToken());
 }
 
 // Tests submitting a frame with resources followed by one with no resources
@@ -279,7 +311,7 @@ TEST_F(CompositorFrameSinkSupportTest,
        ResourceLifetimeSimpleWithProviderHoldingAlive) {
   ResourceId first_frame_ids[] = {1, 2, 3};
   SubmitCompositorFrameWithResources(first_frame_ids,
-                                     arraysize(first_frame_ids));
+                                     base::size(first_frame_ids));
 
   // All of the resources submitted in the first frame are still in use at this
   // time by virtue of being in the pending frame, so none can be returned to
@@ -298,7 +330,7 @@ TEST_F(CompositorFrameSinkSupportTest,
   fake_support_client_.clear_returned_resources();
 
   int release_counts[] = {1, 1, 1};
-  UnrefResources(first_frame_ids, release_counts, arraysize(first_frame_ids));
+  UnrefResources(first_frame_ids, release_counts, base::size(first_frame_ids));
 
   // None is returned to the client since DidReceiveCompositorAck is not
   // invoked.
@@ -311,7 +343,7 @@ TEST_F(CompositorFrameSinkSupportTest,
   int expected_returned_counts[] = {1, 1, 1};
   CheckReturnedResourcesMatchExpected(
       expected_returned_ids, expected_returned_counts,
-      arraysize(expected_returned_counts), consumer_sync_token_);
+      base::size(expected_returned_counts), consumer_sync_token_);
 }
 
 // Tests referencing a resource, unref'ing it to zero, then using it again
@@ -319,14 +351,14 @@ TEST_F(CompositorFrameSinkSupportTest,
 TEST_F(CompositorFrameSinkSupportTest, ResourceReusedBeforeReturn) {
   ResourceId first_frame_ids[] = {7};
   SubmitCompositorFrameWithResources(first_frame_ids,
-                                     arraysize(first_frame_ids));
+                                     base::size(first_frame_ids));
 
   // This removes all references to resource id 7.
   SubmitCompositorFrameWithResources(nullptr, 0);
 
   // This references id 7 again.
   SubmitCompositorFrameWithResources(first_frame_ids,
-                                     arraysize(first_frame_ids));
+                                     base::size(first_frame_ids));
 
   // This removes it again.
   SubmitCompositorFrameWithResources(nullptr, 0);
@@ -349,7 +381,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceReusedBeforeReturn) {
 TEST_F(CompositorFrameSinkSupportTest, ResourceRefMultipleTimes) {
   ResourceId first_frame_ids[] = {3, 4};
   SubmitCompositorFrameWithResources(first_frame_ids,
-                                     arraysize(first_frame_ids));
+                                     base::size(first_frame_ids));
 
   // Ref resources from the first frame twice.
   RefCurrentFrameResources();
@@ -357,7 +389,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceRefMultipleTimes) {
 
   ResourceId second_frame_ids[] = {4, 5};
   SubmitCompositorFrameWithResources(second_frame_ids,
-                                     arraysize(second_frame_ids));
+                                     base::size(second_frame_ids));
 
   // Ref resources from the second frame 3 times.
   RefCurrentFrameResources();
@@ -379,18 +411,18 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceRefMultipleTimes) {
     SCOPED_TRACE("unref all 3");
     ResourceId ids_to_unref[] = {3, 4, 5};
     int counts[] = {1, 1, 1};
-    UnrefResources(ids_to_unref, counts, arraysize(ids_to_unref));
+    UnrefResources(ids_to_unref, counts, base::size(ids_to_unref));
 
     EXPECT_EQ(0u, fake_support_client_.returned_resources().size());
     fake_support_client_.clear_returned_resources();
 
-    UnrefResources(ids_to_unref, counts, arraysize(ids_to_unref));
+    UnrefResources(ids_to_unref, counts, base::size(ids_to_unref));
     SubmitCompositorFrameWithResources(nullptr, 0);
     ResourceId expected_returned_ids[] = {3};
     int expected_returned_counts[] = {1};
     CheckReturnedResourcesMatchExpected(
         expected_returned_ids, expected_returned_counts,
-        arraysize(expected_returned_counts), consumer_sync_token_);
+        base::size(expected_returned_counts), consumer_sync_token_);
   }
 
   // Expected refs remaining:
@@ -400,14 +432,14 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceRefMultipleTimes) {
     SCOPED_TRACE("unref 4 and 5");
     ResourceId ids_to_unref[] = {4, 5};
     int counts[] = {1, 1};
-    UnrefResources(ids_to_unref, counts, arraysize(ids_to_unref));
+    UnrefResources(ids_to_unref, counts, base::size(ids_to_unref));
     SubmitCompositorFrameWithResources(nullptr, 0);
 
     ResourceId expected_returned_ids[] = {5};
     int expected_returned_counts[] = {1};
     CheckReturnedResourcesMatchExpected(
         expected_returned_ids, expected_returned_counts,
-        arraysize(expected_returned_counts), consumer_sync_token_);
+        base::size(expected_returned_counts), consumer_sync_token_);
   }
 
   // Now, just 2 refs remaining on resource 4. Unref both at once and make sure
@@ -416,21 +448,21 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceRefMultipleTimes) {
     SCOPED_TRACE("unref only 4");
     ResourceId ids_to_unref[] = {4};
     int counts[] = {2};
-    UnrefResources(ids_to_unref, counts, arraysize(ids_to_unref));
+    UnrefResources(ids_to_unref, counts, base::size(ids_to_unref));
     SubmitCompositorFrameWithResources(nullptr, 0);
 
     ResourceId expected_returned_ids[] = {4};
     int expected_returned_counts[] = {2};
     CheckReturnedResourcesMatchExpected(
         expected_returned_ids, expected_returned_counts,
-        arraysize(expected_returned_counts), consumer_sync_token_);
+        base::size(expected_returned_counts), consumer_sync_token_);
   }
 }
 
 TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
   ResourceId first_frame_ids[] = {1, 2, 3};
   SubmitCompositorFrameWithResources(first_frame_ids,
-                                     arraysize(first_frame_ids));
+                                     base::size(first_frame_ids));
 
   // All of the resources submitted in the first frame are still in use at this
   // time by virtue of being in the pending frame, so none can be returned to
@@ -443,14 +475,14 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
   // only referenced by the first frame.
   ResourceId second_frame_ids[] = {2, 3, 4};
   SubmitCompositorFrameWithResources(second_frame_ids,
-                                     arraysize(second_frame_ids));
+                                     base::size(second_frame_ids));
   {
     SCOPED_TRACE("second frame");
     ResourceId expected_returned_ids[] = {1};
     int expected_returned_counts[] = {1};
     CheckReturnedResourcesMatchExpected(
         expected_returned_ids, expected_returned_counts,
-        arraysize(expected_returned_counts), gpu::SyncToken());
+        base::size(expected_returned_counts), gpu::SyncToken());
   }
 
   // The third frame references a disjoint set of resources, so we expect to
@@ -459,7 +491,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
   // resource ID 4 will have a count of 1.
   ResourceId third_frame_ids[] = {10, 11, 12, 13};
   SubmitCompositorFrameWithResources(third_frame_ids,
-                                     arraysize(third_frame_ids));
+                                     base::size(third_frame_ids));
 
   {
     SCOPED_TRACE("third frame");
@@ -467,7 +499,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
     int expected_returned_counts[] = {2, 2, 1};
     CheckReturnedResourcesMatchExpected(
         expected_returned_ids, expected_returned_counts,
-        arraysize(expected_returned_counts), gpu::SyncToken());
+        base::size(expected_returned_counts), gpu::SyncToken());
   }
 
   // Simulate a ResourceProvider taking a ref on all of the resources.
@@ -475,7 +507,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
 
   ResourceId fourth_frame_ids[] = {12, 13};
   SubmitCompositorFrameWithResources(fourth_frame_ids,
-                                     arraysize(fourth_frame_ids));
+                                     base::size(fourth_frame_ids));
 
   EXPECT_EQ(0u, fake_support_client_.returned_resources().size());
 
@@ -490,7 +522,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
   {
     ResourceId ids_to_unref[] = {10, 11, 12, 13};
     int counts[] = {1, 1, 1, 1};
-    UnrefResources(ids_to_unref, counts, arraysize(ids_to_unref));
+    UnrefResources(ids_to_unref, counts, base::size(ids_to_unref));
   }
 
   // Nothing is returned to the client yet since DidReceiveCompositorFrameAck
@@ -504,7 +536,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
   {
     ResourceId ids_to_unref[] = {12, 13};
     int counts[] = {1, 1};
-    UnrefResources(ids_to_unref, counts, arraysize(ids_to_unref));
+    UnrefResources(ids_to_unref, counts, base::size(ids_to_unref));
   }
 
   // Resources 12 and 13 are still in use by the current frame, so they
@@ -521,7 +553,7 @@ TEST_F(CompositorFrameSinkSupportTest, ResourceLifetime) {
     int expected_returned_counts[] = {1, 1, 2, 2};
     CheckReturnedResourcesMatchExpected(
         expected_returned_ids, expected_returned_counts,
-        arraysize(expected_returned_counts), consumer_sync_token_);
+        base::size(expected_returned_counts), consumer_sync_token_);
   }
 }
 
@@ -558,12 +590,13 @@ TEST_F(CompositorFrameSinkSupportTest, MonotonicallyIncreasingLocalSurfaceIds) {
   auto support = std::make_unique<CompositorFrameSinkSupport>(
       &mock_client, &manager_, kAnotherArbitraryFrameSinkId, kIsRoot,
       kNeedsSyncPoints);
-  LocalSurfaceId local_surface_id1(6, 1, kArbitraryToken);
-  LocalSurfaceId local_surface_id2(6, 2, kArbitraryToken);
-  LocalSurfaceId local_surface_id3(7, 2, kArbitraryToken);
-  LocalSurfaceId local_surface_id4(5, 3, kArbitraryToken);
-  LocalSurfaceId local_surface_id5(8, 1, kArbitraryToken);
-  LocalSurfaceId local_surface_id6(9, 3, kArbitraryToken);
+  base::UnguessableToken embed_token = base::UnguessableToken::Create();
+  LocalSurfaceId local_surface_id1(6, 1, embed_token);
+  LocalSurfaceId local_surface_id2(6, 2, embed_token);
+  LocalSurfaceId local_surface_id3(7, 2, embed_token);
+  LocalSurfaceId local_surface_id4(5, 3, embed_token);
+  LocalSurfaceId local_surface_id5(8, 1, embed_token);
+  LocalSurfaceId local_surface_id6(9, 3, embed_token);
 
   // LocalSurfaceId1(6, 1)
   auto result = support->MaybeSubmitCompositorFrame(
@@ -577,49 +610,23 @@ TEST_F(CompositorFrameSinkSupportTest, MonotonicallyIncreasingLocalSurfaceIds) {
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
   EXPECT_EQ(SubmitResult::ACCEPTED, result);
 
-  // Since the Surface corresponding to |local_surface_id1| was not a dependency
-  // anywhere then the Surface corresponding to |local_surface_id2| will not
-  // activate until it becomes a dependency.
-  Surface* last_created_surface = support->GetLastCreatedSurfaceForTesting();
-  EXPECT_EQ(local_surface_id2,
-            last_created_surface->surface_id().local_surface_id());
-  EXPECT_FALSE(last_created_surface->HasActiveFrame());
-
-  SurfaceId surface_id2(kAnotherArbitraryFrameSinkId, local_surface_id2);
-  auto frame =
-      CompositorFrameBuilder()
-          .AddDefaultRenderPass()
-          .SetActivationDependencies({surface_id2})
-          .SetReferencedSurfaces({SurfaceRange(base::nullopt, surface_id2)})
-          .Build();
-  result = support_->MaybeSubmitCompositorFrame(
-      local_surface_id_, std::move(frame), base::nullopt, 0,
-      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
-  EXPECT_EQ(SubmitResult::ACCEPTED, result);
-
-  // Submitting a CompositorFrame to the parent FrameSink with a dependency on
-  // |local_surface_id2| causes that Surface's CompositorFrame to activate.
-  EXPECT_TRUE(last_created_surface->HasActiveFrame());
-
   // LocalSurfaceId(7, 2): Parent-initiated synchronization.
   result = support->MaybeSubmitCompositorFrame(
       local_surface_id3, MakeDefaultCompositorFrame(), base::nullopt, 0,
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
   EXPECT_EQ(SubmitResult::ACCEPTED, result);
 
-  // LocalSurfaceId(5, 3): Surface Invariants Violation. Not monotonically
-  // increasing.
+  // LocalSurfaceId(5, 3): Submit rejected because not monotonically increasing.
   result = support->MaybeSubmitCompositorFrame(
       local_surface_id4, MakeDefaultCompositorFrame(), base::nullopt, 0,
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
-  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
+  EXPECT_EQ(SubmitResult::SURFACE_ID_DECREASED, result);
 
-  // LocalSurfaceId(8, 1): Surface Invariants Violation. Not monotonically
-  // increasing.
+  // LocalSurfaceId(8, 1): Submit rejected because not monotonically increasing.
   result = support->MaybeSubmitCompositorFrame(
       local_surface_id5, MakeDefaultCompositorFrame(), base::nullopt, 0,
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
-  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
+  EXPECT_EQ(SubmitResult::SURFACE_ID_DECREASED, result);
 
   // LocalSurfaceId(9, 3): Parent AND child-initiated synchronization.
   result = support->MaybeSubmitCompositorFrame(
@@ -853,21 +860,6 @@ TEST_F(CompositorFrameSinkSupportTest, SurfaceInfo) {
             surface_observer_.last_surface_info().size_in_pixels());
 }
 
-// Check that if a CompositorFrame is received with device scale factor of 0, we
-// don't create a Surface for it.
-TEST_F(CompositorFrameSinkSupportTest, ZeroDeviceScaleFactor) {
-  SurfaceId id(support_->frame_sink_id(), local_surface_id_);
-  auto frame = CompositorFrameBuilder()
-                   .AddDefaultRenderPass()
-                   .SetDeviceScaleFactor(0.f)
-                   .Build();
-  const auto result = support_->MaybeSubmitCompositorFrame(
-      local_surface_id_, std::move(frame), base::nullopt, 0,
-      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
-  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
-  EXPECT_FALSE(GetSurfaceForId(id));
-}
-
 // Check that if the size of a CompositorFrame doesn't match the size of the
 // Surface it's being submitted to, we skip the frame.
 TEST_F(CompositorFrameSinkSupportTest, FrameSizeMismatch) {
@@ -896,7 +888,7 @@ TEST_F(CompositorFrameSinkSupportTest, FrameSizeMismatch) {
       local_surface_id_, std::move(frame), base::nullopt, 0,
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
 
-  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
+  EXPECT_EQ(SubmitResult::SIZE_MISMATCH, result);
 
   // All the resources in the rejected frame should have been returned.
   CheckReturnedResourcesMatchExpected(frame_resource_ids,
@@ -929,7 +921,7 @@ TEST_F(CompositorFrameSinkSupportTest, DeviceScaleFactorMismatch) {
   result = support_->MaybeSubmitCompositorFrame(
       local_surface_id_, std::move(frame), base::nullopt, 0,
       mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
-  EXPECT_EQ(SubmitResult::SURFACE_INVARIANTS_VIOLATION, result);
+  EXPECT_EQ(SubmitResult::SIZE_MISMATCH, result);
 }
 
 TEST_F(CompositorFrameSinkSupportTest, PassesOnBeginFrameAcks) {
@@ -962,6 +954,57 @@ TEST_F(CompositorFrameSinkSupportTest, PassesOnBeginFrameAcks) {
   EXPECT_EQ(ack2, surface_observer_.last_ack());
 
   support_->SetNeedsBeginFrame(false);
+}
+
+// Validates that if a client asked to stop receiving begin-frames, then it
+// stops receiving begin-frames after receiving the presentation-feedback from
+// the last submitted frame.
+TEST_F(CompositorFrameSinkSupportTest,
+       NeedsBeginFrameResetAfterPresentationFeedback) {
+  // Request BeginFrames.
+  support_->SetNeedsBeginFrame(true);
+
+  // Issue a BeginFrame. Validate that the client receives the begin-frame.
+  BeginFrameArgs args =
+      CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0, 1);
+  begin_frame_source_.TestOnBeginFrame(args);
+  BeginFrameArgs received_args = GetLastUsedBeginFrameArgs(support_.get());
+  EXPECT_TRUE(BeginFrameArgsAreEquivalent(args, received_args));
+  EXPECT_EQ(received_args.type, BeginFrameArgs::NORMAL);
+
+  // Client submits a compositor frame in response.
+  BeginFrameAck ack(args, true);
+  CompositorFrame frame = CompositorFrameBuilder()
+                              .AddDefaultRenderPass()
+                              .SetBeginFrameAck(ack)
+                              .Build();
+  auto token = frame.metadata.frame_token;
+  support_->SubmitCompositorFrame(local_surface_id_, std::move(frame));
+
+  // Client stops asking for begin-frames.
+  support_->SetNeedsBeginFrame(false);
+
+  // Issue a new BeginFrame. This time, the client should not receive it since
+  // it has stopped asking for begin-frames.
+  args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 1, 2);
+  begin_frame_source_.TestOnBeginFrame(args);
+  received_args = GetLastUsedBeginFrameArgs(support_.get());
+  EXPECT_FALSE(BeginFrameArgsAreEquivalent(args, received_args));
+
+  // The presentation-feedback from the last submitted frame arrives. This
+  // results in the client immediately receiving a MISSED begin-frame.
+  SendPresentationFeedback(support_.get(), token);
+  received_args = GetLastUsedBeginFrameArgs(support_.get());
+  EXPECT_TRUE(BeginFrameArgsAreEquivalent(args, received_args));
+  EXPECT_EQ(received_args.type, BeginFrameArgs::MISSED);
+
+  // Issue another begin-frame. This time, the client should not receive it
+  // anymore since it has stopped asking for begin-frames, and it has already
+  // received the last presentation-feedback.
+  args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 2, 3);
+  begin_frame_source_.TestOnBeginFrame(args);
+  received_args = GetLastUsedBeginFrameArgs(support_.get());
+  EXPECT_FALSE(BeginFrameArgsAreEquivalent(args, received_args));
 }
 
 TEST_F(CompositorFrameSinkSupportTest, FrameIndexCarriedOverToNewSurface) {
@@ -1120,17 +1163,254 @@ TEST_F(CompositorFrameSinkSupportTest,
 TEST_F(CompositorFrameSinkSupportTest,
        OnFrameTokenUpdateAfterFirstSurfaceActivation) {
   LocalSurfaceId local_surface_id(1, kArbitraryToken);
-  uint32_t frame_token = 2u;
   auto frame = CompositorFrameBuilder()
                    .AddDefaultRenderPass()
-                   .SetFrameToken(frame_token)
                    .SetSendFrameTokenToEmbedder(true)
                    .Build();
+  uint32_t frame_token = frame.metadata.frame_token;
+  ASSERT_NE(frame_token, 0u);
 
   testing::InSequence sequence;
   EXPECT_CALL(frame_sink_manager_client_, OnFirstSurfaceActivation(_));
   EXPECT_CALL(frame_sink_manager_client_, OnFrameTokenChanged(_, frame_token));
   support_->SubmitCompositorFrame(local_surface_id, std::move(frame));
+}
+
+// This test verifies that it is not possible to reuse the same embed token in
+// two different frame sinks.
+TEST_F(CompositorFrameSinkSupportTest,
+       DisallowEmbedTokenReuseAcrossFrameSinks) {
+  auto result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id_, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
+
+  // Create another sink and reuse the same embed token to submit a frame. The
+  // frame should be rejected.
+  MockCompositorFrameSinkClient mock_client;
+  auto support = std::make_unique<CompositorFrameSinkSupport>(
+      &mock_client, &manager_, kAnotherArbitraryFrameSinkId,
+      false /* not root frame sink */, kNeedsSyncPoints);
+  LocalSurfaceId local_surface_id(31232, local_surface_id_.embed_token());
+  result = support->MaybeSubmitCompositorFrame(
+      local_surface_id, MakeDefaultCompositorFrame(), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::SURFACE_OWNED_BY_ANOTHER_CLIENT, result);
+}
+
+// This test verifies that the parent sequence number of the submitted
+// CompositorFrames can decrease as long as the embed token changes as well.
+TEST_F(CompositorFrameSinkSupportTest, SubmitAfterReparenting) {
+  LocalSurfaceId local_surface_id1(2, base::UnguessableToken::Create());
+  LocalSurfaceId local_surface_id2(1, base::UnguessableToken::Create());
+
+  ASSERT_NE(local_surface_id1.embed_token(), local_surface_id2.embed_token());
+
+  CompositorFrame frame =
+      CompositorFrameBuilder().AddDefaultRenderPass().Build();
+  SubmitResult result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id1, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
+
+  frame = CompositorFrameBuilder().AddDefaultRenderPass().Build();
+  result = support_->MaybeSubmitCompositorFrame(
+      local_surface_id2, std::move(frame), base::nullopt, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+
+  // Even though |local_surface_id2| has a smaller parent sequence number than
+  // |local_surface_id1|, the submit should still succeed because it has a
+  // different embed token.
+  EXPECT_EQ(SubmitResult::ACCEPTED, result);
+}
+
+// This test verifies that surfaces created with a new embed token are not
+// compared against the evicted parent sequence number of the previous embed
+// token.
+TEST_F(CompositorFrameSinkSupportTest, EvictThenReparent) {
+  LocalSurfaceId local_surface_id1(2, base::UnguessableToken::Create());
+  LocalSurfaceId local_surface_id2(1, base::UnguessableToken::Create());
+
+  ASSERT_NE(local_surface_id1.embed_token(), local_surface_id2.embed_token());
+
+  support_->EvictSurface(local_surface_id1);
+  CompositorFrame frame =
+      CompositorFrameBuilder().AddDefaultRenderPass().Build();
+  support_->SubmitCompositorFrame(local_surface_id2, std::move(frame));
+  manager_.surface_manager()->GarbageCollectSurfaces();
+
+  // Even though |local_surface_id2| has a smaller parent sequence number than
+  // |local_surface_id1|, it should not be evicted because it has a different
+  // embed token.
+  EXPECT_TRUE(
+      GetSurfaceForId(SurfaceId(support_->frame_sink_id(), local_surface_id2)));
+}
+
+// Verifies that invalid hit test region does not get submitted.
+TEST_F(CompositorFrameSinkSupportTest, HitTestRegionValidation) {
+  constexpr FrameSinkId frame_sink_id(1234, 5678);
+  manager_.RegisterFrameSinkId(frame_sink_id, true /* report_activation */);
+  auto support = std::make_unique<CompositorFrameSinkSupport>(
+      &fake_support_client_, &manager_, frame_sink_id, kIsRoot,
+      kNeedsSyncPoints);
+  LocalSurfaceId local_surface_id(6, 1, base::UnguessableToken::Create());
+
+  HitTestRegionList hit_test_region_list;
+
+  // kHitTestAsk not set, async_hit_test_reasons not set.
+  HitTestRegion hit_test_region_1;
+  hit_test_region_1.frame_sink_id = frame_sink_id;
+  hit_test_region_1.flags = HitTestRegionFlags::kHitTestMine;
+  hit_test_region_1.rect.SetRect(100, 100, 200, 400);
+
+  hit_test_region_list.regions.push_back(std::move(hit_test_region_1));
+
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            0u);
+  support->MaybeSubmitCompositorFrame(
+      local_surface_id, MakeDefaultCompositorFrame(), hit_test_region_list, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  // hit_test_region_1 is valid. Submitted region count increases.
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            1u);
+  hit_test_region_list.regions.clear();
+
+  // kHitTestAsk set, async_hit_test_reasons not set.
+  HitTestRegion hit_test_region_2;
+  hit_test_region_2.frame_sink_id = frame_sink_id;
+  hit_test_region_2.flags = HitTestRegionFlags::kHitTestAsk;
+  hit_test_region_2.rect.SetRect(400, 100, 300, 400);
+
+  hit_test_region_list.regions.push_back(std::move(hit_test_region_2));
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            1u);
+  support->MaybeSubmitCompositorFrame(
+      local_surface_id, MakeDefaultCompositorFrame(), hit_test_region_list, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  // hit_test_region_2 is invalid. Submitted region count does not change.
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            1u);
+
+  // kHitTestAsk not set, async_hit_test_reasons set.
+  HitTestRegion hit_test_region_3;
+  hit_test_region_3.frame_sink_id = frame_sink_id;
+  hit_test_region_3.async_hit_test_reasons =
+      AsyncHitTestReasons::kOverlappedRegion;
+  hit_test_region_3.rect.SetRect(400, 100, 300, 400);
+
+  hit_test_region_list.regions.clear();
+  hit_test_region_list.regions.push_back(std::move(hit_test_region_3));
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            1u);
+  support->MaybeSubmitCompositorFrame(
+      local_surface_id, MakeDefaultCompositorFrame(), hit_test_region_list, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  // hit_test_region_3 is invalid. Submitted region count does not change.
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            1u);
+
+  // kHitTestAsk set, async_hit_test_reasons set.
+  HitTestRegion hit_test_region_4;
+  hit_test_region_4.frame_sink_id = frame_sink_id;
+  hit_test_region_4.flags = HitTestRegionFlags::kHitTestAsk;
+  hit_test_region_4.async_hit_test_reasons =
+      AsyncHitTestReasons::kOverlappedRegion;
+  hit_test_region_4.rect.SetRect(400, 100, 300, 400);
+
+  hit_test_region_list.regions.clear();
+  hit_test_region_list.regions.push_back(std::move(hit_test_region_4));
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            1u);
+  support->MaybeSubmitCompositorFrame(
+      local_surface_id, MakeDefaultCompositorFrame(), hit_test_region_list, 0,
+      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback());
+  // hit_test_region_4 is valid. Submitted region count increases.
+  EXPECT_EQ(manager_.hit_test_manager()->submit_hit_test_region_list_index(),
+            2u);
+}
+
+// Verifies that an unresponsive client has OnBeginFrame() messages throttled
+// and then stopped until it becomes responsive again.
+TEST_F(CompositorFrameSinkSupportTest, ThrottleUnresponsiveClient) {
+  FakeExternalBeginFrameSource begin_frame_source(0.f, false);
+
+  MockCompositorFrameSinkClient mock_client;
+  auto support = std::make_unique<CompositorFrameSinkSupport>(
+      &mock_client, &manager_, kAnotherArbitraryFrameSinkId, /*is_root=*/true,
+      kNeedsSyncPoints);
+  support->SetBeginFrameSource(&begin_frame_source);
+  support->SetNeedsBeginFrame(true);
+
+  constexpr base::TimeDelta interval = BeginFrameArgs::DefaultInterval();
+  base::TimeTicks frametime;
+  uint64_t sequence_number = 1;
+  int sent_frames = 0;
+  BeginFrameArgs args;
+
+  // Issue ten OnBeginFrame() messages with no response. They should all be
+  // received by the client.
+  for (; sent_frames < CompositorFrameSinkSupport::kOutstandingFramesThrottle;
+       ++sent_frames) {
+    frametime += interval;
+
+    args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0,
+                                          sequence_number++, frametime);
+    EXPECT_CALL(mock_client, OnBeginFrame(args, _));
+    begin_frame_source.TestOnBeginFrame(args);
+    testing::Mock::VerifyAndClearExpectations(&mock_client);
+  }
+
+  for (; sent_frames < CompositorFrameSinkSupport::kOutstandingFramesStop;
+       ++sent_frames) {
+    base::TimeTicks unthrottle_time =
+        frametime + base::TimeDelta::FromSeconds(1);
+
+    // The client should now be throttled for the next second and won't receive
+    // OnBeginFrames().
+    frametime += interval;
+    args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0,
+                                          sequence_number++, frametime);
+    EXPECT_CALL(mock_client, OnBeginFrame(args, _)).Times(0);
+    begin_frame_source.TestOnBeginFrame(args);
+    testing::Mock::VerifyAndClearExpectations(&mock_client);
+
+    frametime = unthrottle_time - base::TimeDelta::FromMicroseconds(1);
+    args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0,
+                                          sequence_number++, frametime);
+    EXPECT_CALL(mock_client, OnBeginFrame(args, _)).Times(0);
+    begin_frame_source.TestOnBeginFrame(args);
+    testing::Mock::VerifyAndClearExpectations(&mock_client);
+
+    // After one second OnBeginFrame() the client should receive OnBeginFrame().
+    frametime = unthrottle_time;
+    args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0,
+                                          sequence_number++, frametime);
+    EXPECT_CALL(mock_client, OnBeginFrame(args, _));
+    begin_frame_source.TestOnBeginFrame(args);
+    testing::Mock::VerifyAndClearExpectations(&mock_client);
+  }
+
+  // The client should no longer receive OnBeginFrame() until it becomes
+  // responsive again.
+  frametime += base::TimeDelta::FromMinutes(1);
+  args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0,
+                                        sequence_number++, frametime);
+  EXPECT_CALL(mock_client, OnBeginFrame(args, _)).Times(0);
+  begin_frame_source.TestOnBeginFrame(args);
+  testing::Mock::VerifyAndClearExpectations(&mock_client);
+
+  // The client becomes responsive again. The next OnBeginFrame() message should
+  // be delivered.
+  support->DidNotProduceFrame(BeginFrameAck(args, false));
+
+  frametime += interval;
+  args = CreateBeginFrameArgsForTesting(BEGINFRAME_FROM_HERE, 0,
+                                        sequence_number++, frametime);
+  EXPECT_CALL(mock_client, OnBeginFrame(args, _));
+  begin_frame_source.TestOnBeginFrame(args);
+  testing::Mock::VerifyAndClearExpectations(&mock_client);
+
+  support->SetNeedsBeginFrame(false);
 }
 
 }  // namespace viz

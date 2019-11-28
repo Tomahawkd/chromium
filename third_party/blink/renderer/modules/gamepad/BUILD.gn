@@ -14,6 +14,8 @@ blink_modules_sources("gamepad") {
     "gamepad_button.h",
     "gamepad_button_event.cc",
     "gamepad_button_event.h",
+    "gamepad_comparisons.cc",
+    "gamepad_comparisons.h",
     "gamepad_dispatcher.cc",
     "gamepad_dispatcher.h",
     "gamepad_event.cc",
@@ -22,8 +24,7 @@ blink_modules_sources("gamepad") {
     "gamepad_haptic_actuator.h",
     "gamepad_list.cc",
     "gamepad_list.h",
-    "gamepad_pose.cc",
-    "gamepad_pose.h",
+    "gamepad_listener.h",
     "gamepad_shared_memory_reader.cc",
     "gamepad_shared_memory_reader.h",
     "navigator_gamepad.cc",
@@ -34,5 +35,26 @@ blink_modules_sources("gamepad") {
     "//device/gamepad/public/cpp:shared_with_blink",
     "//device/gamepad/public/mojom:mojom_blink",
     "//third_party/blink/public:blink_headers",
+  ]
+}
+
+jumbo_source_set("unit_tests") {
+  testonly = true
+  sources = [
+    "gamepad_comparisons_test.cc",
+  ]
+
+  configs += [
+    "//third_party/blink/renderer:config",
+    "//third_party/blink/renderer:inside_blink",
+    "//third_party/blink/renderer/core:blink_core_pch",
+  ]
+
+  deps = [
+    "//testing/gmock",
+    "//testing/gtest",
+    "//third_party/blink/renderer/modules",
+    "//third_party/blink/renderer/platform",
+    "//third_party/blink/renderer/platform/wtf",
   ]
 }

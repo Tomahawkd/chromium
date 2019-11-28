@@ -3,13 +3,14 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/task/single_thread_task_executor.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/cpp/service_binding.h"
-#include "services/service_manager/public/cpp/standalone_service/service_main.h"
+#include "services/service_manager/public/cpp/service_executable/service_main.h"
 #include "services/service_manager/public/mojom/service.mojom.h"
-#include "services/service_manager/tests/service_manager/service_manager_unittest.mojom.h"
+#include "services/service_manager/tests/service_manager/service_manager.test-mojom.h"
+#include "services/service_manager/tests/service_manager/test_manifests.h"
 
 namespace {
 
@@ -23,8 +24,8 @@ class Target : public service_manager::Service {
   // service_manager::Service:
   void OnStart() override {
     service_manager::test::mojom::CreateInstanceTestPtr service;
-    service_binding_.GetConnector()->BindInterface("service_manager_unittest",
-                                                   &service);
+    service_binding_.GetConnector()->BindInterface(
+        service_manager::kTestServiceName, &service);
     service->SetTargetIdentity(service_binding_.identity());
   }
 
@@ -36,6 +37,6 @@ class Target : public service_manager::Service {
 }  // namespace
 
 void ServiceMain(service_manager::mojom::ServiceRequest request) {
-  base::MessageLoop message_loop;
+  base::SingleThreadTaskExecutor main_task_executor;
   Target(std::move(request)).RunUntilTermination();
 }

@@ -5,19 +5,20 @@
 #include "ash/assistant/ui/assistant_main_view.h"
 
 #include <algorithm>
-#include <memory>
+#include <utility>
 
-#include "ash/assistant/assistant_controller.h"
-#include "ash/assistant/assistant_interaction_controller.h"
-#include "ash/assistant/assistant_ui_controller.h"
 #include "ash/assistant/model/assistant_interaction_model.h"
+#include "ash/assistant/model/assistant_ui_model.h"
+#include "ash/assistant/ui/assistant_notification_overlay.h"
 #include "ash/assistant/ui/assistant_ui_constants.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/caption_bar.h"
 #include "ash/assistant/ui/dialog_plate/dialog_plate.h"
 #include "ash/assistant/ui/main_stage/assistant_main_stage.h"
 #include "ash/assistant/util/animation_util.h"
 #include "ash/assistant/util/assistant_util.h"
 #include "base/time/time.h"
+#include "chromeos/services/assistant/public/features.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer_animation_element.h"
 #include "ui/compositor/layer_animator.h"
@@ -47,38 +48,31 @@ constexpr base::TimeDelta kDialogPlateAnimationFadeInDuration =
 
 }  // namespace
 
-AssistantMainView::AssistantMainView(AssistantController* assistant_controller)
-    : assistant_controller_(assistant_controller),
-      min_height_dip_(kMinHeightDip) {
+AssistantMainViewDeprecated::AssistantMainViewDeprecated(
+    AssistantViewDelegate* delegate)
+    : delegate_(delegate), min_height_dip_(kMinHeightDip) {
   InitLayout();
 
   // Set delegate/observers.
-  caption_bar_->set_delegate(assistant_controller_->ui_controller());
-  dialog_plate_->AddObserver(assistant_controller_->interaction_controller());
-  dialog_plate_->AddObserver(assistant_controller_->ui_controller());
+  caption_bar_->set_delegate(delegate_->GetCaptionBarDelegate());
 
-  // The AssistantController indirectly owns the view hierarchy to which
-  // AssistantMainView belongs so is guaranteed to outlive it.
-  assistant_controller_->ui_controller()->AddModelObserver(this);
+  // The AssistantViewDelegate should outlive AssistantMainView.
+  delegate_->AddUiModelObserver(this);
 }
 
-AssistantMainView::~AssistantMainView() {
-  dialog_plate_->RemoveObserver(assistant_controller_->ui_controller());
-  dialog_plate_->RemoveObserver(
-      assistant_controller_->interaction_controller());
-
-  assistant_controller_->ui_controller()->RemoveModelObserver(this);
+AssistantMainViewDeprecated::~AssistantMainViewDeprecated() {
+  delegate_->RemoveUiModelObserver(this);
 }
 
-const char* AssistantMainView::GetClassName() const {
+const char* AssistantMainViewDeprecated::GetClassName() const {
   return "AssistantMainView";
 }
 
-gfx::Size AssistantMainView::CalculatePreferredSize() const {
+gfx::Size AssistantMainViewDeprecated::CalculatePreferredSize() const {
   return gfx::Size(kPreferredWidthDip, GetHeightForWidth(kPreferredWidthDip));
 }
 
-int AssistantMainView::GetHeightForWidth(int width) const {
+int AssistantMainViewDeprecated::GetHeightForWidth(int width) const {
   // |min_height_dip_| <= |height| <= |kMaxHeightDip|.
   int height = views::View::GetHeightForWidth(width);
   height = std::min(height, kMaxHeightDip);
@@ -86,20 +80,29 @@ int AssistantMainView::GetHeightForWidth(int width) const {
 
   // |height| should not exceed the height of the usable work area.
   // |height| >= |kMinHeightDip|.
-  gfx::Rect usable_work_area =
-      assistant_controller_->ui_controller()->model()->usable_work_area();
+  gfx::Rect usable_work_area = delegate_->GetUiModel()->usable_work_area();
   if (height > usable_work_area.height())
     height = std::max(kMinHeightDip, usable_work_area.height());
 
   return height;
 }
 
-void AssistantMainView::OnBoundsChanged(const gfx::Rect& prev_bounds) {
+void AssistantMainViewDeprecated::OnBoundsChanged(
+    const gfx::Rect& prev_bounds) {
   // Until Assistant UI is hidden, the view may grow in height but not shrink.
   min_height_dip_ = std::max(min_height_dip_, height());
 }
 
-void AssistantMainView::ChildPreferredSizeChanged(views::View* child) {
+void AssistantMainViewDeprecated::VisibilityChanged(views::View* starting_from,
+                                                    bool visible) {
+  // Overlays behave like children of AssistantMainView so they should only be
+  // visible while AssistantMainView is visible.
+  for (std::unique_ptr<AssistantOverlay>& overlay : overlays_)
+    overlay->SetVisible(visible);
+}
+
+void AssistantMainViewDeprecated::ChildPreferredSizeChanged(
+    views::View* child) {
   PreferredSizeChanged();
 
   // Even though the preferred size for |main_stage_| may change, its bounds
@@ -112,17 +115,24 @@ void AssistantMainView::ChildPreferredSizeChanged(views::View* child) {
   }
 }
 
-void AssistantMainView::ChildVisibilityChanged(views::View* child) {
+void AssistantMainViewDeprecated::ChildVisibilityChanged(views::View* child) {
   PreferredSizeChanged();
 }
 
-views::View* AssistantMainView::FindFirstFocusableView() {
+views::View* AssistantMainViewDeprecated::FindFirstFocusableView() {
   // In those instances in which we want to override views::FocusSearch
   // behavior, DialogPlate will identify the first focusable view.
   return dialog_plate_->FindFirstFocusableView();
 }
 
-void AssistantMainView::InitLayout() {
+std::vector<AssistantOverlay*> AssistantMainViewDeprecated::GetOverlays() {
+  std::vector<AssistantOverlay*> overlays;
+  for (std::unique_ptr<AssistantOverlay>& overlay : overlays_)
+    overlays.push_back(overlay.get());
+  return overlays;
+}
+
+void AssistantMainViewDeprecated::InitLayout() {
   views::BoxLayout* layout_manager =
       SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kVertical));
@@ -138,22 +148,30 @@ void AssistantMainView::InitLayout() {
   AddChildView(caption_bar_);
 
   // Main stage.
-  main_stage_ = new AssistantMainStage(assistant_controller_);
+  main_stage_ = new AssistantMainStage(delegate_);
   AddChildView(main_stage_);
 
   layout_manager->SetFlexForView(main_stage_, 1);
 
   // Dialog plate.
-  dialog_plate_ = new DialogPlate(assistant_controller_);
+  dialog_plate_ = new DialogPlate(delegate_);
 
   // The dialog plate will be animated on its own layer.
   dialog_plate_->SetPaintToLayer();
   dialog_plate_->layer()->SetFillsBoundsOpaquely(false);
 
   AddChildView(dialog_plate_);
+
+  // Notification overlay.
+  if (chromeos::assistant::features::IsInAssistantNotificationsEnabled()) {
+    auto notification_overlay =
+        std::make_unique<AssistantNotificationOverlay>(delegate_);
+    notification_overlay->set_owned_by_client();
+    overlays_.push_back(std::move(notification_overlay));
+  }
 }
 
-void AssistantMainView::OnUiVisibilityChanged(
+void AssistantMainViewDeprecated::OnUiVisibilityChanged(
     AssistantVisibility new_visibility,
     AssistantVisibility old_visibility,
     base::Optional<AssistantEntryPoint> entry_point,
@@ -192,7 +210,7 @@ void AssistantMainView::OnUiVisibilityChanged(
   }
 }
 
-void AssistantMainView::RequestFocus() {
+void AssistantMainViewDeprecated::RequestFocus() {
   dialog_plate_->RequestFocus();
 }
 

@@ -14,11 +14,11 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
+#include "base/stl_util.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -59,7 +59,7 @@ static void FlushTaskRunner(base::SequencedTaskRunner* task_runner) {
 class WebRtcRtpDumpWriterTest : public testing::Test {
  public:
   WebRtcRtpDumpWriterTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+      : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP),
         temp_dir_(new base::ScopedTempDir()) {}
 
   void SetUp() override {
@@ -149,9 +149,9 @@ class WebRtcRtpDumpWriterTest : public testing::Test {
     size_t dump_pos = 0;
 
     // Verifies the first line.
-    EXPECT_EQ(memcmp(&dump[0], kFirstLine, arraysize(kFirstLine) - 1), 0);
+    EXPECT_EQ(memcmp(&dump[0], kFirstLine, base::size(kFirstLine) - 1), 0);
 
-    dump_pos += arraysize(kFirstLine) - 1;
+    dump_pos += base::size(kFirstLine) - 1;
     EXPECT_GT(dump.size(), dump_pos);
 
     // Skips the file header.
@@ -231,7 +231,7 @@ class WebRtcRtpDumpWriterTest : public testing::Test {
     return true;
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<base::ScopedTempDir> temp_dir_;
   base::FilePath incoming_dump_path_;
   base::FilePath outgoing_dump_path_;

@@ -13,6 +13,8 @@
 #include "base/macros.h"
 #include "base/optional.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
+#include "chromeos/components/multidevice/software_feature.h"
+#include "chromeos/services/device_sync/feature_status_change.h"
 #include "chromeos/services/device_sync/public/cpp/device_sync_client.h"
 #include "chromeos/services/device_sync/public/mojom/device_sync.mojom.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
@@ -30,6 +32,7 @@ class FakeDeviceSyncClient : public DeviceSyncClient {
   int GetForceEnrollmentNowCallbackQueueSize();
   int GetForceSyncNowCallbackQueueSize();
   int GetSetSoftwareFeatureStateCallbackQueueSize();
+  int GetSetFeatureStatusCallbackQueueSize();
   int GetFindEligibleDevicesCallbackQueueSize();
   int GetGetDebugInfoCallbackQueueSize();
 
@@ -37,10 +40,16 @@ class FakeDeviceSyncClient : public DeviceSyncClient {
   void InvokePendingForceSyncNowCallback(bool success);
   void InvokePendingSetSoftwareFeatureStateCallback(
       mojom::NetworkRequestResult result_code);
+  void InvokePendingSetFeatureStatusCallback(
+      mojom::NetworkRequestResult result_code);
   void InvokePendingFindEligibleDevicesCallback(
       mojom::NetworkRequestResult result_code,
       multidevice::RemoteDeviceRefList eligible_devices,
       multidevice::RemoteDeviceRefList ineligible_devices);
+  void InvokePendingGetDevicesActivityStatusCallback(
+      mojom::NetworkRequestResult result_code,
+      base::Optional<std::vector<mojom::DeviceActivityStatusPtr>>
+          device_activity_status);
   void InvokePendingGetDebugInfoCallback(mojom::DebugInfoPtr debug_info_ptr);
 
   void set_synced_devices(multidevice::RemoteDeviceRefList synced_devices) {
@@ -66,12 +75,19 @@ class FakeDeviceSyncClient : public DeviceSyncClient {
       override;
   void SetSoftwareFeatureState(
       const std::string public_key,
-      cryptauth::SoftwareFeature software_feature,
+      multidevice::SoftwareFeature software_feature,
       bool enabled,
       bool is_exclusive,
       mojom::DeviceSync::SetSoftwareFeatureStateCallback callback) override;
-  void FindEligibleDevices(cryptauth::SoftwareFeature software_feature,
+  void SetFeatureStatus(
+      const std::string& device_instance_id,
+      multidevice::SoftwareFeature feature,
+      FeatureStatusChange status_change,
+      mojom::DeviceSync::SetFeatureStatusCallback callback) override;
+  void FindEligibleDevices(multidevice::SoftwareFeature software_feature,
                            FindEligibleDevicesCallback callback) override;
+  void GetDevicesActivityStatus(
+      mojom::DeviceSync::GetDevicesActivityStatusCallback callback) override;
   void GetDebugInfo(mojom::DeviceSync::GetDebugInfoCallback callback) override;
 
   multidevice::RemoteDeviceRefList synced_devices_;
@@ -83,7 +99,11 @@ class FakeDeviceSyncClient : public DeviceSyncClient {
       force_sync_now_callback_queue_;
   std::queue<mojom::DeviceSync::SetSoftwareFeatureStateCallback>
       set_software_feature_state_callback_queue_;
+  std::queue<mojom::DeviceSync::SetFeatureStatusCallback>
+      set_feature_status_callback_queue_;
   std::queue<FindEligibleDevicesCallback> find_eligible_devices_callback_queue_;
+  std::queue<mojom::DeviceSync::GetDevicesActivityStatusCallback>
+      get_devices_activity_status_callback_queue_;
   std::queue<mojom::DeviceSync::GetDebugInfoCallback>
       get_debug_info_callback_queue_;
 

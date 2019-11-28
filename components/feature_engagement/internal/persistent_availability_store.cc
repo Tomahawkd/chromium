@@ -15,7 +15,7 @@
 #include "components/feature_engagement/internal/proto/availability.pb.h"
 #include "components/feature_engagement/internal/stats.h"
 #include "components/feature_engagement/public/feature_list.h"
-#include "components/leveldb_proto/proto_database.h"
+#include "components/leveldb_proto/public/proto_database.h"
 
 namespace feature_engagement {
 
@@ -23,10 +23,6 @@ namespace {
 
 using KeyAvailabilityPair = std::pair<std::string, Availability>;
 using KeyAvailabilityList = std::vector<KeyAvailabilityPair>;
-
-// Corresponds to a UMA suffix "LevelDBOpenResults" in histograms.xml.
-// Please do not change.
-const char kDatabaseUMAName[] = "FeatureEngagementTrackerAvailabilityStore";
 
 void OnDBUpdateComplete(
     std::unique_ptr<leveldb_proto::ProtoDatabase<Availability>> db,
@@ -121,7 +117,8 @@ void OnDBInitComplete(
     FeatureVector feature_filter,
     PersistentAvailabilityStore::OnLoadedCallback on_loaded_callback,
     uint32_t current_day,
-    bool success) {
+    leveldb_proto::Enums::InitStatus status) {
+  bool success = status == leveldb_proto::Enums::InitStatus::kOK;
   stats::RecordDbInitEvent(success, stats::StoreType::AVAILABILITY_STORE);
 
   if (!success) {
@@ -146,8 +143,7 @@ void PersistentAvailabilityStore::LoadAndUpdateStore(
     PersistentAvailabilityStore::OnLoadedCallback on_loaded_callback,
     uint32_t current_day) {
   auto* db_ptr = db.get();
-  db_ptr->Init(kDatabaseUMAName,
-               base::BindOnce(&OnDBInitComplete, std::move(db),
+  db_ptr->Init(base::BindOnce(&OnDBInitComplete, std::move(db),
                               std::move(feature_filter),
                               std::move(on_loaded_callback), current_day));
 }

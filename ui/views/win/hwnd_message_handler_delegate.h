@@ -10,9 +10,10 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
 
+class SkPath;
+
 namespace gfx {
 class Insets;
-class Path;
 class Point;
 class Rect;
 class Size;
@@ -56,9 +57,11 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   // TODO(bsep): Investigate deleting this when v2 Apps support is removed.
   virtual bool HasFrame() const = 0;
 
+  // True if the window should paint as active (regardless of whether it has
+  // system focus).
+  virtual bool ShouldPaintAsActive() const = 0;
+
   virtual void SchedulePaint() = 0;
-  virtual void SetAlwaysRenderAsActive(bool always_render_as_active) = 0;
-  virtual bool IsAlwaysRenderAsActive() = 0;
 
   virtual bool CanResize() const = 0;
   virtual bool CanMaximize() const = 0;
@@ -82,7 +85,7 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   virtual bool WillProcessWorkAreaChange() const = 0;
 
   virtual int GetNonClientComponent(const gfx::Point& point) const = 0;
-  virtual void GetWindowMask(const gfx::Size& size, gfx::Path* mask) = 0;
+  virtual void GetWindowMask(const gfx::Size& size, SkPath* mask) = 0;
 
   // Returns true if the delegate modifies |insets| to define a custom client
   // area for the window, false if the default client area should be used. If
@@ -93,6 +96,10 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   // OnNCCalcSize for more details).
   virtual bool GetClientAreaInsets(gfx::Insets* insets,
                                    HMONITOR monitor) const = 0;
+
+  // Returns true if DWM frame should be extended into client area by |insets|.
+  // Insets are specified in screen pixels not DIP because that's what DWM uses.
+  virtual bool GetDwmFrameInsetsInPixels(gfx::Insets* insets) const = 0;
 
   // Returns the minimum and maximum size the window can be resized to by the
   // user.
@@ -110,9 +117,6 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // TODO(beng): Investigate migrating these methods to On* prefixes once
   // HWNDMessageHandler is the WindowImpl.
-
-  // Called when another app was activated.
-  virtual void HandleAppDeactivated() = 0;
 
   // Called when the window was activated or deactivated. |active| reflects the
   // new state.
@@ -261,7 +265,7 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   virtual void HandleWindowScaleFactorChanged(float window_scale_factor) = 0;
 
  protected:
-  virtual ~HWNDMessageHandlerDelegate() {}
+  virtual ~HWNDMessageHandlerDelegate() = default;
 };
 
 }  // namespace views

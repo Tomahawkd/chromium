@@ -337,8 +337,7 @@ ExternalInstallError::ExternalInstallError(
       alert_type_(alert_type),
       manager_(manager),
       error_service_(GlobalErrorServiceFactory::GetForProfile(
-          Profile::FromBrowserContext(browser_context_))),
-      weak_factory_(this) {
+          Profile::FromBrowserContext(browser_context_))) {
   prompt_.reset(new ExtensionInstallPrompt::Prompt(
       ExtensionInstallPrompt::EXTERNAL_INSTALL_PROMPT));
 
@@ -382,13 +381,11 @@ void ExternalInstallError::OnInstallPromptDone(
       break;
     case ExtensionInstallPrompt::Result::USER_CANCELED:
       if (extension) {
-        bool uninstallation_result = ExtensionSystem::Get(browser_context_)
+        ExtensionSystem::Get(browser_context_)
             ->extension_service()
             ->UninstallExtension(extension_id_,
                                  extensions::UNINSTALL_REASON_INSTALL_CANCELED,
                                  nullptr);  // Ignore error.
-        UMA_HISTOGRAM_BOOLEAN("Extensions.ExternalWarningUninstallationResult",
-                              uninstallation_result);
       }
       break;
     case ExtensionInstallPrompt::Result::ABORTED:

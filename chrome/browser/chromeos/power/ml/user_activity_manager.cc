@@ -7,10 +7,10 @@
 #include <cmath>
 
 #include "ash/public/cpp/ash_pref_names.h"
+#include "base/bind.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "chrome/browser/chromeos/power/ml/real_boot_clock.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/resource_coordinator/tab_metrics_logger.h"
@@ -18,10 +18,10 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chromeos/chromeos_features.h"
+#include "chromeos/constants/chromeos_features.h"
+#include "chromeos/constants/devicetype.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager/power_supply_properties.pb.h"
-#include "chromeos/system/devicetype.h"
 #include "components/ukm/content/source_url_recorder.h"
 #include "content/public/common/page_importance_signals.h"
 
@@ -49,6 +49,14 @@ void LogPowerMLModelDimResult(FinalResult result) {
 
 void LogPowerMLModelNoDimResult(FinalResult result) {
   UMA_HISTOGRAM_ENUMERATION("PowerML.ModelNoDim.Result", result);
+}
+
+void LogPowerMLSmartDimModelRequestCancel(base::TimeDelta time) {
+  UMA_HISTOGRAM_TIMES("PowerML.SmartDimModel.RequestCanceledDuration", time);
+}
+
+void LogPowerMLSmartDimModelRequestComplete(base::TimeDelta time) {
+  UMA_HISTOGRAM_TIMES("PowerML.SmartDimModel.RequestCompleteDuration", time);
 }
 
 void LogMetricsToUMA(const UserActivityEvent& event) {
@@ -80,40 +88,34 @@ void LogMetricsToUMA(const UserActivityEvent& event) {
 }  // namespace
 
 struct UserActivityManager::PreviousIdleEventData {
-  // Gap between two ScreenDimImminent signals.
-  base::TimeDelta dim_imminent_signal_interval;
-  // Features recorded for the ScreenDimImminent signal at the beginning of
-  // |dim_imminent_signal_interval|.
+  // Gap between two smart dim decision requests.
+  base::TimeDelta smart_dim_request_interval;
+  // Features recorded for the smart dim decision request at the beginning of
+  // |smart_dim_request_interval|.
   UserActivityEvent::Features features;
-  // Model prediction recorded for the ScreenDimImminent signal at the beginning
-  // of |dim_imminent_signal_interval|.
+  // Model prediction recorded for the smart dim decision request signal at the
+  // beginning of |smart_dim_request_interval|.
   UserActivityEvent::ModelPrediction model_prediction;
 };
 
 UserActivityManager::UserActivityManager(
     UserActivityUkmLogger* ukm_logger,
-    IdleEventNotifier* idle_event_notifier,
     ui::UserActivityDetector* detector,
     chromeos::PowerManagerClient* power_manager_client,
     session_manager::SessionManager* session_manager,
-    viz::mojom::VideoDetectorObserverRequest request,
+    mojo::PendingReceiver<viz::mojom::VideoDetectorObserver> receiver,
     const chromeos::ChromeUserManager* user_manager,
     SmartDimModel* smart_dim_model)
-    : boot_clock_(std::make_unique<RealBootClock>()),
-      ukm_logger_(ukm_logger),
+    : ukm_logger_(ukm_logger),
       smart_dim_model_(smart_dim_model),
-      idle_event_observer_(this),
       user_activity_observer_(this),
       power_manager_client_observer_(this),
       session_manager_observer_(this),
       session_manager_(session_manager),
-      binding_(this, std::move(request)),
+      receiver_(this, std::move(receiver)),
       user_manager_(user_manager),
-      power_manager_client_(power_manager_client),
-      weak_ptr_factory_(this) {
+      power_manager_client_(power_manager_client) {
   DCHECK(ukm_logger_);
-  DCHECK(idle_event_notifier);
-  idle_event_observer_.Add(idle_event_notifier);
 
   DCHECK(detector);
   user_activity_observer_.Add(detector);
@@ -148,11 +150,13 @@ void UserActivityManager::OnUserActivity(const ui::Event* /* event */) {
 void UserActivityManager::LidEventReceived(
     chromeos::PowerManagerClient::LidState state,
     const base::TimeTicks& /* timestamp */) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   lid_state_ = state;
 }
 
 void UserActivityManager::PowerChanged(
     const power_manager::PowerSupplyProperties& proto) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (external_power_.has_value()) {
     bool power_source_changed = (*external_power_ != proto.external_power());
 
@@ -172,11 +176,13 @@ void UserActivityManager::PowerChanged(
 void UserActivityManager::TabletModeEventReceived(
     chromeos::PowerManagerClient::TabletMode mode,
     const base::TimeTicks& /* timestamp */) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   tablet_mode_ = mode;
 }
 
 void UserActivityManager::ScreenIdleStateChanged(
     const power_manager::ScreenIdleState& proto) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!screen_dimmed_ && proto.dimmed()) {
     screen_dim_occurred_ = true;
   }
@@ -215,6 +221,7 @@ void UserActivityManager::SuspendImminent(
 
 void UserActivityManager::InactivityDelaysChanged(
     const power_manager::PowerManagementPolicy::Delays& delays) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   OnReceiveInactivityDelays(delays);
 }
 
@@ -223,13 +230,19 @@ void UserActivityManager::OnVideoActivityStarted() {
                 UserActivityEvent::Event::VIDEO_ACTIVITY);
 }
 
-void UserActivityManager::OnIdleEventObserved(
-    const IdleEventNotifier::ActivityData& activity_data) {
-  base::TimeDelta now = boot_clock_->GetTimeSinceBoot();
+void UserActivityManager::UpdateAndGetSmartDimDecision(
+    const IdleEventNotifier::ActivityData& activity_data,
+    base::OnceCallback<void(bool)> callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  const base::TimeDelta now = boot_clock_.GetTimeSinceBoot();
   if (waiting_for_final_action_) {
-    // ScreenDimImminent is received again after an earlier ScreenDimImminent
-    // event without any user action/suspend in between.
-    PopulatePreviousEventData(now);
+    if (waiting_for_model_decision_) {
+      CancelDimDecisionRequest();
+    } else {
+      // Smart dim request comes again after an earlier request event without
+      // any user action/suspend in between.
+      PopulatePreviousEventData(now);
+    }
   }
 
   idle_event_start_since_boot_ = now;
@@ -251,33 +264,45 @@ void UserActivityManager::OnIdleEventObserved(
   if (smart_dim_enabled &&
       base::FeatureList::IsEnabled(features::kUserActivityPrediction) &&
       smart_dim_model_) {
-    // Decide whether to defer the imminent screen dim.
-    UserActivityEvent::ModelPrediction model_prediction =
-        smart_dim_model_->ShouldDim(features_);
-
-    // Only defer the dim if the model predicts so and also if the dim was not
-    // previously deferred.
-    if (model_prediction.response() ==
-            UserActivityEvent::ModelPrediction::NO_DIM &&
-        !dim_deferred_) {
-      power_manager_client_->DeferScreenDim();
-      dim_deferred_ = true;
-      model_prediction.set_model_applied(true);
-    } else {
-      // Either model predicts dim or model fails, or it was previously dimmed.
-      dim_deferred_ = false;
-      model_prediction.set_model_applied(
-          model_prediction.response() ==
-              UserActivityEvent::ModelPrediction::DIM &&
-          !dim_deferred_);
-    }
-    model_prediction_ = model_prediction;
+    waiting_for_model_decision_ = true;
+    time_dim_decision_requested_ = base::TimeTicks::Now();
+    smart_dim_model_->RequestDimDecision(
+        features_,
+        base::BindOnce(&UserActivityManager::HandleSmartDimDecision,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
   }
   waiting_for_final_action_ = true;
 }
 
+void UserActivityManager::HandleSmartDimDecision(
+    base::OnceCallback<void(bool)> callback,
+    UserActivityEvent::ModelPrediction prediction) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  waiting_for_model_decision_ = false;
+  const base::TimeDelta wait_time =
+      base::TimeTicks::Now() - time_dim_decision_requested_;
+  LogPowerMLSmartDimModelRequestComplete(wait_time);
+  time_dim_decision_requested_ = base::TimeTicks();
+  // Only defer the dim if the model predicts so and also if the dim was not
+  // previously deferred.
+  if (prediction.response() == UserActivityEvent::ModelPrediction::NO_DIM &&
+      !dim_deferred_) {
+    dim_deferred_ = true;
+    prediction.set_model_applied(true);
+  } else {
+    // Either model predicts dim or model fails, or it was previously dimmed.
+    dim_deferred_ = false;
+    prediction.set_model_applied(prediction.response() ==
+                                     UserActivityEvent::ModelPrediction::DIM &&
+                                 !dim_deferred_);
+  }
+  model_prediction_ = prediction;
+  std::move(callback).Run(dim_deferred_);
+}
+
 void UserActivityManager::OnSessionStateChanged() {
   DCHECK(session_manager_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   const bool was_locked = screen_is_locked_;
   screen_is_locked_ = session_manager_->IsScreenLocked();
   if (!was_locked && screen_is_locked_) {
@@ -287,6 +312,7 @@ void UserActivityManager::OnSessionStateChanged() {
 
 void UserActivityManager::OnReceiveSwitchStates(
     base::Optional<chromeos::PowerManagerClient::SwitchStates> switch_states) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (switch_states.has_value()) {
     lid_state_ = switch_states->lid_state;
     tablet_mode_ = switch_states->tablet_mode;
@@ -462,8 +488,14 @@ TabProperty UserActivityManager::UpdateOpenTabURL() {
 void UserActivityManager::MaybeLogEvent(
     UserActivityEvent::Event::Type type,
     UserActivityEvent::Event::Reason reason) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!waiting_for_final_action_)
     return;
+
+  if (waiting_for_model_decision_) {
+    CancelDimDecisionRequest();
+    return;
+  }
   UserActivityEvent activity_event;
 
   UserActivityEvent::Event* event = activity_event.mutable_event();
@@ -471,7 +503,7 @@ void UserActivityManager::MaybeLogEvent(
   event->set_reason(reason);
   if (idle_event_start_since_boot_) {
     event->set_log_duration_sec(
-        (boot_clock_->GetTimeSinceBoot() - idle_event_start_since_boot_.value())
+        (boot_clock_.GetTimeSinceBoot() - idle_event_start_since_boot_.value())
             .InSeconds());
   }
   event->set_screen_dim_occurred(screen_dim_occurred_);
@@ -493,7 +525,7 @@ void UserActivityManager::MaybeLogEvent(
     if (previous_event->has_log_duration_sec()) {
       previous_event->set_log_duration_sec(
           previous_event->log_duration_sec() +
-          previous_idle_event_data_->dim_imminent_signal_interval.InSeconds());
+          previous_idle_event_data_->smart_dim_request_interval.InSeconds());
     }
 
     *previous_activity_event.mutable_features() =
@@ -515,12 +547,6 @@ void UserActivityManager::MaybeLogEvent(
     previous_positive_actions_count_++;
   }
   ResetAfterLogging();
-}
-
-void UserActivityManager::SetTaskRunnerForTesting(
-    scoped_refptr<base::SequencedTaskRunner> task_runner,
-    std::unique_ptr<BootClock> test_boot_clock) {
-  boot_clock_ = std::move(test_boot_clock);
 }
 
 void UserActivityManager::PopulatePreviousEventData(
@@ -554,7 +580,7 @@ void UserActivityManager::PopulatePreviousEventData(
   LogPowerMLPreviousEventLoggingResult(result);
 
   previous_idle_event_data_ = std::make_unique<PreviousIdleEventData>();
-  previous_idle_event_data_->dim_imminent_signal_interval =
+  previous_idle_event_data_->smart_dim_request_interval =
       now - idle_event_start_since_boot_.value();
 
   previous_idle_event_data_->features = features_;
@@ -568,6 +594,16 @@ void UserActivityManager::ResetAfterLogging() {
   model_prediction_ = base::nullopt;
 
   previous_idle_event_data_.reset();
+}
+
+void UserActivityManager::CancelDimDecisionRequest() {
+  LOG(WARNING) << "Cancelling pending Smart Dim decision request.";
+  smart_dim_model_->CancelPreviousRequest();
+  waiting_for_model_decision_ = false;
+  const base::TimeDelta wait_time =
+      base::TimeTicks::Now() - time_dim_decision_requested_;
+  LogPowerMLSmartDimModelRequestCancel(wait_time);
+  time_dim_decision_requested_ = base::TimeTicks();
 }
 
 }  // namespace ml

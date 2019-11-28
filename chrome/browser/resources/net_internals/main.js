@@ -26,8 +26,9 @@ const MainView = (function() {
   function MainView() {
     assertFirstConstructorCall(MainView);
 
-    if (hasTouchScreen())
+    if (hasTouchScreen()) {
       document.body.classList.add('touch');
+    }
 
     // This must be initialized before the tabs, so they can register as
     // observers.
@@ -113,8 +114,9 @@ const MainView = (function() {
     onUrlHashChange_: function() {
       const parsed = parseUrlHash_(window.location.hash);
 
-      if (!parsed)
+      if (!parsed) {
         return;
+      }
 
       // Redirect deleted pages to #events page, which contains instructions
       // about migrating to using net-export and the external netlog_viewer.
@@ -123,6 +125,11 @@ const MainView = (function() {
             '#quic', '#reporting', '#httpCache', '#modules', '#bandwidth',
             '#prerender'
           ].includes(parsed.tabHash)) {
+        parsed.tabHash = EventsView.TAB_HASH;
+      }
+
+      // Don't switch to the chromeos view if not on chromeos.
+      if (!cr.isChromeOS && parsed.tabHash == '#chromeos') {
         parsed.tabHash = EventsView.TAB_HASH;
       }
 
@@ -162,10 +169,12 @@ const MainView = (function() {
     let paramDict = null;
     for (let i = 1; i < parameters.length; i++) {
       const paramStrings = parameters[i].split('=');
-      if (paramStrings.length != 2)
+      if (paramStrings.length != 2) {
         continue;
-      if (paramDict == null)
+      }
+      if (paramDict == null) {
         paramDict = {};
+      }
       const key = decodeURIComponent(paramStrings[0]);
       const value = decodeURIComponent(paramStrings[1]);
       paramDict[key] = value;

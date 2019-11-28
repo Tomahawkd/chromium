@@ -5,13 +5,10 @@
 #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 
 #include "build/build_config.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/grit/generated_resources.h"
-#include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_view_host.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/rect.h"
@@ -43,48 +40,43 @@ void LocationBarBubbleDelegateView::WebContentMouseHandler::OnEvent(
 
 LocationBarBubbleDelegateView::LocationBarBubbleDelegateView(
     views::View* anchor_view,
-    const gfx::Point& anchor_point,
     content::WebContents* web_contents)
-    : BubbleDialogDelegateView(anchor_view,
-                               anchor_view ? views::BubbleBorder::TOP_RIGHT
-                                           : views::BubbleBorder::NONE),
+    : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_RIGHT),
       WebContentsObserver(web_contents) {
   // Add observer to close the bubble if the fullscreen state changes.
   if (web_contents) {
     Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
-    registrar_.Add(
-        this, chrome::NOTIFICATION_FULLSCREEN_CHANGED,
-        content::Source<FullscreenController>(
-            browser->exclusive_access_manager()->fullscreen_controller()));
+    fullscreen_observer_.Add(
+        browser->exclusive_access_manager()->fullscreen_controller());
   }
-  if (!anchor_view)
-    SetAnchorRect(gfx::Rect(anchor_point, gfx::Size()));
 }
 
 LocationBarBubbleDelegateView::~LocationBarBubbleDelegateView() = default;
 
-void LocationBarBubbleDelegateView::ShowForReason(DisplayReason reason) {
+void LocationBarBubbleDelegateView::ShowForReason(DisplayReason reason,
+                                                  bool allow_refocus_alert) {
   if (reason == USER_GESTURE) {
     GetWidget()->Show();
   } else {
     GetWidget()->ShowInactive();
 
-    // Since this widget is inactive (but shown), accessibility tools won't
-    // alert the user to its presence. Accessibility tools such as screen
-    // readers work by tracking system focus. Give users of these tools a hint
-    // description and alert them to the presence of this widget.
-    GetWidget()->GetRootView()->GetViewAccessibility().OverrideDescription(
-        l10n_util::GetStringUTF8(IDS_SHOW_BUBBLE_INACTIVE_DESCRIPTION));
+    if (allow_refocus_alert) {
+      // Since this widget is inactive (but shown), accessibility tools won't
+      // alert the user to its presence. Accessibility tools such as screen
+      // readers work by tracking system focus. Give users of these tools a hint
+      // description and alert them to the presence of this widget.
+      GetWidget()->GetRootView()->GetViewAccessibility().OverrideDescription(
+          l10n_util::GetStringUTF8(IDS_SHOW_BUBBLE_INACTIVE_DESCRIPTION));
+    }
   }
-  GetWidget()->GetRootView()->NotifyAccessibilityEvent(ax::mojom::Event::kAlert,
-                                                       true);
+  if (GetAccessibleWindowRole() == ax::mojom::Role::kAlert ||
+      GetAccessibleWindowRole() == ax::mojom::Role::kAlertDialog) {
+    GetWidget()->GetRootView()->NotifyAccessibilityEvent(
+        ax::mojom::Event::kAlert, true);
+  }
 }
 
-void LocationBarBubbleDelegateView::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_FULLSCREEN_CHANGED, type);
+void LocationBarBubbleDelegateView::OnFullscreenStateChanged() {
   GetWidget()->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
   CloseBubble();
 }

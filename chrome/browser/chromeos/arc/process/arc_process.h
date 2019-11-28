@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "base/process/process_handle.h"
-#include "components/arc/common/process.mojom.h"
+#include "components/arc/mojom/process.mojom.h"
 
 namespace arc {
 
@@ -56,6 +56,14 @@ class ArcProcess {
   // TODO(cylee|yusukes): Consider removing this function. Having only
   // IsImportant() might be good enough.
   bool IsPersistent() const;
+
+  // Returns true if the process is cached or empty and should have a higher
+  // oom_score_adj to be killed earlier.
+  bool IsCached() const;
+
+  // Returns true if process is in the background but should have a lower
+  // oom_score_adj.
+  bool IsBackgroundProtected() const;
 
  private:
   // Returns true if this is ARC protected process which we don't allow to kill.

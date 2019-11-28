@@ -15,16 +15,14 @@
 #include <vector>
 
 #include "base/containers/circular_deque.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/public/common/previews_state.h"
 #include "content/public/common/resource_load_info.mojom.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/url_loader_throttle.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
@@ -32,6 +30,8 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "url/gurl.h"
@@ -40,14 +40,16 @@ namespace base {
 class WaitableEvent;
 }
 
+namespace blink {
+class ThrottlingURLLoader;
+}
+
 namespace net {
 struct RedirectInfo;
 }
 
 namespace network {
-struct ResourceResponseInfo;
 struct ResourceRequest;
-struct ResourceResponseHead;
 struct URLLoaderCompletionStatus;
 namespace mojom {
 class URLLoaderFactory;
@@ -59,7 +61,6 @@ struct NavigationResponseOverrideParameters;
 class RequestPeer;
 class ResourceDispatcherDelegate;
 struct SyncLoadResponse;
-class ThrottlingURLLoader;
 class URLLoaderClientImpl;
 
 // This class serves as a communication interface to the ResourceDispatcherHost
@@ -92,16 +93,16 @@ class CONTENT_EXPORT ResourceDispatcher {
   // |timeout| is used to abort the sync request on timeouts. TimeDelta::Max()
   // is interpreted as no-timeout.
   // If |download_to_blob_registry| is not null, it is used to redirect the
-  // download to a blob, using StartAsync's |pass_response_pipe_to_peer| flag.
+  // download to a blob.
   virtual void StartSync(
       std::unique_ptr<network::ResourceRequest> request,
       int routing_id,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       SyncLoadResponse* response,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
+      std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles,
       base::TimeDelta timeout,
-      blink::mojom::BlobRegistryPtrInfo download_to_blob_registry,
+      mojo::PendingRemote<blink::mojom::BlobRegistry> download_to_blob_registry,
       std::unique_ptr<RequestPeer> peer);
 
   // Call this method to initiate the request. If this method succeeds, then
@@ -111,11 +112,6 @@ class CONTENT_EXPORT ResourceDispatcher {
   // |routing_id| is used to associated the bridge with a frame's network
   // context.
   //
-  // If |pass_response_pipe_to_peer| is true, the raw datapipe containing the
-  // response body is passed on to |peer| without any extra processing. If it
-  // is set to false instead OnReceivedData is called on the |peer| whenever a
-  // chunk of data is available.
-  //
   // You need to pass a non-null |loading_task_runner| to specify task queue to
   // execute loading tasks on.
   virtual int StartAsync(
@@ -124,17 +120,15 @@ class CONTENT_EXPORT ResourceDispatcher {
       scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       bool is_sync,
-      bool pass_response_pipe_to_peer,
       std::unique_ptr<RequestPeer> peer,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
+      std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles,
       std::unique_ptr<NavigationResponseOverrideParameters>
-          response_override_params,
-      base::OnceClosure* continue_navigation_function);
+          response_override_params);
 
   // Removes a request from the |pending_requests_| list, returning true if the
   // request was found and removed.
-  bool RemovePendingRequest(
+  virtual bool RemovePendingRequest(
       int request_id,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
@@ -182,8 +176,6 @@ class CONTENT_EXPORT ResourceDispatcher {
                        ResourceType resource_type,
                        int render_frame_id,
                        const GURL& request_url,
-                       const std::string& method,
-                       const GURL& referrer,
                        std::unique_ptr<NavigationResponseOverrideParameters>
                            response_override_params);
 
@@ -198,30 +190,26 @@ class CONTENT_EXPORT ResourceDispatcher {
     // The url, method and referrer of the latest response even in case of
     // redirection.
     GURL response_url;
-    std::string response_method;
-    GURL response_referrer;
     bool has_pending_redirect = false;
     base::TimeTicks local_request_start;
     base::TimeTicks local_response_start;
     base::TimeTicks remote_request_start;
     net::LoadTimingInfo load_timing_info;
-    net::HostPortPair host_port_pair;
-    bool network_accessed = false;
-    std::string mime_type;
     std::unique_ptr<NavigationResponseOverrideParameters>
         navigation_response_override;
     bool should_follow_redirect = true;
-    bool always_access_network = false;
     bool redirect_requires_loader_restart = false;
     // Network error code the request completed with, or net::ERR_IO_PENDING if
     // it's not completed. Used both to distinguish completion from
     // cancellation, and to log histograms.
     int net_error = net::ERR_IO_PENDING;
+    PreviewsState previews_state = PreviewsTypes::PREVIEWS_UNSPECIFIED;
 
-    std::vector<content::mojom::RedirectInfoPtr> redirect_info_chain;
+    // These stats will be sent to the browser process.
+    mojom::ResourceLoadInfoPtr resource_load_info;
 
     // For mojo loading.
-    std::unique_ptr<ThrottlingURLLoader> url_loader;
+    std::unique_ptr<blink::ThrottlingURLLoader> url_loader;
     std::unique_ptr<URLLoaderClientImpl> url_loader_client;
   };
   using PendingRequestMap = std::map<int, std::unique_ptr<PendingRequestInfo>>;
@@ -235,23 +223,21 @@ class CONTENT_EXPORT ResourceDispatcher {
 
   // Message response handlers, called by the message handler for this process.
   void OnUploadProgress(int request_id, int64_t position, int64_t size);
-  void OnReceivedResponse(int request_id, const network::ResourceResponseHead&);
-  void OnReceivedCachedMetadata(int request_id,
-                                const std::vector<uint8_t>& data);
+  void OnReceivedResponse(int request_id, network::mojom::URLResponseHeadPtr);
+  void OnReceivedCachedMetadata(int request_id, mojo_base::BigBuffer data);
   void OnReceivedRedirect(
       int request_id,
       const net::RedirectInfo& redirect_info,
-      const network::ResourceResponseHead& response_head,
+      network::mojom::URLResponseHeadPtr response_head,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   void OnStartLoadingResponseBody(int request_id,
                                   mojo::ScopedDataPipeConsumerHandle body);
   void OnRequestComplete(int request_id,
                          const network::URLLoaderCompletionStatus& status);
 
-  void ToResourceResponseInfo(
+  void ToLocalURLResponseHead(
       const PendingRequestInfo& request_info,
-      const network::ResourceResponseHead& browser_info,
-      network::ResourceResponseInfo* renderer_info) const;
+      network::mojom::URLResponseHead& response_head) const;
 
   void ContinueForNavigation(int request_id);
 
@@ -262,7 +248,7 @@ class CONTENT_EXPORT ResourceDispatcher {
 
   base::WaitableEvent* terminate_sync_load_event_ = nullptr;
 
-  base::WeakPtrFactory<ResourceDispatcher> weak_factory_;
+  base::WeakPtrFactory<ResourceDispatcher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ResourceDispatcher);
 };

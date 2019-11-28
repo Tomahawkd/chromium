@@ -5,12 +5,19 @@
 #ifndef CHROME_TEST_BASE_WEB_UI_BROWSER_TEST_H_
 #define CHROME_TEST_BASE_WEB_UI_BROWSER_TEST_H_
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "chrome/browser/ui/webui/web_ui_test_handler.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/javascript_browser_test.h"
+
+namespace {
+class WebUITestMessageHandler;
+}
 
 namespace base {
 class Value;
@@ -19,11 +26,9 @@ class Value;
 namespace content {
 class RenderViewHost;
 class WebUI;
-class WebUIMessageHandler;
 }
 
 class TestChromeWebUIControllerFactory;
-class WebUITestHandler;
 
 // The runner of WebUI javascript based tests.
 // See chrome/test/data/webui/test_api.js for the javascript side test API's.
@@ -31,9 +36,9 @@ class WebUITestHandler;
 // These tests should follow the form given in:
 // chrome/test/data/webui/sample_downloads.js.
 // and the lone test within this class.
-class WebUIBrowserTest : public JavaScriptBrowserTest {
+class BaseWebUIBrowserTest : public JavaScriptBrowserTest {
  public:
-  ~WebUIBrowserTest() override;
+  ~BaseWebUIBrowserTest() override;
 
   // Runs a javascript function in the context of all libraries.
   // Note that calls to functions in test_api.js are not supported.
@@ -96,13 +101,15 @@ class WebUIBrowserTest : public JavaScriptBrowserTest {
 
  protected:
   // URL to dummy WebUI page for testing framework.
-  static const char kDummyURL[];
+  static const std::string kDummyURL;
 
-  WebUIBrowserTest();
+  BaseWebUIBrowserTest();
 
   // Accessors for preload test fixture and name.
   void set_preload_test_fixture(const std::string& preload_test_fixture);
   void set_preload_test_name(const std::string& preload_test_name);
+
+  void set_webui_host(const std::string& webui_host);
 
   // Enable command line flags for test.
   void SetUpCommandLine(base::CommandLine* command_line) override;
@@ -117,7 +124,6 @@ class WebUIBrowserTest : public JavaScriptBrowserTest {
   // Returns a mock WebUI object under test (if any).
   virtual content::WebUIMessageHandler* GetMockMessageHandler();
 
-  WebUITestHandler* test_handler() { return test_handler_.get(); }
   content::WebUI* override_selected_web_ui() {
     return override_selected_web_ui_;
   }
@@ -127,7 +133,12 @@ class WebUIBrowserTest : public JavaScriptBrowserTest {
   static GURL WebUITestDataPathToURL(const base::FilePath::StringType& path);
 
   // Attaches mock and test handlers.
-  virtual void SetupHandlers();
+  virtual void SetupHandlers() = 0;
+
+  WebUITestHandler* test_handler() { return test_handler_.get(); }
+  void set_test_handler(std::unique_ptr<WebUITestHandler> test_handler) {
+    test_handler_ = std::move(test_handler);
+  }
 
  private:
   // Loads all libraries added with AddLibrary(), and calls |function_name| with
@@ -160,6 +171,17 @@ class WebUIBrowserTest : public JavaScriptBrowserTest {
   content::WebUI* override_selected_web_ui_;
 
   std::unique_ptr<TestChromeWebUIControllerFactory> test_factory_;
+};
+
+class WebUIBrowserTest : public BaseWebUIBrowserTest {
+ public:
+  WebUIBrowserTest();
+  ~WebUIBrowserTest() override;
+
+  void SetupHandlers() override;
+
+ private:
+  WebUITestMessageHandler* test_message_handler_;
 };
 
 #endif  // CHROME_TEST_BASE_WEB_UI_BROWSER_TEST_H_

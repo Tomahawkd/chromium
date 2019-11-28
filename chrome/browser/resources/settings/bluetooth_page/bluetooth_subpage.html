@@ -40,29 +40,33 @@
     </style>
 
     <div class="settings-box first" actionable on-click="onEnableTap_">
-      <div id="onOff" class="start" on$="[[bluetoothToggleState]]">
+      <div id="onOff" class="start settings-box-text"
+          on$="[[bluetoothToggleState]]" aria-hidden="true">
         [[getOnOffString_(bluetoothToggleState,
           '$i18nPolymer{deviceOn}', '$i18nPolymer{deviceOff}')]]
       </div>
       <cr-toggle id="enableBluetooth"
           checked="{{bluetoothToggleState}}"
           disabled$="[[!isToggleEnabled_(adapterState, stateChangeInProgress)]]"
-          aria-label="$i18n{bluetoothToggleA11yLabel}">
+          aria-label="$i18n{bluetoothToggleA11yLabel}"
+          aria-live="polite" aria-relevant="all">
       </cr-toggle>
     </div>
 
     <!-- Paired device list -->
     <div class="settings-box first header" hidden="[[!bluetoothToggleState]]">
-      <div class="start">$i18n{bluetoothDeviceListPaired}</div>
+      <div class="start settings-box-text">
+        $i18n{bluetoothDeviceListPaired}
+      </div>
     </div>
-    <div id="noPairedDevices" class="list-frame"
+    <div id="noPairedDevices" class="list-frame settings-box-text"
         hidden="[[!showNoDevices_(bluetoothToggleState, pairedDeviceList_)]]">
       $i18n{bluetoothNoDevices}
     </div>
     <div id="pairedContainer" class="container"
         scrollable on-device-event="onDeviceEvent_"
         hidden="[[!showDevices_(bluetoothToggleState, pairedDeviceList_)]]">
-      <iron-list id="pairedDevices" preserve-focus items="[[pairedDeviceList_]]"
+      <iron-list id="pairedDevices" items="[[pairedDeviceList_]]"
           selection-enabled selected-item="{{selectedPairedItem_}}"
           scroll-target="pairedContainer" class="cr-separators">
         <template>
@@ -75,18 +79,20 @@
 
     <!-- Unpaired device list -->
     <div class="settings-box first header" hidden="[[!bluetoothToggleState]]">
-      <div class="start">$i18n{bluetoothDeviceListUnpaired}</div>
+      <div class="start settings-box-text">
+        $i18n{bluetoothDeviceListUnpaired}
+      </div>
       <paper-spinner-lite active="[[showSpinner_]]">
       </paper-spinner-lite>
     </div>
-    <div id="noUnpairedDevices" class="list-frame"
+    <div id="noUnpairedDevices" class="list-frame settings-box-text"
         hidden="[[!showNoDevices_(bluetoothToggleState, unpairedDeviceList_)]]">
       $i18n{bluetoothNoDevicesFound}
     </div>
     <div id="unpairedContainer" class="container"
         scrollable on-device-event="onDeviceEvent_"
         hidden="[[!showDevices_(bluetoothToggleState, unpairedDeviceList_)]]">
-      <iron-list id="unpairedDevices" class="cr-separators" preserve-focus
+      <iron-list id="unpairedDevices" class="cr-separators"
           items="[[unpairedDeviceList_]]"
           selection-enabled selected-item="{{selectedUnpairedItem_}}"
           scroll-target="unpairedContainer">

@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/values.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -46,7 +47,8 @@ bool CanUseDeprecatedAudioApi(const Extension* extension) {
       .is_available();
 }
 
-bool CanReceiveDeprecatedAudioEvent(content::BrowserContext* context,
+bool CanReceiveDeprecatedAudioEvent(content::BrowserContext* browser_context,
+                                    Feature::Context target_context,
                                     const Extension* extension,
                                     Event* event,
                                     const base::DictionaryValue* filter) {
@@ -90,7 +92,8 @@ void AudioAPI::OnDeviceChanged() {
   std::unique_ptr<Event> event(new Event(
       events::AUDIO_ON_DEVICE_CHANGED, audio::OnDeviceChanged::kEventName,
       std::unique_ptr<base::ListValue>(new base::ListValue())));
-  event->will_dispatch_callback = base::Bind(&CanReceiveDeprecatedAudioEvent);
+  event->will_dispatch_callback =
+      base::BindRepeating(&CanReceiveDeprecatedAudioEvent);
   event_router->BroadcastEvent(std::move(event));
 }
 

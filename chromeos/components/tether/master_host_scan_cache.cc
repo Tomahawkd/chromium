@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/components/tether/persistent_host_scan_cache.h"
 #include "chromeos/components/tether/timer_factory.h"
@@ -26,8 +26,7 @@ MasterHostScanCache::MasterHostScanCache(
       active_host_(active_host),
       network_host_scan_cache_(network_host_scan_cache),
       persistent_host_scan_cache_(persistent_host_scan_cache),
-      is_initializing_(false),
-      weak_ptr_factory_(this) {
+      is_initializing_(false) {
   InitializeFromPersistentCache();
 }
 

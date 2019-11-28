@@ -6,7 +6,7 @@
 #define COMPONENTS_PASSWORD_MANAGER_IOS_JS_PASSWORD_MANAGER_H_
 
 #include "base/ios/block_types.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
 
 namespace autofill {
 struct PasswordFormFillData;
@@ -64,6 +64,16 @@ NSString* SerializePasswordFormFillData(
             withUsername:(NSString*)username
                 password:(NSString*)password
        completionHandler:(void (^)(BOOL))completionHandler;
+
+// Fills new password field for (optional) |newPasswordIdentifier| and for
+// (optional) confirm password field |confirmPasswordIdentifier| in the form
+// identified by |formData|. Invokes |completionHandler| with true if any fields
+// were filled, false otherwise.
+- (void)fillPasswordForm:(NSString*)formName
+        newPasswordIdentifier:(NSString*)newPasswordIdentifier
+    confirmPasswordIdentifier:(NSString*)confirmPasswordIdentifier
+            generatedPassword:(NSString*)generatedPassword
+            completionHandler:(void (^)(BOOL))completionHandler;
 
 // Designated initializer. |receiver| should not be nil.
 - (instancetype)initWithReceiver:(CRWJSInjectionReceiver*)receiver

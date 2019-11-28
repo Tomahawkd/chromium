@@ -33,14 +33,13 @@ cr.define('settings', function() {
     'CONTENT',
     'CR-ACTION-MENU',
     'CR-DIALOG',
+    'CR-ICON-BUTTON',
+    'CR-SLIDER',
     'DIALOG',
     'IMG',
     'IRON-ICON',
     'IRON-LIST',
-    'PAPER-ICON-BUTTON',
-    'PAPER-ICON-BUTTON-LIGHT',
     'PAPER-RIPPLE',
-    'PAPER-SLIDER',
     'PAPER-SPINNER-LITE',
     'SLOT',
     'STYLE',
@@ -59,10 +58,8 @@ cr.define('settings', function() {
    */
   function findAndHighlightMatches_(request, root) {
     let foundMatches = false;
-    let highlights = [];
-    let bubbles = [];
-
-    const domIfTag = Polymer.DomIf ? 'DOM-IF' : 'TEMPLATE';
+    const highlights = [];
+    const bubbles = [];
 
     function doSearch(node) {
       // NOTE: For subpage wrappers <template route-path="..."> when |no-search|
@@ -74,16 +71,16 @@ cr.define('settings', function() {
       //
       // The latter throws an error during the automatic Polymer 2 conversion to
       // <dom-if><template...></dom-if> syntax.
-      // TODO(dpapad):Clean this up once Polymer 2 migration has finished.
-      if (node.nodeName == domIfTag && node.hasAttribute('route-path') &&
+      if (node.nodeName == 'DOM-IF' && node.hasAttribute('route-path') &&
           !node.if && !node['noSearch'] &&
           !node.hasAttribute(SKIP_SEARCH_CSS_ATTRIBUTE)) {
         request.queue_.addRenderTask(new RenderTask(request, node));
         return;
       }
 
-      if (IGNORED_ELEMENTS.has(node.nodeName))
+      if (IGNORED_ELEMENTS.has(node.nodeName)) {
         return;
+      }
 
       if (node instanceof HTMLElement) {
         const element = /** @type {HTMLElement} */ (node);
@@ -95,14 +92,16 @@ cr.define('settings', function() {
 
       if (node.nodeType == Node.TEXT_NODE) {
         const textContent = node.nodeValue.trim();
-        if (textContent.length == 0)
+        if (textContent.length == 0) {
           return;
+        }
 
         if (request.regExp.test(textContent)) {
           foundMatches = true;
-          let bubble = revealParentSection_(node, request.rawQuery_);
-          if (bubble)
+          const bubble = revealParentSection_(node, request.rawQuery_);
+          if (bubble) {
             bubbles.push(bubble);
+          }
 
           // Don't highlight <select> nodes, yellow rectangles can't be
           // displayed within an <option>.
@@ -128,8 +127,9 @@ cr.define('settings', function() {
       }
 
       const shadowRoot = node.shadowRoot;
-      if (shadowRoot)
+      if (shadowRoot) {
         doSearch(shadowRoot);
+      }
     }
 
     doSearch(root);
@@ -149,10 +149,14 @@ cr.define('settings', function() {
     let associatedControl = null;
     // Find corresponding SETTINGS-SECTION parent and make it visible.
     let parent = node;
-    while (parent && parent.nodeName !== 'SETTINGS-SECTION') {
+    while (parent.nodeName !== 'SETTINGS-SECTION') {
       parent = parent.nodeType == Node.DOCUMENT_FRAGMENT_NODE ?
           parent.host :
           parent.parentNode;
+      if (!parent) {
+        // |node| wasn't inside a SETTINGS-SECTION.
+        return null;
+      }
       if (parent.nodeName == 'SETTINGS-SUBPAGE') {
         // TODO(dpapad): Cast to SettingsSubpageElement here.
         associatedControl = assert(
@@ -161,8 +165,7 @@ cr.define('settings', function() {
                 parent.pageTitle + ', but was not found.');
       }
     }
-    if (parent)
-      parent.hiddenBySearch = false;
+    parent.hiddenBySearch = false;
 
     // Need to add the search bubble after the parent SETTINGS-SECTION has
     // become visible, otherwise |offsetWidth| returns zero.
@@ -212,9 +215,8 @@ cr.define('settings', function() {
     exec() {
       const routePath = this.node.getAttribute('route-path');
 
-      const content = Polymer.DomIf ?
-          Polymer.DomIf._contentForTemplate(this.node.firstElementChild) :
-          /** @type {{_content: DocumentFragment}} */ (this.node)._content;
+      const content = Polymer.DomIf._contentForTemplate(
+          /** @type {!HTMLTemplateElement} */ (this.node.firstElementChild));
       const subpageTemplate = content.querySelector('settings-subpage');
       subpageTemplate.setAttribute('route-path', routePath);
       assert(!this.node.if);
@@ -280,8 +282,9 @@ cr.define('settings', function() {
     setSectionsVisibility_(visible) {
       const sections = this.node.querySelectorAll('settings-section');
 
-      for (let i = 0; i < sections.length; i++)
+      for (let i = 0; i < sections.length; i++) {
         sections[i].hiddenBySearch = !visible;
+      }
     }
   }
 
@@ -353,14 +356,16 @@ cr.define('settings', function() {
 
     /** @private */
     consumePending_() {
-      if (this.running_)
+      if (this.running_) {
         return;
+      }
 
       const task = this.popNextTask_();
       if (!task) {
         this.running_ = false;
-        if (this.onEmptyCallback_)
+        if (this.onEmptyCallback_) {
           this.onEmptyCallback_();
+        }
         return;
       }
 
@@ -426,8 +431,8 @@ cr.define('settings', function() {
      * @param {!Array<!Node>} bubbles The search bubbles to add.
      */
     addHighlightsAndBubbles(highlights, bubbles) {
-      this.highlights_.push.apply(this.highlights_, highlights);
-      this.bubbles_.push.apply(this.bubbles_, bubbles);
+      this.highlights_.push(...highlights);
+      this.bubbles_.push(...bubbles);
     }
 
     removeAllTextObservers() {
@@ -439,8 +444,9 @@ cr.define('settings', function() {
 
     removeAllHighlightsAndBubbles() {
       cr.search_highlight_utils.removeHighlights(this.highlights_);
-      for (let bubble of this.bubbles_)
+      for (const bubble of this.bubbles_) {
         bubble.remove();
+      }
       this.highlights_ = [];
       this.bubbles_ = [];
     }
@@ -480,8 +486,9 @@ cr.define('settings', function() {
       // Generate search text by escaping any characters that would be
       // problematic for regular expressions.
       const searchText = this.rawQuery_.trim().replace(SANITIZE_REGEX, '\\$&');
-      if (searchText.length > 0)
+      if (searchText.length > 0) {
         regExp = new RegExp(`(${searchText})`, 'i');
+      }
 
       return regExp;
     }
@@ -572,8 +579,9 @@ cr.define('settings', function() {
 
   /** @return {!SearchManager} */
   function getSearchManager() {
-    if (instance === null)
+    if (instance === null) {
       instance = new SearchManagerImpl();
+    }
     return instance;
   }
 

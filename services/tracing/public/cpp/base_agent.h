@@ -5,44 +5,24 @@
 #ifndef SERVICES_TRACING_PUBLIC_CPP_BASE_AGENT_H_
 #define SERVICES_TRACING_PUBLIC_CPP_BASE_AGENT_H_
 
+#include <set>
 #include <string>
 
 #include "base/component_export.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/tracing/public/mojom/tracing.mojom.h"
+#include "base/macros.h"
 
-namespace service_manager {
-class Connector;
-}  // namespace service_manager
-
-// This class is a minimal implementation of mojom::Agent to reduce boilerplate
-// code in tracing agents. A tracing agent can inherit from this class and only
-// override methods that actually do something, in most cases only StartTracing
-// and StopAndFlush.
 namespace tracing {
-class COMPONENT_EXPORT(TRACING_CPP) BaseAgent : public mojom::Agent {
+
+// TODO(oysteine): Remove once we have a way of enumerating available
+// categories via Perfetto.
+class COMPONENT_EXPORT(TRACING_CPP) BaseAgent {
+ public:
+  virtual ~BaseAgent();
+
+  virtual void GetCategories(std::set<std::string>* category_set);
+
  protected:
-  BaseAgent(service_manager::Connector* connector,
-            const std::string& label,
-            mojom::TraceDataType type,
-            bool supports_explicit_clock_sync,
-            base::ProcessId pid);
-  ~BaseAgent() override;
-
- private:
-  // tracing::mojom::Agent:
-  void StartTracing(const std::string& config,
-                    base::TimeTicks coordinator_time,
-                    Agent::StartTracingCallback callback) override;
-  void StopAndFlush(tracing::mojom::RecorderPtr recorder) override;
-  void RequestClockSyncMarker(
-      const std::string& sync_id,
-      Agent::RequestClockSyncMarkerCallback callback) override;
-  void GetCategories(Agent::GetCategoriesCallback callback) override;
-  void RequestBufferStatus(
-      Agent::RequestBufferStatusCallback callback) override;
-
-  mojo::Binding<tracing::mojom::Agent> binding_;
+  BaseAgent();
 
   DISALLOW_COPY_AND_ASSIGN(BaseAgent);
 };

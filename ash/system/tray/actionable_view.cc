@@ -4,9 +4,8 @@
 
 #include "ash/system/tray/actionable_view.h"
 
-#include "ash/public/cpp/ash_constants.h"
-#include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_utils.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
@@ -27,11 +26,10 @@ ActionableView::ActionableView(TrayPopupInkDropStyle ink_drop_style)
       destroyed_(nullptr),
       ink_drop_style_(ink_drop_style) {
   SetFocusBehavior(FocusBehavior::ALWAYS);
-  set_ink_drop_base_color(kTrayPopupInkDropBaseColor);
-  set_ink_drop_visible_opacity(kTrayPopupInkDropRippleOpacity);
   set_has_ink_drop_action_on_click(false);
   set_notify_enter_exit_on_child(true);
   SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
+  TrayPopupUtils::InstallHighlightPathGenerator(this, ink_drop_style_);
 }
 
 ActionableView::~ActionableView() {
@@ -69,17 +67,18 @@ std::unique_ptr<views::InkDrop> ActionableView::CreateInkDrop() {
 
 std::unique_ptr<views::InkDropRipple> ActionableView::CreateInkDropRipple()
     const {
+  // TODO(minch): Do not hard code the background color. Add it as a constructor
+  // argument to ActionableView.
   return TrayPopupUtils::CreateInkDropRipple(
-      ink_drop_style_, this, GetInkDropCenterBasedOnLastEvent());
+      ink_drop_style_, this, GetInkDropCenterBasedOnLastEvent(), SK_ColorWHITE);
 }
 
 std::unique_ptr<views::InkDropHighlight>
 ActionableView::CreateInkDropHighlight() const {
-  return TrayPopupUtils::CreateInkDropHighlight(ink_drop_style_, this);
-}
-
-std::unique_ptr<views::InkDropMask> ActionableView::CreateInkDropMask() const {
-  return TrayPopupUtils::CreateInkDropMask(ink_drop_style_, this);
+  // TODO(minch): Do not hard code the background color. Add it as a constructor
+  // argument to ActionableView.
+  return TrayPopupUtils::CreateInkDropHighlight(ink_drop_style_, this,
+                                                SK_ColorWHITE);
 }
 
 void ActionableView::ButtonPressed(Button* sender, const ui::Event& event) {

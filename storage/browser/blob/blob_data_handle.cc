@@ -20,9 +20,9 @@
 #include "storage/browser/blob/blob_data_snapshot.h"
 #include "storage/browser/blob/blob_reader.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/browser/fileapi/file_stream_reader.h"
-#include "storage/browser/fileapi/file_system_context.h"
-#include "storage/browser/fileapi/file_system_url.h"
+#include "storage/browser/file_system/file_stream_reader.h"
+#include "storage/browser/file_system/file_system_context.h"
+#include "storage/browser/file_system/file_system_url.h"
 #include "url/gurl.h"
 
 namespace storage {
@@ -70,10 +70,7 @@ BlobDataHandle::BlobDataHandle(const BlobDataHandle& other) = default;
 
 BlobDataHandle::~BlobDataHandle() {
   if (!io_task_runner_->RunsTasksInCurrentSequence()) {
-    BlobDataHandleShared* raw = shared_.get();
-    raw->AddRef();
-    shared_ = nullptr;
-    io_task_runner_->ReleaseSoon(FROM_HERE, raw);
+    io_task_runner_->ReleaseSoon(FROM_HERE, std::move(shared_));
   }
 }
 

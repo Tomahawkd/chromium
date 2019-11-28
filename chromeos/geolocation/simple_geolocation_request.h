@@ -9,11 +9,11 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/geolocation/geoposition.h"
 #include "chromeos/network/network_util.h"
 #include "net/url_request/url_fetcher.h"
@@ -38,16 +38,16 @@ class SimpleGeolocationRequestTestMonitor;
 // - If request is destroyed while callback has not beed called yet, request
 // is silently cancelled.
 //
-// Note: we need CHROMEOS_EXPORT for tests.
-class CHROMEOS_EXPORT SimpleGeolocationRequest {
+// Note: we need COMPONENT_EXPORT(CHROMEOS_GEOLOCATION) for tests.
+class COMPONENT_EXPORT(CHROMEOS_GEOLOCATION) SimpleGeolocationRequest {
  public:
   // Called when a new geo geolocation information is available.
   // The second argument indicates whether there was a server error or not.
   // It is true when there was a server or network error - either no response
   // or a 500 error code.
-  typedef base::Callback<void(const Geoposition& /* position*/,
-                              bool /* server_error */,
-                              const base::TimeDelta elapsed)> ResponseCallback;
+  using ResponseCallback = base::OnceCallback<void(const Geoposition& position,
+                                                   bool server_error,
+                                                   base::TimeDelta elapsed)>;
 
   // |url| is the server address to which the request wil be sent.
   // |timeout| retry request on error until timeout.
@@ -65,7 +65,7 @@ class CHROMEOS_EXPORT SimpleGeolocationRequest {
   // Initiates request.
   // Note: if request object is destroyed before callback is called,
   // request will be silently cancelled.
-  void MakeRequest(const ResponseCallback& callback);
+  void MakeRequest(ResponseCallback callback);
 
   void set_retry_sleep_on_server_error_for_testing(
       const base::TimeDelta value) {

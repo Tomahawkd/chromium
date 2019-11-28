@@ -11,36 +11,30 @@
 
 namespace views {
 namespace test {
-namespace {
-
-Widget* CreateTopLevelPlatformWidgetWithStubbedCapture(
-    ViewsTestBase* test,
-    Widget::InitParams::Type type) {
-  Widget* widget = new Widget;
-  Widget::InitParams params = test->CreateParams(type);
-  params.native_widget =
-      CreatePlatformNativeWidgetImpl(params, widget, kStubCapture, nullptr);
-  widget->Init(params);
-  return widget;
-}
-
-}  // namespace
 
 void WidgetTest::WidgetCloser::operator()(Widget* widget) const {
   widget->CloseNow();
 }
 
-WidgetTest::WidgetTest() {}
-WidgetTest::~WidgetTest() {}
+WidgetTest::~WidgetTest() = default;
 
 Widget* WidgetTest::CreateTopLevelPlatformWidget() {
-  return CreateTopLevelPlatformWidgetWithStubbedCapture(
-      this, Widget::InitParams::TYPE_WINDOW);
+  Widget* widget = new Widget;
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget =
+      CreatePlatformNativeWidgetImpl(params, widget, kStubCapture, nullptr);
+  widget->Init(std::move(params));
+  return widget;
 }
 
 Widget* WidgetTest::CreateTopLevelFramelessPlatformWidget() {
-  return CreateTopLevelPlatformWidgetWithStubbedCapture(
-      this, Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  Widget* widget = new Widget;
+  Widget::InitParams params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  params.native_widget =
+      CreatePlatformNativeWidgetImpl(params, widget, kStubCapture, nullptr);
+  widget->Init(std::move(params));
+  return widget;
 }
 
 Widget* WidgetTest::CreateChildPlatformWidget(
@@ -50,7 +44,7 @@ Widget* WidgetTest::CreateChildPlatformWidget(
   Widget* child = new Widget;
   params.native_widget =
       CreatePlatformNativeWidgetImpl(params, child, kStubCapture, nullptr);
-  child->Init(params);
+  child->Init(std::move(params));
   child->SetContentsView(new View);
   return child;
 }
@@ -58,7 +52,7 @@ Widget* WidgetTest::CreateChildPlatformWidget(
 Widget* WidgetTest::CreateTopLevelNativeWidget() {
   Widget* toplevel = new Widget;
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
-  toplevel->Init(params);
+  toplevel->Init(std::move(params));
   return toplevel;
 }
 
@@ -66,22 +60,13 @@ Widget* WidgetTest::CreateChildNativeWidgetWithParent(Widget* parent) {
   Widget* child = new Widget;
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_CONTROL);
   params.parent = parent->GetNativeView();
-  child->Init(params);
+  child->Init(std::move(params));
   child->SetContentsView(new View);
   return child;
 }
 
 Widget* WidgetTest::CreateChildNativeWidget() {
   return CreateChildNativeWidgetWithParent(nullptr);
-}
-
-Widget* WidgetTest::CreateNativeDesktopWidget() {
-  Widget* widget = new Widget;
-  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
-  params.native_widget =
-      CreatePlatformDesktopNativeWidgetImpl(params, widget, nullptr);
-  widget->Init(params);
-  return widget;
 }
 
 View* WidgetTest::GetMousePressedHandler(internal::RootView* root_view) {
@@ -96,8 +81,15 @@ View* WidgetTest::GetGestureHandler(internal::RootView* root_view) {
   return root_view->gesture_handler_;
 }
 
-TestDesktopWidgetDelegate::TestDesktopWidgetDelegate() : widget_(new Widget) {
+DesktopWidgetTest::DesktopWidgetTest() = default;
+DesktopWidgetTest::~DesktopWidgetTest() = default;
+
+void DesktopWidgetTest::SetUp() {
+  set_native_widget_type(NativeWidgetType::kDesktop);
+  WidgetTest::SetUp();
 }
+
+TestDesktopWidgetDelegate::TestDesktopWidgetDelegate() : widget_(new Widget) {}
 
 TestDesktopWidgetDelegate::TestDesktopWidgetDelegate(Widget* widget)
     : widget_(widget) {}
@@ -110,12 +102,8 @@ TestDesktopWidgetDelegate::~TestDesktopWidgetDelegate() {
 
 void TestDesktopWidgetDelegate::InitWidget(Widget::InitParams init_params) {
   init_params.delegate = this;
-#if !defined(OS_CHROMEOS)
-  init_params.native_widget =
-      CreatePlatformDesktopNativeWidgetImpl(init_params, widget_, nullptr);
-#endif
   init_params.bounds = initial_bounds_;
-  widget_->Init(init_params);
+  widget_->Init(std::move(init_params));
 }
 
 void TestDesktopWidgetDelegate::WindowClosing() {
@@ -139,6 +127,12 @@ bool TestDesktopWidgetDelegate::ShouldAdvanceFocusToTopLevelWidget() const {
   return true;  // Same default as DefaultWidgetDelegate in widget.cc.
 }
 
+bool TestDesktopWidgetDelegate::OnCloseRequested(
+    Widget::ClosedReason close_reason) {
+  last_closed_reason_ = close_reason;
+  return can_close_;
+}
+
 TestInitialFocusWidgetDelegate::TestInitialFocusWidgetDelegate(
     gfx::NativeWindow context)
     : view_(new View) {
@@ -147,11 +141,11 @@ TestInitialFocusWidgetDelegate::TestInitialFocusWidgetDelegate(
   Widget::InitParams params(Widget::InitParams::TYPE_WINDOW);
   params.context = context;
   params.delegate = this;
-  GetWidget()->Init(params);
+  GetWidget()->Init(std::move(params));
   GetWidget()->GetContentsView()->AddChildView(view_);
 }
 
-TestInitialFocusWidgetDelegate::~TestInitialFocusWidgetDelegate() {}
+TestInitialFocusWidgetDelegate::~TestInitialFocusWidgetDelegate() = default;
 
 View* TestInitialFocusWidgetDelegate::GetInitiallyFocusedView() {
   return view_;
@@ -166,7 +160,7 @@ WidgetActivationWaiter::WidgetActivationWaiter(Widget* widget, bool active)
   widget->AddObserver(this);
 }
 
-WidgetActivationWaiter::~WidgetActivationWaiter() {}
+WidgetActivationWaiter::~WidgetActivationWaiter() = default;
 
 void WidgetActivationWaiter::Wait() {
   if (!observed_)

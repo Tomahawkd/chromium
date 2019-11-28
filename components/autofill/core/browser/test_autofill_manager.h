@@ -22,23 +22,24 @@ class AutofillClient;
 class AutofillDriver;
 class FormStructure;
 class TestPersonalDataManager;
+class MockAutocompleteHistoryManager;
 
 class TestAutofillManager : public AutofillManager {
  public:
-  TestAutofillManager(AutofillDriver* driver,
-                      AutofillClient* client,
-                      TestPersonalDataManager* personal_data);
+  TestAutofillManager(
+      AutofillDriver* driver,
+      AutofillClient* client,
+      TestPersonalDataManager* personal_data,
+      MockAutocompleteHistoryManager* autocomplete_history_manager);
   ~TestAutofillManager() override;
 
   // AutofillManager overrides.
-  bool IsAutofillEnabled() const override;
   bool IsProfileAutofillEnabled() const override;
   bool IsCreditCardAutofillEnabled() const override;
   void UploadFormData(const FormStructure& submitted_form,
                       bool observed_submission) override;
   bool MaybeStartVoteUploadProcess(
       std::unique_ptr<FormStructure> form_structure,
-      const base::TimeTicks& timestamp,
       bool observed_submission) override;
   void UploadFormDataAsyncCallback(const FormStructure* submitted_form,
                                    const base::TimeTicks& interaction_time,
@@ -59,11 +60,9 @@ class TestAutofillManager : public AutofillManager {
 
   const std::string GetSubmittedFormSignature();
 
-  void SetAutofillEnabled(bool autofill_enabled);
+  void SetProfileAutofillEnabled(bool profile_enabled);
 
-  void SetProfileEnabled(bool profile_enabled);
-
-  void SetCreditCardEnabled(bool credit_card_enabled);
+  void SetCreditCardAutofillEnabled(bool credit_card_enabled);
 
   void SetExpectedSubmittedFieldTypes(
       const std::vector<ServerFieldTypeSet>& expected_types);
@@ -76,9 +75,8 @@ class TestAutofillManager : public AutofillManager {
 
  private:
   TestPersonalDataManager* personal_data_;  // Weak reference.
-  bool autofill_enabled_ = true;
-  bool profile_enabled_ = true;
-  bool credit_card_enabled_ = true;
+  bool profile_autofill_enabled_ = true;
+  bool credit_card_autofill_enabled_ = true;
   bool call_parent_upload_form_data_ = false;
   base::Optional<bool> expected_observed_submission_;
 

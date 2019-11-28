@@ -9,6 +9,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile_destroyer.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_navigator.h"
@@ -22,6 +23,7 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_side_navigation_test_utils.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/views/test/test_views_delegate.h"
@@ -32,12 +34,9 @@
 #include "components/constrained_window/constrained_window_views.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/public/cpp/mus_property_mirror_ash.h"
 #include "ash/test/ash_test_views_delegate.h"
+#include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "content/public/browser/context_factory.h"
-#include "ui/aura/mus/window_tree_client.h"
-#include "ui/aura/test/env_test_helper.h"
-#include "ui/views/mus/mus_client.h"
 #else
 #include "ui/views/test/test_views_delegate.h"
 #endif
@@ -48,48 +47,19 @@ using content::RenderFrameHost;
 using content::RenderFrameHostTester;
 using content::WebContents;
 
-BrowserWithTestWindowTest::BrowserWithTestWindowTest()
-    : BrowserWithTestWindowTest(Browser::TYPE_TABBED,
-                                false,
-                                content::TestBrowserThreadBundle::DEFAULT) {}
-
-BrowserWithTestWindowTest::BrowserWithTestWindowTest(
-    content::TestBrowserThreadBundle::Options thread_bundle_options)
-    : BrowserWithTestWindowTest(Browser::TYPE_TABBED,
-                                false,
-                                thread_bundle_options) {}
-
-BrowserWithTestWindowTest::BrowserWithTestWindowTest(Browser::Type browser_type,
-                                                     bool hosted_app)
-    : BrowserWithTestWindowTest(browser_type,
-                                hosted_app,
-                                content::TestBrowserThreadBundle::DEFAULT) {}
-
-BrowserWithTestWindowTest::BrowserWithTestWindowTest(
-    Browser::Type browser_type,
-    bool hosted_app,
-    content::TestBrowserThreadBundle::Options thread_bundle_options)
-    : thread_bundle_(thread_bundle_options),
-#if defined(OS_CHROMEOS)
-      ash_test_helper_(&ash_test_environment_),
-#endif
-      browser_type_(browser_type),
-      hosted_app_(hosted_app) {
-}
-
 BrowserWithTestWindowTest::~BrowserWithTestWindowTest() {}
 
 void BrowserWithTestWindowTest::SetUp() {
   testing::Test::SetUp();
 #if defined(OS_CHROMEOS)
-  ash_test_helper_.SetUp(true);
-  ash_test_helper_.SetRunningOutsideAsh();
+  ash::AshTestHelper::InitParams init_params;
+  ash_test_helper_.SetUp(init_params);
 #elif defined(TOOLKIT_VIEWS)
   views_test_helper_.reset(new views::ScopedViewsTestHelper());
 #endif
 
   // This must be created after ash_test_helper_ is set up so that it doesn't
-  // create an InputDeviceManager.
+  // create an DeviceDataManager.
   rvh_test_enabler_ = std::make_unique<content::RenderViewHostTestEnabler>();
 
 #if defined(TOOLKIT_VIEWS)
@@ -108,29 +78,12 @@ void BrowserWithTestWindowTest::SetUp() {
   // Subclasses can provide their own Profile.
   profile_ = CreateProfile();
   // Subclasses can provide their own test BrowserWindow. If they return NULL
-  // then Browser will create the a production BrowserWindow and the subclass
-  // is responsible for cleaning it up (usually by NativeWidget destruction).
-  window_.reset(CreateBrowserWindow());
+  // then Browser will create a production BrowserWindow and the subclass is
+  // responsible for cleaning it up (usually by NativeWidget destruction).
+  window_ = CreateBrowserWindow();
 
-#if defined(OS_CHROMEOS)
-  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS) {
-    views::MusClient::InitParams mus_client_init_params;
-    mus_client_init_params.connector =
-        ash_test_helper()->GetWindowServiceConnector();
-    mus_client_init_params.create_wm_state = false;
-    mus_client_init_params.running_in_ws_process = true;
-    mus_client_init_params.window_tree_client =
-        aura::test::EnvTestHelper().GetWindowTreeClient();
-    mus_client_ = std::make_unique<views::MusClient>(mus_client_init_params);
-    mus_client_->SetMusPropertyMirror(
-        std::make_unique<ash::MusPropertyMirrorAsh>());
-
-    aura::Env::GetInstance()->set_context_factory(content::GetContextFactory());
-  }
-#endif
-
-  browser_.reset(
-      CreateBrowser(profile(), browser_type_, hosted_app_, window_.get()));
+  browser_ =
+      CreateBrowser(profile(), browser_type_, hosted_app_, window_.get());
 }
 
 void BrowserWithTestWindowTest::TearDown() {
@@ -152,9 +105,20 @@ void BrowserWithTestWindowTest::TearDown() {
 
   profile_manager_->DeleteAllTestingProfiles();
   profile_ = nullptr;
+
+  // Depends on LocalState owned by |profile_manager_|.
+  if (SystemNetworkContextManager::GetInstance()) {
+    SystemNetworkContextManager::DeleteInstance();
+  }
+
   profile_manager_.reset();
 
 #if defined(OS_CHROMEOS)
+  // If initialized, the KioskAppManager will register an observer to
+  // CrosSettings and will need to be destroyed before it. Having it destroyed
+  // as part of the teardown will avoid unexpected test failures.
+  chromeos::KioskAppManager::Shutdown();
+
   ash_test_helper_.TearDown();
 #elif defined(TOOLKIT_VIEWS)
   views_test_helper_.reset();
@@ -163,9 +127,7 @@ void BrowserWithTestWindowTest::TearDown() {
   testing::Test::TearDown();
 
   // A Task is leaked if we don't destroy everything, then run the message loop.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
-  base::RunLoop().Run();
+  base::RunLoop().RunUntilIdle();
 }
 
 gfx::NativeWindow BrowserWithTestWindowTest::GetContext() {
@@ -197,9 +159,8 @@ void BrowserWithTestWindowTest::CommitPendingLoad(
 void BrowserWithTestWindowTest::NavigateAndCommit(
     NavigationController* controller,
     const GURL& url) {
-  controller->LoadURL(
-      url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
-  CommitPendingLoad(controller);
+  content::NavigationSimulator::NavigateAndCommitFromBrowser(
+      controller->GetWebContents(), url);
 }
 
 void BrowserWithTestWindowTest::NavigateAndCommitActiveTab(const GURL& url) {
@@ -230,11 +191,12 @@ BrowserWithTestWindowTest::GetTestingFactories() {
   return {};
 }
 
-BrowserWindow* BrowserWithTestWindowTest::CreateBrowserWindow() {
-  return new TestBrowserWindow();
+std::unique_ptr<BrowserWindow>
+BrowserWithTestWindowTest::CreateBrowserWindow() {
+  return std::make_unique<TestBrowserWindow>();
 }
 
-Browser* BrowserWithTestWindowTest::CreateBrowser(
+std::unique_ptr<Browser> BrowserWithTestWindowTest::CreateBrowser(
     Profile* profile,
     Browser::Type browser_type,
     bool hosted_app,
@@ -247,5 +209,25 @@ Browser* BrowserWithTestWindowTest::CreateBrowser(
     params.type = browser_type;
   }
   params.window = browser_window;
-  return new Browser(params);
+  return std::make_unique<Browser>(params);
 }
+
+#if defined(OS_CHROMEOS)
+chromeos::ScopedCrosSettingsTestHelper*
+BrowserWithTestWindowTest::GetCrosSettingsHelper() {
+  return &cros_settings_test_helper_;
+}
+
+chromeos::StubInstallAttributes*
+BrowserWithTestWindowTest::GetInstallAttributes() {
+  return GetCrosSettingsHelper()->InstallAttributes();
+}
+#endif  // defined(OS_CHROMEOS)
+
+BrowserWithTestWindowTest::BrowserWithTestWindowTest(
+    std::unique_ptr<content::BrowserTaskEnvironment> task_environment,
+    Browser::Type browser_type,
+    bool hosted_app)
+    : task_environment_(std::move(task_environment)),
+      browser_type_(browser_type),
+      hosted_app_(hosted_app) {}

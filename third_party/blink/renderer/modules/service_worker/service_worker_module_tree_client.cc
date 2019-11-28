@@ -12,20 +12,19 @@
 namespace blink {
 
 ServiceWorkerModuleTreeClient::ServiceWorkerModuleTreeClient(
-    Modulator* modulator)
-    : modulator_(modulator) {}
+    ScriptState* script_state)
+    : script_state_(script_state) {}
 
 // This client is used for both new and installed scripts. In the new scripts
-// case, this is a partial implementation of the custom "perfom the fetch" hook
+// case, this is a partial implementation of the custom "perform the fetch" hook
 // in the spec: https://w3c.github.io/ServiceWorker/#update-algorithm For
 // installed scripts, there is no corresponding specification text because there
 // is no fetching process there. The service worker simply uses its associated
 // script resource.
 void ServiceWorkerModuleTreeClient::NotifyModuleTreeLoadFinished(
     ModuleScript* module_script) {
-  auto* execution_context =
-      ExecutionContext::From(modulator_->GetScriptState());
-  auto* worker_global_scope = To<WorkerGlobalScope>(execution_context);
+  auto* worker_global_scope =
+      To<WorkerGlobalScope>(ExecutionContext::From(script_state_));
   blink::WorkerReportingProxy& worker_reporting_proxy =
       worker_global_scope->ReportingProxy();
 
@@ -38,18 +37,17 @@ void ServiceWorkerModuleTreeClient::NotifyModuleTreeLoadFinished(
     worker_global_scope->close();
     return;
   }
+  worker_reporting_proxy.DidFetchScript();
 
   // (In the update case) Step 9: "Else, continue the rest of these steps after
   // the algorithm's asynchronous completion, with script being the asynchronous
   // completion value."
-  worker_reporting_proxy.WillEvaluateModuleScript();
-  ScriptValue error = modulator_->ExecuteModule(
-      module_script, Modulator::CaptureEvalErrorFlag::kReport);
-  worker_reporting_proxy.DidEvaluateModuleScript(error.IsEmpty());
+  worker_global_scope->WorkerScriptFetchFinished(
+      *module_script, base::nullopt /* v8_inspector::V8StackTraceId */);
 }
 
 void ServiceWorkerModuleTreeClient::Trace(blink::Visitor* visitor) {
-  visitor->Trace(modulator_);
+  visitor->Trace(script_state_);
   ModuleTreeClient::Trace(visitor);
 }
 

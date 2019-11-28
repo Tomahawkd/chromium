@@ -9,14 +9,14 @@
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/browser/download/save_file_manager.h"
 #include "content/browser/download/save_package.h"
-#include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/common/url_constants.h"
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
@@ -104,12 +104,7 @@ class SavePackageTest : public RenderViewHostImplTestHarness {
         temp_dir_.GetPath().Append(long_file_name + FPL("_files")));
   }
 
-  BrowserContext* CreateBrowserContext() override {
-    // This method is invoked after the browser threads have been created and
-    // obviously before the BrowserContext is created. This is the correct time
-    // to create a ResourceDispatcherHostImpl so that our SavePackage objects
-    // can initialize correctly.
-    rdh_.reset(new ResourceDispatcherHostImpl);
+  std::unique_ptr<BrowserContext> CreateBrowserContext() override {
     // Initialize the SaveFileManager instance which we will use for the tests.
     save_file_manager_ = new SaveFileManager();
     return RenderViewHostImplTestHarness::CreateBrowserContext();
@@ -121,7 +116,6 @@ class SavePackageTest : public RenderViewHostImplTestHarness {
 
     save_package_success_ = nullptr;
     save_package_fail_ = nullptr;
-    rdh_.reset();
 
     RenderViewHostImplTestHarness::TearDown();
   }
@@ -141,7 +135,6 @@ class SavePackageTest : public RenderViewHostImplTestHarness {
 
   base::ScopedTempDir temp_dir_;
 
-  std::unique_ptr<ResourceDispatcherHostImpl> rdh_;
   scoped_refptr<SaveFileManager> save_file_manager_;
 };
 
@@ -194,7 +187,7 @@ static const struct {
 };
 
 TEST_F(SavePackageTest, TestSuccessfullyGenerateSavePackageFilename) {
-  for (size_t i = 0; i < arraysize(kGeneratedFiles); ++i) {
+  for (size_t i = 0; i < base::size(kGeneratedFiles); ++i) {
     base::FilePath::StringType file_name;
     bool ok = GetGeneratedFilename(true,
                                    kGeneratedFiles[i].disposition,
@@ -207,7 +200,7 @@ TEST_F(SavePackageTest, TestSuccessfullyGenerateSavePackageFilename) {
 }
 
 TEST_F(SavePackageTest, TestUnSuccessfullyGenerateSavePackageFilename) {
-  for (size_t i = 0; i < arraysize(kGeneratedFiles); ++i) {
+  for (size_t i = 0; i < base::size(kGeneratedFiles); ++i) {
     base::FilePath::StringType file_name;
     bool ok = GetGeneratedFilename(false,
                                    kGeneratedFiles[i].disposition,

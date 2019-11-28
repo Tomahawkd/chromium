@@ -9,12 +9,14 @@
 
 #include <cmath>
 #include <memory>
+#include <unordered_map>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/values.h"
 #include "content/renderer/pepper/resource_converter.h"
 #include "ppapi/c/pp_bool.h"
@@ -56,9 +58,7 @@ class MockResourceConverter : public content::ResourceConverter {
   ~MockResourceConverter() override {}
   void Reset() override {}
   bool NeedsFlush() override { return false; }
-  void Flush(const base::Callback<void(bool)>& callback) override {
-    NOTREACHED();
-  }
+  void Flush(base::OnceCallback<void(bool)> callback) override { NOTREACHED(); }
   bool FromV8Value(v8::Local<v8::Object> val,
                    v8::Local<v8::Context> context,
                    PP_Var* result,
@@ -74,7 +74,7 @@ class MockResourceConverter : public content::ResourceConverter {
 };
 
 // Maps PP_Var IDs to the V8 value handle they correspond to.
-typedef base::hash_map<int64_t, v8::Local<v8::Value> > VarHandleMap;
+typedef std::unordered_map<int64_t, v8::Local<v8::Value>> VarHandleMap;
 
 bool Equals(const PP_Var& var,
             v8::Local<v8::Value> val,
@@ -118,7 +118,8 @@ bool Equals(const PP_Var& var,
     if (v8_array->Length() != array_var->elements().size())
       return false;
     for (uint32_t i = 0; i < v8_array->Length(); ++i) {
-      v8::Local<v8::Value> child_v8 = v8_array->Get(i);
+      v8::Local<v8::Value> child_v8 =
+          v8_array->Get(context, i).ToLocalChecked();
       if (!Equals(array_var->elements()[i].get(), child_v8, visited_ids))
         return false;
     }
@@ -196,10 +197,8 @@ class V8VarConverterTest : public testing::Test {
   bool FromV8ValueSync(v8::Local<v8::Value> val,
                        v8::Local<v8::Context> context,
                        PP_Var* result) {
-    V8VarConverter::VarResult conversion_result =
-        converter_->FromV8Value(val,
-                                context,
-                                base::Bind(&FromV8ValueComplete));
+    V8VarConverter::VarResult conversion_result = converter_->FromV8Value(
+        val, context, base::BindOnce(&FromV8ValueComplete));
     DCHECK(conversion_result.completed_synchronously);
     if (conversion_result.success)
       *result = conversion_result.var.Release();
@@ -240,8 +239,8 @@ class V8VarConverterTest : public testing::Test {
   std::unique_ptr<V8VarConverter> converter_;
 
  private:
-  base::test::ScopedTaskEnvironment
-      task_environment_;  // Required to receive callbacks.
+  // Required to receive callbacks.
+  base::test::TaskEnvironment task_environment_;
 
   TestGlobals globals_;
 };
@@ -392,7 +391,7 @@ TEST_F(V8VarConverterTest, Cycles) {
     ASSERT_FALSE(FromV8ValueSync(object, context, &var_result));
 
     // Array with self reference.
-    array->Set(0, array);
+    array->Set(context, 0, array).Check();
     ASSERT_FALSE(FromV8ValueSync(array, context, &var_result));
   }
 }

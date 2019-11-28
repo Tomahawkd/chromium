@@ -46,8 +46,11 @@ void SimpleGeolocationProvider::RequestGeolocation(
   // Mostly necessary for testing and rare cases where NetworkHandler is not
   // initialized: in that case, calls to Get() will fail.
   if (send_wifi_access_points || send_cell_towers) {
-    NetworkHandler::Get()->geolocation_handler()->GetNetworkInformation(
-        wifi_vector.get(), cell_vector.get());
+    GeolocationHandler* geolocation_handler = geolocation_handler_;
+    if (!geolocation_handler)
+      geolocation_handler = NetworkHandler::Get()->geolocation_handler();
+    geolocation_handler->GetNetworkInformation(wifi_vector.get(),
+                                               cell_vector.get());
   }
 
   if (!send_wifi_access_points || (wifi_vector->size() == 0))
@@ -65,11 +68,9 @@ void SimpleGeolocationProvider::RequestGeolocation(
   // "this" because destruction of SimpleGeolocationProvider cancels all
   // requests.
   SimpleGeolocationRequest::ResponseCallback callback_tmp(
-      base::Bind(&SimpleGeolocationProvider::OnGeolocationResponse,
-                 base::Unretained(this),
-                 request,
-                 callback));
-  request->MakeRequest(callback_tmp);
+      base::BindOnce(&SimpleGeolocationProvider::OnGeolocationResponse,
+                     base::Unretained(this), request, std::move(callback)));
+  request->MakeRequest(std::move(callback_tmp));
 }
 
 // static
@@ -85,7 +86,7 @@ void SimpleGeolocationProvider::OnGeolocationResponse(
     const base::TimeDelta elapsed) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  callback.Run(geoposition, server_error, elapsed);
+  std::move(callback).Run(geoposition, server_error, elapsed);
 
   std::vector<std::unique_ptr<SimpleGeolocationRequest>>::iterator position =
       std::find_if(

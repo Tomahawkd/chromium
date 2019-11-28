@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_REPORTING_H_
 #define CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_REPORTING_H_
 
+#include <string>
+
 #include "base/logging.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
 
@@ -70,11 +72,12 @@ enum IndexedDBBackingStoreOpenResult {
   INDEXED_DB_BACKING_STORE_OPEN_NO_RECOVERY,
   INDEXED_DB_BACKING_STORE_OPEN_FAILED_PRIOR_CORRUPTION,
   INDEXED_DB_BACKING_STORE_OPEN_FAILED_CLEANUP_JOURNAL_ERROR,
+  INDEXED_DB_BACKING_STORE_OPEN_FAILED_METADATA_SETUP,
   INDEXED_DB_BACKING_STORE_OPEN_MAX,
 };
 
-void HistogramOpenStatus(IndexedDBBackingStoreOpenResult result,
-                         const url::Origin& origin);
+void ReportOpenStatus(IndexedDBBackingStoreOpenResult result,
+                      const url::Origin& origin);
 
 void ReportInternalError(const char* type,
                          IndexedDBBackingStoreErrorSource location);
@@ -82,6 +85,9 @@ void ReportInternalError(const char* type,
 void ReportSchemaVersion(int version, const url::Origin& origin);
 
 void ReportV2Schema(bool has_broken_blobs, const url::Origin& origin);
+
+void ReportLevelDBError(const std::string& histogram_name,
+                        const leveldb::Status& s);
 
 // Use to signal conditions caused by data corruption.
 // A macro is used instead of an inline function so that the assert and log

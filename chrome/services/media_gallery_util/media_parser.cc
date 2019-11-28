@@ -4,6 +4,7 @@
 
 #include "chrome/services/media_gallery_util/media_parser.h"
 
+#include "base/bind.h"
 #include "chrome/services/media_gallery_util/ipc_data_source.h"
 #include "chrome/services/media_gallery_util/media_metadata_parser.h"
 #include "media/media_buildflags.h"
@@ -28,9 +29,7 @@ void ParseMediaMetadataDone(
 
 }  // namespace
 
-MediaParser::MediaParser(
-    std::unique_ptr<service_manager::ServiceContextRef> service_ref)
-    : service_ref_(std::move(service_ref)) {}
+MediaParser::MediaParser() = default;
 
 MediaParser::~MediaParser() = default;
 
@@ -38,7 +37,7 @@ void MediaParser::ParseMediaMetadata(
     const std::string& mime_type,
     int64_t total_size,
     bool get_attached_images,
-    chrome::mojom::MediaDataSourcePtr media_data_source,
+    mojo::PendingRemote<chrome::mojom::MediaDataSource> media_data_source,
     ParseMediaMetadataCallback callback) {
   auto source =
       std::make_unique<IPCDataSource>(std::move(media_data_source), total_size);

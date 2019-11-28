@@ -60,11 +60,17 @@ class Http2PushPromiseIndexTest : public testing::Test {
         key1_(HostPortPair::FromURL(url1_),
               ProxyServer::Direct(),
               PRIVACY_MODE_ENABLED,
-              SocketTag()),
+              SpdySessionKey::IsProxySession::kFalse,
+              SocketTag(),
+              NetworkIsolationKey(),
+              false /* disable_secure_dns */),
         key2_(HostPortPair::FromURL(url2_),
               ProxyServer::Direct(),
               PRIVACY_MODE_ENABLED,
-              SocketTag()) {}
+              SpdySessionKey::IsProxySession::kFalse,
+              SocketTag(),
+              NetworkIsolationKey(),
+              false /* disable_secure_dns */) {}
 
   const GURL url1_;
   const GURL url2_;

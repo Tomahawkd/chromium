@@ -14,14 +14,12 @@
 #include "base/memory/ref_counted.h"
 #include "content/browser/background_fetch/background_fetch_context.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/platform/modules/background_fetch/background_fetch.mojom.h"
+#include "third_party/blink/public/mojom/background_fetch/background_fetch.mojom.h"
 #include "url/origin.h"
 
 namespace content {
 
-class BackgroundFetchContext;
-class RenderFrameHost;
-class RenderProcessHost;
+struct ServiceWorkerVersionInfo;
 
 class CONTENT_EXPORT BackgroundFetchServiceImpl
     : public blink::mojom::BackgroundFetchService {
@@ -29,18 +27,17 @@ class CONTENT_EXPORT BackgroundFetchServiceImpl
   BackgroundFetchServiceImpl(
       scoped_refptr<BackgroundFetchContext> background_fetch_context,
       url::Origin origin,
-      RenderFrameHost* render_frame_host);
+      int render_frame_tree_node_id,
+      WebContents::Getter wc_getter);
   ~BackgroundFetchServiceImpl() override;
 
   static void CreateForWorker(
-      blink::mojom::BackgroundFetchServiceRequest request,
-      RenderProcessHost* render_process_host,
-      const url::Origin& origin);
+      const ServiceWorkerVersionInfo& info,
+      mojo::PendingReceiver<blink::mojom::BackgroundFetchService> receiver);
 
   static void CreateForFrame(
-      RenderProcessHost* render_process_host,
-      int render_frame_id,
-      blink::mojom::BackgroundFetchServiceRequest request);
+      RenderFrameHost* render_frame_host,
+      mojo::PendingReceiver<blink::mojom::BackgroundFetchService> receiver);
 
   // blink::mojom::BackgroundFetchService implementation.
   void Fetch(int64_t service_worker_registration_id,
@@ -51,38 +48,19 @@ class CONTENT_EXPORT BackgroundFetchServiceImpl
              blink::mojom::BackgroundFetchUkmDataPtr ukm_data,
              FetchCallback callback) override;
   void GetIconDisplaySize(GetIconDisplaySizeCallback callback) override;
-  void MatchRequests(int64_t service_worker_registration_id,
-                     const std::string& developer_id,
-                     const std::string& unique_id,
-                     blink::mojom::FetchAPIRequestPtr request_to_match,
-                     blink::mojom::QueryParamsPtr cache_query_params,
-                     bool match_all,
-                     MatchRequestsCallback callback) override;
-  void UpdateUI(int64_t service_worker_registration_id,
-                const std::string& developer_id,
-                const std::string& unique_id,
-                const base::Optional<std::string>& title,
-                const SkBitmap& icon,
-                UpdateUICallback callback) override;
-  void Abort(int64_t service_worker_registration_id,
-             const std::string& developer_id,
-             const std::string& unique_id,
-             AbortCallback callback) override;
   void GetRegistration(int64_t service_worker_registration_id,
                        const std::string& developer_id,
                        GetRegistrationCallback callback) override;
   void GetDeveloperIds(int64_t service_worker_registration_id,
                        GetDeveloperIdsCallback callback) override;
-  void AddRegistrationObserver(
-      const std::string& unique_id,
-      blink::mojom::BackgroundFetchRegistrationObserverPtr observer) override;
 
  private:
-  static void CreateOnIoThread(
+  static void CreateOnCoreThread(
       scoped_refptr<BackgroundFetchContext> background_fetch_context,
       url::Origin origin,
-      RenderFrameHost* render_frame_host,
-      blink::mojom::BackgroundFetchServiceRequest request);
+      int render_frame_tree_node_id,
+      WebContents::Getter wc_getter,
+      mojo::PendingReceiver<blink::mojom::BackgroundFetchService> receiver);
 
   // Validates and returns whether the |developer_id|, |unique_id|, |requests|
   // and |title| respectively have valid values. The renderer will be flagged
@@ -91,14 +69,14 @@ class CONTENT_EXPORT BackgroundFetchServiceImpl
   bool ValidateUniqueId(const std::string& unique_id) WARN_UNUSED_RESULT;
   bool ValidateRequests(const std::vector<blink::mojom::FetchAPIRequestPtr>&
                             requests) WARN_UNUSED_RESULT;
-  bool ValidateTitle(const std::string& title) WARN_UNUSED_RESULT;
 
   // The Background Fetch context on which operations will be dispatched.
   scoped_refptr<BackgroundFetchContext> background_fetch_context_;
 
   const url::Origin origin_;
 
-  RenderFrameHost* render_frame_host_;
+  int render_frame_tree_node_id_;
+  WebContents::Getter wc_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundFetchServiceImpl);
 };

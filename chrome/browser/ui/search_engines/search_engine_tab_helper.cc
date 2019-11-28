@@ -25,6 +25,8 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/resource_type.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/mojom/referrer.mojom.h"
 
 using content::NavigationController;
 using content::NavigationEntry;
@@ -33,13 +35,12 @@ using content::WebContents;
 namespace {
 
 // Returns true if the entry's transition type is FORM_SUBMIT.
-bool IsFormSubmit(const NavigationEntry* entry) {
+bool IsFormSubmit(NavigationEntry* entry) {
   return ui::PageTransitionCoreTypeIs(entry->GetTransitionType(),
                                       ui::PAGE_TRANSITION_FORM_SUBMIT);
 }
 
-base::string16 GenerateKeywordFromNavigationEntry(
-    const NavigationEntry* entry) {
+base::string16 GenerateKeywordFromNavigationEntry(NavigationEntry* entry) {
   // Don't autogenerate keywords for pages that are the result of form
   // submissions.
   if (IsFormSubmit(entry))
@@ -121,8 +122,8 @@ void SearchEngineTabHelper::PageHasOpenSearchDescriptionDocument(
 
   // If the current page is a form submit, find the last page that was not a
   // form submit and use its url to generate the keyword from.
-  const NavigationController& controller = web_contents()->GetController();
-  const NavigationEntry* entry = controller.GetLastCommittedEntry();
+  NavigationController& controller = web_contents()->GetController();
+  NavigationEntry* entry = controller.GetLastCommittedEntry();
   for (int index = controller.GetLastCommittedEntryIndex();
        (index > 0) && IsFormSubmit(entry);
        entry = controller.GetEntryAtIndex(index))
@@ -137,16 +138,17 @@ void SearchEngineTabHelper::PageHasOpenSearchDescriptionDocument(
     return;
 
   auto* frame = web_contents()->GetMainFrame();
-  network::mojom::URLLoaderFactoryPtr url_loader_factory;
+  mojo::Remote<network::mojom::URLLoaderFactory> url_loader_factory;
   frame->CreateNetworkServiceDefaultFactory(
-      mojo::MakeRequest(&url_loader_factory));
+      url_loader_factory.BindNewPipeAndPassReceiver());
 
   // Download the OpenSearch description document. If this is successful, a
   // new keyword will be created when done.
   TemplateURLFetcherFactory::GetForProfile(profile)->ScheduleDownload(
       keyword, osdd_url, entry->GetFavicon().url,
-      url::Origin::Create(web_contents()->GetURL()), url_loader_factory.get(),
-      frame->GetRoutingID(), content::RESOURCE_TYPE_SUB_RESOURCE);
+      frame->GetLastCommittedOrigin(), url_loader_factory.get(),
+      frame->GetRoutingID(),
+      static_cast<int>(content::ResourceType::kSubResource));
 }
 
 void SearchEngineTabHelper::OnFaviconUpdated(
@@ -173,7 +175,7 @@ void SearchEngineTabHelper::GenerateKeywordIfNecessary(
   if (profile->IsOffTheRecord())
     return;
 
-  const NavigationController& controller = web_contents()->GetController();
+  NavigationController& controller = web_contents()->GetController();
   int last_index = controller.GetLastCommittedEntryIndex();
   // When there was no previous page, the last index will be 0. This is
   // normally due to a form submit that opened in a new tab.

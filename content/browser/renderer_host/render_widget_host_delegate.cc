@@ -12,20 +12,17 @@
 
 namespace content {
 
-bool RenderWidgetHostDelegate::DoBrowserControlsShrinkRendererSize() const {
-  return false;
-}
-
-int RenderWidgetHostDelegate::GetTopControlsHeight() const {
-  return 0;
-}
-
 KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
 bool RenderWidgetHostDelegate::PreHandleMouseEvent(
+    const blink::WebMouseEvent& event) {
+  return false;
+}
+
+bool RenderWidgetHostDelegate::HandleMouseEvent(
     const blink::WebMouseEvent& event) {
   return false;
 }
@@ -86,9 +83,13 @@ bool RenderWidgetHostDelegate::IsFullscreenForCurrentTab() {
   return false;
 }
 
-blink::WebDisplayMode RenderWidgetHostDelegate::GetDisplayMode(
+bool RenderWidgetHostDelegate::ShouldShowStaleContentOnEviction() {
+  return false;
+}
+
+blink::mojom::DisplayMode RenderWidgetHostDelegate::GetDisplayMode(
     RenderWidgetHostImpl* render_widget_host) const {
-  return blink::kWebDisplayModeBrowser;
+  return blink::mojom::DisplayMode::kBrowser;
 }
 
 bool RenderWidgetHostDelegate::HasMouseLock(
@@ -158,6 +159,11 @@ bool RenderWidgetHostDelegate::IsShowingContextMenuOnPage() const {
 }
 
 InputEventShim* RenderWidgetHostDelegate::GetInputEventShim() const {
+  return nullptr;
+}
+
+RenderFrameHostImpl*
+RenderWidgetHostDelegate::GetFocusedFrameFromFocusedDelegate() {
   return nullptr;
 }
 

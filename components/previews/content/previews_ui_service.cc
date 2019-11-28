@@ -4,6 +4,8 @@
 
 #include "components/previews/content/previews_ui_service.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/single_thread_task_runner.h"
 #include "url/gurl.h"
@@ -20,8 +22,7 @@ PreviewsUIService::PreviewsUIService(
     network::NetworkQualityTracker* network_quality_tracker)
     : previews_decider_impl_(std::move(previews_decider_impl)),
       logger_(std::move(logger)),
-      network_quality_tracker_(network_quality_tracker),
-      weak_factory_(this) {
+      network_quality_tracker_(network_quality_tracker) {
   DCHECK(logger_);
   DCHECK(previews_decider_impl_);
   DCHECK(network_quality_tracker_);
@@ -89,26 +90,6 @@ void PreviewsUIService::SetIgnorePreviewsBlacklistDecision(bool ignored) {
 void PreviewsUIService::OnIgnoreBlacklistDecisionStatusChanged(bool ignored) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   logger_->OnIgnoreBlacklistDecisionStatusChanged(ignored);
-}
-
-void PreviewsUIService::SetResourceLoadingHintsResourcePatternsToBlock(
-    const GURL& document_gurl,
-    const std::vector<std::string>& patterns) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  resource_loading_hints_document_gurl_ = document_gurl;
-  resource_loading_hints_patterns_to_block_ = patterns;
-}
-
-std::vector<std::string>
-PreviewsUIService::GetResourceLoadingHintsResourcePatternsToBlock(
-    const GURL& document_gurl) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  // TODO(tbansal): https://crbug.com/856243. Read patterns from the proto
-  // optimizations file from the disk, and populate the return value.
-  if (document_gurl != resource_loading_hints_document_gurl_)
-    return std::vector<std::string>();
-  return resource_loading_hints_patterns_to_block_;
 }
 
 PreviewsLogger* PreviewsUIService::previews_logger() const {

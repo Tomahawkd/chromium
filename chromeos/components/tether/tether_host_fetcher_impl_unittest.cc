@@ -13,6 +13,8 @@
 #include "chromeos/components/multidevice/remote_device.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/multidevice/remote_device_test_util.h"
+#include "chromeos/components/multidevice/software_feature.h"
+#include "chromeos/components/multidevice/software_feature_state.h"
 #include "chromeos/services/device_sync/public/cpp/fake_device_sync_client.h"
 #include "chromeos/services/multidevice_setup/public/cpp/fake_multidevice_setup_client.h"
 #include "chromeos/services/multidevice_setup/public/mojom/multidevice_setup.mojom.h"
@@ -110,15 +112,17 @@ class TetherHostFetcherImplTest : public testing::Test {
     multidevice::RemoteDeviceList list =
         multidevice::CreateRemoteDeviceListForTest(kNumTestDevices);
     for (auto& device : list) {
-      device.software_features[cryptauth::SoftwareFeature::MAGIC_TETHER_HOST] =
+      device.software_features
+          [chromeos::multidevice::SoftwareFeature::kInstantTetheringHost] =
           multidevice::SoftwareFeatureState::kSupported;
     }
 
     // Mark the first device enabled instead of supported.
-    list[0].software_features[cryptauth::SoftwareFeature::MAGIC_TETHER_HOST] =
+    list[0].software_features
+        [chromeos::multidevice::SoftwareFeature::kInstantTetheringHost] =
         multidevice::SoftwareFeatureState::kEnabled;
-    list[0]
-        .software_features[cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST] =
+    list[0].software_features
+        [chromeos::multidevice::SoftwareFeature::kBetterTogetherHost] =
         multidevice::SoftwareFeatureState::kEnabled;
 
     return list;
@@ -192,81 +196,6 @@ class TetherHostFetcherImplTest : public testing::Test {
     EXPECT_EQ(2u, test_observer_->num_updates());
   }
 
-  void TestSingleTetherHost(bool use_legacy_mode = false) {
-    InitializeTest();
-    if (use_legacy_mode) {
-      test_remote_device_list_[0]
-          .software_features[cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST] =
-          multidevice::SoftwareFeatureState::kNotSupported;
-      test_remote_device_ref_list_ =
-          CreateTestRemoteDeviceRefList(test_remote_device_list_);
-      SetSyncedDevices(test_remote_device_list_);
-      NotifyNewDevicesSynced();
-    }
-
-    VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
-                           test_remote_device_ref_list_[0]);
-
-    // Now, set device 0 as the only device. It should still be returned when
-    // requested.
-    SetSyncedDevices(
-        multidevice::RemoteDeviceList{test_remote_device_list_[0]});
-    NotifyNewDevicesSynced();
-    VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
-                           test_remote_device_ref_list_[0]);
-
-    // Now, set another device as the only device, but remove its mobile data
-    // support. It should not be returned.
-    multidevice::RemoteDevice remote_device = multidevice::RemoteDevice();
-    remote_device
-        .software_features[cryptauth::SoftwareFeature::MAGIC_TETHER_HOST] =
-        multidevice::SoftwareFeatureState::kNotSupported;
-
-    SetSyncedDevices(multidevice::RemoteDeviceList{remote_device});
-    NotifyNewDevicesSynced();
-    VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
-                           base::nullopt);
-
-    // Update the list; now, there are no more devices.
-    SetSyncedDevices(multidevice::RemoteDeviceList());
-    NotifyNewDevicesSynced();
-    VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
-                           base::nullopt);
-  }
-
-  void TestFetchAllTetherHosts(bool use_legacy_mode = false) {
-    InitializeTest();
-
-    // Create a list of test devices, only some of which are valid tether hosts.
-    // Ensure that only that subset is fetched.
-    test_remote_device_list_[3]
-        .software_features[cryptauth::SoftwareFeature::MAGIC_TETHER_HOST] =
-        multidevice::SoftwareFeatureState::kNotSupported;
-    test_remote_device_list_[4]
-        .software_features[cryptauth::SoftwareFeature::MAGIC_TETHER_HOST] =
-        multidevice::SoftwareFeatureState::kNotSupported;
-    if (use_legacy_mode) {
-      test_remote_device_list_[0]
-          .software_features[cryptauth::SoftwareFeature::BETTER_TOGETHER_HOST] =
-          multidevice::SoftwareFeatureState::kNotSupported;
-    }
-
-    SetSyncedDevices(test_remote_device_list_);
-    NotifyNewDevicesSynced();
-
-    multidevice::RemoteDeviceRefList expected_host_device_list;
-    if (!use_legacy_mode) {
-      expected_host_device_list =
-          CreateTestRemoteDeviceRefList({test_remote_device_list_[0]});
-    } else {
-      expected_host_device_list = CreateTestRemoteDeviceRefList(
-          {test_remote_device_list_[0], test_remote_device_list_[1],
-           test_remote_device_list_[2]});
-    }
-
-    VerifyAllTetherHosts(expected_host_device_list);
-  }
-
   multidevice::RemoteDeviceList test_remote_device_list_;
   multidevice::RemoteDeviceRefList test_remote_device_ref_list_;
 
@@ -316,17 +245,58 @@ TEST_F(TetherHostFetcherImplTest, TestHasSyncedTetherHosts) {
 }
 
 TEST_F(TetherHostFetcherImplTest, TestFetchAllTetherHosts) {
-  TestFetchAllTetherHosts();
-}
-TEST_F(TetherHostFetcherImplTest, TestFetchAllTetherHostsInLegacyMode) {
-  TestFetchAllTetherHosts(true /* use_legacy_mode */);
+  InitializeTest();
+
+  // Create a list of test devices, only some of which are valid tether hosts.
+  // Ensure that only that subset is fetched.
+  test_remote_device_list_[3].software_features
+      [chromeos::multidevice::SoftwareFeature::kInstantTetheringHost] =
+      multidevice::SoftwareFeatureState::kNotSupported;
+  test_remote_device_list_[4].software_features
+      [chromeos::multidevice::SoftwareFeature::kInstantTetheringHost] =
+      multidevice::SoftwareFeatureState::kNotSupported;
+
+  SetSyncedDevices(test_remote_device_list_);
+  NotifyNewDevicesSynced();
+
+  multidevice::RemoteDeviceRefList expected_host_device_list;
+
+  expected_host_device_list =
+      CreateTestRemoteDeviceRefList({test_remote_device_list_[0]});
+
+  VerifyAllTetherHosts(expected_host_device_list);
 }
 
 TEST_F(TetherHostFetcherImplTest, TestSingleTetherHost) {
-  TestSingleTetherHost();
-}
-TEST_F(TetherHostFetcherImplTest, TestSingleTetherHostInLegacyMode) {
-  TestSingleTetherHost(true /* use_legacy_mode */);
+  InitializeTest();
+
+  VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
+                         test_remote_device_ref_list_[0]);
+
+  // Now, set device 0 as the only device. It should still be returned when
+  // requested.
+  SetSyncedDevices(multidevice::RemoteDeviceList{test_remote_device_list_[0]});
+  NotifyNewDevicesSynced();
+  VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
+                         test_remote_device_ref_list_[0]);
+
+  // Now, set another device as the only device, but remove its mobile data
+  // support. It should not be returned.
+  multidevice::RemoteDevice remote_device = multidevice::RemoteDevice();
+  remote_device.software_features
+      [chromeos::multidevice::SoftwareFeature::kInstantTetheringHost] =
+      multidevice::SoftwareFeatureState::kNotSupported;
+
+  SetSyncedDevices(multidevice::RemoteDeviceList{remote_device});
+  NotifyNewDevicesSynced();
+  VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
+                         base::nullopt);
+
+  // Update the list; now, there are no more devices.
+  SetSyncedDevices(multidevice::RemoteDeviceList());
+  NotifyNewDevicesSynced();
+  VerifySingleTetherHost(test_remote_device_ref_list_[0].GetDeviceId(),
+                         base::nullopt);
 }
 
 TEST_F(TetherHostFetcherImplTest,

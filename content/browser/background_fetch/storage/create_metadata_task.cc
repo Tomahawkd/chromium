@@ -9,6 +9,8 @@
 #include <utility>
 
 #include "base/barrier_closure.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/background_fetch/background_fetch_data_manager.h"
@@ -16,14 +18,15 @@
 #include "content/browser/background_fetch/storage/database_helpers.h"
 #include "content/browser/background_fetch/storage/image_helpers.h"
 #include "content/browser/background_fetch/storage/mark_registration_for_deletion_task.h"
+#include "content/browser/cache_storage/cache_storage.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/common/background_fetch/background_fetch_types.h"
-#include "content/common/service_worker/service_worker_utils.h"
+#include "content/common/fetch/fetch_api_request_proto.h"
+#include "third_party/blink/public/common/cache_storage/cache_storage_utils.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 
 namespace content {
-
 namespace background_fetch {
 
 namespace {
@@ -42,10 +45,7 @@ class CanCreateRegistrationTask : public DatabaseTask {
   CanCreateRegistrationTask(DatabaseTaskHost* host,
                             const url::Origin& origin,
                             CanCreateRegistrationCallback callback)
-      : DatabaseTask(host),
-        origin_(origin),
-        callback_(std::move(callback)),
-        weak_factory_(this) {}
+      : DatabaseTask(host), origin_(origin), callback_(std::move(callback)) {}
 
   ~CanCreateRegistrationTask() override = default;
 
@@ -119,8 +119,8 @@ class CanCreateRegistrationTask : public DatabaseTask {
   // The number of existing registrations found for |origin_|.
   size_t num_active_registrations_ = 0u;
 
-  base::WeakPtrFactory<CanCreateRegistrationTask>
-      weak_factory_;  // Keep as last.
+  base::WeakPtrFactory<CanCreateRegistrationTask> weak_factory_{
+      this};  // Keep as last.
 };
 
 }  // namespace
@@ -139,8 +139,7 @@ CreateMetadataTask::CreateMetadataTask(
       options_(std::move(options)),
       icon_(icon),
       start_paused_(start_paused),
-      callback_(std::move(callback)),
-      weak_factory_(this) {}
+      callback_(std::move(callback)) {}
 
 CreateMetadataTask::~CreateMetadataTask() = default;
 
@@ -296,7 +295,8 @@ void CreateMetadataTask::StoreMetadata() {
   // - DeveloperId -> UniqueID
   // - BackgroundFetchMetadata
   // - BackgroundFetchUIOptions
-  entries.reserve(requests_.size() + 3);
+  // - BackgroundFetchStorageVersion
+  entries.reserve(requests_.size() + 4u);
 
   std::string serialized_metadata_proto;
 
@@ -325,6 +325,9 @@ void CreateMetadataTask::StoreMetadata() {
                        std::move(serialized_metadata_proto));
   entries.emplace_back(UIOptionsKey(registration_id_.unique_id()),
                        serialized_ui_options_proto);
+  entries.emplace_back(
+      StorageVersionKey(registration_id_.unique_id()),
+      base::NumberToString(proto::BackgroundFetchStorageVersion::SV_CURRENT));
 
   // Signed integers are used for request indexes to avoid unsigned gotchas.
   for (int i = 0; i < base::checked_cast<int>(requests_.size()); i++) {
@@ -332,7 +335,9 @@ void CreateMetadataTask::StoreMetadata() {
     pending_request_proto.set_unique_id(registration_id_.unique_id());
     pending_request_proto.set_request_index(i);
     pending_request_proto.set_serialized_request(
-        ServiceWorkerUtils::SerializeFetchRequestToString(*requests_[i]));
+        SerializeFetchRequestToString(*requests_[i]));
+    if (requests_[i]->blob)
+      pending_request_proto.set_request_body_size(requests_[i]->blob->size);
     entries.emplace_back(PendingRequestKey(registration_id_.unique_id(), i),
                          pending_request_proto.SerializeAsString());
   }
@@ -346,6 +351,11 @@ void CreateMetadataTask::StoreMetadata() {
 
 void CreateMetadataTask::DidStoreMetadata(
     blink::ServiceWorkerStatusCode status) {
+  int64_t trace_id = blink::cache_storage::CreateTraceId();
+  TRACE_EVENT_WITH_FLOW0("CacheStorage",
+                         "CacheStorageMigrationTask::DidStoreMetadata",
+                         TRACE_ID_GLOBAL(trace_id), TRACE_EVENT_FLAG_FLOW_OUT);
+
   switch (ToDatabaseStatus(status)) {
     case DatabaseStatus::kOk:
       break;
@@ -357,15 +367,21 @@ void CreateMetadataTask::DidStoreMetadata(
   }
 
   // Create cache entries.
-  cache_manager()->OpenCache(registration_id_.origin(),
-                             CacheStorageOwner::kBackgroundFetch,
-                             registration_id_.unique_id() /* cache_name */,
-                             base::BindOnce(&CreateMetadataTask::DidOpenCache,
-                                            weak_factory_.GetWeakPtr()));
+  CacheStorageHandle cache_storage = GetOrOpenCacheStorage(registration_id_);
+  cache_storage.value()->OpenCache(
+      /* cache_name= */ registration_id_.unique_id(), trace_id,
+      base::BindOnce(&CreateMetadataTask::DidOpenCache,
+                     weak_factory_.GetWeakPtr(), trace_id));
 }
 
-void CreateMetadataTask::DidOpenCache(CacheStorageCacheHandle handle,
+void CreateMetadataTask::DidOpenCache(int64_t trace_id,
+                                      CacheStorageCacheHandle handle,
                                       blink::mojom::CacheStorageError error) {
+  TRACE_EVENT_WITH_FLOW0("CacheStorage",
+                         "CacheStorageMigrationTask::DidReopenCache",
+                         TRACE_ID_GLOBAL(trace_id),
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+
   if (error != blink::mojom::CacheStorageError::kSuccess) {
     SetStorageErrorAndFinish(BackgroundFetchStorageError::kCacheStorageError);
     return;
@@ -376,17 +392,19 @@ void CreateMetadataTask::DidOpenCache(CacheStorageCacheHandle handle,
   // Create batch PUT operations instead of putting them one-by-one.
   std::vector<blink::mojom::BatchOperationPtr> operations;
   operations.reserve(requests_.size());
-  for (auto& request : requests_) {
+  for (size_t i = 0; i < requests_.size(); i++) {
     auto operation = blink::mojom::BatchOperation::New();
     operation->operation_type = blink::mojom::OperationType::kPut;
-    operation->request = std::move(request);
+    requests_[i]->url =
+        MakeCacheUrlUnique(requests_[i]->url, registration_id_.unique_id(), i);
+    operation->request = std::move(requests_[i]);
     // Empty response.
     operation->response = blink::mojom::FetchAPIResponse::New();
     operations.push_back(std::move(operation));
   }
 
   handle.value()->BatchOperation(
-      std::move(operations), /* fail_on_duplicates= */ false,
+      std::move(operations), trace_id,
       base::BindOnce(&CreateMetadataTask::DidStoreRequests,
                      weak_factory_.GetWeakPtr(), handle.Clone()),
       base::DoNothing());
@@ -409,13 +427,13 @@ void CreateMetadataTask::DidStoreRequests(
 
 void CreateMetadataTask::FinishWithError(
     blink::mojom::BackgroundFetchError error) {
-  BackgroundFetchRegistration registration;
+  auto registration_data = blink::mojom::BackgroundFetchRegistrationData::New();
 
   if (error == blink::mojom::BackgroundFetchError::NONE) {
     DCHECK(metadata_proto_);
 
-    bool converted =
-        ToBackgroundFetchRegistration(*metadata_proto_, &registration);
+    bool converted = ToBackgroundFetchRegistration(*metadata_proto_,
+                                                   registration_data.get());
     if (!converted) {
       // Database corrupted.
       SetStorageErrorAndFinish(
@@ -424,7 +442,7 @@ void CreateMetadataTask::FinishWithError(
     }
 
     for (auto& observer : data_manager()->observers()) {
-      observer.OnRegistrationCreated(registration_id_, registration,
+      observer.OnRegistrationCreated(registration_id_, *registration_data,
                                      options_.Clone(), icon_, requests_.size(),
                                      start_paused_);
     }
@@ -432,7 +450,7 @@ void CreateMetadataTask::FinishWithError(
 
   ReportStorageError();
 
-  std::move(callback_).Run(error, registration);
+  std::move(callback_).Run(error, std::move(registration_data));
   Finished();  // Destroys |this|.
 }
 
@@ -441,5 +459,4 @@ std::string CreateMetadataTask::HistogramName() const {
 }
 
 }  // namespace background_fetch
-
 }  // namespace content

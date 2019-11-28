@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
@@ -24,6 +25,7 @@
 
 #if defined(OS_ANDROID)
 #include <android/hardware_buffer.h>
+#include <memory>
 #include "base/android/scoped_hardware_buffer_handle.h"
 #include "base/files/scoped_file.h"
 #endif
@@ -31,8 +33,12 @@
 namespace base {
 namespace trace_event {
 class ProcessMemoryDump;
-}
-}
+}  // namespace trace_event
+
+namespace android {
+class ScopedHardwareBufferFenceSync;
+}  // namespace android
+}  // namespace base
 
 namespace gfx {
 class GpuFence;
@@ -49,8 +55,20 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
   // Get the size of the image.
   virtual gfx::Size GetSize() = 0;
 
-  // Get the internal format of the image.
+  // Get the GL internal format, format, type of the image.
+  // They are aligned with glTexImage{2|3}D's parameters |internalformat|,
+  // |format|, and |type|.
+  // The returned enums are based on ES2 contexts and are mostly ES3
+  // compatible, except for GL_HALF_FLOAT_OES.
   virtual unsigned GetInternalFormat() = 0;
+  virtual unsigned GetDataFormat();
+  virtual unsigned GetDataType() = 0;
+
+  enum BindOrCopy { BIND, COPY };
+  // Returns whether this image is meant to be bound or copied to textures. The
+  // suggested method is not guaranteed to succeed, but the alternative will
+  // definitely fail.
+  virtual BindOrCopy ShouldBindOrCopy() = 0;
 
   // Bind image to texture currently bound to |target|. Returns true on success.
   // It is valid for an implementation to always return false.
@@ -89,7 +107,8 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
       std::unique_ptr<gfx::GpuFence> gpu_fence) = 0;
 
   // Set the color space when image is used as an overlay.
-  virtual void SetColorSpace(const gfx::ColorSpace& color_space) = 0;
+  virtual void SetColorSpace(const gfx::ColorSpace& color_space);
+  const gfx::ColorSpace& color_space() const { return color_space_; }
 
   // Flush any preceding rendering for the image.
   virtual void Flush() = 0;
@@ -112,35 +131,32 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
   virtual bool EmulatingRGB() const;
 
 #if defined(OS_ANDROID)
-  class GL_EXPORT ScopedHardwareBuffer {
-   public:
-    ScopedHardwareBuffer(base::android::ScopedHardwareBufferHandle handle,
-                         base::ScopedFD fence_fd);
-    virtual ~ScopedHardwareBuffer();
-
-    AHardwareBuffer* buffer() const { return handle_.get(); }
-    base::ScopedFD TakeFence();
-
-   private:
-    base::android::ScopedHardwareBufferHandle handle_;
-    base::ScopedFD fence_fd_;
-  };
-
   // Provides the buffer backing this image, if it is backed by an
   // AHardwareBuffer. The ScopedHardwareBuffer returned may include a fence
   // which will be signaled when all pending work for the buffer has been
   // finished and it can be safely read from.
   // The buffer is guaranteed to be valid until the lifetime of the object
   // returned.
-  virtual std::unique_ptr<ScopedHardwareBuffer> GetAHardwareBuffer();
+  virtual std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
+  GetAHardwareBuffer();
+
+  // Provides the crop rectangle associated with the image. The crop rectangle
+  // specifies the region of valid pixels in the image.
+  virtual gfx::Rect GetCropRect();
 #endif
 
   // An identifier for subclasses. Necessary for safe downcasting.
-  enum class Type { NONE, MEMORY, IOSURFACE, DXGI_IMAGE };
+  enum class Type { NONE, MEMORY, IOSURFACE, DXGI_IMAGE, D3D };
   virtual Type GetType() const;
+
+  // Workaround for StreamTexture which must be re-copied on each access.
+  // TODO(ericrk): Remove this once SharedImage transition is complete.
+  virtual bool HasMutableState() const;
 
  protected:
   virtual ~GLImage() {}
+
+  gfx::ColorSpace color_space_;
 
  private:
   friend class base::RefCounted<GLImage>;

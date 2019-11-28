@@ -20,6 +20,7 @@
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_types.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/proximity_auth/screenlock_state.h"
+#include "chromeos/components/proximity_auth/smart_lock_metrics_recorder.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 class AccountId;
@@ -81,12 +82,10 @@ class EasyUnlockService : public KeyedService {
   // Returns the user currently associated with the service.
   virtual AccountId GetAccountId() const = 0;
 
-  // Gets/Sets/Clears the permit access for the local device.
-  virtual void ClearPermitAccess() = 0;
-
-  // Gets/Sets the remote devices list.
+  // Retrieve the stored remote devices list:
+  //   * If in regular context, device list is retrieved from prefs.
+  //   * If in sign-in context, device list is retrieved from TPM.
   virtual const base::ListValue* GetRemoteDevices() const = 0;
-  virtual void SetRemoteDevices(const base::ListValue& devices) = 0;
 
   // Gets the challenge bytes for the user currently associated with the
   // service.
@@ -119,9 +118,6 @@ class EasyUnlockService : public KeyedService {
 
   // Returns true if ChromeOS login is enabled by the user.
   virtual bool IsChromeOSLoginEnabled() const;
-
-  // TODO(crbug.com/894585): Remove this legacy special case after M71.
-  virtual bool IsInLegacyHostMode() const;
 
   // Sets the hardlock state for the associated user.
   void SetHardlockState(EasyUnlockScreenlockStateHandler::HardlockState state);
@@ -180,10 +176,6 @@ class EasyUnlockService : public KeyedService {
   // not be allowed if common tests fail (e.g. if Bluetooth is not available).
   virtual bool IsAllowedInternal() const = 0;
 
-  // Called while processing a user gesture to unlock the screen using Easy
-  // Unlock, just before the screen is unlocked.
-  virtual void OnWillFinalizeUnlock(bool success) = 0;
-
   // Called when the local device resumes after a suspend.
   virtual void OnSuspendDoneInternal() = 0;
 
@@ -224,6 +216,11 @@ class EasyUnlockService : public KeyedService {
   // according to the current state of the service.
   EasyUnlockAuthEvent GetPasswordAuthEvent() const;
 
+  // Returns the authentication event for a recent password sign-in or unlock,
+  // according to the current state of the service.
+  SmartLockMetricsRecorder::SmartLockAuthEventPasswordState
+  GetSmartUnlockPasswordAuthEvent() const;
+
   // Called by subclasses when remote devices allowed to unlock the screen
   // are loaded for |account_id|.
   void SetProximityAuthDevices(
@@ -231,7 +228,21 @@ class EasyUnlockService : public KeyedService {
       const multidevice::RemoteDeviceRefList& remote_devices,
       base::Optional<multidevice::RemoteDeviceRef> local_device);
 
+  bool will_authenticate_using_easy_unlock() const {
+    return will_authenticate_using_easy_unlock_;
+  }
+
+  void set_will_authenticate_using_easy_unlock(
+      bool will_authenticate_using_easy_unlock) {
+    will_authenticate_using_easy_unlock_ = will_authenticate_using_easy_unlock;
+  }
+
  private:
+  // True if the user just authenticated using Easy Unlock. Reset once
+  // the screen signs in/unlocks. Used to distinguish Easy Unlock-powered
+  // signins/unlocks from password-based unlocks for metrics.
+  bool will_authenticate_using_easy_unlock_ = false;
+
   // A class to detect whether a bluetooth adapter is present.
   class BluetoothDetector;
 
@@ -285,7 +296,7 @@ class EasyUnlockService : public KeyedService {
 
   bool tpm_key_checked_;
 
-  base::WeakPtrFactory<EasyUnlockService> weak_ptr_factory_;
+  base::WeakPtrFactory<EasyUnlockService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EasyUnlockService);
 };

@@ -22,6 +22,7 @@
 #include "gin/per_isolate_data.h"
 #include "gin/v8_initializer.h"
 #include "gin/v8_isolate_memory_dump_provider.h"
+#include "gin/v8_shared_memory_dump_provider.h"
 
 namespace gin {
 
@@ -84,33 +85,15 @@ IsolateHolder::IsolateHolder(
     v8::Isolate::Initialize(isolate_, params);
   }
 
+  // This will attempt register the shared memory dump provider for every
+  // IsolateHolder, but only the first registration will have any effect.
+  gin::V8SharedMemoryDumpProvider::Register();
+
   isolate_memory_dump_provider_.reset(
       new V8IsolateMemoryDumpProvider(this, task_runner));
-#if defined(OS_WIN)
-  {
-    void* code_range;
-    size_t size;
-    isolate_->GetCodeRange(&code_range, &size);
-    Debug::CodeRangeCreatedCallback callback =
-        DebugImpl::GetCodeRangeCreatedCallback();
-    if (code_range && size && callback)
-      callback(code_range, size);
-  }
-#endif
 }
 
 IsolateHolder::~IsolateHolder() {
-#if defined(OS_WIN)
-  {
-    void* code_range;
-    size_t size;
-    isolate_->GetCodeRange(&code_range, &size);
-    Debug::CodeRangeDeletedCallback callback =
-        DebugImpl::GetCodeRangeDeletedCallback();
-    if (code_range && callback)
-      callback(code_range);
-  }
-#endif
   isolate_memory_dump_provider_.reset();
   isolate_data_.reset();
   isolate_->Dispose();
@@ -119,11 +102,10 @@ IsolateHolder::~IsolateHolder() {
 
 // static
 void IsolateHolder::Initialize(ScriptMode mode,
-                               V8ExtrasMode v8_extras_mode,
                                v8::ArrayBuffer::Allocator* allocator,
                                const intptr_t* reference_table) {
   CHECK(allocator);
-  V8Initializer::Initialize(mode, v8_extras_mode);
+  V8Initializer::Initialize(mode);
   g_array_buffer_allocator = allocator;
   g_reference_table = reference_table;
 }

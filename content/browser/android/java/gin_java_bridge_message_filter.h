@@ -37,7 +37,7 @@ class GinJavaBridgeMessageFilter : public BrowserMessageFilter,
   // BrowserMessageFilter
   void OnDestruct() const override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  base::TaskRunner* OverrideTaskRunnerForMessage(
+  scoped_refptr<base::SequencedTaskRunner> OverrideTaskRunnerForMessage(
       const IPC::Message& message) override;
 
   // RenderProcessHostObserver
@@ -51,11 +51,6 @@ class GinJavaBridgeMessageFilter : public BrowserMessageFilter,
 
   static scoped_refptr<GinJavaBridgeMessageFilter> FromHost(
       GinJavaBridgeDispatcherHost* host, bool create_if_not_exists);
-
-  // Removes the filter, which triggers its deletion. Needs to be called when
-  // the corresponding RenderProcessHost cleans itself up, e.g. on renderer
-  // process exit.
-  static void RemoveFilter(GinJavaBridgeDispatcherHost* host);
 
  private:
   friend class BrowserThread;

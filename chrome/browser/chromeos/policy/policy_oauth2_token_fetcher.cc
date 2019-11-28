@@ -13,7 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/gaia/gaia_auth_fetcher.h"
@@ -117,13 +117,12 @@ class PolicyOAuth2TokenFetcherImpl : public PolicyOAuth2TokenFetcher,
   // The callback to invoke when done.
   TokenCallback callback_;
 
-  base::WeakPtrFactory<PolicyOAuth2TokenFetcherImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<PolicyOAuth2TokenFetcherImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PolicyOAuth2TokenFetcherImpl);
 };
 
-PolicyOAuth2TokenFetcherImpl::PolicyOAuth2TokenFetcherImpl()
-    : weak_ptr_factory_(this) {}
+PolicyOAuth2TokenFetcherImpl::PolicyOAuth2TokenFetcherImpl() {}
 
 PolicyOAuth2TokenFetcherImpl::~PolicyOAuth2TokenFetcherImpl() {}
 
@@ -220,7 +219,7 @@ void PolicyOAuth2TokenFetcherImpl::RetryOnError(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (error.IsTransientError() && retry_count_ < kMaxRequestAttemptCount) {
     retry_count_++;
-    base::PostDelayedTaskWithTraits(
+    base::PostDelayedTask(
         FROM_HERE, {BrowserThread::UI}, task,
         base::TimeDelta::FromMilliseconds(kRequestRestartDelay));
     return;
@@ -292,10 +291,11 @@ void PolicyOAuth2TokenFetcher::UseFakeTokensForTesting() {
 }
 
 // static
-PolicyOAuth2TokenFetcher* PolicyOAuth2TokenFetcher::CreateInstance() {
+std::unique_ptr<PolicyOAuth2TokenFetcher>
+PolicyOAuth2TokenFetcher::CreateInstance() {
   if (use_fake_tokens_for_testing_)
-    return new PolicyOAuth2TokenFetcherFake();
-  return new PolicyOAuth2TokenFetcherImpl();
+    return std::make_unique<PolicyOAuth2TokenFetcherFake>();
+  return std::make_unique<PolicyOAuth2TokenFetcherImpl>();
 }
 
 PolicyOAuth2TokenFetcher::PolicyOAuth2TokenFetcher() {}

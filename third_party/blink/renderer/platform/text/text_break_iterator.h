@@ -22,13 +22,16 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_TEXT_BREAK_ITERATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_TEXT_BREAK_ITERATOR_H_
 
+#include <type_traits>
+
+#include <unicode/brkiter.h>
+
+#include "base/containers/span.h"
 #include "base/macros.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
-
-#include <unicode/brkiter.h>
 
 namespace blink {
 
@@ -41,28 +44,25 @@ typedef icu::BreakIterator TextBreakIterator;
 // platform UI conventions. One notable example where this can be different
 // from character break iterator is Thai prepend characters, see bug 24342.
 // Use this for insertion point and selection manipulations.
-PLATFORM_EXPORT TextBreakIterator* CursorMovementIterator(const UChar*,
-                                                          int length);
-
+PLATFORM_EXPORT TextBreakIterator* CursorMovementIterator(
+    base::span<const UChar>);
 PLATFORM_EXPORT TextBreakIterator* WordBreakIterator(const String&,
                                                      int start,
                                                      int length);
-PLATFORM_EXPORT TextBreakIterator* WordBreakIterator(const UChar*, int length);
+PLATFORM_EXPORT TextBreakIterator* WordBreakIterator(base::span<const UChar>);
 PLATFORM_EXPORT TextBreakIterator* AcquireLineBreakIterator(
-    const LChar*,
-    int length,
+    base::span<const LChar>,
     const AtomicString& locale,
     const UChar* prior_context,
     unsigned prior_context_length);
 PLATFORM_EXPORT TextBreakIterator* AcquireLineBreakIterator(
-    const UChar*,
-    int length,
+    base::span<const UChar>,
     const AtomicString& locale,
     const UChar* prior_context,
     unsigned prior_context_length);
 PLATFORM_EXPORT void ReleaseLineBreakIterator(TextBreakIterator*);
-PLATFORM_EXPORT TextBreakIterator* SentenceBreakIterator(const UChar*,
-                                                         int length);
+PLATFORM_EXPORT TextBreakIterator* SentenceBreakIterator(
+    base::span<const UChar>);
 
 // Before calling this, check if the iterator is not at the end. Otherwise,
 // it may not work as expected.
@@ -110,6 +110,11 @@ enum class BreakSpaceType {
   // opportunities between white spaces.
   // LayoutNG line breaker uses this type.
   kBeforeSpaceRun,
+
+  // white-spaces:break-spaces allows breaking after any preserved white-space,
+  // even when these are leading spaces so that we can avoid breaking
+  // the word in case of overflow.
+  kAfterEverySpace,
 };
 
 PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, LineBreakType);
@@ -143,33 +148,33 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   const String& GetString() const { return string_; }
 
   UChar LastCharacter() const {
-    static_assert(arraysize(prior_context_) == 2,
+    static_assert(std::extent<decltype(prior_context_)>() == 2,
                   "TextBreakIterator has unexpected prior context length");
     return prior_context_[1];
   }
 
   UChar SecondToLastCharacter() const {
-    static_assert(arraysize(prior_context_) == 2,
+    static_assert(std::extent<decltype(prior_context_)>() == 2,
                   "TextBreakIterator has unexpected prior context length");
     return prior_context_[0];
   }
 
   void SetPriorContext(UChar last, UChar second_to_last) {
-    static_assert(arraysize(prior_context_) == 2,
+    static_assert(std::extent<decltype(prior_context_)>() == 2,
                   "TextBreakIterator has unexpected prior context length");
     prior_context_[0] = second_to_last;
     prior_context_[1] = last;
   }
 
   void UpdatePriorContext(UChar last) {
-    static_assert(arraysize(prior_context_) == 2,
+    static_assert(std::extent<decltype(prior_context_)>() == 2,
                   "TextBreakIterator has unexpected prior context length");
     prior_context_[0] = prior_context_[1];
     prior_context_[1] = last;
   }
 
   void ResetPriorContext() {
-    static_assert(arraysize(prior_context_) == 2,
+    static_assert(std::extent<decltype(prior_context_)>() == 2,
                   "TextBreakIterator has unexpected prior context length");
     prior_context_[0] = 0;
     prior_context_[1] = 0;
@@ -181,7 +186,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   };
 
   PriorContext GetPriorContext() const {
-    static_assert(arraysize(prior_context_) == 2,
+    static_assert(std::extent<decltype(prior_context_)>() == 2,
                   "TextBreakIterator has unexpected prior context length");
     if (prior_context_[1]) {
       if (prior_context_[0])
@@ -211,6 +216,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
     ReleaseIterator();
   }
 
+  const AtomicString& Locale() const { return locale_; }
   void SetLocale(const AtomicString& locale) {
     if (locale == locale_)
       return;
@@ -292,15 +298,13 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
     cached_prior_context_ = prior_context;
     CHECK_LE(start_offset_, string_.length());
     if (string_.Is8Bit()) {
-      iterator_ =
-          AcquireLineBreakIterator(string_.Characters8() + start_offset_,
-                                   string_.length() - start_offset_, locale_,
-                                   prior_context.text, prior_context.length);
+      iterator_ = AcquireLineBreakIterator(
+          string_.Span8().subspan(start_offset_), locale_, prior_context.text,
+          prior_context.length);
     } else {
-      iterator_ =
-          AcquireLineBreakIterator(string_.Characters16() + start_offset_,
-                                   string_.length() - start_offset_, locale_,
-                                   prior_context.text, prior_context.length);
+      iterator_ = AcquireLineBreakIterator(
+          string_.Span16().subspan(start_offset_), locale_, prior_context.text,
+          prior_context.length);
     }
     return iterator_;
   }

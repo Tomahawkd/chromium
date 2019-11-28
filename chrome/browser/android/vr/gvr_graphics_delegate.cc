@@ -6,7 +6,9 @@
 
 #include <algorithm>
 
+#include "base/bind.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "chrome/browser/android/vr/gl_browser_interface.h"
 #include "chrome/browser/android/vr/gvr_util.h"
@@ -139,8 +141,7 @@ GvrGraphicsDelegate::GvrGraphicsDelegate(
       browser_(browser),
       textures_initialized_callback_(std::move(textures_initialized_callback)),
       webvr_acquire_time_(sliding_time_size),
-      webvr_submit_time_(sliding_time_size),
-      weak_ptr_factory_(this) {}
+      webvr_submit_time_(sliding_time_size) {}
 
 GvrGraphicsDelegate::~GvrGraphicsDelegate() = default;
 

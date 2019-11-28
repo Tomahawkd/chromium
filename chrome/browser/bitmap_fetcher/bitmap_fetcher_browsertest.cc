@@ -4,6 +4,7 @@
 
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
@@ -133,7 +134,7 @@ class BitmapFetcherBrowserTest : public InProcessBrowserTest {
   }
 };
 
-// WARNING:  These tests work with --single_process, but not
+// WARNING:  These tests work with --single-process-tests, but not
 // --single-process.  The reason is that the sandbox does not get created
 // for us by the test process if --single-process is used.
 
@@ -150,7 +151,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, StartTest) {
   fetcher.Init(
       std::string(),
       net::URLRequest::REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      net::LOAD_NORMAL);
+      network::mojom::CredentialsMode::kInclude);
   fetcher.Start(
       content::BrowserContext::GetDefaultStoragePartition(browser()->profile())
           ->GetURLLoaderFactoryForBrowserProcess()
@@ -200,7 +201,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, OnURLFetchFailureTest) {
   fetcher.Init(
       std::string(),
       net::URLRequest::REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      net::LOAD_NORMAL);
+      network::mojom::CredentialsMode::kInclude);
   fetcher.Start(
       content::BrowserContext::GetDefaultStoragePartition(browser()->profile())
           ->GetURLLoaderFactoryForBrowserProcess()
@@ -220,7 +221,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, HandleImageFailedTest) {
   fetcher.Init(
       std::string(),
       net::URLRequest::REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      net::LOAD_NORMAL);
+      network::mojom::CredentialsMode::kInclude);
   fetcher.Start(
       content::BrowserContext::GetDefaultStoragePartition(browser()->profile())
           ->GetURLLoaderFactoryForBrowserProcess()

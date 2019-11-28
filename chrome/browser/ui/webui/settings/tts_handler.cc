@@ -11,6 +11,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/speech/extension_api/tts_engine_extension_api.h"
 #include "chrome/browser/speech/extension_api/tts_engine_extension_observer.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/tts_controller.h"
@@ -24,7 +25,7 @@
 #include "ui/base/l10n/l10n_util.h"
 
 namespace settings {
-TtsHandler::TtsHandler() : weak_factory_(this) {}
+TtsHandler::TtsHandler() {}
 
 TtsHandler::~TtsHandler() {
   content::TtsController::GetInstance()->RemoveVoicesChangedDelegate(this);
@@ -65,7 +66,7 @@ void TtsHandler::HandleGetTtsExtensions(const base::ListValue* args) {
 
           extensions::OptionsPageInfo::GetOptionsPage(extension).spec());
     }
-    responses.GetList().push_back(std::move(response));
+    responses.Append(std::move(response));
   }
 
   FireWebUIListener("tts-extensions-updated", responses);
@@ -98,8 +99,8 @@ void TtsHandler::OnVoicesChanged() {
     response.SetString("languageCode", language_code);
     response.SetString("fullLanguageCode", voice.lang);
     response.SetInteger("languageScore", language_score);
-    response.SetString("extensionId", voice.extension_id);
-    responses.GetList().push_back(std::move(response));
+    response.SetString("extensionId", voice.engine_id);
+    responses.Append(std::move(response));
   }
   AllowJavascript();
   FireWebUIListener("all-voice-data-updated", responses);
@@ -108,9 +109,10 @@ void TtsHandler::OnVoicesChanged() {
   HandleGetTtsExtensions(nullptr);
 }
 
-void TtsHandler::OnTtsEvent(content::Utterance* utterance,
+void TtsHandler::OnTtsEvent(content::TtsUtterance* utterance,
                             content::TtsEventType event_type,
                             int char_index,
+                            int length,
                             const std::string& error_message) {
   if (event_type == content::TTS_EVENT_END ||
       event_type == content::TTS_EVENT_INTERRUPTED ||
@@ -131,24 +133,25 @@ void TtsHandler::HandlePreviewTtsVoice(const base::ListValue* args) {
     return;
 
   std::unique_ptr<base::DictionaryValue> json =
-      base::DictionaryValue::From(base::JSONReader::Read(voice_id));
+      base::DictionaryValue::From(base::JSONReader::ReadDeprecated(voice_id));
   std::string name;
   std::string extension_id;
   json->GetString("name", &name);
   json->GetString("extension", &extension_id);
 
-  content::Utterance* utterance =
-      new content::Utterance(Profile::FromWebUI(web_ui()));
-  utterance->set_text(text);
-  utterance->set_voice_name(name);
-  utterance->set_extension_id(extension_id);
-  utterance->set_src_url(GURL("chrome://settings/manageAccessibility/tts"));
-  utterance->set_event_delegate(this);
+  std::unique_ptr<content::TtsUtterance> utterance =
+      content::TtsUtterance::Create((Profile::FromWebUI(web_ui())));
+  utterance->SetText(text);
+  utterance->SetVoiceName(name);
+  utterance->SetEngineId(extension_id);
+  utterance->SetSrcUrl(
+      GURL(chrome::GetOSSettingsUrl("manageAccessibility/tts")));
+  utterance->SetEventDelegate(this);
   content::TtsController::GetInstance()->Stop();
 
   base::Value result(true /* preview started */);
   FireWebUIListener("tts-preview-state-changed", result);
-  content::TtsController::GetInstance()->SpeakOrEnqueue(utterance);
+  content::TtsController::GetInstance()->SpeakOrEnqueue(std::move(utterance));
 }
 
 void TtsHandler::RegisterMessages() {
@@ -191,7 +194,7 @@ int TtsHandler::GetVoiceLangMatchScore(const content::VoiceData* voice,
 
 void TtsHandler::WakeTtsEngine(const base::ListValue* args) {
   Profile* profile = Profile::FromWebUI(web_ui());
-  TtsExtensionEngine::GetInstance()->LoadBuiltInTtsExtension(profile);
+  TtsExtensionEngine::GetInstance()->LoadBuiltInTtsEngine(profile);
   extensions::ProcessManager::Get(profile)->WakeEventPage(
       extension_misc::kGoogleSpeechSynthesisExtensionId,
       base::BindOnce(&TtsHandler::OnTtsEngineAwake,

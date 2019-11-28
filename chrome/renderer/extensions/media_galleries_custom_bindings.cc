@@ -6,8 +6,9 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "extensions/renderer/script_context.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/common/file_system/file_system_util.h"
 #include "third_party/blink/public/platform/url_conversion.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_dom_file_system.h"
@@ -25,8 +26,9 @@ MediaGalleriesCustomBindings::MediaGalleriesCustomBindings(
 void MediaGalleriesCustomBindings::AddRoutes() {
   RouteHandlerFunction(
       "GetMediaFileSystemObject", "mediaGalleries",
-      base::Bind(&MediaGalleriesCustomBindings::GetMediaFileSystemObject,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &MediaGalleriesCustomBindings::GetMediaFileSystemObject,
+          base::Unretained(this)));
 }
 
 // FileSystemObject GetMediaFileSystem(string file_system_url): construct

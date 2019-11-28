@@ -18,13 +18,17 @@ class TestShellDelegate : public ShellDelegate {
   ~TestShellDelegate() override;
 
   // Overridden from ShellDelegate:
-  bool CanShowWindowForUser(aura::Window* window) const override;
-  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
+  bool CanShowWindowForUser(const aura::Window* window) const override;
   std::unique_ptr<ScreenshotDelegate> CreateScreenshotDelegate() override;
   AccessibilityDelegate* CreateAccessibilityDelegate() override;
-  ws::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
+  bool CanGoBack(gfx::NativeWindow window) const override;
+
+  void SetCanGoBack(bool can_go_back);
 
  private:
+  // True if the current top window can back.
+  bool can_go_back_ = true;
+
   DISALLOW_COPY_AND_ASSIGN(TestShellDelegate);
 };
 

@@ -18,7 +18,6 @@
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/cros_settings_provider.h"
@@ -116,7 +115,8 @@ void CloudExternalDataPolicyObserver::Delegate::OnExternalDataCleared(
 void CloudExternalDataPolicyObserver::Delegate::OnExternalDataFetched(
     const std::string& policy,
     const std::string& user_id,
-    std::unique_ptr<std::string> data) {}
+    std::unique_ptr<std::string> data,
+    const base::FilePath& file_path) {}
 
 CloudExternalDataPolicyObserver::Delegate::~Delegate() {
 }
@@ -129,8 +129,7 @@ CloudExternalDataPolicyObserver::CloudExternalDataPolicyObserver(
     : cros_settings_(cros_settings),
       device_local_account_policy_service_(device_local_account_policy_service),
       policy_(policy),
-      delegate_(delegate),
-      weak_factory_(this) {
+      delegate_(delegate) {
   notification_registrar_.Add(
       this,
       chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
@@ -170,20 +169,20 @@ void CloudExternalDataPolicyObserver::Observe(
   }
 
   const std::string& user_id = user->GetAccountId().GetUserEmail();
-  if (base::ContainsKey(logged_in_user_observers_, user_id)) {
+  if (base::Contains(logged_in_user_observers_, user_id)) {
     NOTREACHED();
     return;
   }
 
   ProfilePolicyConnector* policy_connector =
-      ProfilePolicyConnectorFactory::GetForBrowserContext(profile);
+      profile->GetProfilePolicyConnector();
   logged_in_user_observers_[user_id] = std::make_unique<PolicyServiceObserver>(
       this, user_id, policy_connector->policy_service());
 }
 
 void CloudExternalDataPolicyObserver::OnPolicyUpdated(
     const std::string& user_id) {
-  if (base::ContainsKey(logged_in_user_observers_, user_id)) {
+  if (base::Contains(logged_in_user_observers_, user_id)) {
     // When a device-local account is logged in, a policy change triggers both
     // OnPolicyUpdated() and PolicyServiceObserver::OnPolicyUpdated(). Ignore
     // the former so that the policy change is handled only once.
@@ -252,7 +251,7 @@ void CloudExternalDataPolicyObserver::RetrieveDeviceLocalAccounts() {
   for (DeviceLocalAccountEntryMap::iterator it =
            device_local_account_entries_.begin();
        it != device_local_account_entries_.end(); ) {
-    if (!base::ContainsKey(device_local_accounts, it->first)) {
+    if (!base::Contains(device_local_accounts, it->first)) {
       const std::string user_id = it->first;
       device_local_account_entries_.erase(it++);
       // When a device-local account whose external data reference was set is
@@ -284,10 +283,9 @@ void CloudExternalDataPolicyObserver::HandleExternalDataPolicyUpdate(
   std::unique_ptr<WeakPtrFactory>& weak_ptr_factory = fetch_weak_ptrs_[user_id];
   weak_ptr_factory.reset(new WeakPtrFactory(this));
   if (entry->external_data_fetcher) {
-    entry->external_data_fetcher->Fetch(base::Bind(
-        &CloudExternalDataPolicyObserver::OnExternalDataFetched,
-        weak_ptr_factory->GetWeakPtr(),
-        user_id));
+    entry->external_data_fetcher->Fetch(
+        base::BindOnce(&CloudExternalDataPolicyObserver::OnExternalDataFetched,
+                       weak_ptr_factory->GetWeakPtr(), user_id));
   } else {
     NOTREACHED();
   }
@@ -295,11 +293,13 @@ void CloudExternalDataPolicyObserver::HandleExternalDataPolicyUpdate(
 
 void CloudExternalDataPolicyObserver::OnExternalDataFetched(
     const std::string& user_id,
-    std::unique_ptr<std::string> data) {
+    std::unique_ptr<std::string> data,
+    const base::FilePath& file_path) {
   FetchWeakPtrMap::iterator it = fetch_weak_ptrs_.find(user_id);
   DCHECK(it != fetch_weak_ptrs_.end());
   fetch_weak_ptrs_.erase(it);
-  delegate_->OnExternalDataFetched(policy_, user_id, std::move(data));
+  delegate_->OnExternalDataFetched(policy_, user_id, std::move(data),
+                                   file_path);
 }
 
 }  // namespace policy

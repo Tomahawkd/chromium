@@ -29,6 +29,28 @@ FrameInfo::FrameInfo(const std::string& parent_frame_id,
       frame_id(frame_id),
       chromedriver_frame_id(chromedriver_frame_id) {}
 
+InputCancelListEntry::InputCancelListEntry(base::DictionaryValue* input_state,
+                                           const MouseEvent* mouse_event,
+                                           const TouchEvent* touch_event,
+                                           const KeyEvent* key_event)
+    : input_state(input_state) {
+  if (mouse_event != nullptr) {
+    this->mouse_event = std::make_unique<MouseEvent>(*mouse_event);
+    this->mouse_event->type = kReleasedMouseEventType;
+  } else if (touch_event != nullptr) {
+    this->touch_event = std::make_unique<TouchEvent>(*touch_event);
+    this->touch_event->type = kTouchEnd;
+  } else if (key_event != nullptr) {
+    this->key_event = std::make_unique<KeyEvent>(*key_event);
+    this->key_event->type = kKeyUpEventType;
+  }
+}
+
+InputCancelListEntry::InputCancelListEntry(InputCancelListEntry&& other) =
+    default;
+
+InputCancelListEntry::~InputCancelListEntry() = default;
+
 // The default timeout values came from W3C spec.
 const base::TimeDelta Session::kDefaultImplicitWaitTimeout =
     base::TimeDelta::FromSeconds(0);
@@ -42,22 +64,21 @@ Session::Session(const std::string& id)
       w3c_compliant(kW3CDefault),
       quit(false),
       detach(false),
-      force_devtools_screenshot(false),
       sticky_modifiers(0),
       mouse_position(0, 0),
       pressed_mouse_button(kNoneMouseButton),
       implicit_wait(kDefaultImplicitWaitTimeout),
       page_load_timeout(kDefaultPageLoadTimeout),
       script_timeout(kDefaultScriptTimeout),
-      auto_reporting_enabled(false),
-      strict_file_interactability(false){}
+      strict_file_interactability(false),
+      click_count(0),
+      mouse_click_timestamp(base::TimeTicks::Now()) {}
 
 Session::Session(const std::string& id, std::unique_ptr<Chrome> chrome)
     : id(id),
       w3c_compliant(kW3CDefault),
       quit(false),
       detach(false),
-      force_devtools_screenshot(false),
       chrome(std::move(chrome)),
       sticky_modifiers(0),
       mouse_position(0, 0),
@@ -65,8 +86,9 @@ Session::Session(const std::string& id, std::unique_ptr<Chrome> chrome)
       implicit_wait(kDefaultImplicitWaitTimeout),
       page_load_timeout(kDefaultPageLoadTimeout),
       script_timeout(kDefaultScriptTimeout),
-      auto_reporting_enabled(false),
-      strict_file_interactability(false){}
+      strict_file_interactability(false),
+      click_count(0),
+      mouse_click_timestamp(base::TimeTicks::Now()) {}
 
 Session::~Session() {}
 
@@ -82,11 +104,13 @@ Status Session::GetTargetWindow(WebView** web_view) {
 
 void Session::SwitchToTopFrame() {
   frames.clear();
+  ClearNavigationState(true);
 }
 
 void Session::SwitchToParentFrame() {
   if (!frames.empty())
     frames.pop_back();
+  ClearNavigationState(false);
 }
 
 void Session::SwitchToSubFrame(const std::string& frame_id,
@@ -95,6 +119,22 @@ void Session::SwitchToSubFrame(const std::string& frame_id,
   if (!frames.empty())
     parent_frame_id = frames.back().frame_id;
   frames.push_back(FrameInfo(parent_frame_id, frame_id, chromedriver_frame_id));
+  ClearNavigationState(false);
+}
+
+void Session::ClearNavigationState(bool for_top_frame) {
+  WebView* web_view = nullptr;
+  Status status = GetTargetWindow(&web_view);
+  if (!status.IsError()) {
+    if (for_top_frame)
+      web_view->ClearNavigationState(std::string());
+    else
+      web_view->ClearNavigationState(GetCurrentFrameId());
+  } else {
+    // Do nothing; this should be very rare because callers of this function
+    // have already called GetTargetWindow.
+    // Let later code handle issues that arise from the invalid state.
+  }
 }
 
 std::string Session::GetCurrentFrameId() const {
@@ -110,17 +150,6 @@ std::vector<WebDriverLog*> Session::GetAllLogs() const {
   if (driver_log)
     logs.push_back(driver_log.get());
   return logs;
-}
-
-std::string Session::GetFirstBrowserError() const {
-  for (const auto& log : devtools_logs) {
-    if (log->type() == WebDriverLog::kBrowserType) {
-      std::string message = log->GetFirstErrorMessage();
-      if (!message.empty())
-        return message;
-    }
-  }
-  return std::string();
 }
 
 Session* GetThreadLocalSession() {

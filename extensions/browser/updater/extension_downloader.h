@@ -13,17 +13,29 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/version.h"
 #include "extensions/browser/updater/extension_downloader_delegate.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
 #include "extensions/browser/updater/request_queue.h"
 #include "extensions/browser/updater/safe_manifest_parser.h"
 #include "extensions/common/extension.h"
-#include "google_apis/gaia/oauth2_token_service.h"
+#include "google_apis/gaia/google_service_auth_error.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
+
+namespace crx_file {
+enum class VerifierFormat;
+}
+
+namespace signin {
+class PrimaryAccountAccessTokenFetcher;
+class IdentityManager;
+struct AccessTokenInfo;
+}  // namespace signin
 
 namespace net {
 class URLRequestStatus;
@@ -37,10 +49,6 @@ class URLLoaderFactory;
 }
 struct ResourceRequest;
 }  // namespace network
-
-namespace service_manager {
-class Connector;
-}
 
 namespace extensions {
 
@@ -60,26 +68,21 @@ class ExtensionUpdaterTest;
 // the crx file when updates are found. It uses a |ExtensionDownloaderDelegate|
 // that takes ownership of the downloaded crx files, and handles events during
 // the update check.
-class ExtensionDownloader : public OAuth2TokenService::Consumer {
+class ExtensionDownloader {
  public:
   // A closure which constructs a new ExtensionDownloader to be owned by the
   // caller.
   using Factory = base::RepeatingCallback<std::unique_ptr<ExtensionDownloader>(
       ExtensionDownloaderDelegate* delegate)>;
 
-  // A closure that returns the account to use for authentication to the
-  // webstore.
-  using GetWebstoreAccountCallback =
-      base::RepeatingCallback<const std::string&()>;
-
   // |delegate| is stored as a raw pointer and must outlive the
   // ExtensionDownloader.
   ExtensionDownloader(
       ExtensionDownloaderDelegate* delegate,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      service_manager::Connector* connector,
+      crx_file::VerifierFormat crx_format_requirement,
       const base::FilePath& profile_path = base::FilePath());
-  ~ExtensionDownloader() override;
+  ~ExtensionDownloader();
 
   // Adds |extension| to the list of extensions to check for updates.
   // Returns false if the |extension| can't be updated due to invalid details.
@@ -93,6 +96,14 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
                     int request_id,
                     ManifestFetchData::FetchPriority fetch_priority);
 
+  // Check AddPendingExtensionWithVersion with the version set as "0.0.0.0".
+  bool AddPendingExtension(const std::string& id,
+                           const GURL& update_url,
+                           Manifest::Location install_source,
+                           bool is_corrupt_reinstall,
+                           int request_id,
+                           ManifestFetchData::FetchPriority fetch_priority);
+
   // Adds extension |id| to the list of extensions to check for updates.
   // Returns false if the |id| can't be updated due to invalid details.
   // In that case, no callbacks will be performed on the |delegate_|.
@@ -102,24 +113,26 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
   // parameter is used to indicate in the request that we detected corruption in
   // the local copy of the extension and we want to perform a reinstall of it.
   // |fetch_priority| parameter notifies the downloader the priority of this
-  // extension update (either foreground or background).
-  bool AddPendingExtension(const std::string& id,
-                           const GURL& update_url,
-                           Manifest::Location install_source,
-                           bool is_corrupt_reinstall,
-                           int request_id,
-                           ManifestFetchData::FetchPriority fetch_priority);
+  // extension update (either foreground or background). The |version|
+  // parameter specifies the version of the downloaded crx file,
+  // equals to 0.0.0.0 if there is no crx file.
+  bool AddPendingExtensionWithVersion(
+      const std::string& id,
+      const GURL& update_url,
+      Manifest::Location install_source,
+      bool is_corrupt_reinstall,
+      int request_id,
+      ManifestFetchData::FetchPriority fetch_priority,
+      base::Version version);
 
   // Schedules a fetch of the manifest of all the extensions added with
   // AddExtension() and AddPendingExtension().
   void StartAllPending(ExtensionCache* cache);
 
-  // Sets GetWebstoreAccountCallback and TokenService instances to be used for
-  // OAuth2 authentication on protected Webstore downloads. Both objects must be
-  // valid to use for the lifetime of this object.
-  void SetWebstoreAuthenticationCapabilities(
-      const GetWebstoreAccountCallback& webstore_account_callback,
-      OAuth2TokenService* token_service);
+  // Sets the IdentityManager instance to be used for OAuth2 authentication on
+  // protected Webstore downloads. The IdentityManager instance must be valid to
+  // use for the lifetime of this object.
+  void SetIdentityManager(signin::IdentityManager* identity_manager);
 
   void set_brand_code(const std::string& brand_code) {
     brand_code_ = brand_code;
@@ -155,6 +168,7 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
   static const char kUpdateInteractivityBackground[];
 
  private:
+  friend class ExtensionDownloaderTest;
   friend class ExtensionUpdaterTest;
 
   // These counters are bumped as extensions are added to be fetched. They
@@ -269,6 +283,11 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
                         std::set<std::string>* no_updates,
                         std::set<std::string>* errors);
 
+  // Checks whether extension is presented in cache. If yes, return path to its
+  // cached CRX, base::nullopt otherwise.
+  base::Optional<base::FilePath> GetCachedExtension(
+      const ExtensionFetch& fetch_data);
+
   // Begins (or queues up) download of an updated extension.
   void FetchUpdatedExtension(std::unique_ptr<ExtensionFetch> fetch_data);
 
@@ -279,10 +298,20 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
   // Handles the result of a crx fetch.
   void OnExtensionLoadComplete(base::FilePath crx_path);
 
+  // Invokes OnExtensionDownloadStageChanged() on the |delegate_| for each
+  // extension in the set, with |stage| as the current stage. Make a copy of
+  // arguments because there is no guarantee that callback won't indirectly
+  // change source of IDs.
+  void NotifyExtensionsDownloadStageChanged(
+      std::set<std::string> extension_ids,
+      ExtensionDownloaderDelegate::Stage stage);
+
   // Invokes OnExtensionDownloadFailed() on the |delegate_| for each extension
-  // in the set, with |error| as the reason for failure.
-  void NotifyExtensionsDownloadFailed(const std::set<std::string>& id_set,
-                                      const std::set<int>& request_ids,
+  // in the set, with |error| as the reason for failure. Make a copy of
+  // arguments because there is no guarantee that callback won't indirectly
+  // change source of IDs.
+  void NotifyExtensionsDownloadFailed(std::set<std::string> id_set,
+                                      std::set<int> request_ids,
                                       ExtensionDownloaderDelegate::Error error);
 
   // Send a notification that an update was found for |id| that we'll
@@ -312,12 +341,8 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
                                            const net::URLRequestStatus& status,
                                            int response_code);
 
-  // OAuth2TokenService::Consumer implementation.
-  void OnGetTokenSuccess(
-      const OAuth2TokenService::Request* request,
-      const OAuth2AccessTokenConsumer::TokenResponse& token_response) override;
-  void OnGetTokenFailure(const OAuth2TokenService::Request* request,
-                         const GoogleServiceAuthError& error) override;
+  void OnAccessTokenFetchComplete(GoogleServiceAuthError error,
+                                  signin::AccessTokenInfo token_info);
 
   ManifestFetchData* CreateManifestFetchData(
       const GURL& update_url,
@@ -347,9 +372,6 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
   // The profile path used to load file:// URLs. It can be invalid.
   base::FilePath profile_path_for_url_loader_factory_;
 
-  // The connector to the ServiceManager.
-  service_manager::Connector* connector_;
-
   // Collects UMA samples that are reported when ReportStats() is called.
   URLStats url_stats_;
 
@@ -377,20 +399,17 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
   // Cache for .crx files.
   ExtensionCache* extension_cache_;
 
-  // Gets the account to use for protected download requests. May be null. If
-  // non-null, valid to call for the lifetime of this object.
-  GetWebstoreAccountCallback webstore_account_callback_;
-
   // May be used to fetch access tokens for protected download requests. May be
   // null. If non-null, guaranteed to outlive this object.
-  OAuth2TokenService* token_service_;
+  signin::IdentityManager* identity_manager_;
 
   // A Webstore download-scoped access token for the |identity_provider_|'s
   // active account, if any.
   std::string access_token_;
 
-  // A pending token fetch request.
-  std::unique_ptr<OAuth2TokenService::Request> access_token_request_;
+  // A pending access token fetcher.
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher>
+      access_token_fetcher_;
 
   // Brand code to include with manifest fetch queries if sending ping data.
   std::string brand_code_;
@@ -406,8 +425,10 @@ class ExtensionDownloader : public OAuth2TokenService::Consumer {
       last_extension_loader_resource_request_headers_for_testing_;
   int last_extension_loader_load_flags_for_testing_ = 0;
 
+  crx_file::VerifierFormat crx_format_requirement_;
+
   // Used to create WeakPtrs to |this|.
-  base::WeakPtrFactory<ExtensionDownloader> weak_ptr_factory_;
+  base::WeakPtrFactory<ExtensionDownloader> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionDownloader);
 };

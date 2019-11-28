@@ -9,12 +9,14 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "components/sync/base/data_type_histogram.h"
 #include "components/sync/engine_impl/conflict_resolver.h"
 #include "components/sync/engine_impl/cycle/data_type_debug_info_emitter.h"
 #include "components/sync/engine_impl/cycle/status_controller.h"
 #include "components/sync/engine_impl/update_applicator.h"
 #include "components/sync/syncable/directory.h"
+#include "components/sync/syncable/directory_cryptographer.h"
 #include "components/sync/syncable/model_neutral_mutable_entry.h"
 #include "components/sync/syncable/syncable_changes_version.h"
 #include "components/sync/syncable/syncable_model_neutral_write_transaction.h"
@@ -307,12 +309,6 @@ void DirectoryUpdateHandler::ExpireEntriesIfNeeded(
                          new_gc_directive.age_watermark_in_days());
       cached_gc_directive_aged_out_day_ = to_be_expired;
     }
-  }
-
-  if (new_gc_directive.has_max_number_of_items()) {
-    DCHECK(new_gc_directive.max_number_of_items());
-    ExpireEntriesByItemLimit(dir_, trans, type_,
-                             new_gc_directive.max_number_of_items());
   }
 }
 

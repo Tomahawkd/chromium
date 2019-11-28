@@ -4,9 +4,21 @@
 
 #include "base/json/json_writer.h"
 #include "base/values.h"
+#include "components/offline_pages/core/background/offliner.h"
 #include "components/offline_pages/core/background/save_page_request.h"
 
 namespace offline_pages {
+namespace {
+
+const char* EnumString(SavePageRequest::AutoFetchNotificationState value) {
+  switch (value) {
+    case SavePageRequest::AutoFetchNotificationState::kUnknown:
+      return "kUnknown";
+    case SavePageRequest::AutoFetchNotificationState::kShown:
+      return "kShown";
+  }
+}
+}  // namespace
 
 std::string SavePageRequest::ToString() const {
   base::DictionaryValue result;
@@ -25,10 +37,23 @@ std::string SavePageRequest::ToString() const {
   result.SetInteger("pending_state", static_cast<int>(pending_state_));
   result.SetString("original_url", original_url_.spec());
   result.SetString("request_origin", request_origin_);
+  result.SetString("auto_fetch_notification_state",
+                   EnumString(auto_fetch_notification_state_));
 
   std::string result_string;
   base::JSONWriter::Write(result, &result_string);
   return result_string;
+}
+
+// Implemented in test_util.cc.
+std::ostream& operator<<(std::ostream& out,
+                         SavePageRequest::AutoFetchNotificationState value) {
+  return out << EnumString(value);
+}
+
+std::ostream& operator<<(std::ostream& out,
+                         const Offliner::RequestStatus& value) {
+  return out << Offliner::RequestStatusToString(value);
 }
 
 }  // namespace offline_pages

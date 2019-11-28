@@ -5,9 +5,10 @@
 #include "chrome/browser/android/preferences/preferences_launcher.h"
 
 #include "base/android/jni_android.h"
+#include "chrome/android/chrome_jni_headers/PreferencesLauncher_jni.h"
 #include "chrome/browser/android/tab_android.h"
+#include "components/password_manager/core/browser/manage_passwords_referrer.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/PreferencesLauncher_jni.h"
 
 namespace chrome {
 namespace android {
@@ -25,9 +26,11 @@ void PreferencesLauncher::ShowAutofillCreditCardSettings(
 }
 
 void PreferencesLauncher::ShowPasswordSettings(
-    content::WebContents* web_contents) {
+    content::WebContents* web_contents,
+    password_manager::ManagePasswordsReferrer referrer) {
   Java_PreferencesLauncher_showPasswordSettings(
-      base::android::AttachCurrentThread(), web_contents->GetJavaWebContents());
+      base::android::AttachCurrentThread(), web_contents->GetJavaWebContents(),
+      static_cast<int>(referrer));
 }
 
 }  // namespace android

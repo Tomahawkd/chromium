@@ -29,14 +29,18 @@
 
 #include <memory>
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/public/mojom/net/ip_address_space.mojom-blink.h"
+#include "services/network/public/mojom/ip_address_space.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
 #include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
+#include "third_party/blink/renderer/platform/loader/fetch/detachable_use_counter.h"
+#include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher_properties.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/loader/fetch/text_resource_decoder_options.h"
@@ -48,28 +52,68 @@
 
 namespace blink {
 
+namespace {
+
+// CheckSameOriginEnforcement() functions return non-null String on error.
+//
+// WorkerGlobalScope's SecurityOrigin is initialized to request URL's
+// origin at the construction of WorkerGlobalScope, while
+// WorkerGlobalScope's URL is set to response URL
+// (ResourceResponse::ResponseURL()).
+// These functions are used to ensure the SecurityOrigin and the URL to be
+// consistent. https://crbug.com/861564
+//
+// TODO(hiroshige): Merge with similar code in other places.
+String CheckSameOriginEnforcement(const KURL& request_url,
+                                  const KURL& response_url) {
+  if (request_url != response_url &&
+      !SecurityOrigin::AreSameSchemeHostPort(request_url, response_url)) {
+    return "Refused to load the top-level worker script from '" +
+           response_url.ElidedString() +
+           "' because it doesn't match the origin of the request URL '" +
+           request_url.ElidedString() + "'";
+  }
+  return String();
+}
+
+String CheckSameOriginEnforcement(const KURL& request_url,
+                                  const ResourceResponse& response) {
+  // While this check is not strictly necessary as CurrentRequestUrl() is not
+  // used as WorkerGlobalScope's URL, it is probably safer to reject cases like
+  // Origin A(request_url)
+  //   =(cross-origin redirects)=> Origin B(CurrentRequestUrl())
+  //   =(ServiceWorker interception)=> Origin A(ResponseUrl())
+  // which doesn't seem to have valid use cases.
+  String error =
+      CheckSameOriginEnforcement(request_url, response.CurrentRequestUrl());
+  if (!error.IsNull())
+    return error;
+
+  // This check is directly required to ensure the consistency between
+  // WorkerGlobalScope's SecurityOrigin and URL.
+  return CheckSameOriginEnforcement(request_url, response.ResponseUrl());
+}
+
+}  // namespace
+
 WorkerClassicScriptLoader::WorkerClassicScriptLoader()
-    : response_address_space_(mojom::IPAddressSpace::kPublic),
-      mime_type_check_mode_(AllowedByNosniff::MimeTypeCheck::kStrict) {}
+    : response_address_space_(network::mojom::IPAddressSpace::kPublic) {}
 
 void WorkerClassicScriptLoader::LoadSynchronously(
     ExecutionContext& execution_context,
     ResourceFetcher* fetch_client_settings_object_fetcher,
     const KURL& url,
-    mojom::RequestContextType request_context,
-    mojom::IPAddressSpace creation_address_space) {
+    mojom::RequestContextType request_context) {
   DCHECK(fetch_client_settings_object_fetcher);
   url_ = url;
   fetch_client_settings_object_fetcher_ = fetch_client_settings_object_fetcher;
 
-  // Impose strict MIME-type checks on importScripts(). See
-  // https://crbug.com/794548.
-  mime_type_check_mode_ = AllowedByNosniff::MimeTypeCheck::kStrict;
-
   ResourceRequest request(url);
-  request.SetHTTPMethod(http_names::kGET);
+  request.SetHttpMethod(http_names::kGET);
   request.SetExternalRequestStateFromRequestorAddressSpace(
-      creation_address_space);
+      fetch_client_settings_object_fetcher_->GetProperties()
+          .GetFetchClientSettingsObject()
+          .GetAddressSpace());
   request.SetRequestContext(request_context);
 
   SECURITY_DCHECK(execution_context.IsWorkerGlobalScope());
@@ -90,10 +134,8 @@ void WorkerClassicScriptLoader::LoadTopLevelScriptAsynchronously(
     ResourceFetcher* fetch_client_settings_object_fetcher,
     const KURL& url,
     mojom::RequestContextType request_context,
-    network::mojom::FetchRequestMode fetch_request_mode,
-    network::mojom::FetchCredentialsMode fetch_credentials_mode,
-    mojom::IPAddressSpace creation_address_space,
-    bool is_nested_worker,
+    network::mojom::RequestMode request_mode,
+    network::mojom::CredentialsMode credentials_mode,
     base::OnceClosure response_callback,
     base::OnceClosure finished_callback) {
   DCHECK(fetch_client_settings_object_fetcher);
@@ -102,40 +144,17 @@ void WorkerClassicScriptLoader::LoadTopLevelScriptAsynchronously(
   finished_callback_ = std::move(finished_callback);
   url_ = url;
   fetch_client_settings_object_fetcher_ = fetch_client_settings_object_fetcher;
-  forbid_cross_origin_redirects_ = true;
-
-  if (execution_context.IsDocument()) {
-    // For worker creation on a document, don't impose strict MIME-type checks
-    // on the top-level worker script for backward compatibility. Note that
-    // there is a plan to deprecate legacy mime types for workers. See
-    // https://crbug.com/794548.
-    mime_type_check_mode_ = AllowedByNosniff::MimeTypeCheck::kLax;
-  } else {
-    DCHECK(execution_context.IsWorkerGlobalScope());
-    is_worker_global_scope_ = true;
-    if (is_nested_worker) {
-      // For nested workers, impose the strict MIME-type checks because the
-      // feature is new (enabled by default in M69) and there is no backward
-      // compatibility issue.
-      mime_type_check_mode_ = AllowedByNosniff::MimeTypeCheck::kStrict;
-    } else {
-      // For worker creation on a document with off-the-main-thread top-level
-      // worker classic script loading, don't impose strict MIME-type checks for
-      // backward compatibility.
-      // TODO(nhiroki): Always impose strict MIME-type checks on all web
-      // workers (https://crbug.com/794548).
-      DCHECK(RuntimeEnabledFeatures::OffMainThreadWorkerScriptFetchEnabled());
-      mime_type_check_mode_ = AllowedByNosniff::MimeTypeCheck::kLax;
-    }
-  }
+  is_top_level_script_ = true;
 
   ResourceRequest request(url);
-  request.SetHTTPMethod(http_names::kGET);
+  request.SetHttpMethod(http_names::kGET);
   request.SetExternalRequestStateFromRequestorAddressSpace(
-      creation_address_space);
+      fetch_client_settings_object_fetcher_->GetProperties()
+          .GetFetchClientSettingsObject()
+          .GetAddressSpace());
   request.SetRequestContext(request_context);
-  request.SetFetchRequestMode(fetch_request_mode);
-  request.SetFetchCredentialsMode(fetch_credentials_mode);
+  request.SetMode(request_mode);
+  request.SetCredentialsMode(credentials_mode);
 
   need_to_cancel_ = true;
   threadable_loader_ = MakeGarbageCollected<ThreadableLoader>(
@@ -152,42 +171,35 @@ const KURL& WorkerClassicScriptLoader::ResponseURL() const {
 }
 
 void WorkerClassicScriptLoader::DidReceiveResponse(
-    unsigned long identifier,
-    const ResourceResponse& response,
-    std::unique_ptr<WebDataConsumerHandle> handle) {
-  DCHECK(!handle);
+    uint64_t identifier,
+    const ResourceResponse& response) {
   if (response.HttpStatusCode() / 100 != 2 && response.HttpStatusCode()) {
     NotifyError();
     return;
   }
   if (!AllowedByNosniff::MimeTypeAsScript(
-          fetch_client_settings_object_fetcher_->Context(), response,
-          mime_type_check_mode_, is_worker_global_scope_)) {
+          fetch_client_settings_object_fetcher_->GetUseCounter(),
+          &fetch_client_settings_object_fetcher_->GetConsoleLogger(), response,
+          fetch_client_settings_object_fetcher_->GetProperties()
+              .GetFetchClientSettingsObject()
+              .MimeTypeCheckForClassicWorkerScript())) {
     NotifyError();
     return;
   }
 
-  if (forbid_cross_origin_redirects_ && url_ != response.CurrentRequestUrl() &&
-      !SecurityOrigin::AreSameSchemeHostPort(url_,
-                                             response.CurrentRequestUrl())) {
-    // Forbid cross-origin redirects to ensure the request and response URLs
-    // have the same SecurityOrigin.
-    fetch_client_settings_object_fetcher_->Context().AddErrorConsoleMessage(
-        "Refused to cross-origin redirects of the top-level worker script.",
-        FetchContext::kSecuritySource);
-    NotifyError();
-    return;
+  if (is_top_level_script_) {
+    String error = CheckSameOriginEnforcement(url_, response);
+    if (!error.IsNull()) {
+      fetch_client_settings_object_fetcher_->GetConsoleLogger()
+          .AddConsoleMessage(mojom::ConsoleMessageSource::kSecurity,
+                             mojom::ConsoleMessageLevel::kError, error);
+      NotifyError();
+      return;
+    }
   }
 
   identifier_ = identifier;
   response_url_ = response.ResponseUrl();
-  // The response URL may be empty if a service worker did respondWith(new
-  // Response()) to generate a response.
-  // TODO(falken): Change this to an empty URL if that is indeed spec
-  // conformant.
-  if (response_url_.IsEmpty())
-    response_url_ = response.CurrentRequestUrl();
-
   response_encoding_ = response.TextEncodingName();
   app_cache_id_ = response.AppCacheID();
 
@@ -199,8 +211,8 @@ void WorkerClassicScriptLoader::DidReceiveResponse(
   if (network_utils::IsReservedIPAddress(response.RemoteIPAddress())) {
     response_address_space_ =
         SecurityOrigin::Create(response_url_)->IsLocalhost()
-            ? mojom::IPAddressSpace::kLocal
-            : mojom::IPAddressSpace::kPrivate;
+            ? network::mojom::IPAddressSpace::kLocal
+            : network::mojom::IPAddressSpace::kPrivate;
   }
 
   if (response_callback_)
@@ -212,7 +224,7 @@ void WorkerClassicScriptLoader::DidReceiveData(const char* data, unsigned len) {
     return;
 
   if (!decoder_) {
-    decoder_ = TextResourceDecoder::Create(TextResourceDecoderOptions(
+    decoder_ = std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
         TextResourceDecoderOptions::kPlainTextContent,
         response_encoding_.IsEmpty() ? UTF8Encoding()
                                      : WTF::TextEncoding(response_encoding_)));
@@ -226,11 +238,11 @@ void WorkerClassicScriptLoader::DidReceiveData(const char* data, unsigned len) {
 
 void WorkerClassicScriptLoader::DidReceiveCachedMetadata(const char* data,
                                                          int size) {
-  cached_metadata_ = std::make_unique<Vector<char>>(size);
+  cached_metadata_ = std::make_unique<Vector<uint8_t>>(size);
   memcpy(cached_metadata_->data(), data, size);
 }
 
-void WorkerClassicScriptLoader::DidFinishLoading(unsigned long identifier) {
+void WorkerClassicScriptLoader::DidFinishLoading(uint64_t identifier) {
   need_to_cancel_ = false;
   if (!failed_ && decoder_)
     source_text_.Append(decoder_->Flush());
@@ -298,7 +310,7 @@ void WorkerClassicScriptLoader::ProcessContentSecurityPolicy(
   if (!response.CurrentRequestUrl().ProtocolIs("blob") &&
       !response.CurrentRequestUrl().ProtocolIs("file") &&
       !response.CurrentRequestUrl().ProtocolIs("filesystem")) {
-    content_security_policy_ = ContentSecurityPolicy::Create();
+    content_security_policy_ = MakeGarbageCollected<ContentSecurityPolicy>();
     content_security_policy_->SetOverrideURLForSelf(
         response.CurrentRequestUrl());
     content_security_policy_->DidReceiveHeaders(

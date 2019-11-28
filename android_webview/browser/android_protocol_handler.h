@@ -5,27 +5,20 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_ANDROID_PROTOCOL_HANDLER_H_
 #define ANDROID_WEBVIEW_BROWSER_ANDROID_PROTOCOL_HANDLER_H_
 
+#include <jni.h>
 #include <memory>
 
-namespace net {
-class URLRequestInterceptor;
-}  // namespace net
+class GURL;
 
 namespace android_webview {
+class InputStream;
 
-// These methods create interceptors for Android WebView-specific schemes:
-//
-//  - "content:" scheme is used for accessing data from Android content
-//    providers, see http://developer.android.com/guide/topics/providers/
-//      content-provider-basics.html#ContentURIs
-std::unique_ptr<net::URLRequestInterceptor>
-CreateContentSchemeRequestInterceptor();
+std::unique_ptr<InputStream> CreateInputStream(JNIEnv* env, const GURL& url);
 
-//  - "file:" scheme extension for accessing application assets and resources
-//    (file:///android_asset/ and file:///android_res/), see
-//    http://developer.android.com/reference/android/webkit/
-//      WebSettings.html#setAllowFileAccess(boolean)
-std::unique_ptr<net::URLRequestInterceptor> CreateAssetFileRequestInterceptor();
+bool GetInputStreamMimeType(JNIEnv* env,
+                            const GURL& url,
+                            InputStream* stream,
+                            std::string* mime_type);
 
 }  // namespace android_webview
 

@@ -14,6 +14,9 @@
  * change if the page is re-opened later.
  */
 
+// #import {assert} from './assert.m.js';
+// #import {parseHtmlSubset} from './parse_html_subset.m.js';
+
 /**
  * @typedef {{
  *   substitutions: (Array<string>|undefined),
@@ -21,9 +24,10 @@
  *   tags: (Array<string>|undefined),
  * }}
  */
-var SanitizeInnerHtmlOpts;
+/* #export */ let SanitizeInnerHtmlOpts;
 
-/** @type {!LoadTimeData} */ var loadTimeData;
+// eslint-disable-next-line no-var
+/* #export */ /** @type {!LoadTimeData} */ var loadTimeData;
 
 // Expose this type globally as a temporary work around until
 // https://github.com/google/closure-compiler/issues/544 is fixed.
@@ -71,7 +75,7 @@ function LoadTimeData(){}
      */
     getValue: function(id) {
       expect(this.data_, 'No data. Did you remember to include strings.js?');
-      var value = this.data_[id];
+      const value = this.data_[id];
       expect(typeof value != 'undefined', 'Could not find value for ' + id);
       return value;
     },
@@ -82,7 +86,7 @@ function LoadTimeData(){}
      * @return {string} The corresponding string value.
      */
     getString: function(id) {
-      var value = this.getValue(id);
+      const value = this.getValue(id);
       expectIsType(id, value, 'string');
       return /** @type {string} */ (value);
     },
@@ -96,11 +100,12 @@ function LoadTimeData(){}
      * @return {string} The formatted string.
      */
     getStringF: function(id, var_args) {
-      var value = this.getString(id);
-      if (!value)
+      const value = this.getString(id);
+      if (!value) {
         return '';
+      }
 
-      var args = Array.prototype.slice.call(arguments);
+      const args = Array.prototype.slice.call(arguments);
       args[0] = value;
       return this.substituteString.apply(this, args);
     },
@@ -130,7 +135,7 @@ function LoadTimeData(){}
      * @return {string} The formatted string.
      */
     substituteString: function(label, var_args) {
-      var varArgs = arguments;
+      const varArgs = arguments;
       return label.replace(/\$(.|$|\n)/g, function(m) {
         assert(m.match(/\$[$1-9]/), 'Unescaped $ found in localized string.');
         return m == '$$' ? '$' : varArgs[m[1]];
@@ -149,11 +154,11 @@ function LoadTimeData(){}
      *     string pieces.
      */
     getSubstitutedStringPieces: function(label, var_args) {
-      var varArgs = arguments;
+      const varArgs = arguments;
       // Split the string by separately matching all occurrences of $1-9 and of
       // non $1-9 pieces.
-      var pieces = (label.match(/(\$[1-9])|(([^$]|\$([^1-9]|$))+)/g) ||
-                    []).map(function(p) {
+      const pieces = (label.match(/(\$[1-9])|(([^$]|\$([^1-9]|$))+)/g) ||
+                      []).map(function(p) {
         // Pieces that are not $1-9 should be returned after replacing $$
         // with $.
         if (!p.match(/^\$[1-9]$/)) {
@@ -176,7 +181,7 @@ function LoadTimeData(){}
      * @return {boolean} The corresponding boolean value.
      */
     getBoolean: function(id) {
-      var value = this.getValue(id);
+      const value = this.getValue(id);
       expectIsType(id, value, 'boolean');
       return /** @type {boolean} */ (value);
     },
@@ -187,7 +192,7 @@ function LoadTimeData(){}
      * @return {number} The corresponding number value.
      */
     getInteger: function(id) {
-      var value = this.getValue(id);
+      const value = this.getValue(id);
       expectIsType(id, value, 'number');
       expect(value == Math.floor(value), 'Number isn\'t integer: ' + value);
       return /** @type {number} */ (value);
@@ -201,7 +206,7 @@ function LoadTimeData(){}
       expect(
           typeof replacements == 'object',
           'Replacements must be a dictionary object.');
-      for (var key in replacements) {
+      for (const key in replacements) {
         this.data_[key] = replacements[key];
       }
     }
@@ -232,4 +237,9 @@ function LoadTimeData(){}
 
   expect(!loadTimeData, 'should only include this file once');
   loadTimeData = new LoadTimeData;
+
+  // Expose |loadTimeData| directly on |window|. This is only necessary by the
+  // auto-generated load_time_data.m.js, since within a JS module the scope is
+  // local.
+  window.loadTimeData = loadTimeData;
 })();

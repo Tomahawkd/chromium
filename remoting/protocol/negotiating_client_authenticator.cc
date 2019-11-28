@@ -30,8 +30,7 @@ NegotiatingClientAuthenticator::NegotiatingClientAuthenticator(
     : NegotiatingAuthenticatorBase(MESSAGE_READY),
       local_id_(local_id),
       remote_id_(remote_id),
-      config_(config),
-      weak_factory_(this) {
+      config_(config) {
   if (!config_.fetch_third_party_token_callback.is_null()) {
     AddMethod(Method::THIRD_PARTY_SPAKE2_CURVE25519);
     AddMethod(Method::THIRD_PARTY_SPAKE2_P224);
@@ -49,7 +48,7 @@ NegotiatingClientAuthenticator::NegotiatingClientAuthenticator(
 NegotiatingClientAuthenticator::~NegotiatingClientAuthenticator() = default;
 
 void NegotiatingClientAuthenticator::ProcessMessage(
-    const buzz::XmlElement* message,
+    const jingle_xmpp::XmlElement* message,
     const base::Closure& resume_callback) {
   DCHECK_EQ(state(), WAITING_MESSAGE);
   state_ = PROCESSING_MESSAGE;
@@ -75,7 +74,7 @@ void NegotiatingClientAuthenticator::ProcessMessage(
     // Copy the message since the authenticator may process it asynchronously.
     base::Closure callback = base::Bind(
         &NegotiatingAuthenticatorBase::ProcessMessageInternal,
-        base::Unretained(this), base::Owned(new buzz::XmlElement(*message)),
+        base::Unretained(this), base::Owned(new jingle_xmpp::XmlElement(*message)),
         resume_callback);
     CreateAuthenticatorForCurrentMethod(WAITING_MESSAGE, callback);
     return;
@@ -83,7 +82,7 @@ void NegotiatingClientAuthenticator::ProcessMessage(
   ProcessMessageInternal(message, resume_callback);
 }
 
-std::unique_ptr<buzz::XmlElement>
+std::unique_ptr<jingle_xmpp::XmlElement>
 NegotiatingClientAuthenticator::GetNextMessage() {
   DCHECK_EQ(state(), MESSAGE_READY);
 
@@ -91,7 +90,7 @@ NegotiatingClientAuthenticator::GetNextMessage() {
   if (current_method_ == Method::INVALID) {
     // If no authentication method has been chosen, see if we can optimistically
     // choose one.
-    std::unique_ptr<buzz::XmlElement> result;
+    std::unique_ptr<jingle_xmpp::XmlElement> result;
     CreatePreferredAuthenticator();
     if (current_authenticator_) {
       DCHECK(current_authenticator_->state() == MESSAGE_READY);
@@ -103,7 +102,7 @@ NegotiatingClientAuthenticator::GetNextMessage() {
     if (is_paired()) {
       // If the client is paired with the host then attach pairing client_id to
       // the message.
-      buzz::XmlElement* pairing_tag = new buzz::XmlElement(kPairingInfoTag);
+      jingle_xmpp::XmlElement* pairing_tag = new jingle_xmpp::XmlElement(kPairingInfoTag);
       result->AddElement(pairing_tag);
       pairing_tag->AddAttr(kClientIdAttribute, config_.pairing_client_id);
     }

@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
@@ -40,8 +41,7 @@ MockQuotaManager::MockQuotaManager(
                    profile_path,
                    std::move(io_thread),
                    std::move(special_storage_policy),
-                   storage::GetQuotaSettingsFunc()),
-      weak_factory_(this) {}
+                   storage::GetQuotaSettingsFunc()) {}
 
 void MockQuotaManager::GetUsageAndQuota(const url::Origin& origin,
                                         StorageType type,

@@ -17,12 +17,24 @@ PrintViewManagerBasic::PrintViewManagerBasic(content::WebContents* web_contents)
     : PrintViewManagerBase(web_contents) {
 #if defined(OS_ANDROID)
   pdf_writing_done_callback_ =
-      base::Bind(&PrintingContextAndroid::PdfWritingDone);
+      base::BindRepeating(&PrintingContextAndroid::PdfWritingDone);
 #endif
 }
 
 PrintViewManagerBasic::~PrintViewManagerBasic() {
+#if defined(OS_ANDROID)
+  // Must do this call here and not let ~PrintViewManagerBase do it as
+  // TerminatePrintJob() calls PdfWritingDone() and if that is done from
+  // ~PrintViewManagerBase then a pure virtual call is done.
+  DisconnectFromCurrentPrintJob();
+#endif
 }
+
+#if defined(OS_ANDROID)
+void PrintViewManagerBasic::PdfWritingDone(int page_count) {
+  pdf_writing_done_callback_.Run(page_count);
+}
+#endif
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PrintViewManagerBasic)
 

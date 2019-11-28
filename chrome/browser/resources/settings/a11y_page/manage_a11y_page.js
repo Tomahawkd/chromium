@@ -10,7 +10,7 @@
 Polymer({
   is: 'settings-manage-a11y-page',
 
-  behaviors: [WebUIListenerBehavior],
+  behaviors: [WebUIListenerBehavior, settings.RouteOriginBehavior],
 
   properties: {
     /**
@@ -69,44 +69,6 @@ Polymer({
       },
     },
 
-    autoClickEventTypeOptions_: {
-      readOnly: true,
-      type: Array,
-      value: function() {
-        // These values correspond to the i18n values in settings_strings.grdp
-        // and the enums in accessibility_controller.mojom, AutoclickEventType.
-        // If these values get changed then those strings need to be changed as
-        // well.
-        return [
-          {
-            // mojom::AutoclickEventType::kLeftClick
-            value: 0,
-            name: loadTimeData.getString('autoclickEventTypeLeftClick')
-          },
-          {
-            // mojom::AutoclickEventType::kRightClick
-            value: 1,
-            name: loadTimeData.getString('autoclickEventTypeRightClick')
-          },
-          {
-            // mojom::AutoclickEventType::kDragAndDrop
-            value: 2,
-            name: loadTimeData.getString('autoclickEventTypeDragAndDrop')
-          },
-          {
-            // mojom::AutoclickEventType::kDoubleClick
-            value: 3,
-            name: loadTimeData.getString('autoclickEventTypeDoubleClick')
-          },
-          {
-            // mojom::AutoclickEventType::kNoAction
-            value: 4,
-            name: loadTimeData.getString('autoclickEventTypeNoAction')
-          },
-        ];
-      },
-    },
-
     autoClickMovementThresholdOptions_: {
       readOnly: true,
       type: Array,
@@ -136,41 +98,11 @@ Polymer({
       },
     },
 
-    /**
-     * Whether to show experimental accessibility features.
-     * @private {boolean}
-     */
-    showExperimentalFeatures_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('showExperimentalA11yFeatures');
-      },
-    },
-
-    showExperimentalAutoclick_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean(
-            'showExperimentalAccessibilityAutoclick');
-      },
-    },
-
     showExperimentalSwitchAccess_: {
       type: Boolean,
       value: function() {
         return loadTimeData.getBoolean(
             'showExperimentalAccessibilitySwitchAccess');
-      },
-    },
-
-    /**
-     * Whether the docked magnifier flag is enabled.
-     * @private {boolean}
-     */
-    dockedMagnifierFeatureEnabled_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('dockedMagnifierFeatureEnabled');
       },
     },
 
@@ -183,12 +115,27 @@ Polymer({
     },
 
     /**
-     * |hasKeyboard_|starts undefined so observers don't trigger
+     * Whether this page shown as part of OS settings.
+     * TODO(crbug.com/986596): Remove this when SplitSettings is the default.
+     * @private
+     */
+    isOSSettings_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('isOSSettings');
+      },
+    },
+
+    /**
+     * |hasKeyboard_| starts undefined so observers don't trigger
      * until it has been populated.
      * @private
      */
     hasKeyboard_: Boolean,
   },
+
+  /** settings.RouteOriginBehavior override */
+  route_: settings.routes.MANAGE_ACCESSIBILITY,
 
   /** @override */
   attached: function() {
@@ -203,6 +150,16 @@ Polymer({
         'startup-sound-enabled-updated',
         this.updateStartupSoundEnabled_.bind(this));
     chrome.send('getStartupSoundEnabled');
+
+    const r = settings.routes;
+    this.addFocusConfig_(r.MANAGE_TTS_SETTINGS, '#ttsSubpageButton');
+    this.addFocusConfig_(r.MANAGE_CAPTION_SETTINGS, '#captionsSubpageButton');
+    this.addFocusConfig_(
+        r.MANAGE_SWITCH_ACCESS_SETTINGS, '#switchAccessSubpageButton');
+    this.addFocusConfig_(r.DISPLAY, '#displaySubpageButton');
+    this.addFocusConfig_(r.APPEARANCE, '#appearanceSubpageButton');
+    this.addFocusConfig_(r.KEYBOARD, '#keyboardSubpageButton');
+    this.addFocusConfig_(r.POINTERS, '#pointerSubpageButton');
   },
 
   /**
@@ -225,12 +182,11 @@ Polymer({
   },
 
   /**
-   * @param {!CustomEvent} e
+   * @param {!CustomEvent<boolean>} e
    * @private
    */
   toggleStartupSoundEnabled_: function(e) {
-    let checked = /** @type {boolean} */ (e.detail);
-    chrome.send('setStartupSoundEnabled', [checked]);
+    chrome.send('setStartupSoundEnabled', [e.detail]);
   },
 
   /**
@@ -252,13 +208,18 @@ Polymer({
   },
 
   /** @private */
+  onCaptionsClick_: function() {
+    settings.navigateTo(settings.routes.MANAGE_CAPTION_SETTINGS);
+  },
+
+  /** @private */
   onSelectToSpeakSettingsTap_: function() {
     chrome.send('showSelectToSpeakSettings');
   },
 
   /** @private */
   onSwitchAccessSettingsTap_: function() {
-    chrome.send('showSwitchAccessSettings');
+    settings.navigateTo(settings.routes.MANAGE_SWITCH_ACCESS_SETTINGS);
   },
 
   /** @private */
@@ -270,9 +231,16 @@ Polymer({
 
   /** @private */
   onAppearanceTap_: function() {
-    settings.navigateTo(
-        settings.routes.APPEARANCE,
-        /* dynamicParams */ null, /* removeSearch */ true);
+    if (loadTimeData.getBoolean('isOSSettings')) {
+      // Open browser appearance section in a new browser tab.
+      window.open('chrome://settings/appearance');
+    } else {
+      // Open browser appearance in this settings window.
+      // TODO(crbug.com/986596): Remove this when SplitSettings is the default.
+      settings.navigateTo(
+          settings.routes.APPEARANCE,
+          /* dynamicParams */ null, /* removeSearch */ true);
+    }
   },
 
   /** @private */

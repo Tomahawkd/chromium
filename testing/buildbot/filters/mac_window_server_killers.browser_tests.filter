@@ -32,7 +32,6 @@
 -BrowserUiTest.*
 -BrowsingDataRemoverBrowserTestP.*
 -CDM_11/ECKEncryptedMediaTest.*
--CDM_9/ECKEncryptedMediaTest.*
 -CaptivePortalBlockingPageTest.*
 -CaptivePortalBrowserTest.*
 -CardUnmaskPromptViewBrowserTest.*
@@ -64,6 +63,7 @@
 -DeclarativeNetRequestBrowserTest.*
 -DeclarativeNetRequestHostPermissionsBrowserTest.*
 -DevToolsExtensionTest.*
+-DevToolsManagerDelegateTest.*
 -DevToolsSanityTest.*
 -DeviceManagementServiceIntegrationTestInstance/DeviceManagementServiceIntegrationTest.*
 -DiceBrowserTest.*
@@ -170,17 +170,17 @@
 -PlatformAppWithFileBrowserTest.*
 -PluginPowerSaverBrowserTest.*
 -PolicyTest.*
--PolicyToolUITest.*
 -PrefsFunctionalTest.*
 -PrefsTabHelperBrowserTest.*
 -PrerenderBrowserTest.*
+-PresentationReceiverWindowViewBrowserTest.*
 -PrintBrowserTest.*
 -PrintPreviewDialogControllerBrowserTest.*
 -PrintPreviewSettingsSectionsTest.*
 -PrintPreviewUIBrowserTest.*
 -ProcessManagerBrowserTest.*
--ProfileChooserViewExtensionsTest.*
 -ProfileMainNetworkContext/NetworkContextConfigurationBrowserTest.*
+-ProfileMenuViewExtensionsTest.*
 -ProfileSigninConfirmationHelperBrowserTest.*
 -PushMessagingBrowserTest.*
 -RedirectTest.*

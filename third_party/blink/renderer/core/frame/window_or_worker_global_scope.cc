@@ -32,6 +32,8 @@
 
 #include "third_party/blink/renderer/core/frame/window_or_worker_global_scope.h"
 
+#include "base/containers/span.h"
+#include "third_party/blink/renderer/bindings/core/v8/scheduled_action.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_trusted_script.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_for_context_dispose.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -44,13 +46,14 @@
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/weborigin/security_violation_reporting_policy.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 
 namespace blink {
 
-static bool IsAllowed(ScriptState* script_state,
-                      ExecutionContext* execution_context,
+static bool IsAllowed(ExecutionContext* execution_context,
                       bool is_eval,
                       const String& source) {
   if (execution_context->IsDocument()) {
@@ -58,7 +61,7 @@ static bool IsAllowed(ScriptState* script_state,
     if (!document->GetFrame())
       return false;
     if (is_eval && !document->GetContentSecurityPolicy()->AllowEval(
-                       script_state, SecurityViolationReportingPolicy::kReport,
+                       SecurityViolationReportingPolicy::kReport,
                        ContentSecurityPolicy::kWillNotThrowException, source)) {
       return false;
     }
@@ -72,9 +75,9 @@ static bool IsAllowed(ScriptState* script_state,
     ContentSecurityPolicy* policy =
         worker_global_scope->GetContentSecurityPolicy();
     if (is_eval && policy &&
-        !policy->AllowEval(
-            script_state, SecurityViolationReportingPolicy::kReport,
-            ContentSecurityPolicy::kWillNotThrowException, source)) {
+        !policy->AllowEval(SecurityViolationReportingPolicy::kReport,
+                           ContentSecurityPolicy::kWillNotThrowException,
+                           source)) {
       return false;
     }
     return true;
@@ -97,7 +100,8 @@ String WindowOrWorkerGlobalScope::btoa(EventTarget&,
     return String();
   }
 
-  return Base64Encode(string_to_encode.Latin1());
+  return Base64Encode(
+      base::as_bytes(base::make_span(string_to_encode.Latin1())));
 }
 
 String WindowOrWorkerGlobalScope::atob(EventTarget&,
@@ -128,21 +132,21 @@ String WindowOrWorkerGlobalScope::atob(EventTarget&,
 int WindowOrWorkerGlobalScope::setTimeout(
     ScriptState* script_state,
     EventTarget& event_target,
-    const ScriptValue& handler,
+    V8Function* handler,
     int timeout,
-    const Vector<ScriptValue>& arguments) {
+    const HeapVector<ScriptValue>& arguments) {
   ExecutionContext* execution_context = event_target.GetExecutionContext();
-  if (!IsAllowed(script_state, execution_context, false, g_empty_string))
+  if (!IsAllowed(execution_context, false, g_empty_string))
     return 0;
   if (timeout >= 0 && execution_context->IsDocument()) {
     // FIXME: Crude hack that attempts to pass idle time to V8. This should
     // be done using the scheduler instead.
     V8GCForContextDispose::Instance().NotifyIdle();
   }
-  ScheduledAction* action = ScheduledAction::Create(
+  auto* action = MakeGarbageCollected<ScheduledAction>(
       script_state, execution_context, handler, arguments);
   return DOMTimer::Install(execution_context, action,
-                           TimeDelta::FromMilliseconds(timeout), true);
+                           base::TimeDelta::FromMilliseconds(timeout), true);
 }
 
 int WindowOrWorkerGlobalScope::setTimeout(
@@ -150,7 +154,7 @@ int WindowOrWorkerGlobalScope::setTimeout(
     EventTarget& event_target,
     const StringOrTrustedScript& string_or_trusted_script,
     int timeout,
-    const Vector<ScriptValue>& arguments,
+    const HeapVector<ScriptValue>& arguments,
     ExceptionState& exception_state) {
   ExecutionContext* execution_context = event_target.GetExecutionContext();
   Document* document = execution_context->IsDocument()
@@ -169,12 +173,12 @@ int WindowOrWorkerGlobalScope::setTimeoutFromString(
     EventTarget& event_target,
     const String& handler,
     int timeout,
-    const Vector<ScriptValue>&) {
+    const HeapVector<ScriptValue>&) {
   ExecutionContext* execution_context = event_target.GetExecutionContext();
-  if (!IsAllowed(script_state, execution_context, true, handler))
+  if (!IsAllowed(execution_context, true, handler))
     return 0;
   // Don't allow setting timeouts to run empty functions.  Was historically a
-  // perfomance issue.
+  // performance issue.
   if (handler.IsEmpty())
     return 0;
   if (timeout >= 0 && execution_context->IsDocument()) {
@@ -182,25 +186,25 @@ int WindowOrWorkerGlobalScope::setTimeoutFromString(
     // be done using the scheduler instead.
     V8GCForContextDispose::Instance().NotifyIdle();
   }
-  ScheduledAction* action =
-      ScheduledAction::Create(script_state, execution_context, handler);
+  auto* action = MakeGarbageCollected<ScheduledAction>(
+      script_state, execution_context, handler);
   return DOMTimer::Install(execution_context, action,
-                           TimeDelta::FromMilliseconds(timeout), true);
+                           base::TimeDelta::FromMilliseconds(timeout), true);
 }
 
 int WindowOrWorkerGlobalScope::setInterval(
     ScriptState* script_state,
     EventTarget& event_target,
-    const ScriptValue& handler,
+    V8Function* handler,
     int timeout,
-    const Vector<ScriptValue>& arguments) {
+    const HeapVector<ScriptValue>& arguments) {
   ExecutionContext* execution_context = event_target.GetExecutionContext();
-  if (!IsAllowed(script_state, execution_context, false, g_empty_string))
+  if (!IsAllowed(execution_context, false, g_empty_string))
     return 0;
-  ScheduledAction* action = ScheduledAction::Create(
+  auto* action = MakeGarbageCollected<ScheduledAction>(
       script_state, execution_context, handler, arguments);
   return DOMTimer::Install(execution_context, action,
-                           TimeDelta::FromMilliseconds(timeout), false);
+                           base::TimeDelta::FromMilliseconds(timeout), false);
 }
 
 int WindowOrWorkerGlobalScope::setInterval(
@@ -208,7 +212,7 @@ int WindowOrWorkerGlobalScope::setInterval(
     EventTarget& event_target,
     const StringOrTrustedScript& string_or_trusted_script,
     int timeout,
-    const Vector<ScriptValue>& arguments,
+    const HeapVector<ScriptValue>& arguments,
     ExceptionState& exception_state) {
   ExecutionContext* execution_context = event_target.GetExecutionContext();
   Document* document = execution_context->IsDocument()
@@ -227,18 +231,18 @@ int WindowOrWorkerGlobalScope::setIntervalFromString(
     EventTarget& event_target,
     const String& handler,
     int timeout,
-    const Vector<ScriptValue>&) {
+    const HeapVector<ScriptValue>&) {
   ExecutionContext* execution_context = event_target.GetExecutionContext();
-  if (!IsAllowed(script_state, execution_context, true, handler))
+  if (!IsAllowed(execution_context, true, handler))
     return 0;
   // Don't allow setting timeouts to run empty functions.  Was historically a
-  // perfomance issue.
+  // performance issue.
   if (handler.IsEmpty())
     return 0;
-  ScheduledAction* action =
-      ScheduledAction::Create(script_state, execution_context, handler);
+  auto* action = MakeGarbageCollected<ScheduledAction>(
+      script_state, execution_context, handler);
   return DOMTimer::Install(execution_context, action,
-                           TimeDelta::FromMilliseconds(timeout), false);
+                           base::TimeDelta::FromMilliseconds(timeout), false);
 }
 
 void WindowOrWorkerGlobalScope::clearTimeout(EventTarget& event_target,

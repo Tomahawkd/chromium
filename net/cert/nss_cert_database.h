@@ -106,11 +106,6 @@ class NET_EXPORT NSSCertDatabase {
                   crypto::ScopedPK11Slot private_slot);
   virtual ~NSSCertDatabase();
 
-  // Get a list of unique certificates in the certificate database (one
-  // instance of all certificates).
-  // DEPRECATED by |ListCerts|. See http://crbug.com/340460.
-  virtual ScopedCERTCertificateList ListCertsSync();
-
   // Asynchronously get a list of unique certificates in the certificate
   // database (one instance of all certificates). Note that the callback may be
   // run even after the database is deleted.
@@ -131,6 +126,10 @@ class NET_EXPORT NSSCertDatabase {
   // before SetSystemSlot is called and get a NULL result.
   // See https://crbug.com/399554 .
   virtual crypto::ScopedPK11Slot GetSystemSlot() const;
+
+  // Check whether the certificate is stored on the system slot (i.e. is a
+  // device certificate).
+  bool IsCertificateOnSystemSlot(CERTCertificate* cert) const;
 #endif
 
   // Get the default slot for public key data.
@@ -235,26 +234,14 @@ class NET_EXPORT NSSCertDatabase {
   // Check whether cert is stored in a hardware slot.
   bool IsHardwareBacked(const CERTCertificate* cert) const;
 
-  // TODO(https://crbug.com/844537): Remove this after we've collected logs that
-  // show device-wide certificates disappearing. Does nothing in the default
-  // implementation, but can be used in subclasses for logging user
-  // certificates. Will be called when the DB has changed. |log_reason| says why
-  // this has been invoked.
-  virtual void LogUserCertificates(const std::string& log_reason) const;
-
  protected:
-  // Certificate listing implementation used by |ListCerts*| and
-  // |ListCertsSync|. Static so it may safely be used on the worker thread.
-  // If |slot| is NULL, obtains the certs of all slots, otherwise only of
-  // |slot|.
+  // Certificate listing implementation used by |ListCerts*|. Static so it may
+  // safely be used on the worker thread. If |slot| is nullptr, obtains the
+  // certs of all slots, otherwise only of |slot|.
   static ScopedCERTCertificateList ListCertsImpl(crypto::ScopedPK11Slot slot);
 
   // Broadcasts notifications to all registered observers.
   void NotifyObserversCertDBChanged();
-
-  // TODO(https://crbug.com/844537): Remove this after we've collected logs that
-  // show device-wide certificates disappearing.
-  static std::string GetCertIssuerCommonName(const CERTCertificate* cert);
 
  private:
   // Registers |observer| to receive notifications of certificate changes.  The
@@ -289,7 +276,7 @@ class NET_EXPORT NSSCertDatabase {
 
   const scoped_refptr<base::ObserverListThreadSafe<Observer>> observer_list_;
 
-  base::WeakPtrFactory<NSSCertDatabase> weak_factory_;
+  base::WeakPtrFactory<NSSCertDatabase> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NSSCertDatabase);
 };

@@ -6,7 +6,7 @@
 
 #include "base/sys_byteorder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/skia/third_party/skcms/skcms.h"
+#include "third_party/skia/include/third_party/skcms/skcms.h"
 
 namespace blink {
 
@@ -77,12 +77,12 @@ ColorCorrectionTestUtils::ColorSpaceConversionToSkColorSpace(
   if (conversion == kColorSpaceConversion_LinearRGB)
     return SkColorSpace::MakeSRGBLinear();
   if (conversion == kColorSpaceConversion_P3) {
-    return SkColorSpace::MakeRGB(SkColorSpace::kLinear_RenderTargetGamma,
-                                 SkColorSpace::kDCIP3_D65_Gamut);
+    return SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear,
+                                 SkNamedGamut::kDCIP3);
   }
   if (conversion == kColorSpaceConversion_Rec2020) {
-    return SkColorSpace::MakeRGB(SkColorSpace::kLinear_RenderTargetGamma,
-                                 SkColorSpace::kRec2020_Gamut);
+    return SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear,
+                                 SkNamedGamut::kRec2020);
   }
   return nullptr;
 }
@@ -221,13 +221,14 @@ bool ColorCorrectionTestUtils::ConvertPixelsToColorSpaceAndPixelFormatForTest(
                         (src_storage_format == kUint8ClampedArrayStorageFormat)
                             ? kRGBA8CanvasPixelFormat
                             : kF16CanvasPixelFormat,
-                        kNonOpaque)
+                        kNonOpaque, CanvasForceRGBA::kNotForced)
           .GetSkColorSpaceForSkSurfaces();
   if (!src_sk_color_space.get())
     src_sk_color_space = SkColorSpace::MakeSRGB();
 
   sk_sp<SkColorSpace> dst_sk_color_space =
-      CanvasColorParams(dst_color_space, dst_canvas_pixel_format, kNonOpaque)
+      CanvasColorParams(dst_color_space, dst_canvas_pixel_format, kNonOpaque,
+                        CanvasForceRGBA::kNotForced)
           .GetSkColorSpaceForSkSurfaces();
   if (!dst_sk_color_space.get())
     dst_sk_color_space = SkColorSpace::MakeSRGB();
@@ -286,9 +287,12 @@ bool ColorCorrectionTestUtils::MatchSkImages(sk_sp<SkImage> src_image,
     return false;
   // Color type is not checked since the decoded image does not have a specific
   // color type, unless it is drawn onto a surface or readPixels() is called.
-  if (!MatchColorSpace(src_image->refColorSpace(),
-                       dst_image->refColorSpace())) {
-    return false;
+  // Only compare color spaces if both are non-null
+  if (src_image->refColorSpace() && dst_image->refColorSpace()) {
+    if (!MatchColorSpace(src_image->refColorSpace(),
+                         dst_image->refColorSpace())) {
+      return false;
+    }
   }
 
   bool test_passed = true;

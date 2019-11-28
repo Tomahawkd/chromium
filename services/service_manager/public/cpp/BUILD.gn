@@ -2,10 +2,14 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//mojo/public/tools/bindings/mojom.gni")
+
 component("cpp") {
   output_name = "service_manager_cpp"
 
   sources = [
+    "binder_map.h",
+    "binder_map_internal.h",
     "binder_registry.h",
     "connect.h",
     "connector.cc",
@@ -17,6 +21,10 @@ component("cpp") {
     "interface_provider.cc",
     "interface_provider.h",
     "local_interface_provider.h",
+    "manifest.cc",
+    "manifest.h",
+    "manifest_builder.cc",
+    "manifest_builder.h",
     "service.cc",
     "service.h",
     "service_binding.cc",
@@ -24,6 +32,8 @@ component("cpp") {
     "service_context_ref.h",
     "service_keepalive.cc",
     "service_keepalive.h",
+    "standalone_connector_impl.cc",
+    "standalone_connector_impl.h",
   ]
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
@@ -36,6 +46,10 @@ component("cpp") {
     "//services/service_manager/public/mojom",
     "//services/service_manager/public/mojom:constants",
     "//url",
+  ]
+
+  deps = [
+    "//services/tracing/public/cpp:traced_process",
   ]
 
   defines = [
@@ -94,4 +108,30 @@ component("mojom_traits") {
   ]
 
   defines = [ "IS_SERVICE_MANAGER_MOJOM_TRAITS_IMPL" ]
+}
+
+source_set("unittests") {
+  testonly = true
+
+  sources = [
+    "manifest_unittest.cc",
+    "standalone_connector_impl_unittest.cc",
+  ]
+
+  deps = [
+    ":cpp",
+    ":test_mojom",
+    "//base",
+    "//base/test:test_support",
+    "//services/service_manager/public/mojom",
+    "//testing/gmock",
+    "//testing/gtest",
+  ]
+}
+
+mojom("test_mojom") {
+  testonly = true
+  sources = [
+    "standalone_connector_impl_unittest.test-mojom",
+  ]
 }

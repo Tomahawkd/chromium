@@ -3,6 +3,7 @@
 <script src="../../../resources/testharnessreport.js"></script>
 <script src="../../assert_selection.js"></script>
 <script>
+
 selection_test(
   '<div contenteditable dir="ltr">|\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
@@ -12,19 +13,19 @@ selection_test(
 selection_test(
   '<div contenteditable dir="ltr">\u05D0|\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1|\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">|\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-1 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1|\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123|\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0|\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-2 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2|123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3|\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1|\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-3 ltr left character');
 
 selection_test(
@@ -48,19 +49,19 @@ selection_test(
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3|\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4|\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123|\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-7 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4|\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">|\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3|\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-8 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5|abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0|\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4|\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-9 ltr left character');
 
 selection_test(
@@ -84,19 +85,19 @@ selection_test(
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6|\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7|\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc|\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-13 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7|\u05D8456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456|\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6|\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-14 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8|456\u05D9\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9|\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7|\u05D8456\u05D9\u05DB\u05DC</div>',
   '16-15 ltr left character');
 
 selection_test(
@@ -120,18 +121,18 @@ selection_test(
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9|\u05DB\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB|\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456|\u05D9\u05DB\u05DC</div>',
   '16-19 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB|\u05DC</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc|\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9|\u05DB\u05DC</div>',
   '16-20 ltr left character');
 
 selection_test(
   '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB\u05DC|</div>',
   selection => selection.modify('move', 'left', 'character'),
-  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6|\u05D7\u05D8456\u05D9\u05DB\u05DC</div>',
+  '<div contenteditable dir="ltr">\u05D0\u05D1\u05D2123\u05D3\u05D4\u05D5abc\u05D6\u05D7\u05D8456\u05D9\u05DB|\u05DC</div>',
   '16-21 ltr left character');
 </script>

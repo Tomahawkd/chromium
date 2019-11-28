@@ -38,7 +38,7 @@
     reset.
   </description>
 
-  <interface name="zcr_remote_shell_v1" version="19">
+  <interface name="zcr_remote_shell_v1" version="24">
     <description summary="remote_shell">
       The global interface that allows clients to turn a wl_surface into a
       "real window" which is remotely managed but can be stacked, activated
@@ -148,7 +148,7 @@
 
     <event name="workspace" since="5">
       <description summary="area of remote shell">
-	Defines an area of the remote shell used for layout. Each series of
+	[Deprecated] Defines an area of the remote shell used for layout. Each series of
 	"workspace" events must be terminated by a "configure" event.
       </description>
       <arg name="display_id_hi" type="uint"/>
@@ -198,7 +198,7 @@
 
     <event name="display_info" since="19">
       <description summary="extra display information">
-	Sends display size in pixels and display identification data, typically
+	[Deprecated] Sends display size in pixels and display identification data, typically
 	in EDID format. Preceded by a "workspace" event for the same display.
       </description>
       <arg name="display_id_hi" type="uint"/>
@@ -207,9 +207,37 @@
       <arg name="height" type="int"/>
       <arg name="identification_data" type="array"/>
     </event>
+
+    <!-- Version 20 additions -->
+
+    <event name="workspace_info" since="20">
+      <description summary="area of remote shell in pixels">
+	Sends display information such as size, work area and its related information.
+	Each series of "workspace_info" events must be terminated by a "configure" event.
+      </description>
+      <arg name="display_id_hi" type="uint"/>
+      <arg name="display_id_lo" type="uint"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="inset_left" type="int"/>
+      <arg name="inset_top" type="int"/>
+      <arg name="inset_right" type="int"/>
+      <arg name="inset_bottom" type="int"/>
+      <arg name="stable_inset_left" type="int"/>
+      <arg name="stable_inset_top" type="int"/>
+      <arg name="stable_inset_right" type="int"/>
+      <arg name="stable_inset_bottom" type="int"/>
+      <arg name="systemui_visibility" type="int" summary="systemui_visibility_state"/>
+      <arg name="transform" type="int"/>
+      <arg name="is_internal" type="uint" summary="1 if screen is built-in"/>
+      <arg name="identification_data" type="array" summary="EDID blob data"/>
+    </event>
+
   </interface>
 
-  <interface name="zcr_remote_surface_v1" version="18">
+  <interface name="zcr_remote_surface_v1" version="24">
     <description summary="A desktop window">
       An interface that may be implemented by a wl_surface, for
       implementations that provide a desktop-style user interface
@@ -248,6 +276,7 @@
       </description>
       <entry name="normal" value="1" summary="normal app window"/>
       <entry name="system_ui" value="2" summary="window is treated as systemui"/>
+      <entry name="hidden_in_overview" value="3" summary="window is normal, but hidden in overview"/>
     </enum>
 
     <request name="destroy" type="destructor">
@@ -666,6 +695,7 @@
 	     summary="the window bounds is moved due to other WM operations"/>
       <entry name="resize" value="6"
 	     summary="the window bounds is reiszed due to other WM operations"/>
+      <entry name="move_pip" value="7" summary="the window bounds is resized for PIP"/>
     </enum>
 
     <event name="bounds_changed" since="10">
@@ -949,6 +979,61 @@
       <arg name="height" type="int"/>
     </request>
 
+    <!-- Version 19 additions -->
+
+    <request name="set_aspect_ratio" since="19">
+      <description summary="set the maximum size">
+	Set an aspect ratio of the surface.
+
+	Values set in this way are double-buffered. They will get
+	applied on the next commit.
+
+	Setting the aspect ratio of the surface. The ratio of the values is used
+	for the ratio of width to height of the surface. The size of surface is
+	restricted to the ratio. If any value is zero, the restriction on aspect
+	ratio is unset.
+      </description>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <!-- Version 20 additions -->
+
+    <request name="block_ime" since="20">
+      <description summary="block server side IME">
+	Block server side IME and always send key events through Wayland.
+
+	For some client, it's possible that server side IME is connected to the
+	client through other mechanism e.g. ime.mojom. When set_ime_blocked
+	is requested, server side IME should give up handling key events and
+	forward those events through Wayland protocol.
+      </description>
+    </request>
+
+    <request name="unblock_ime" since="20">
+      <description summary="unblock host side IME">
+	Unblock server side IME. Some events can be handled by server side IME,
+	while others can still be sent through Wayland protocol. See the
+	description of set_ime_blocked for detail.
+      </description>
+    </request>
+
+    <!-- Version 23 additions -->
+    <enum name="zoom_change">
+      <description summary="zoom level change">
+	Zoom level change.
+      </description>
+      <entry name="in" value="0" summary="zoom in"/>
+      <entry name="out" value="1" summary="zoom out"/>
+      <entry name="reset" value="2" summary="reset zoom level"/>
+    </enum>
+
+    <event name="change_zoom_level" since="23">
+      <description summary="change zoom level">
+	Request application zoom level change.
+      </description>
+      <arg name="change" type="int" summary="zoom_change"/>
+    </event>
   </interface>
 
   <interface name="zcr_notification_surface_v1" version="16">
@@ -973,7 +1058,7 @@
     </request>
   </interface>
 
-  <interface name="zcr_input_method_surface_v1" version="17">
+  <interface name="zcr_input_method_surface_v1" version="18">
     <description summary="An input method window">
       An interface that may be implemented by a wl_surface to host IME contents.
     </description>
@@ -982,6 +1067,35 @@
       <description summary="Destroy the ime_surface">
 	Unmap and destroy the input mtehod surface.
       </description>
+    </request>
+
+    <!-- Version 18 additions -->
+
+    <request name="set_bounds" since="18">
+      <description summary="set window bounds">
+	Set the "visible bounds" of a window from the user's perspective.
+
+	The bounds are double buffered, and will be applied at the
+	time wl_surface.commit of the corresponding wl_surface is called.
+
+	Once the bounds are set, it is not possible to unset them, and they will
+	remain the same until set_bounds is called again, even if a new sub-
+	surface or buffer is attached.
+
+	If never set, the value is the surface content bounds. This updates
+	dynamically on every commit.
+
+	The bounds are relative to the given display. If the display is invalid,
+	they are assumed to be relative to the primary display.
+
+	The width and height must be greater than zero.
+      </description>
+      <arg name="display_id_hi" type="uint"/>
+      <arg name="display_id_lo" type="uint"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
     </request>
   </interface>
 

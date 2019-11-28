@@ -9,9 +9,11 @@
 
 #include "ash/system/bluetooth/tray_bluetooth_helper.h"
 #include "ash/test/ash_test_base.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/bind_helpers.h"
+#include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "dbus/object_path.h"
-#include "device/base/features.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_adapter_client.h"
 #include "device/bluetooth/dbus/fake_bluetooth_device_client.h"
@@ -107,7 +109,7 @@ TEST_F(TrayBluetoothHelperLegacyTest, Basics) {
 
   TrayBluetoothHelperLegacy helper;
   helper.Initialize();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(device::mojom::BluetoothSystem::State::kPoweredOn,
             helper.GetBluetoothState());
   EXPECT_FALSE(helper.HasBluetoothDiscoverySession());
@@ -119,11 +121,11 @@ TEST_F(TrayBluetoothHelperLegacyTest, Basics) {
   EXPECT_FALSE(ExistInFilteredDevices(kLowEnergyAddress, devices));
 
   helper.StartBluetoothDiscovering();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(helper.HasBluetoothDiscoverySession());
 
   helper.StopBluetoothDiscovering();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(helper.HasBluetoothDiscoverySession());
 }
 
@@ -142,7 +144,7 @@ TEST_F(TrayBluetoothHelperLegacyTest, GetBluetoothState) {
   adapter_client->SetVisible(false);
   adapter_client->SetSecondVisible(false);
   helper.Initialize();
-  RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(BluetoothSystem::State::kUnavailable, helper.GetBluetoothState());
 
@@ -257,9 +259,8 @@ TEST_F(TrayBluetoothHelperLegacyTest, OnBluetoothSystemStateChanged) {
 // Tests the Bluetooth device list when UnfilteredBluetoothDevices feature is
 // enabled.
 TEST_F(TrayBluetoothHelperLegacyTest, UnfilteredBluetoothDevices) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitFromCommandLine(device::kUnfilteredBluetoothDevices.name,
-                                   "");
+  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+  cmd_line->AppendSwitch(chromeos::switches::kUnfilteredBluetoothDevices);
 
   // Set Bluetooth discovery simulation delay to 0 so the test doesn't have to
   // wait or use timers.
@@ -317,8 +318,15 @@ TEST_F(TrayBluetoothHelperLegacyTest, BluetoothAddress) {
   base::RunLoop().RunUntilIdle();
 
   const BluetoothDeviceList& devices = helper.GetAvailableBluetoothDevices();
-  ASSERT_EQ(1u, devices.size());
-  EXPECT_EQ(kDisplayPinCodeAddress, devices[0]->address);
+  ASSERT_EQ(3u, devices.size());
+  EXPECT_EQ(base::UTF8ToUTF16(
+                FakeBluetoothDeviceClient::kPairedUnconnectableDeviceAddress),
+            device::GetBluetoothAddressForDisplay(devices[0]->address));
+  EXPECT_EQ(base::UTF8ToUTF16(FakeBluetoothDeviceClient::kPairedDeviceAddress),
+            device::GetBluetoothAddressForDisplay(devices[1]->address));
+  EXPECT_EQ(
+      base::UTF8ToUTF16(FakeBluetoothDeviceClient::kDisplayPinCodeAddress),
+      device::GetBluetoothAddressForDisplay(devices[2]->address));
 }
 
 }  // namespace

@@ -18,7 +18,6 @@
 namespace syncer {
 
 class CancelationSignal;
-class CommitProcessor;
 class GetUpdatesDelegate;
 class NudgeTracker;
 class SyncCycle;
@@ -69,16 +68,10 @@ class Syncer {
   // otherwise.
   virtual bool PollSyncShare(ModelTypeSet request_types, SyncCycle* cycle);
 
-  // Posts a ClearServerData command.
-  // Returns: false if an error occurred and retries should backoff, true
-  // otherwise.
-  virtual bool PostClearServerData(SyncCycle* cycle);
-
  private:
   bool DownloadAndApplyUpdates(ModelTypeSet* request_types,
                                SyncCycle* cycle,
-                               const GetUpdatesDelegate& delegate,
-                               bool create_mobile_bookmarks_folder);
+                               const GetUpdatesDelegate& delegate);
 
   // This function will commit batches of unsynced items to the server until the
   // number of unsynced and ready to commit items reaches zero or an error is
@@ -86,8 +79,7 @@ class Syncer {
   // abort any blocking operations.
   SyncerError BuildAndPostCommits(const ModelTypeSet& request_types,
                                   NudgeTracker* nudge_tracker,
-                                  SyncCycle* cycle,
-                                  CommitProcessor* commit_processor);
+                                  SyncCycle* cycle);
 
   // Whether an early exist was requested due to a cancelation signal.
   bool ExitRequested();

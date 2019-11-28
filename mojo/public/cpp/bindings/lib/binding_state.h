@@ -17,15 +17,15 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
-#include "base/single_thread_task_runner.h"
 #include "mojo/public/cpp/bindings/connection_error_callback.h"
-#include "mojo/public/cpp/bindings/filter_chain.h"
+#include "mojo/public/cpp/bindings/connection_group.h"
 #include "mojo/public/cpp/bindings/interface_endpoint_client.h"
 #include "mojo/public/cpp/bindings/interface_id.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/lib/multiplex_router.h"
+#include "mojo/public/cpp/bindings/lib/pending_receiver_state.h"
 #include "mojo/public/cpp/bindings/message_header_validator.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/system/core.h"
@@ -39,7 +39,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) BindingStateBase {
   BindingStateBase();
   ~BindingStateBase();
 
-  void AddFilter(std::unique_ptr<MessageReceiver> filter);
+  void SetFilter(std::unique_ptr<MessageFilter> filter);
 
   bool HasAssociatedInterfaces() const;
 
@@ -77,13 +77,15 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) BindingStateBase {
 
   void FlushForTesting();
 
+  void EnableBatchDispatch();
+
   void EnableTestingMode();
 
   scoped_refptr<internal::MultiplexRouter> RouterForTesting();
 
  protected:
-  void BindInternal(ScopedMessagePipeHandle handle,
-                    scoped_refptr<base::SingleThreadTaskRunner> runner,
+  void BindInternal(PendingReceiverState* receiver_state,
+                    scoped_refptr<base::SequencedTaskRunner> runner,
                     const char* interface_name,
                     std::unique_ptr<MessageReceiver> request_validator,
                     bool passes_associated_kinds,
@@ -94,7 +96,7 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) BindingStateBase {
   scoped_refptr<internal::MultiplexRouter> router_;
   std::unique_ptr<InterfaceEndpointClient> endpoint_client_;
 
-  base::WeakPtrFactory<BindingStateBase> weak_ptr_factory_;
+  base::WeakPtrFactory<BindingStateBase> weak_ptr_factory_{this};
 };
 
 template <typename Interface, typename ImplRefTraits>
@@ -108,10 +110,10 @@ class BindingState : public BindingStateBase {
 
   ~BindingState() { Close(); }
 
-  void Bind(ScopedMessagePipeHandle handle,
-            scoped_refptr<base::SingleThreadTaskRunner> runner) {
+  void Bind(PendingReceiverState* receiver_state,
+            scoped_refptr<base::SequencedTaskRunner> runner) {
     BindingStateBase::BindInternal(
-        std::move(handle), runner, Interface::Name_,
+        std::move(receiver_state), runner, Interface::Name_,
         std::make_unique<typename Interface::RequestValidator_>(),
         Interface::PassesAssociatedKinds_, Interface::HasSyncMethods_, &stub_,
         Interface::Version_);

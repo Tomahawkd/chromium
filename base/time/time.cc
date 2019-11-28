@@ -135,32 +135,6 @@ int64_t TimeDelta::InNanoseconds() const {
   return delta_ * Time::kNanosecondsPerMicrosecond;
 }
 
-namespace time_internal {
-
-int64_t SaturatedAdd(TimeDelta delta, int64_t value) {
-  CheckedNumeric<int64_t> rv(delta.delta_);
-  rv += value;
-  if (rv.IsValid())
-    return rv.ValueOrDie();
-  // Positive RHS overflows. Negative RHS underflows.
-  if (value < 0)
-    return std::numeric_limits<int64_t>::min();
-  return std::numeric_limits<int64_t>::max();
-}
-
-int64_t SaturatedSub(TimeDelta delta, int64_t value) {
-  CheckedNumeric<int64_t> rv(delta.delta_);
-  rv -= value;
-  if (rv.IsValid())
-    return rv.ValueOrDie();
-  // Negative RHS overflows. Positive RHS underflows.
-  if (value < 0)
-    return std::numeric_limits<int64_t>::max();
-  return std::numeric_limits<int64_t>::min();
-}
-
-}  // namespace time_internal
-
 std::ostream& operator<<(std::ostream& os, TimeDelta time_delta) {
   return os << time_delta.InSecondsF() << " s";
 }
@@ -251,6 +225,10 @@ double Time::ToJsTime() const {
     // Preserve 0 so the invalid result doesn't depend on the platform.
     return 0;
   }
+  return ToJsTimeIgnoringNull();
+}
+
+double Time::ToJsTimeIgnoringNull() const {
   if (is_max()) {
     // Preserve max without offset to prevent overflow.
     return std::numeric_limits<double>::infinity();
@@ -292,8 +270,17 @@ Time Time::Midnight(bool is_local) const {
   exploded.second = 0;
   exploded.millisecond = 0;
   Time out_time;
-  if (FromExploded(is_local, exploded, &out_time))
+  if (FromExploded(is_local, exploded, &out_time)) {
     return out_time;
+  } else if (is_local) {
+    // Hitting this branch means 00:00:00am of the current day
+    // does not exist (due to Daylight Saving Time in some countries
+    // where clocks are shifted at midnight). In this case, midnight
+    // should be defined as 01:00:00am.
+    exploded.hour = 1;
+    if (FromExploded(is_local, exploded, &out_time))
+      return out_time;
+  }
   // This function must not fail.
   NOTREACHED();
   return Time();

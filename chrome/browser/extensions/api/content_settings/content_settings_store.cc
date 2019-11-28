@@ -113,7 +113,7 @@ void ContentSettingsStore::SetExtensionContentSetting(
     } else {
       // Do not set a timestamp for extension settings.
       map->SetValue(primary_pattern, secondary_pattern, type, identifier,
-                    base::Time(), new base::Value(setting));
+                    base::Time(), base::Value(setting));
     }
   }
 
@@ -306,7 +306,7 @@ std::unique_ptr<base::ListValue> ContentSettingsStore::GetSettingsForExtension(
           content_settings_api_constants::kResourceIdentifierKey,
           key.resource_identifier);
       ContentSetting content_setting =
-          content_settings::ValueToContentSetting(rule.value.get());
+          content_settings::ValueToContentSetting(&rule.value);
       DCHECK_NE(CONTENT_SETTING_DEFAULT, content_setting);
 
       std::string setting_string =
@@ -351,7 +351,7 @@ void ContentSettingsStore::SetExtensionContentSettingFromList(
     ContentSettingsType content_settings_type =
         content_settings_helpers::StringToContentSettingsType(
             content_settings_type_str);
-    if (content_settings_type == CONTENT_SETTINGS_TYPE_DEFAULT) {
+    if (content_settings_type == ContentSettingsType::DEFAULT) {
       // We'll end up with DEFAULT here if the type string isn't recognised.
       // This could be if it's a string from an old settings type that has been
       // deleted. DCHECK to make sure this is the case (not some random string).

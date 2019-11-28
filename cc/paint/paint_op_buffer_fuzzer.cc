@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 #include "base/command_line.h"
+#include "base/process/memory.h"
+#include "base/test/test_discardable_memory_allocator.h"
 #include "cc/paint/paint_cache.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "cc/test/transfer_cache_test_helper.h"
@@ -20,7 +22,16 @@ struct Environment {
     // Disable noisy logging as per "libFuzzer in Chrome" documentation:
     // testing/libfuzzer/getting_started.md#Disable-noisy-error-message-logging.
     logging::SetMinLogLevel(logging::LOG_FATAL);
+
+    base::EnableTerminationOnOutOfMemory();
+    base::DiscardableMemoryAllocator::SetInstance(
+        &discardable_memory_allocator);
   }
+
+  ~Environment() { base::DiscardableMemoryAllocator::SetInstance(nullptr); }
+
+ private:
+  base::TestDiscardableMemoryAllocator discardable_memory_allocator;
 };
 
 class FontSupport : public gpu::ServiceFontManager::Client {
@@ -35,6 +46,7 @@ class FontSupport : public gpu::ServiceFontManager::Client {
       return it->second;
     return CreateBuffer(shm_id);
   }
+  void ReportProgress() override {}
 
  private:
   scoped_refptr<gpu::Buffer> CreateBuffer(uint32_t shm_id) {
@@ -68,8 +80,9 @@ void Raster(scoped_refptr<viz::TestContextProvider> context_provider,
 
   cc::PlaybackParams params(nullptr, canvas->getTotalMatrix());
   cc::TransferCacheTestHelper transfer_cache_helper;
+  std::vector<uint8_t> scratch_buffer;
   cc::PaintOp::DeserializeOptions deserialize_options(
-      &transfer_cache_helper, paint_cache, strike_client);
+      &transfer_cache_helper, paint_cache, strike_client, &scratch_buffer);
 
   // Need 4 bytes to be able to read the type/skip.
   while (size >= 4) {
@@ -111,7 +124,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   base::CommandLine::Init(0, nullptr);
 
   // Partition the data to use some bytes for populating the font cache.
-  size_t bytes_for_fonts = data[0];
+  uint32_t bytes_for_fonts = data[0];
   if (bytes_for_fonts > size)
     bytes_for_fonts = size / 2;
 

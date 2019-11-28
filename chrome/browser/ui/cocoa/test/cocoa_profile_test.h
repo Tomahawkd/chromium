@@ -9,10 +9,11 @@
 
 #import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "ui/views/test/scoped_views_test_helper.h"
 
 namespace content {
-class TestBrowserThreadBundle;
+class BrowserTaskEnvironment;
 }
 
 class Browser;
@@ -58,9 +59,13 @@ class CocoaProfileTest : public CocoaTest {
   virtual Browser* CreateBrowser();
 
  private:
-  std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
+  std::unique_ptr<content::BrowserTaskEnvironment> task_environment_;
 
   views::ScopedViewsTestHelper views_helper_;
+
+  // test_url_loader_factory_ is declared before profile_manager_
+  // to guarantee it outlives profile_.
+  network::TestURLLoaderFactory test_url_loader_factory_;
 
   TestingProfileManager profile_manager_;
   TestingProfile* profile_;  // Weak; owned by profile_manager_.

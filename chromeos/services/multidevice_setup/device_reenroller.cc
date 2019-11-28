@@ -4,11 +4,13 @@
 
 #include "chromeos/services/multidevice_setup/device_reenroller.h"
 
+#include "base/bind.h"
 #include "base/containers/flat_set.h"
 #include "base/no_destructor.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
-#include "components/cryptauth/gcm_device_info_provider.h"
-#include "components/cryptauth/proto/enum_util.h"
+#include "base/timer/timer.h"
+#include "chromeos/components/multidevice/logging/logging.h"
+#include "chromeos/services/device_sync/proto/enum_util.h"
+#include "chromeos/services/device_sync/public/cpp/gcm_device_info_provider.h"
 
 namespace chromeos {
 
@@ -84,7 +86,7 @@ DeviceReenroller::Factory::~Factory() = default;
 
 std::unique_ptr<DeviceReenroller> DeviceReenroller::Factory::BuildInstance(
     device_sync::DeviceSyncClient* device_sync_client,
-    const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider,
+    const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider,
     std::unique_ptr<base::OneShotTimer> timer) {
   return base::WrapUnique(new DeviceReenroller(
       device_sync_client, gcm_device_info_provider, std::move(timer)));
@@ -96,7 +98,7 @@ DeviceReenroller::~DeviceReenroller() {
 
 DeviceReenroller::DeviceReenroller(
     device_sync::DeviceSyncClient* device_sync_client,
-    const cryptauth::GcmDeviceInfoProvider* gcm_device_info_provider,
+    const device_sync::GcmDeviceInfoProvider* gcm_device_info_provider,
     std::unique_ptr<base::OneShotTimer> timer)
     : device_sync_client_(device_sync_client),
       gcm_supported_software_features_(GetSupportedFeaturesFromGcmDeviceInfo(
@@ -149,7 +151,11 @@ DeviceReenroller::GetSupportedFeaturesForLocalDevice() {
        i <= cryptauth::SoftwareFeature_MAX; ++i) {
     cryptauth::SoftwareFeature feature =
         static_cast<cryptauth::SoftwareFeature>(i);
-    if (local_device_metadata.GetSoftwareFeatureState(feature) !=
+    if (feature == cryptauth::UNKNOWN_FEATURE)
+      continue;
+
+    if (local_device_metadata.GetSoftwareFeatureState(
+            multidevice::FromCryptAuthFeature(feature)) !=
         multidevice::SoftwareFeatureState::kNotSupported) {
       sorted_and_deduped_set.insert(feature);
     }

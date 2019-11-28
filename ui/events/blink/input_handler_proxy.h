@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "cc/input/input_handler.h"
 #include "cc/input/snap_fling_controller.h"
@@ -31,6 +30,7 @@ namespace ui {
 namespace test {
 class InputHandlerProxyTest;
 class InputHandlerProxyEventQueueTest;
+class InputHandlerProxyMomentumScrollJankTest;
 class TestInputHandlerProxy;
 }
 
@@ -41,6 +41,7 @@ class InputScrollElasticityController;
 class ScrollPredictor;
 class SynchronousInputHandler;
 class SynchronousInputHandlerProxy;
+class MomentumScrollJankTracker;
 struct DidOverscrollParams;
 
 // This class is a proxy between the blink web input events for a WebWidget and
@@ -52,7 +53,8 @@ class InputHandlerProxy : public cc::InputHandlerClient,
                           public cc::SnapFlingClient {
  public:
   InputHandlerProxy(cc::InputHandler* input_handler,
-                    InputHandlerProxyClient* client);
+                    InputHandlerProxyClient* client,
+                    bool force_input_to_main_thread);
   ~InputHandlerProxy() override;
 
   InputScrollElasticityController* scroll_elasticity_controller() {
@@ -81,7 +83,15 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   void HandleInputEventWithLatencyInfo(WebScopedInputEvent event,
                                        const LatencyInfo& latency_info,
                                        EventDispositionCallback callback);
-  EventDisposition HandleInputEvent(const blink::WebInputEvent& event);
+  void InjectScrollbarGestureScroll(
+      const blink::WebInputEvent::Type type,
+      const blink::WebFloatPoint& position_in_widget,
+      const cc::InputHandlerPointerResult& pointer_result,
+      const LatencyInfo& latency_info,
+      const base::TimeTicks now);
+  EventDisposition RouteToTypeSpecificHandler(
+      const blink::WebInputEvent& event,
+      const LatencyInfo& original_latency_info = LatencyInfo());
 
   // cc::InputHandlerClient implementation.
   void WillShutdown() override;
@@ -94,21 +104,22 @@ class InputHandlerProxy : public cc::InputHandlerClient,
       float page_scale_factor,
       float min_page_scale_factor,
       float max_page_scale_factor) override;
-  void DeliverInputForBeginFrame() override;
+  void DeliverInputForBeginFrame(const viz::BeginFrameArgs& args) override;
+  void DeliverInputForHighLatencyMode() override;
 
   // SynchronousInputHandlerProxy implementation.
-  void SetOnlySynchronouslyAnimateRootFlings(
+  void SetSynchronousInputHandler(
       SynchronousInputHandler* synchronous_input_handler) override;
-  void SynchronouslyAnimate(base::TimeTicks time) override;
   void SynchronouslySetRootScrollOffset(
       const gfx::ScrollOffset& root_offset) override;
   void SynchronouslyZoomBy(float magnify_delta,
                            const gfx::Point& anchor) override;
 
   // SnapFlingClient implementation.
-  bool GetSnapFlingInfo(const gfx::Vector2dF& natural_displacement,
-                        gfx::Vector2dF* initial_offset,
-                        gfx::Vector2dF* target_offset) const override;
+  bool GetSnapFlingInfoAndSetSnapTarget(
+      const gfx::Vector2dF& natural_displacement,
+      gfx::Vector2dF* initial_offset,
+      gfx::Vector2dF* target_offset) const override;
   gfx::Vector2dF ScrollByForSnapFling(const gfx::Vector2dF& delta) override;
   void ScrollEndForSnapFling() override;
   void RequestAnimationForSnapFling() override;
@@ -127,6 +138,7 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   friend class test::TestInputHandlerProxy;
   friend class test::InputHandlerProxyTest;
   friend class test::InputHandlerProxyEventQueueTest;
+  friend class test::InputHandlerProxyMomentumScrollJankTest;
 
   void DispatchSingleInputEvent(std::unique_ptr<EventWithCallback>,
                                 const base::TimeTicks);
@@ -155,7 +167,8 @@ class InputHandlerProxy : public cc::InputHandlerClient,
                         const cc::InputHandlerScrollResult& scroll_result);
 
   // Whether to use a smooth scroll animation for this event.
-  bool ShouldAnimate(bool has_precise_scroll_deltas) const;
+  bool ShouldAnimate(blink::WebGestureDevice device,
+                     bool has_precise_scroll_deltas) const;
 
   // Update the elastic overscroll controller with |gesture_event|.
   void HandleScrollElasticityOverscroll(
@@ -179,12 +192,7 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   InputHandlerProxyClient* client_;
   cc::InputHandler* input_handler_;
 
-  // When present, Animates are not requested to the InputHandler, but to this
-  // SynchronousInputHandler instead. And all Animate() calls are expected to
-  // happen via the SynchronouslyAnimate() call instead of coming directly from
-  // the InputHandler.
   SynchronousInputHandler* synchronous_input_handler_;
-  bool allow_root_animate_;
 
 #if DCHECK_IS_ON()
   bool expect_scroll_update_end_;
@@ -216,7 +224,19 @@ class InputHandlerProxy : public cc::InputHandlerClient,
 
   std::unique_ptr<CompositorThreadEventQueue> compositor_event_queue_;
   bool has_ongoing_compositor_scroll_or_pinch_;
-  bool is_first_gesture_scroll_update_;
+
+  // Tracks whether the first scroll update gesture event has been seen after a
+  // scroll begin. This is set/reset when scroll gestures are processed in
+  // HandleInputEventWithLatencyInfo and shouldn't be used outside the scope
+  // of that method.
+  bool has_seen_first_gesture_scroll_update_after_begin_;
+
+  // Whether the last injected scroll gesture was a GestureScrollBegin. Used to
+  // determine which GestureScrollUpdate is the first in a gesture sequence for
+  // latency classification. This is separate from
+  // |is_first_gesture_scroll_update_| and is used to determine which type of
+  // latency component should be added for injected GestureScrollUpdates.
+  bool last_injected_gesture_was_begin_;
 
   const base::TickClock* tick_clock_;
 
@@ -225,6 +245,20 @@ class InputHandlerProxy : public cc::InputHandlerClient,
   std::unique_ptr<ScrollPredictor> scroll_predictor_;
 
   bool compositor_touch_action_enabled_;
+
+  // This flag can be used to force all input to be forwarded to Blink. It's
+  // used in LayoutTests to preserve existing behavior for non-threaded layout
+  // tests and to allow testing both Blink and CC input handling paths.
+  bool force_input_to_main_thread_;
+
+  // These flags are set for the SkipTouchEventFilter experiment. The
+  // experiment either skips filtering discrete (touch start/end) events to the
+  // main thread, or all events (touch start/end/move).
+  bool skip_touch_filter_discrete_ = false;
+  bool skip_touch_filter_all_ = false;
+
+  // Helpers for the momentum scroll jank UMAs.
+  std::unique_ptr<MomentumScrollJankTracker> momentum_scroll_jank_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(InputHandlerProxy);
 };

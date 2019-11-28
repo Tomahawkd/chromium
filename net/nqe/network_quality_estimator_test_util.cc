@@ -8,7 +8,7 @@
 #include "base/run_loop.h"
 #include "net/base/load_flags.h"
 #include "net/log/net_log_with_source.h"
-#include "net/log/test_net_log_entry.h"
+#include "net/log/test_net_log_util.h"
 #include "net/nqe/network_quality_estimator_params.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -29,16 +29,17 @@ TestNetworkQualityEstimator::TestNetworkQualityEstimator()
 
 TestNetworkQualityEstimator::TestNetworkQualityEstimator(
     const std::map<std::string, std::string>& variation_params)
-    : TestNetworkQualityEstimator(variation_params,
-                                  true,
-                                  true,
-                                  std::make_unique<BoundTestNetLog>()) {}
+    : TestNetworkQualityEstimator(
+          variation_params,
+          true,
+          true,
+          std::make_unique<RecordingBoundTestNetLog>()) {}
 
 TestNetworkQualityEstimator::TestNetworkQualityEstimator(
     const std::map<std::string, std::string>& variation_params,
     bool allow_local_host_requests_for_tests,
     bool allow_smaller_responses_for_tests,
-    std::unique_ptr<BoundTestNetLog> net_log)
+    std::unique_ptr<RecordingBoundTestNetLog> net_log)
     : TestNetworkQualityEstimator(variation_params,
                                   allow_local_host_requests_for_tests,
                                   allow_smaller_responses_for_tests,
@@ -50,13 +51,12 @@ TestNetworkQualityEstimator::TestNetworkQualityEstimator(
     bool allow_local_host_requests_for_tests,
     bool allow_smaller_responses_for_tests,
     bool suppress_notifications_for_testing,
-    std::unique_ptr<BoundTestNetLog> net_log)
+    std::unique_ptr<RecordingBoundTestNetLog> net_log)
     : NetworkQualityEstimator(
           std::make_unique<NetworkQualityEstimatorParams>(variation_params),
           net_log->bound().net_log()),
       net_log_(std::move(net_log)),
       current_network_type_(NetworkChangeNotifier::CONNECTION_UNKNOWN),
-      accuracy_recording_intervals_set_(false),
       embedded_test_server_(base::FilePath(kTestFilePath)),
       suppress_notifications_for_testing_(suppress_notifications_for_testing) {
   SetUseLocalHostRequestsForTesting(allow_local_host_requests_for_tests);
@@ -65,19 +65,18 @@ TestNetworkQualityEstimator::TestNetworkQualityEstimator(
 
 TestNetworkQualityEstimator::TestNetworkQualityEstimator(
     std::unique_ptr<NetworkQualityEstimatorParams> params)
-    : TestNetworkQualityEstimator(std::move(params),
-                                  std::make_unique<BoundTestNetLog>()) {}
+    : TestNetworkQualityEstimator(
+          std::move(params),
+          std::make_unique<RecordingBoundTestNetLog>()) {}
 
 TestNetworkQualityEstimator::TestNetworkQualityEstimator(
     std::unique_ptr<NetworkQualityEstimatorParams> params,
-    std::unique_ptr<BoundTestNetLog> net_log)
+    std::unique_ptr<RecordingBoundTestNetLog> net_log)
     : NetworkQualityEstimator(std::move(params), net_log->bound().net_log()),
       net_log_(std::move(net_log)),
       current_network_type_(NetworkChangeNotifier::CONNECTION_UNKNOWN),
-      accuracy_recording_intervals_set_(false),
       embedded_test_server_(base::FilePath(kTestFilePath)),
-      suppress_notifications_for_testing_(false) {
-}
+      suppress_notifications_for_testing_(false) {}
 
 TestNetworkQualityEstimator::~TestNetworkQualityEstimator() = default;
 
@@ -131,16 +130,7 @@ TestNetworkQualityEstimator::GetEffectiveConnectionType() const {
 }
 
 EffectiveConnectionType
-TestNetworkQualityEstimator::GetRecentEffectiveConnectionType(
-    const base::TimeTicks& start_time) const {
-  if (recent_effective_connection_type_)
-    return recent_effective_connection_type_.value();
-  return NetworkQualityEstimator::GetRecentEffectiveConnectionType(start_time);
-}
-
-EffectiveConnectionType
-TestNetworkQualityEstimator::GetRecentEffectiveConnectionTypeAndNetworkQuality(
-    const base::TimeTicks& start_time,
+TestNetworkQualityEstimator::GetRecentEffectiveConnectionTypeUsingMetrics(
     base::TimeDelta* http_rtt,
     base::TimeDelta* transport_rtt,
     base::TimeDelta* end_to_end_rtt,
@@ -148,18 +138,17 @@ TestNetworkQualityEstimator::GetRecentEffectiveConnectionTypeAndNetworkQuality(
     size_t* observations_count,
     size_t* end_to_end_rtt_observation_count) const {
   if (recent_effective_connection_type_) {
-    GetRecentRTT(nqe::internal::OBSERVATION_CATEGORY_HTTP, start_time, http_rtt,
-                 nullptr);
-    GetRecentRTT(nqe::internal::OBSERVATION_CATEGORY_TRANSPORT, start_time,
-                 transport_rtt, observations_count);
-    GetRecentDownlinkThroughputKbps(start_time, downstream_throughput_kbps);
+    GetRecentRTT(nqe::internal::OBSERVATION_CATEGORY_HTTP, base::TimeTicks(),
+                 http_rtt, nullptr);
+    GetRecentRTT(nqe::internal::OBSERVATION_CATEGORY_TRANSPORT,
+                 base::TimeTicks(), transport_rtt, observations_count);
+    GetRecentDownlinkThroughputKbps(base::TimeTicks(),
+                                    downstream_throughput_kbps);
     return recent_effective_connection_type_.value();
   }
-  return NetworkQualityEstimator::
-      GetRecentEffectiveConnectionTypeAndNetworkQuality(
-          start_time, http_rtt, transport_rtt, end_to_end_rtt,
-          downstream_throughput_kbps, observations_count,
-          end_to_end_rtt_observation_count);
+  return NetworkQualityEstimator::GetRecentEffectiveConnectionTypeUsingMetrics(
+      http_rtt, transport_rtt, end_to_end_rtt, downstream_throughput_kbps,
+      observations_count, end_to_end_rtt_observation_count);
 }
 
 bool TestNetworkQualityEstimator::GetRecentRTT(
@@ -256,62 +245,38 @@ base::TimeDelta TestNetworkQualityEstimator::GetRTTEstimateInternal(
       start_time, observation_category, percentile, observations_count);
 }
 
-void TestNetworkQualityEstimator::SetAccuracyRecordingIntervals(
-    const std::vector<base::TimeDelta>& accuracy_recording_intervals) {
-  accuracy_recording_intervals_set_ = true;
-  accuracy_recording_intervals_ = accuracy_recording_intervals;
-}
-
-const std::vector<base::TimeDelta>&
-TestNetworkQualityEstimator::GetAccuracyRecordingIntervals() const {
-  if (accuracy_recording_intervals_set_)
-    return accuracy_recording_intervals_;
-
-  return NetworkQualityEstimator::GetAccuracyRecordingIntervals();
-}
-
 int TestNetworkQualityEstimator::GetEntriesCount(NetLogEventType type) const {
-  TestNetLogEntry::List entries;
-  net_log_->GetEntries(&entries);
-
-  int count = 0;
-  for (const auto& entry : entries) {
-    if (entry.type == type)
-      ++count;
-  }
-  return count;
+  return net_log_->GetEntriesWithType(type).size();
 }
 
 std::string TestNetworkQualityEstimator::GetNetLogLastStringValue(
     NetLogEventType type,
     const std::string& key) const {
-  std::string return_value;
-  TestNetLogEntry::List entries;
-  net_log_->GetEntries(&entries);
+  auto entries = net_log_->GetEntries();
 
   for (int i = entries.size() - 1; i >= 0; --i) {
-    if (entries[i].type == type &&
-        entries[i].GetStringValue(key, &return_value)) {
-      return return_value;
+    if (entries[i].type == type) {
+      auto value = GetOptionalStringValueFromParams(entries[i], key);
+      if (value)
+        return *value;
     }
   }
-  return return_value;
+  return std::string();
 }
 
 int TestNetworkQualityEstimator::GetNetLogLastIntegerValue(
     NetLogEventType type,
     const std::string& key) const {
-  int return_value = 0;
-  TestNetLogEntry::List entries;
-  net_log_->GetEntries(&entries);
+  auto entries = net_log_->GetEntries();
 
   for (int i = entries.size() - 1; i >= 0; --i) {
-    if (entries[i].type == type &&
-        entries[i].GetIntegerValue(key, &return_value)) {
-      return return_value;
+    if (entries[i].type == type) {
+      auto value = GetOptionalIntegerValueFromParams(entries[i], key);
+      if (value)
+        return *value;
     }
   }
-  return return_value;
+  return 0;
 }
 
 void TestNetworkQualityEstimator::
@@ -324,10 +289,24 @@ void TestNetworkQualityEstimator::
   }
 }
 
-void TestNetworkQualityEstimator::NotifyObserversOfEffectiveConnectionType(
-    EffectiveConnectionType type) {
+void TestNetworkQualityEstimator::
+    SetAndNotifyObserversOfEffectiveConnectionType(
+        EffectiveConnectionType type) {
+  set_effective_connection_type(type);
   for (auto& observer : effective_connection_type_observer_list_)
     observer.OnEffectiveConnectionTypeChanged(type);
+}
+
+base::Optional<net::EffectiveConnectionType>
+TestNetworkQualityEstimator::GetOverrideECT() const {
+  return effective_connection_type_;
+}
+
+void TestNetworkQualityEstimator::
+    SetAndNotifyObserversOfP2PActiveConnectionsCountChange(uint32_t count) {
+  p2p_connections_count_ = count;
+  for (auto& observer : peer_to_peer_type_observer_list_)
+    observer.OnPeerToPeerConnectionsCountChange(count);
 }
 
 void TestNetworkQualityEstimator::RecordSpdyPingLatency(
@@ -349,7 +328,12 @@ nqe::internal::NetworkID TestNetworkQualityEstimator::GetCurrentNetworkID()
 }
 
 int32_t TestNetworkQualityEstimator::GetCurrentSignalStrength() const {
-  return INT32_MIN;
+  return current_cellular_signal_strength_;
+}
+
+void TestNetworkQualityEstimator::SetCurrentSignalStrength(
+    int32_t signal_strength) {
+  current_cellular_signal_strength_ = signal_strength;
 }
 
 TestNetworkQualityEstimator::LocalHttpTestServer::LocalHttpTestServer(

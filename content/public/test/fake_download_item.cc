@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "components/download/public/common/download_danger_type.h"
 #include "net/http/http_response_headers.h"
 
 namespace content {
@@ -217,6 +218,10 @@ void FakeDownloadItem::SetLastModifiedTime(
   last_modified_time_ = last_modified_time;
 }
 
+void FakeDownloadItem::SetHash(const std::string& hash) {
+  hash_ = hash;
+}
+
 const std::string& FakeDownloadItem::GetLastModifiedTime() const {
   return last_modified_time_;
 }
@@ -237,7 +242,7 @@ void FakeDownloadItem::Pause() {
   NOTREACHED();
 }
 
-void FakeDownloadItem::Resume() {
+void FakeDownloadItem::Resume(bool user_resume) {
   NOTREACHED();
 }
 
@@ -257,7 +262,22 @@ void FakeDownloadItem::ShowDownloadInShell() {
   NOTREACHED();
 }
 
+void FakeDownloadItem::Rename(const base::FilePath& name,
+                              RenameDownloadCallback callback) {
+  NOTREACHED();
+}
+
+void FakeDownloadItem::OnAsyncScanningCompleted(
+    download::DownloadDangerType danger_type) {
+  NOTREACHED();
+}
+
 bool FakeDownloadItem::IsPaused() const {
+  return false;
+}
+
+bool FakeDownloadItem::AllowMetered() const {
+  NOTREACHED();
   return false;
 }
 
@@ -272,6 +292,11 @@ bool FakeDownloadItem::CanResume() const {
 }
 
 int64_t FakeDownloadItem::GetBytesWasted() const {
+  NOTREACHED();
+  return 0;
+}
+
+int32_t FakeDownloadItem::GetAutoResumeCount() const {
   NOTREACHED();
   return 0;
 }
@@ -294,6 +319,12 @@ const GURL& FakeDownloadItem::GetTabUrl() const {
 const GURL& FakeDownloadItem::GetTabReferrerUrl() const {
   NOTREACHED();
   return dummy_url;
+}
+
+const base::Optional<url::Origin>& FakeDownloadItem::GetRequestInitiator()
+    const {
+  NOTREACHED();
+  return dummy_origin;
 }
 
 std::string FakeDownloadItem::GetSuggestedFilename() const {
@@ -331,6 +362,10 @@ bool FakeDownloadItem::IsSavePackageDownload() const {
   return false;
 }
 
+download::DownloadSource FakeDownloadItem::GetDownloadSource() const {
+  return download::DownloadSource::UNKNOWN;
+}
+
 const base::FilePath& FakeDownloadItem::GetFullPath() const {
   return dummy_file_path;
 }
@@ -357,8 +392,7 @@ FakeDownloadItem::GetTargetDisposition() const {
 }
 
 const std::string& FakeDownloadItem::GetHash() const {
-  NOTREACHED();
-  return dummy_string;
+  return hash_;
 }
 
 void FakeDownloadItem::DeleteFile(const base::Callback<void(bool)>& callback) {

@@ -22,15 +22,14 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.modaldialog.DialogDismissalCause;
-import org.chromium.chrome.browser.modaldialog.ModalDialogManager;
-import org.chromium.chrome.browser.modaldialog.ModalDialogProperties;
-import org.chromium.chrome.browser.modaldialog.ModalDialogView;
-import org.chromium.chrome.browser.modelutil.PropertyModel;
-import org.chromium.chrome.browser.preferences.PrefServiceBridge;
-import org.chromium.chrome.browser.preferences.languages.LanguageItem;
+import org.chromium.chrome.browser.settings.languages.LanguageItem;
+import org.chromium.chrome.browser.translate.TranslateBridge;
 import org.chromium.components.language.AndroidLanguageMetricsBridge;
 import org.chromium.components.language.GeoLanguageProviderBridge;
+import org.chromium.ui.modaldialog.DialogDismissalCause;
+import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -38,12 +37,13 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.TreeSet;
 
 /**
  * Implements a modal dialog that prompts the user about the languages they can read. Displayed
  * once at browser startup when no other promo or modals are shown.
  */
-public class LanguageAskPrompt implements ModalDialogView.Controller {
+public class LanguageAskPrompt implements ModalDialogProperties.Controller {
     // Enum values for the Translate.ExplicitLanguageAsk.Event histogram.
     private static final int PROMPT_EVENT_SHOWN = 0;
     private static final int PROMPT_EVENT_SAVED = 1;
@@ -243,12 +243,12 @@ public class LanguageAskPrompt implements ModalDialogView.Controller {
      */
     public static boolean maybeShowLanguageAskPrompt(ChromeActivity activity) {
         if (!ChromeFeatureList.isEnabled(ChromeFeatureList.EXPLICIT_LANGUAGE_ASK)) return false;
-        if (PrefServiceBridge.getInstance().getExplicitLanguageAskPromptShown()) return false;
+        if (TranslateBridge.getExplicitLanguageAskPromptShown()) return false;
 
         LanguageAskPrompt prompt = new LanguageAskPrompt();
         prompt.show(activity);
 
-        PrefServiceBridge.getInstance().setExplicitLanguageAskPromptShown(true);
+        TranslateBridge.setExplicitLanguageAskPromptShown(true);
 
         return true;
     }
@@ -265,11 +265,11 @@ public class LanguageAskPrompt implements ModalDialogView.Controller {
      * mLanguagesUpdate, and by extension which languages were checked by the user in the prompt.
      */
     private void saveLanguages() {
-        HashSet<String> languagesToAdd = new HashSet<String>(mLanguagesUpdate);
+        TreeSet<String> languagesToAdd = new TreeSet<String>(mLanguagesUpdate);
         languagesToAdd.removeAll(mInitialLanguages);
 
         for (String language : languagesToAdd) {
-            PrefServiceBridge.getInstance().updateUserAcceptLanguages(language, true);
+            TranslateBridge.updateUserAcceptLanguages(language, true);
             AndroidLanguageMetricsBridge.reportExplicitLanguageAskStateChanged(language, true);
         }
 
@@ -277,7 +277,7 @@ public class LanguageAskPrompt implements ModalDialogView.Controller {
         languagesToRemove.removeAll(mLanguagesUpdate);
 
         for (String language : languagesToRemove) {
-            PrefServiceBridge.getInstance().updateUserAcceptLanguages(language, false);
+            TranslateBridge.updateUserAcceptLanguages(language, false);
             AndroidLanguageMetricsBridge.reportExplicitLanguageAskStateChanged(language, false);
         }
     }
@@ -291,8 +291,7 @@ public class LanguageAskPrompt implements ModalDialogView.Controller {
 
         recordPromptEvent(PROMPT_EVENT_SHOWN);
 
-        List<String> userAcceptLanguagesList =
-                PrefServiceBridge.getInstance().getUserLanguageCodes();
+        List<String> userAcceptLanguagesList = TranslateBridge.getUserLanguageCodes();
         mInitialLanguages = new HashSet<String>();
         mInitialLanguages.addAll(userAcceptLanguagesList);
         mLanguagesUpdate = new HashSet<String>(mInitialLanguages);
@@ -311,7 +310,7 @@ public class LanguageAskPrompt implements ModalDialogView.Controller {
         ImageView bottomShadow = customView.findViewById(R.id.bottom_shadow);
         mListScrollListener = new ListScrollListener(list, topShadow, bottomShadow);
 
-        List<LanguageItem> languages = PrefServiceBridge.getInstance().getChromeLanguageList();
+        List<LanguageItem> languages = TranslateBridge.getChromeLanguageList();
         LinkedHashSet<String> currentGeoLanguages =
                 GeoLanguageProviderBridge.getCurrentGeoLanguages();
 
@@ -361,7 +360,7 @@ public class LanguageAskPrompt implements ModalDialogView.Controller {
 
     @Override
     public void onClick(PropertyModel model, int buttonType) {
-        if (buttonType == ModalDialogView.ButtonType.NEGATIVE) {
+        if (buttonType == ModalDialogProperties.ButtonType.NEGATIVE) {
             mModalDialogManager.dismissDialog(model, DialogDismissalCause.NEGATIVE_BUTTON_CLICKED);
         } else {
             saveLanguages();

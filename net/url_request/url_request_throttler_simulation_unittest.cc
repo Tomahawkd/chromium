@@ -18,9 +18,9 @@
 #include <vector>
 
 #include "base/environment.h"
-#include "base/macros.h"
 #include "base/rand_util.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/stl_util.h"
+#include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "net/base/request_priority.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -127,7 +127,7 @@ class Server : public DiscreteTimeSimulation::Actor {
         max_experienced_queries_per_tick_(0),
         mock_request_(context_.CreateRequest(GURL(),
                                              DEFAULT_PRIORITY,
-                                             NULL,
+                                             nullptr,
                                              TRAFFIC_ANNOTATION_FOR_TESTS)) {}
 
   void SetDowntime(const TimeTicks& start_time, const TimeDelta& duration) {
@@ -528,7 +528,7 @@ void SimulateAttack(Server* server,
 }
 
 TEST(URLRequestThrottlerSimulation, HelpsInAttack) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   Server unprotected_server(30, 1.0);
   RequesterResults unprotected_attacker_results;
@@ -598,8 +598,8 @@ double SimulateDowntime(const TimeDelta& duration,
   if (!enable_throttling)
     throttler_entry->DisableBackoffThrottling();
 
-  Requester requester(
-      throttler_entry.get(), average_client_interval, &server, NULL);
+  Requester requester(throttler_entry.get(), average_client_interval, &server,
+                      nullptr);
   requester.SetStartupJitter(duration / 3);
   requester.SetRequestJitter(average_client_interval);
 
@@ -615,7 +615,7 @@ double SimulateDowntime(const TimeDelta& duration,
 }
 
 TEST(URLRequestThrottlerSimulation, PerceivedDowntimeRatio) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   struct Stats {
     // Expected interval that we expect the ratio of downtime when anti-DDoS
@@ -708,7 +708,7 @@ TEST(URLRequestThrottlerSimulation, PerceivedDowntimeRatio) {
   // If things don't converge by the time we've done 100K trials, then
   // clearly one or more of the expected intervals are wrong.
   while (global_stats.num_runs < 100000) {
-    for (size_t i = 0; i < arraysize(trials); ++i) {
+    for (size_t i = 0; i < base::size(trials); ++i) {
       ++global_stats.num_runs;
       ++trials[i].stats.num_runs;
       double ratio_unprotected = SimulateDowntime(
@@ -736,7 +736,7 @@ TEST(URLRequestThrottlerSimulation, PerceivedDowntimeRatio) {
 
   // Print individual trial results for optional manual evaluation.
   double max_increase_ratio = 0.0;
-  for (size_t i = 0; i < arraysize(trials); ++i) {
+  for (size_t i = 0; i < base::size(trials); ++i) {
     double increase_ratio;
     trials[i].stats.DidConverge(&increase_ratio);
     max_increase_ratio = std::max(max_increase_ratio, increase_ratio);

@@ -8,7 +8,7 @@
 
 #include "base/mac/foundation_util.h"
 #import "ui/accessibility/platform/ax_platform_node_mac.h"
-#import "ui/views/cocoa/bridged_native_widget_host_impl.h"
+#import "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget.h"
@@ -30,17 +30,6 @@ void EnsureNativeViewHasNoChildWidgets(NSView* native_view) {
   }
 }
 
-AXPlatformNodeCocoa* ClosestPlatformAncestorNode(views::View* view) {
-  do {
-    gfx::NativeViewAccessible accessible = view->GetNativeViewAccessible();
-    if ([accessible isKindOfClass:[AXPlatformNodeCocoa class]]) {
-      return NSAccessibilityUnignoredAncestor(accessible);
-    }
-    view = view->parent();
-  } while (view);
-  return nil;
-}
-
 }  // namespace
 
 NativeViewHostMac::NativeViewHostMac(NativeViewHost* host) : host_(host) {
@@ -51,9 +40,8 @@ NativeViewHostMac::NativeViewHostMac(NativeViewHost* host) : host_(host) {
 NativeViewHostMac::~NativeViewHostMac() {
 }
 
-BridgedNativeWidgetHostImpl* NativeViewHostMac::GetBridgedNativeWidgetHost()
-    const {
-  return BridgedNativeWidgetHostImpl::GetFromNativeWindow(
+NativeWidgetMacNSWindowHost* NativeViewHostMac::GetNSWindowHost() const {
+  return NativeWidgetMacNSWindowHost::GetFromNativeWindow(
       host_->GetWidget()->GetNativeWindow());
 }
 
@@ -64,42 +52,20 @@ ui::Layer* NativeViewHostMac::GetUiLayer() const {
   return host_->layer();
 }
 
-uint64_t NativeViewHostMac::GetViewsFactoryHostId() const {
-  auto* bridge_host = GetBridgedNativeWidgetHost();
-  if (bridge_host && bridge_host->bridge_factory_host())
-    return bridge_host->bridge_factory_host()->GetHostId();
-  // This matches content::NSViewBridgeFactoryHost::kLocalDirectHostId,
-  // indicating that this is a local window.
-  constexpr uint64_t kLocalDirectHostId = -1;
-  return kLocalDirectHostId;
+remote_cocoa::mojom::Application* NativeViewHostMac::GetRemoteCocoaApplication()
+    const {
+  if (auto* window_host = GetNSWindowHost()) {
+    if (auto* application_host = window_host->application_host())
+      return application_host->GetApplication();
+  }
+  return nullptr;
 }
 
 uint64_t NativeViewHostMac::GetNSViewId() const {
-  auto* bridge_host = GetBridgedNativeWidgetHost();
-  if (bridge_host)
-    return bridge_host->GetRootViewNSViewId();
+  auto* window_host = GetNSWindowHost();
+  if (window_host)
+    return window_host->GetRootViewNSViewId();
   return 0;
-}
-
-id NativeViewHostMac::GetAccessibilityElement() const {
-  // Find the closest ancestor view that participates in the views toolkit
-  // accessibility hierarchy and set its element as the native view's parent.
-  // This is necessary because a closer ancestor might already be attaching
-  // to the NSView/content hierarchy.
-  // For example, web content is currently embedded into the views hierarchy
-  // roughly like this:
-  // BrowserView (views)
-  // |_  WebView (views)
-  //   |_  NativeViewHost (views)
-  //     |_  WebContentView (Cocoa, is |native_view_| in this scenario,
-  //         |               accessibility ignored).
-  //         |_ RenderWidgetHostView (Cocoa)
-  // WebView specifies either the RenderWidgetHostView or the native view as
-  // its accessibility element. That means that if we were to set it as
-  // |native_view_|'s parent, the RenderWidgetHostView would be its own
-  // accessibility parent! Instead, we want to find the browser view and
-  // attach to its node.
-  return ClosestPlatformAncestorNode(host_->parent());
 }
 
 void NativeViewHostMac::OnHostableViewDestroying() {
@@ -115,21 +81,30 @@ void NativeViewHostMac::AttachNativeView() {
   DCHECK(host_->native_view());
   DCHECK(!native_view_);
   native_view_.reset([host_->native_view().GetNativeNSView() retain]);
-  EnsureNativeViewHasNoChildWidgets(native_view_);
-
-  auto* bridge_host = GetBridgedNativeWidgetHost();
-  DCHECK(bridge_host);
-  NSView* superview =
-      bridge_host->native_widget_mac()->GetNativeView().GetNativeNSView();
-  [superview addSubview:native_view_];
-  bridge_host->SetAssociationForView(host_, native_view_);
-
   if ([native_view_ conformsToProtocol:@protocol(ViewsHostable)]) {
     id hostable = native_view_;
     native_view_hostable_ = [hostable viewsHostableView];
-    if (native_view_hostable_)
-      native_view_hostable_->OnViewsHostableAttached(this);
   }
+  EnsureNativeViewHasNoChildWidgets(native_view_);
+
+  auto* window_host = GetNSWindowHost();
+  CHECK(window_host);
+
+  // TODO(https://crbug.com/933679): This is lifted out the ViewsHostableAttach
+  // call below because of crashes being observed in the field.
+  NSView* superview =
+      window_host->native_widget_mac()->GetNativeView().GetNativeNSView();
+  [superview addSubview:native_view_];
+
+  if (native_view_hostable_) {
+    native_view_hostable_->ViewsHostableAttach(this);
+    // Initially set the parent to match the views::Views parent. Note that this
+    // may be overridden (e.g, by views::WebView).
+    native_view_hostable_->ViewsHostableSetParentAccessible(
+        host_->parent()->GetNativeViewAccessible());
+  }
+
+  window_host->OnNativeViewHostAttach(host_, native_view_);
 }
 
 void NativeViewHostMac::NativeViewDetaching(bool destroyed) {
@@ -146,19 +121,19 @@ void NativeViewHostMac::NativeViewDetaching(bool destroyed) {
   }
 
   DCHECK(native_view_ == host_native_view);
-  [native_view_ setHidden:YES];
-  [native_view_ removeFromSuperview];
-
   if (native_view_hostable_) {
-    native_view_hostable_->OnViewsHostableDetached();
+    native_view_hostable_->ViewsHostableDetach();
     native_view_hostable_ = nullptr;
+  } else {
+    [native_view_ setHidden:YES];
+    [native_view_ removeFromSuperview];
   }
 
   EnsureNativeViewHasNoChildWidgets(native_view_);
-  auto* bridge_host = GetBridgedNativeWidgetHost();
-  // BridgedNativeWidgetImpl can be null when Widget is closing.
-  if (bridge_host)
-    bridge_host->ClearAssociationForView(host_);
+  auto* window_host = GetNSWindowHost();
+  // NativeWidgetNSWindowBridge can be null when Widget is closing.
+  if (window_host)
+    window_host->OnNativeViewHostDetach(host_);
 
   native_view_.reset();
 }
@@ -187,6 +162,11 @@ void NativeViewHostMac::SetHitTestTopInset(int top_inset) {
   NOTIMPLEMENTED();
 }
 
+int NativeViewHostMac::GetHitTestTopInset() const {
+  NOTIMPLEMENTED();
+  return 0;
+}
+
 void NativeViewHostMac::InstallClip(int x, int y, int w, int h) {
   NOTIMPLEMENTED();
 }
@@ -207,39 +187,40 @@ void NativeViewHostMac::ShowWidget(int x,
                                    int native_h) {
   // TODO(https://crbug.com/415024): Implement host_->fast_resize().
 
-  // Coordinates will be from the top left of the parent Widget. The NativeView
-  // is already in the same NSWindow, so just flip to get Cooca coordinates and
-  // then convert to the containing view.
-  NSRect window_rect = NSMakeRect(
-      x,
-      host_->GetWidget()->GetClientAreaBoundsInScreen().height() - y - h,
-      w,
-      h);
+  if (native_view_hostable_) {
+    native_view_hostable_->ViewsHostableSetBounds(gfx::Rect(x, y, w, h));
+    native_view_hostable_->ViewsHostableSetVisible(true);
+  } else {
+    // Coordinates will be from the top left of the parent Widget. The
+    // NativeView is already in the same NSWindow, so just flip to get Cooca
+    // coordinates and then convert to the containing view.
+    NSRect window_rect = NSMakeRect(
+        x, host_->GetWidget()->GetClientAreaBoundsInScreen().height() - y - h,
+        w, h);
 
-  // Convert window coordinates to the hosted view's superview, since that's how
-  // coordinates of the hosted view's frame is based.
-  NSRect container_rect =
-      [[native_view_ superview] convertRect:window_rect fromView:nil];
-  [native_view_ setFrame:container_rect];
-  [native_view_ setHidden:NO];
-
-  if (native_view_hostable_)
-    native_view_hostable_->OnViewsHostableShow(gfx::Rect(x, y, w, h));
+    // Convert window coordinates to the hosted view's superview, since that's
+    // how coordinates of the hosted view's frame is based.
+    NSRect container_rect = [[native_view_ superview] convertRect:window_rect
+                                                         fromView:nil];
+    [native_view_ setFrame:container_rect];
+    [native_view_ setHidden:NO];
+  }
 }
 
 void NativeViewHostMac::HideWidget() {
-  [native_view_ setHidden:YES];
-
   if (native_view_hostable_)
-    native_view_hostable_->OnViewsHostableHide();
+    native_view_hostable_->ViewsHostableSetVisible(false);
+  else
+    [native_view_ setHidden:YES];
 }
 
 void NativeViewHostMac::SetFocus() {
-  if ([native_view_ acceptsFirstResponder])
-    [[native_view_ window] makeFirstResponder:native_view_];
-
-  if (native_view_hostable_)
-    native_view_hostable_->OnViewsHostableMakeFirstResponder();
+  if (native_view_hostable_) {
+    native_view_hostable_->ViewsHostableMakeFirstResponder();
+  } else {
+    if ([native_view_ acceptsFirstResponder])
+      [[native_view_ window] makeFirstResponder:native_view_];
+  }
 }
 
 gfx::NativeView NativeViewHostMac::GetNativeViewContainer() const {
@@ -248,7 +229,10 @@ gfx::NativeView NativeViewHostMac::GetNativeViewContainer() const {
 }
 
 gfx::NativeViewAccessible NativeViewHostMac::GetNativeViewAccessible() {
-  return nullptr;
+  if (native_view_hostable_)
+    return native_view_hostable_->ViewsHostableGetAccessibilityElement();
+  else
+    return native_view_;
 }
 
 gfx::NativeCursor NativeViewHostMac::GetCursor(int x, int y) {
@@ -266,7 +250,22 @@ gfx::NativeCursor NativeViewHostMac::GetCursor(int x, int y) {
 }
 
 void NativeViewHostMac::SetVisible(bool visible) {
-  [native_view_ setHidden:!visible];
+  if (native_view_hostable_)
+    native_view_hostable_->ViewsHostableSetVisible(visible);
+  else
+    [native_view_ setHidden:!visible];
+}
+
+void NativeViewHostMac::SetParentAccessible(
+    gfx::NativeViewAccessible parent_accessibility_element) {
+  if (native_view_hostable_) {
+    native_view_hostable_->ViewsHostableSetParentAccessible(
+        parent_accessibility_element);
+  } else {
+    // It is not easy to force a generic NSView to return a different
+    // accessibility parent. Fortunately, this interface is only ever used
+    // in practice to host a WebContentsView.
+  }
 }
 
 // static

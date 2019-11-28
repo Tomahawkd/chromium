@@ -12,7 +12,6 @@
  *   ppdManufacturer: string,
  *   ppdModel: string,
  *   printerAddress: string,
- *   printerAutoconf: boolean,
  *   printerDescription: string,
  *   printerId: string,
  *   printerManufacturer: string,
@@ -20,10 +19,19 @@
  *   printerMakeAndModel: string,
  *   printerName: string,
  *   printerPPDPath: string,
+ *   printerPpdReference: {
+ *     userSuppliedPpdUrl: string,
+ *     effectiveMakeAndModel: string,
+ *     autoconf: boolean,
+ *   },
  *   printerProtocol: string,
  *   printerQueue: string,
  *   printerStatus: string,
  * }}
+ *
+ * Note: |printerPPDPath| refers to a PPD retrieved from the user at the
+ * add-printer-manufacturer-model-dialog. |printerPpdReference| refers to either
+ * information retrieved from the printer or resolved via ppd_provider.
  */
 let CupsPrinterInfo;
 
@@ -55,7 +63,10 @@ let ModelsInfo;
  *   manufacturer: string,
  *   model: string,
  *   makeAndModel: string,
- *   autoconf: boolean
+ *   autoconf: boolean,
+ *   ppdRefUserSuppliedPpdUrl: string,
+ *   ppdRefEffectiveMakeAndModel: string,
+ *   ppdReferenceResolved: boolean
  * }}
  */
 let PrinterMakeModel;
@@ -80,10 +91,14 @@ const PrinterSetupResult = {
   DBUS_ERROR: 3,
   NATIVE_PRINTERS_NOT_ALLOWED: 4,
   INVALID_PRINTER_UPDATE: 5,
+  COMPONENT_UNAVAILAVLE: 6,
+  EDIT_SUCCESS: 7,
   PPD_TOO_LARGE: 10,
   INVALID_PPD: 11,
   PPD_NOT_FOUND: 12,
   PPD_UNRETRIEVABLE: 13,
+  DBUS_NO_REPLY: 64,
+  DBUS_TIMEOUT: 65,
 };
 
 /**
@@ -104,6 +119,7 @@ cr.define('settings', function() {
     /**
      * @param {string} printerId
      * @param {string} printerName
+     * @return {!Promise<!PrinterSetupResult>}
      */
     updateCupsPrinter(printerId, printerName) {}
 
@@ -120,8 +136,15 @@ cr.define('settings', function() {
 
     /**
      * @param {!CupsPrinterInfo} newPrinter
+     * @return {!Promise<!PrinterSetupResult>}
      */
     addCupsPrinter(newPrinter) {}
+
+    /**
+     * @param {!CupsPrinterInfo} printer
+     * @return {!Promise<!PrinterSetupResult>}
+     */
+    reconfigureCupsPrinter(printer) {}
 
     startDiscoveringPrinters() {}
     stopDiscoveringPrinters() {}
@@ -151,6 +174,7 @@ cr.define('settings', function() {
 
     /**
      * @param{string} printerId
+     * @return {!Promise<!PrinterSetupResult>}
      */
     addDiscoveredPrinter(printerId) {}
 
@@ -159,6 +183,14 @@ cr.define('settings', function() {
      * @param {!CupsPrinterInfo} newPrinter
      */
     cancelPrinterSetUp(newPrinter) {}
+
+    /**
+     * @param {string} ppdManufacturer
+     * @param {string} ppdModel
+     * @return {!Promise<string>} Returns the EULA URL of the printer. Returns
+     * an empty string if no EULA is required.
+     */
+    getEulaUrl(ppdManufacturer, ppdModel) {}
   }
 
   /**
@@ -172,7 +204,7 @@ cr.define('settings', function() {
 
     /** @override */
     updateCupsPrinter(printerId, printerName) {
-      chrome.send('updateCupsPrinter', [printerId, printerName]);
+      return cr.sendWithPromise('updateCupsPrinter', printerId, printerName);
     }
 
     /** @override */
@@ -182,7 +214,12 @@ cr.define('settings', function() {
 
     /** @override */
     addCupsPrinter(newPrinter) {
-      chrome.send('addCupsPrinter', [newPrinter]);
+      return cr.sendWithPromise('addCupsPrinter', newPrinter);
+    }
+
+    /** @override */
+    reconfigureCupsPrinter(printer) {
+      return cr.sendWithPromise('reconfigureCupsPrinter', printer);
     }
 
     /** @override */
@@ -222,12 +259,17 @@ cr.define('settings', function() {
 
     /** @override */
     addDiscoveredPrinter(printerId) {
-      chrome.send('addDiscoveredPrinter', [printerId]);
+      return cr.sendWithPromise('addDiscoveredPrinter', printerId);
     }
 
     /** @override */
     cancelPrinterSetUp(newPrinter) {
       chrome.send('cancelPrinterSetUp', [newPrinter]);
+    }
+
+    /** @override */
+    getEulaUrl(ppdManufacturer, ppdModel) {
+      return cr.sendWithPromise('getEulaUrl', ppdManufacturer, ppdModel);
     }
   }
 

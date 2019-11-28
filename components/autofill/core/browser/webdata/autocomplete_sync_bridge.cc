@@ -15,8 +15,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/proto/autofill_sync.pb.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
-#include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/sync/model/entity_data.h"
 #include "components/sync/model/model_type_change_processor.h"
 #include "components/sync/model/mutable_data_batch.h"
@@ -71,7 +71,7 @@ std::unique_ptr<EntityData> CreateEntityData(const AutofillEntry& entry) {
   autofill->add_usage_timestamp(entry.date_created().ToInternalValue());
   if (entry.date_created() != entry.date_last_used())
     autofill->add_usage_timestamp(entry.date_last_used().ToInternalValue());
-  entity_data->non_unique_name = EscapeIdentifiers(*autofill);
+  entity_data->name = EscapeIdentifiers(*autofill);
   return entity_data;
 }
 
@@ -302,8 +302,7 @@ AutocompleteSyncBridge::AutocompleteSyncBridge(
     AutofillWebDataBackend* backend,
     std::unique_ptr<ModelTypeChangeProcessor> change_processor)
     : ModelTypeSyncBridge(std::move(change_processor)),
-      web_data_backend_(backend),
-      scoped_observer_(this) {
+      web_data_backend_(backend) {
   DCHECK(web_data_backend_);
 
   scoped_observer_.Add(web_data_backend_);
@@ -329,15 +328,16 @@ Optional<syncer::ModelError> AutocompleteSyncBridge::MergeSyncData(
 
   SyncDifferenceTracker tracker(GetAutofillTable());
   for (const auto& change : entity_data) {
-    DCHECK(change.data().specifics.has_autofill());
+    DCHECK(change->data().specifics.has_autofill());
     RETURN_IF_ERROR(tracker.IncorporateRemoteSpecifics(
-        change.storage_key(), change.data().specifics.autofill()));
+        change->storage_key(), change->data().specifics.autofill()));
   }
 
   RETURN_IF_ERROR(tracker.FlushToLocal(web_data_backend_));
   RETURN_IF_ERROR(tracker.FlushToSync(true, std::move(metadata_change_list),
                                 change_processor()));
-  web_data_backend_->RemoveExpiredFormElements();
+
+  web_data_backend_->CommitChanges();
   web_data_backend_->NotifyThatSyncHasStarted(syncer::AUTOFILL);
   return {};
 }
@@ -348,20 +348,21 @@ Optional<ModelError> AutocompleteSyncBridge::ApplySyncChanges(
   DCHECK(thread_checker_.CalledOnValidThread());
 
   SyncDifferenceTracker tracker(GetAutofillTable());
-  for (const EntityChange& change : entity_changes) {
-    if (change.type() == EntityChange::ACTION_DELETE) {
-      RETURN_IF_ERROR(tracker.IncorporateRemoteDelete(change.storage_key()));
+  for (const std::unique_ptr<EntityChange>& change : entity_changes) {
+    if (change->type() == EntityChange::ACTION_DELETE) {
+      RETURN_IF_ERROR(tracker.IncorporateRemoteDelete(change->storage_key()));
     } else {
-      DCHECK(change.data().specifics.has_autofill());
+      DCHECK(change->data().specifics.has_autofill());
       RETURN_IF_ERROR(tracker.IncorporateRemoteSpecifics(
-          change.storage_key(), change.data().specifics.autofill()));
+          change->storage_key(), change->data().specifics.autofill()));
     }
   }
 
   RETURN_IF_ERROR(tracker.FlushToLocal(web_data_backend_));
   RETURN_IF_ERROR(tracker.FlushToSync(false, std::move(metadata_change_list),
                                       change_processor()));
-  web_data_backend_->RemoveExpiredFormElements();
+
+  web_data_backend_->CommitChanges();
   return {};
 }
 
@@ -438,8 +439,28 @@ void AutocompleteSyncBridge::ActOnLocalChanges(
         change_processor()->Delete(storage_key, metadata_change_list.get());
         break;
       }
+      case AutofillChange::EXPIRE: {
+        // For expired entries, unlink and delete the sync metadata.
+        // That way we are not sending tombstone updates to the sync servers.
+        bool success = GetAutofillTable()->ClearSyncMetadata(syncer::AUTOFILL,
+                                                             storage_key);
+        if (!success) {
+          change_processor()->ReportError(
+              {FROM_HERE,
+               "Failed to clear sync metadata for an expired autofill entry "
+               "from WebDatabase."});
+          return;
+        }
+
+        change_processor()->UntrackEntityForStorageKey(storage_key);
+      }
     }
   }
+
+  // We do not need to commit any local changes (written by the processor via
+  // the metadata change list) because the open WebDatabase transaction is
+  // committed by the AutofillWebDataService when the original local write
+  // operation (that triggered this notification to the bridge) finishes.
 
   if (Optional<ModelError> error = metadata_change_list->TakeError())
     change_processor()->ReportError(*error);

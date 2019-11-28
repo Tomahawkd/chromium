@@ -9,8 +9,10 @@
 #include "base/logging.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "base/test/task_environment.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/constants.h"
 #include "services/service_manager/public/cpp/service.h"
@@ -18,16 +20,11 @@
 #include "services/service_manager/public/mojom/service.mojom.h"
 #include "services/service_manager/public/mojom/service_manager.mojom.h"
 #include "services/service_manager/service_manager.h"
-#include "services/service_manager/tests/catalog_source.h"
+#include "services/service_manager/tests/service_manager/test_manifests.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace service_manager {
 namespace {
-
-// These constants reflect service names in test service manifests within the
-// default catalog for service_unittests.
-const char kTestServiceName[] = "service_manager_unittest";
-const char kTestTargetServiceName[] = "service_manager_unittest_target";
 
 constexpr uint32_t kTestSelfPid = 1234;
 constexpr uint32_t kTestTargetPid1 = 4567;
@@ -35,8 +32,9 @@ constexpr uint32_t kTestTargetPid2 = 8910;
 
 class TestListener : public mojom::ServiceManagerListener {
  public:
-  explicit TestListener(mojom::ServiceManagerListenerRequest request)
-      : binding_(this, std::move(request)) {}
+  explicit TestListener(
+      mojo::PendingReceiver<mojom::ServiceManagerListener> receiver)
+      : receiver_(this, std::move(receiver)) {}
   ~TestListener() override = default;
 
   void WaitForInit() { wait_for_init_loop_.Run(); }
@@ -68,7 +66,7 @@ class TestListener : public mojom::ServiceManagerListener {
   void OnServicePIDReceived(const Identity& identity, uint32_t pid) override {}
 
  private:
-  mojo::Binding<mojom::ServiceManagerListener> binding_;
+  mojo::Receiver<mojom::ServiceManagerListener> receiver_;
   base::RunLoop wait_for_init_loop_;
 
   base::Optional<base::RunLoop> wait_for_start_loop_;
@@ -108,7 +106,8 @@ class TestTargetService : public Service {
 class ServiceManagerListenerTest : public testing::Test, public Service {
  public:
   ServiceManagerListenerTest()
-      : service_manager_(nullptr, test::CreateTestCatalog(), nullptr) {}
+      : service_manager_(GetTestManifests(),
+                         ServiceManager::ServiceExecutablePolicy::kSupported) {}
   ~ServiceManagerListenerTest() override = default;
 
   Connector* connector() { return service_binding_.GetConnector(); }
@@ -117,27 +116,28 @@ class ServiceManagerListenerTest : public testing::Test, public Service {
     service_binding_.Bind(
         RegisterServiceInstance(kTestServiceName, kTestSelfPid));
 
-    mojom::ServiceManagerPtr service_manager;
-    connector()->BindInterface(mojom::kServiceName, &service_manager);
+    mojo::Remote<mojom::ServiceManager> service_manager;
+    connector()->Connect(mojom::kServiceName,
+                         service_manager.BindNewPipeAndPassReceiver());
 
-    mojom::ServiceManagerListenerPtr listener_proxy;
-    listener_ =
-        std::make_unique<TestListener>(mojo::MakeRequest(&listener_proxy));
+    mojo::PendingRemote<mojom::ServiceManagerListener> listener_proxy;
+    listener_ = std::make_unique<TestListener>(
+        listener_proxy.InitWithNewPipeAndPassReceiver());
     service_manager->AddListener(std::move(listener_proxy));
     listener_->WaitForInit();
   }
 
   mojom::ServiceRequest RegisterServiceInstance(const std::string& service_name,
                                                 uint32_t fake_pid) {
-    mojom::ServicePtr proxy;
-    mojom::ServiceRequest request = mojo::MakeRequest(&proxy);
-    mojom::PIDReceiverPtr pid_receiver;
+    mojo::PendingRemote<mojom::Service> service;
+    auto receiver = service.InitWithNewPipeAndPassReceiver();
+    mojo::Remote<mojom::ProcessMetadata> metadata;
     service_manager_.RegisterService(
         Identity(service_name, kSystemInstanceGroup, base::Token{},
                  base::Token::CreateRandom()),
-        std::move(proxy), mojo::MakeRequest(&pid_receiver));
-    pid_receiver->SetPID(fake_pid);
-    return request;
+        std::move(service), metadata.BindNewPipeAndPassReceiver());
+    metadata->SetPID(fake_pid);
+    return std::move(receiver);
   }
 
   void WaitForServiceStarted(Identity* out_identity, uint32_t* out_pid) {
@@ -145,7 +145,7 @@ class ServiceManagerListenerTest : public testing::Test, public Service {
   }
 
  private:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::TaskEnvironment task_environment_;
   ServiceManager service_manager_;
   ServiceBinding service_binding_{this};
   std::unique_ptr<TestListener> listener_;
@@ -155,12 +155,12 @@ class ServiceManagerListenerTest : public testing::Test, public Service {
 
 TEST_F(ServiceManagerListenerTest, InstancesHaveUniqueIdentity) {
   TestTargetService target1(
-      RegisterServiceInstance(kTestTargetServiceName, kTestTargetPid1));
+      RegisterServiceInstance(kTestTargetName, kTestTargetPid1));
 
   Identity identity1;
   uint32_t pid1;
   WaitForServiceStarted(&identity1, &pid1);
-  EXPECT_EQ(kTestTargetServiceName, identity1.name());
+  EXPECT_EQ(kTestTargetName, identity1.name());
   EXPECT_FALSE(identity1.globally_unique_id().is_zero());
   EXPECT_EQ(kTestTargetPid1, pid1);
 
@@ -173,12 +173,12 @@ TEST_F(ServiceManagerListenerTest, InstancesHaveUniqueIdentity) {
   target1.QuitGracefullyAndWait();
 
   TestTargetService target2(
-      RegisterServiceInstance(kTestTargetServiceName, kTestTargetPid2));
+      RegisterServiceInstance(kTestTargetName, kTestTargetPid2));
 
   Identity identity2;
   uint32_t pid2;
   WaitForServiceStarted(&identity2, &pid2);
-  EXPECT_EQ(kTestTargetServiceName, identity2.name());
+  EXPECT_EQ(kTestTargetName, identity2.name());
   EXPECT_FALSE(identity2.globally_unique_id().is_zero());
   EXPECT_EQ(kTestTargetPid2, pid2);
 

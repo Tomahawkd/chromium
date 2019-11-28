@@ -67,6 +67,7 @@ class CC_PAINT_EXPORT PaintOpReader {
   void Read(SkColorType* color_type);
   void Read(SkImageInfo* info);
   void Read(sk_sp<SkColorSpace>* color_space);
+  void Read(SkYUVColorSpace* yuv_color_space);
 
   void Read(SkClipOp* op) {
     uint8_t value = 0u;
@@ -188,6 +189,7 @@ class CC_PAINT_EXPORT PaintOpReader {
   size_t Read(sk_sp<PaintRecord>* record);
 
   void Read(SkRegion* region);
+  uint8_t* CopyScratchSpace(size_t bytes);
 
   const volatile char* memory_ = nullptr;
   size_t remaining_bytes_ = 0u;

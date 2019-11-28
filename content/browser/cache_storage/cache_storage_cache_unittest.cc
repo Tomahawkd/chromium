@@ -2,15 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/browser/cache_storage/cache_storage_cache.h"
-
 #include <stddef.h>
 #include <stdint.h>
 
+#include <limits>
 #include <memory>
 #include <set>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
@@ -22,36 +22,39 @@
 #include "base/test/bind_test_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/cache_storage/cache_storage_cache.h"
 #include "content/browser/cache_storage/cache_storage_cache_handle.h"
 #include "content/browser/cache_storage/cache_storage_histogram_utils.h"
 #include "content/browser/cache_storage/cache_storage_manager.h"
+#include "content/browser/cache_storage/legacy/legacy_cache_storage.h"
+#include "content/browser/cache_storage/legacy/legacy_cache_storage_cache.h"
 #include "content/common/background_fetch/background_fetch_types.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/referrer.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "crypto/symmetric_key.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/data_pipe_drainer.h"
 #include "net/base/test_completion_callback.h"
 #include "net/disk_cache/disk_cache.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_job_factory_impl.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_data_snapshot.h"
 #include "storage/browser/blob/blob_impl.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/browser/blob/blob_url_request_job_factory.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
+#include "storage/browser/test/blob_test_utils.h"
+#include "storage/browser/test/fake_blob.h"
 #include "storage/browser/test/mock_quota_manager_proxy.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
-#include "storage/common/blob_storage/blob_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "url/origin.h"
@@ -73,14 +76,6 @@ const GURL kBodyUrlWithQuery("http://example.com/body.html?query=test");
 const GURL kNoBodyUrl("http://example.com/no_body.html");
 const FetchAPIRequestHeadersMap kHeaders({{"a", "a"}, {"b", "b"}});
 
-// Returns a BlobProtocolHandler that uses |blob_storage_context|. Caller owns
-// the memory.
-std::unique_ptr<storage::BlobProtocolHandler> CreateMockBlobProtocolHandler(
-    storage::BlobStorageContext* blob_storage_context) {
-  return base::WrapUnique(
-      new storage::BlobProtocolHandler(blob_storage_context));
-}
-
 void SizeCallback(base::RunLoop* run_loop,
                   bool* callback_called,
                   int64_t* out_size,
@@ -91,37 +86,57 @@ void SizeCallback(base::RunLoop* run_loop,
     run_loop->Quit();
 }
 
+// A blob that never finishes writing to its pipe.
+class SlowBlob : public storage::FakeBlob {
+ public:
+  explicit SlowBlob(base::OnceClosure quit_closure)
+      : FakeBlob("foo"), quit_closure_(std::move(quit_closure)) {}
+
+  void ReadAll(
+      mojo::ScopedDataPipeProducerHandle producer_handle,
+      mojo::PendingRemote<blink::mojom::BlobReaderClient> client) override {
+    // Don't respond, forcing the consumer to wait forever.
+    std::move(quit_closure_).Run();
+  }
+
+ private:
+  base::OnceClosure quit_closure_;
+};
+
 // A disk_cache::Backend wrapper that can delay operations.
 class DelayableBackend : public disk_cache::Backend {
  public:
   explicit DelayableBackend(std::unique_ptr<disk_cache::Backend> backend)
-      : backend_(std::move(backend)), delay_open_entry_(false) {}
+      : Backend(backend->GetCacheType()),
+        backend_(std::move(backend)),
+        delay_open_entry_(false) {}
 
   // disk_cache::Backend overrides
-  net::CacheType GetCacheType() const override {
-    return backend_->GetCacheType();
-  }
   int32_t GetEntryCount() const override { return backend_->GetEntryCount(); }
-  net::Error OpenEntry(const std::string& key,
-                       net::RequestPriority request_priority,
-                       disk_cache::Entry** entry,
-                       CompletionOnceCallback callback) override {
+  EntryResult OpenEntry(const std::string& key,
+                        net::RequestPriority request_priority,
+                        EntryResultCallback callback) override {
     if (delay_open_entry_ && open_entry_callback_.is_null()) {
-      open_entry_callback_ = base::BindOnce(
-          &DelayableBackend::OpenEntryDelayedImpl, base::Unretained(this), key,
-          base::Unretained(entry), std::move(callback));
-      return net::ERR_IO_PENDING;
+      open_entry_callback_ =
+          base::BindOnce(&DelayableBackend::OpenEntryDelayedImpl,
+                         base::Unretained(this), key, std::move(callback));
+      if (open_entry_started_callback_)
+        std::move(open_entry_started_callback_).Run();
+      return EntryResult::MakeError(net::ERR_IO_PENDING);
     }
-    return backend_->OpenEntry(key, request_priority, entry,
-                               std::move(callback));
+    return backend_->OpenEntry(key, request_priority, std::move(callback));
   }
 
-  net::Error CreateEntry(const std::string& key,
-                         net::RequestPriority request_priority,
-                         disk_cache::Entry** entry,
-                         CompletionOnceCallback callback) override {
-    return backend_->CreateEntry(key, request_priority, entry,
-                                 std::move(callback));
+  EntryResult CreateEntry(const std::string& key,
+                          net::RequestPriority request_priority,
+                          EntryResultCallback callback) override {
+    return backend_->CreateEntry(key, request_priority, std::move(callback));
+  }
+  EntryResult OpenOrCreateEntry(const std::string& key,
+                                net::RequestPriority request_priority,
+                                EntryResultCallback callback) override {
+    return backend_->OpenOrCreateEntry(key, request_priority,
+                                       std::move(callback));
   }
   net::Error DoomEntry(const std::string& key,
                        net::RequestPriority request_priority,
@@ -174,54 +189,35 @@ class DelayableBackend : public disk_cache::Backend {
 
   void set_delay_open_entry(bool value) { delay_open_entry_ = value; }
 
+  void set_open_entry_started_callback(
+      base::OnceClosure open_entry_started_callback) {
+    open_entry_started_callback_ = std::move(open_entry_started_callback);
+  }
+
  private:
   void OpenEntryDelayedImpl(const std::string& key,
-                            disk_cache::Entry** entry,
-                            CompletionOnceCallback callback) {
+                            EntryResultCallback callback) {
     auto copyable_callback =
         base::AdaptCallbackForRepeating(std::move(callback));
-    int rv = backend_->OpenEntry(key, net::HIGHEST, entry, copyable_callback);
-    if (rv != net::ERR_IO_PENDING)
-      copyable_callback.Run(rv);
+    EntryResult result =
+        backend_->OpenEntry(key, net::HIGHEST, copyable_callback);
+    if (result.net_error() != net::ERR_IO_PENDING)
+      copyable_callback.Run(std::move(result));
   }
 
   std::unique_ptr<disk_cache::Backend> backend_;
   bool delay_open_entry_;
   base::OnceClosure open_entry_callback_;
+  base::OnceClosure open_entry_started_callback_;
 };
-
-class DataPipeDrainerClient : public mojo::DataPipeDrainer::Client {
- public:
-  DataPipeDrainerClient(std::string* output) : output_(output) {}
-  void Run() { run_loop_.Run(); }
-
-  void OnDataAvailable(const void* data, size_t num_bytes) override {
-    output_->append(reinterpret_cast<const char*>(data), num_bytes);
-  }
-  void OnDataComplete() override { run_loop_.Quit(); }
-
- private:
-  base::RunLoop run_loop_;
-  std::string* output_;
-};
-
-std::string CopyBody(blink::mojom::Blob* actual_blob) {
-  std::string output;
-  mojo::DataPipe pipe;
-  actual_blob->ReadAll(std::move(pipe.producer_handle), nullptr);
-  DataPipeDrainerClient client(&output);
-  mojo::DataPipeDrainer drainer(&client, std::move(pipe.consumer_handle));
-  client.Run();
-  return output;
-}
 
 std::string CopySideData(blink::mojom::Blob* actual_blob) {
   std::string output;
   base::RunLoop loop;
   actual_blob->ReadSideData(base::BindLambdaForTesting(
-      [&](const base::Optional<std::vector<uint8_t>>& data) {
-        ASSERT_TRUE(data);
-        output.append(data->begin(), data->end());
+      [&](const base::Optional<mojo_base::BigBuffer> data) {
+        if (data)
+          output.append(data->data(), data->data() + data->size());
         loop.Quit();
       }));
   loop.Run();
@@ -276,21 +272,10 @@ bool ResponseMetadataEqual(const blink::mojom::FetchAPIResponse& expected,
   return true;
 }
 
-bool ResponseBodiesEqual(const std::string& expected_body,
-                         blink::mojom::Blob* actual_blob) {
-  std::string actual_body = CopyBody(actual_blob);
-  return expected_body == actual_body;
-}
-
-bool ResponseSideDataEqual(const std::string& expected_side_data,
-                           blink::mojom::Blob* actual_blob) {
-  std::string actual_body = CopySideData(actual_blob);
-  return expected_side_data == actual_body;
-}
-
 blink::mojom::FetchAPIResponsePtr SetCacheName(
     blink::mojom::FetchAPIResponsePtr response) {
-  response->is_in_cache_storage = true;
+  response->response_source =
+      network::mojom::FetchResponseSource::kCacheStorage;
   response->cache_storage_cache_name = kCacheName;
   return response;
 }
@@ -305,25 +290,26 @@ void OnBadMessage(std::string* result) {
 }
 
 // A CacheStorageCache that can optionally delay during backend creation.
-class TestCacheStorageCache : public CacheStorageCache {
+class TestCacheStorageCache : public LegacyCacheStorageCache {
  public:
   TestCacheStorageCache(
       const url::Origin& origin,
       const std::string& cache_name,
       const base::FilePath& path,
-      CacheStorage* cache_storage,
+      LegacyCacheStorage* cache_storage,
       const scoped_refptr<storage::QuotaManagerProxy>& quota_manager_proxy,
-      base::WeakPtr<storage::BlobStorageContext> blob_context)
-      : CacheStorageCache(origin,
-                          CacheStorageOwner::kCacheAPI,
-                          cache_name,
-                          path,
-                          cache_storage,
-                          quota_manager_proxy,
-                          blob_context,
-                          0 /* cache_size */,
-                          0 /* cache_padding */,
-                          CreateTestPaddingKey()),
+      scoped_refptr<BlobStorageContextWrapper> blob_storage_context)
+      : LegacyCacheStorageCache(origin,
+                                CacheStorageOwner::kCacheAPI,
+                                cache_name,
+                                path,
+                                cache_storage,
+                                base::ThreadTaskRunnerHandle::Get(),
+                                quota_manager_proxy,
+                                std::move(blob_storage_context),
+                                0 /* cache_size */,
+                                0 /* cache_padding */,
+                                CreateTestPaddingKey()),
         delay_backend_creation_(false) {}
 
   ~TestCacheStorageCache() override { base::RunLoop().RunUntilIdle(); }
@@ -336,7 +322,8 @@ class TestCacheStorageCache : public CacheStorageCache {
   }
 
   void ContinueCreateBackend() {
-    CacheStorageCache::CreateBackend(std::move(backend_creation_callback_));
+    LegacyCacheStorageCache::CreateBackend(
+        std::move(backend_creation_callback_));
   }
 
   void set_delay_backend_creation(bool delay) {
@@ -355,41 +342,78 @@ class TestCacheStorageCache : public CacheStorageCache {
 
   void Init() { InitBackend(); }
 
- private:
-  CacheStorageCacheHandle CreateHandle() override {
-    // Returns an empty handle. There is no need for CacheStorage and its
-    // handles in these tests.
-    return CacheStorageCacheHandle();
+  base::CheckedNumeric<uint64_t> GetRequiredSafeSpaceForRequest(
+      const blink::mojom::FetchAPIRequestPtr& request) {
+    return CalculateRequiredSafeSpaceForRequest(request);
   }
 
+  base::CheckedNumeric<uint64_t> GetRequiredSafeSpaceForResponse(
+      const blink::mojom::FetchAPIResponsePtr& response) {
+    return CalculateRequiredSafeSpaceForResponse(response);
+  }
+
+ private:
   bool delay_backend_creation_;
   ErrorCallback backend_creation_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(TestCacheStorageCache);
 };
 
+class MockLegacyCacheStorage : public LegacyCacheStorage {
+ public:
+  MockLegacyCacheStorage(
+      const base::FilePath& origin_path,
+      bool memory_only,
+      base::SequencedTaskRunner* cache_task_runner,
+      scoped_refptr<base::SequencedTaskRunner> scheduler_task_runner,
+      scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy,
+      scoped_refptr<BlobStorageContextWrapper> blob_storage_context,
+      LegacyCacheStorageManager* cache_storage_manager,
+      const url::Origin& origin,
+      CacheStorageOwner owner)
+      : LegacyCacheStorage(origin_path,
+                           memory_only,
+                           cache_task_runner,
+                           std::move(scheduler_task_runner),
+                           std::move(quota_manager_proxy),
+                           std::move(blob_storage_context),
+                           cache_storage_manager,
+                           std::move(origin),
+                           owner) {}
+
+  void CacheUnreferenced(LegacyCacheStorageCache* cache) override {
+    // Normally the LegacyCacheStorage will attempt to delete the cache
+    // from its map when the cache has become unreferenced.  Since we are
+    // using detached cache objects we instead override to do nothing here.
+  }
+};
+
 class CacheStorageCacheTest : public testing::Test {
  public:
   CacheStorageCacheTest()
-      : browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP) {}
+      : task_environment_(BrowserTaskEnvironment::IO_MAINLOOP) {}
 
   void SetUp() override {
     ChromeBlobStorageContext* blob_storage_context =
         ChromeBlobStorageContext::GetFor(&browser_context_);
     // Wait for chrome_blob_storage_context to finish initializing.
     base::RunLoop().RunUntilIdle();
-    blob_storage_context_ = blob_storage_context->context();
+
+    mojo::PendingRemote<storage::mojom::BlobStorageContext> remote;
+    blob_storage_context->BindMojoContext(
+        remote.InitWithNewPipeAndPassReceiver());
+    blob_storage_context_ =
+        base::MakeRefCounted<BlobStorageContextWrapper>(std::move(remote));
 
     const bool is_incognito = MemoryOnly();
-    base::FilePath temp_dir_path;
     if (!is_incognito) {
       ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-      temp_dir_path = temp_dir_.GetPath();
+      temp_dir_path_ = temp_dir_.GetPath();
     }
 
     quota_policy_ = new MockSpecialStoragePolicy;
     mock_quota_manager_ = new MockQuotaManager(
-        is_incognito, temp_dir_path, base::ThreadTaskRunnerHandle::Get().get(),
+        is_incognito, temp_dir_path_, base::ThreadTaskRunnerHandle::Get().get(),
         quota_policy_.get());
     mock_quota_manager_->SetQuota(
         kOrigin, blink::mojom::StorageType::kTemporary, 1024 * 1024 * 100);
@@ -397,29 +421,30 @@ class CacheStorageCacheTest : public testing::Test {
     quota_manager_proxy_ = new MockQuotaManagerProxy(
         mock_quota_manager_.get(), base::ThreadTaskRunnerHandle::Get().get());
 
-    url_request_job_factory_.reset(new net::URLRequestJobFactoryImpl);
-    url_request_job_factory_->SetProtocolHandler(
-        "blob", CreateMockBlobProtocolHandler(blob_storage_context->context()));
-
-    net::URLRequestContext* url_request_context =
-        BrowserContext::GetDefaultStoragePartition(&browser_context_)->
-            GetURLRequestContext()->GetURLRequestContext();
-
-    url_request_context->set_job_factory(url_request_job_factory_.get());
-
     CreateRequests(blob_storage_context);
 
     response_time_ = base::Time::Now();
     for (int i = 0; i < 100; ++i)
       expected_blob_data_ += kTestData;
-    blob_handle_ = BuildBlobHandle("blob-id:myblob", expected_blob_data_);
-    storage::BlobImpl::Create(
-        std::make_unique<storage::BlobDataHandle>(*blob_handle_),
-        MakeRequest(&blob_ptr_));
+
+    blob_storage_context_->context()->RegisterFromMemory(
+        blob_remote_.BindNewPipeAndPassReceiver(), expected_blob_uuid_,
+        std::vector<uint8_t>(expected_blob_data_.begin(),
+                             expected_blob_data_.end()));
+
+    // Use a mock LegacyCacheStorage object so we can use real
+    // CacheStorageCacheHandle reference counting.  A LegacyCacheStorage
+    // must be present to be notified when a cache becomes unreferenced.
+    mock_cache_storage_ = std::make_unique<MockLegacyCacheStorage>(
+        temp_dir_path_, MemoryOnly(), base::ThreadTaskRunnerHandle::Get().get(),
+        base::ThreadTaskRunnerHandle::Get(), quota_manager_proxy_,
+        blob_storage_context_,
+        /* cache_storage_manager = */ nullptr, kOrigin,
+        CacheStorageOwner::kCacheAPI);
 
     cache_ = std::make_unique<TestCacheStorageCache>(
-        kOrigin, kCacheName, temp_dir_path, nullptr /* CacheStorage */,
-        quota_manager_proxy_, blob_storage_context->context()->AsWeakPtr());
+        kOrigin, kCacheName, temp_dir_path_, mock_cache_storage_.get(),
+        quota_manager_proxy_, blob_storage_context_);
     cache_->Init();
   }
 
@@ -443,10 +468,10 @@ class CacheStorageCacheTest : public testing::Test {
 
   blink::mojom::FetchAPIResponsePtr CreateBlobBodyResponse() {
     auto blob = blink::mojom::SerializedBlob::New();
-    blob->uuid = blob_handle_->uuid();
+    blob->uuid = expected_blob_uuid_;
     blob->size = expected_blob_data_.size();
-    // Use cloned blob pointer for all responses with blob body.
-    blob_ptr_->Clone(mojo::MakeRequest(&blob->blob));
+    // Use cloned blob remote for all responses with blob body.
+    blob_remote_->Clone(blob->blob.InitWithNewPipeAndPassReceiver());
 
     blink::mojom::FetchAPIResponsePtr response = CreateNoBodyResponse();
     response->url_list = {kBodyUrl};
@@ -471,26 +496,21 @@ class CacheStorageCacheTest : public testing::Test {
         nullptr /* blob */, blink::mojom::ServiceWorkerResponseError::kUnknown,
         response_time_, std::string() /* cache_storage_cache_name */,
         std::vector<std::string>() /* cors_exposed_header_names */,
-        false /* is_in_cache_storage */, nullptr /* side_data_blob */);
+        nullptr /* side_data_blob */,
+        nullptr /* side_data_blob_for_cache_put */,
+        nullptr /* content_security_policy */);
   }
 
-  std::unique_ptr<storage::BlobDataHandle> BuildBlobHandle(
-      const std::string& uuid,
-      const std::string& data) {
-    std::unique_ptr<storage::BlobDataBuilder> builder =
-        std::make_unique<storage::BlobDataBuilder>(uuid);
-    builder->AppendData(data);
-    return blob_storage_context_->AddFinishedBlob(std::move(builder));
-  }
-
-  void CopySideDataToResponse(storage::BlobDataHandle* side_data_blob_handle,
+  void CopySideDataToResponse(const std::string& uuid,
+                              const std::string& data,
                               blink::mojom::FetchAPIResponse* response) {
-    response->side_data_blob = blink::mojom::SerializedBlob::New();
-    response->side_data_blob->uuid = side_data_blob_handle->uuid();
-    response->side_data_blob->size = side_data_blob_handle->size();
-    storage::BlobImpl::Create(
-        std::make_unique<storage::BlobDataHandle>(*side_data_blob_handle),
-        MakeRequest(&response->side_data_blob->blob));
+    auto& blob = response->side_data_blob_for_cache_put;
+    blob = blink::mojom::SerializedBlob::New();
+    blob->uuid = uuid;
+    blob->size = data.size();
+    blob_storage_context_->context()->RegisterFromMemory(
+        blob->blob.InitWithNewPipeAndPassReceiver(), uuid,
+        std::vector<uint8_t>(data.begin(), data.end()));
   }
 
   blink::mojom::FetchAPIRequestPtr CopyFetchRequest(
@@ -501,12 +521,11 @@ class CacheStorageCacheTest : public testing::Test {
   }
 
   CacheStorageError BatchOperation(
-      std::vector<blink::mojom::BatchOperationPtr> operations,
-      bool fail_on_duplicates = true) {
+      std::vector<blink::mojom::BatchOperationPtr> operations) {
     std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
 
     cache_->BatchOperation(
-        std::move(operations), fail_on_duplicates,
+        std::move(operations), /* trace_id = */ 0,
         base::BindOnce(&CacheStorageCacheTest::VerboseErrorTypeCallback,
                        base::Unretained(this), base::Unretained(loop.get())),
         base::BindOnce(&OnBadMessage, base::Unretained(&bad_message_reason_)));
@@ -545,12 +564,13 @@ class CacheStorageCacheTest : public testing::Test {
   }
 
   bool Match(const blink::mojom::FetchAPIRequestPtr& request,
-             blink::mojom::QueryParamsPtr match_params = nullptr) {
+             blink::mojom::CacheQueryOptionsPtr match_options = nullptr) {
     base::HistogramTester histogram_tester;
     std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
 
     cache_->Match(
-        CopyFetchRequest(request), std::move(match_params),
+        CopyFetchRequest(request), std::move(match_options),
+        CacheStorageSchedulerPriority::kNormal, /* trace_id = */ 0,
         base::BindOnce(&CacheStorageCacheTest::ResponseAndErrorCallback,
                        base::Unretained(this), base::Unretained(loop.get())));
     loop->Run();
@@ -560,12 +580,13 @@ class CacheStorageCacheTest : public testing::Test {
   }
 
   bool MatchAll(const blink::mojom::FetchAPIRequestPtr& request,
-                blink::mojom::QueryParamsPtr match_params,
+                blink::mojom::CacheQueryOptionsPtr match_options,
                 std::vector<blink::mojom::FetchAPIResponsePtr>* responses) {
     base::HistogramTester histogram_tester;
     base::RunLoop loop;
     cache_->MatchAll(
-        CopyFetchRequest(request), std::move(match_params),
+        CopyFetchRequest(request), std::move(match_options),
+        /* trace_id = */ 0,
         base::BindOnce(&CacheStorageCacheTest::ResponsesAndErrorCallback,
                        base::Unretained(this), loop.QuitClosure(), responses));
     loop.Run();
@@ -579,6 +600,7 @@ class CacheStorageCacheTest : public testing::Test {
     base::RunLoop loop;
     cache_->GetAllMatchedEntries(
         nullptr /* request */, nullptr /* options */,
+        /* trace_id = */ 0,
         base::BindOnce(&CacheStorageCacheTest::CacheEntriesAndErrorCallback,
                        base::Unretained(this), loop.QuitClosure(),
                        cache_entries));
@@ -591,13 +613,13 @@ class CacheStorageCacheTest : public testing::Test {
   }
 
   bool Delete(const blink::mojom::FetchAPIRequestPtr& request,
-              blink::mojom::QueryParamsPtr match_params = nullptr) {
+              blink::mojom::CacheQueryOptionsPtr match_options = nullptr) {
     base::HistogramTester histogram_tester;
     blink::mojom::BatchOperationPtr operation =
         blink::mojom::BatchOperation::New();
     operation->operation_type = blink::mojom::OperationType::kDelete;
     operation->request = BackgroundFetchSettledFetch::CloneRequest(request);
-    operation->match_params = std::move(match_params);
+    operation->match_options = std::move(match_options);
 
     std::vector<blink::mojom::BatchOperationPtr> operations;
     operations.emplace_back(std::move(operation));
@@ -609,12 +631,13 @@ class CacheStorageCacheTest : public testing::Test {
 
   bool Keys(const blink::mojom::FetchAPIRequestPtr& request =
                 blink::mojom::FetchAPIRequest::New(),
-            blink::mojom::QueryParamsPtr match_params = nullptr) {
+            blink::mojom::CacheQueryOptionsPtr match_options = nullptr) {
     base::HistogramTester histogram_tester;
     std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
 
     cache_->Keys(
-        CopyFetchRequest(request), std::move(match_params),
+        CopyFetchRequest(request), std::move(match_options),
+        /* trace_id = */ 0,
         base::BindOnce(&CacheStorageCacheTest::RequestsCallback,
                        base::Unretained(this), base::Unretained(loop.get())));
     loop->Run();
@@ -645,7 +668,7 @@ class CacheStorageCacheTest : public testing::Test {
     cache_->WriteSideData(
         base::BindOnce(&CacheStorageCacheTest::ErrorTypeCallback,
                        base::Unretained(this), base::Unretained(&run_loop)),
-        url, expected_response_time, buffer, buf_len);
+        url, expected_response_time, /* trace_id = */ 0, buffer, buf_len);
     run_loop.Run();
     if (callback_error_ == CacheStorageError::kSuccess)
       CheckOpHistograms(histogram_tester, "WriteSideData");
@@ -781,28 +804,29 @@ class CacheStorageCacheTest : public testing::Test {
 
   size_t EstimatedResponseSizeWithoutBlob(
       const blink::mojom::FetchAPIResponse& response) {
-    return CacheStorageCache::EstimatedResponseSizeWithoutBlob(response);
+    return LegacyCacheStorageCache::EstimatedResponseSizeWithoutBlob(response);
   }
 
  protected:
   base::ScopedTempDir temp_dir_;
-  TestBrowserThreadBundle browser_thread_bundle_;
+  BrowserTaskEnvironment task_environment_;
   TestBrowserContext browser_context_;
-  std::unique_ptr<net::URLRequestJobFactoryImpl> url_request_job_factory_;
   scoped_refptr<MockSpecialStoragePolicy> quota_policy_;
   scoped_refptr<MockQuotaManager> mock_quota_manager_;
   scoped_refptr<MockQuotaManagerProxy> quota_manager_proxy_;
-  storage::BlobStorageContext* blob_storage_context_;
+  scoped_refptr<BlobStorageContextWrapper> blob_storage_context_;
+  std::unique_ptr<MockLegacyCacheStorage> mock_cache_storage_;
 
+  base::FilePath temp_dir_path_;
   std::unique_ptr<TestCacheStorageCache> cache_;
 
   blink::mojom::FetchAPIRequestPtr body_request_;
   blink::mojom::FetchAPIRequestPtr body_request_with_query_;
   blink::mojom::FetchAPIRequestPtr no_body_request_;
   blink::mojom::FetchAPIRequestPtr body_head_request_;
-  std::unique_ptr<storage::BlobDataHandle> blob_handle_;
-  // Holds a Mojo connection to the BlobImpl containing |blob_handle_|.
-  blink::mojom::BlobPtr blob_ptr_;
+  std::string expected_blob_uuid_ = "blob-id:myblob";
+  // Holds a Mojo connection to the BlobImpl with uuid |expected_blob_uuid_|.
+  mojo::Remote<blink::mojom::Blob> blob_remote_;
   base::Time response_time_;
   std::string expected_blob_data_;
 
@@ -877,8 +901,9 @@ TEST_P(CacheStorageCacheTestP, MatchLimit) {
   EXPECT_TRUE(Put(no_body_request_, CreateNoBodyResponse()));
   EXPECT_TRUE(Match(no_body_request_));
 
-  size_t max_size = CacheStorageCache::EstimatedStructSize(no_body_request_) +
-                    EstimatedResponseSizeWithoutBlob(*callback_response_);
+  size_t max_size =
+      LegacyCacheStorageCache::EstimatedStructSize(no_body_request_) +
+      EstimatedResponseSizeWithoutBlob(*callback_response_);
   SetMaxQuerySizeBytes(max_size);
   EXPECT_TRUE(Match(no_body_request_));
 
@@ -893,32 +918,33 @@ TEST_P(CacheStorageCacheTestP, MatchAllLimit) {
   EXPECT_TRUE(Match(body_request_));
 
   size_t body_request_size =
-      CacheStorageCache::EstimatedStructSize(body_request_) +
+      LegacyCacheStorageCache::EstimatedStructSize(body_request_) +
       EstimatedResponseSizeWithoutBlob(*callback_response_);
   size_t query_request_size =
-      CacheStorageCache::EstimatedStructSize(body_request_with_query_) +
+      LegacyCacheStorageCache::EstimatedStructSize(body_request_with_query_) +
       EstimatedResponseSizeWithoutBlob(*callback_response_);
 
   std::vector<blink::mojom::FetchAPIResponsePtr> responses;
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
 
   // There is enough room for both requests and responses
   SetMaxQuerySizeBytes(body_request_size + query_request_size);
-  EXPECT_TRUE(MatchAll(body_request_, match_params->Clone(), &responses));
+  EXPECT_TRUE(MatchAll(body_request_, match_options->Clone(), &responses));
   EXPECT_EQ(1u, responses.size());
 
-  match_params->ignore_search = true;
-  EXPECT_TRUE(MatchAll(body_request_, match_params->Clone(), &responses));
+  match_options->ignore_search = true;
+  EXPECT_TRUE(MatchAll(body_request_, match_options->Clone(), &responses));
   EXPECT_EQ(2u, responses.size());
 
   // There is not enough room for both requests and responses
   SetMaxQuerySizeBytes(body_request_size);
-  match_params->ignore_search = false;
-  EXPECT_TRUE(MatchAll(body_request_, match_params->Clone(), &responses));
+  match_options->ignore_search = false;
+  EXPECT_TRUE(MatchAll(body_request_, match_options->Clone(), &responses));
   EXPECT_EQ(1u, responses.size());
 
-  match_params->ignore_search = true;
-  EXPECT_FALSE(MatchAll(body_request_, match_params->Clone(), &responses));
+  match_options->ignore_search = true;
+  EXPECT_FALSE(MatchAll(body_request_, match_options->Clone(), &responses));
   EXPECT_EQ(CacheStorageError::kErrorQueryTooLarge, callback_error_);
 }
 
@@ -926,13 +952,14 @@ TEST_P(CacheStorageCacheTestP, KeysLimit) {
   EXPECT_TRUE(Put(no_body_request_, CreateNoBodyResponse()));
   EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
 
-  size_t max_size = CacheStorageCache::EstimatedStructSize(no_body_request_) +
-                    CacheStorageCache::EstimatedStructSize(body_request_);
+  size_t max_size =
+      LegacyCacheStorageCache::EstimatedStructSize(no_body_request_) +
+      LegacyCacheStorageCache::EstimatedStructSize(body_request_);
   SetMaxQuerySizeBytes(max_size);
   EXPECT_TRUE(Keys());
 
   SetMaxQuerySizeBytes(
-      CacheStorageCache::EstimatedStructSize(no_body_request_));
+      LegacyCacheStorageCache::EstimatedStructSize(no_body_request_));
   EXPECT_FALSE(Keys());
   EXPECT_EQ(CacheStorageError::kErrorQueryTooLarge, callback_error_);
 }
@@ -975,13 +1002,15 @@ TEST_P(CacheStorageCacheTestP, PutBodyDropBlobRef) {
   operations.emplace_back(std::move(operation));
   std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
   cache_->BatchOperation(
-      std::move(operations), true /* fail_on_duplicate */,
+      std::move(operations), /* trace_id = */ 0,
       base::BindOnce(&CacheStorageCacheTestP::VerboseErrorTypeCallback,
                      base::Unretained(this), base::Unretained(loop.get())),
       CacheStorageCache::BadMessageCallback());
+
   // The handle should be held by the cache now so the deref here should be
   // okay.
-  blob_handle_.reset();
+  blob_remote_.reset();
+
   loop->Run();
 
   EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
@@ -996,13 +1025,13 @@ TEST_P(CacheStorageCacheTestP, PutBadMessage) {
       blink::mojom::BatchOperation::New(
           blink::mojom::OperationType::kPut,
           BackgroundFetchSettledFetch::CloneRequest(body_request_),
-          CreateBlobBodyResponse(), nullptr /* match_params */);
+          CreateBlobBodyResponse(), nullptr /* match_options */);
   operation1->response->blob->size = std::numeric_limits<uint64_t>::max();
   blink::mojom::BatchOperationPtr operation2 =
       blink::mojom::BatchOperation::New(
           blink::mojom::OperationType::kPut,
           BackgroundFetchSettledFetch::CloneRequest(body_request_with_query_),
-          CreateBlobBodyResponse(), nullptr /* match_params */);
+          CreateBlobBodyResponse(), nullptr /* match_options */);
   operation2->response->blob->size = std::numeric_limits<uint64_t>::max();
 
   std::vector<blink::mojom::BatchOperationPtr> operations;
@@ -1062,39 +1091,6 @@ TEST_P(CacheStorageCacheTestP, PutReplaceInBatchFails) {
   EXPECT_FALSE(Match(body_request_));
 }
 
-TEST_P(CacheStorageCacheTestP, PutReplaceInBatchWithDuplicateCheckingDisabled) {
-  blink::mojom::BatchOperationPtr operation1 =
-      blink::mojom::BatchOperation::New();
-  operation1->operation_type = blink::mojom::OperationType::kPut;
-  operation1->request =
-      BackgroundFetchSettledFetch::CloneRequest(body_request_);
-  operation1->response = CreateNoBodyResponse();
-
-  blink::mojom::BatchOperationPtr operation2 =
-      blink::mojom::BatchOperation::New();
-  operation2->operation_type = blink::mojom::OperationType::kPut;
-  operation2->request =
-      BackgroundFetchSettledFetch::CloneRequest(body_request_);
-  operation2->response = CreateBlobBodyResponse();
-
-  std::vector<blink::mojom::BatchOperationPtr> operations;
-  operations.push_back(std::move(operation1));
-  operations.push_back(std::move(operation2));
-
-  EXPECT_EQ(
-      CacheStorageError::kSuccess,
-      BatchOperation(std::move(operations), false /* fail_on_duplicates */));
-
-  // Even when we don't fail on duplicates we should still provide an
-  // informative message to the user that includes the duplicate URLs.
-  ASSERT_TRUE(callback_message_);
-  EXPECT_NE(std::string::npos, callback_message_.value().find(kBodyUrl.spec()));
-
-  // |operation2| should win.
-  EXPECT_TRUE(Match(body_request_));
-  EXPECT_TRUE(callback_response_->blob);
-}
-
 TEST_P(CacheStorageCacheTestP, MatchNoBody) {
   EXPECT_TRUE(Put(no_body_request_, CreateNoBodyResponse()));
   EXPECT_TRUE(Match(no_body_request_));
@@ -1108,8 +1104,9 @@ TEST_P(CacheStorageCacheTestP, MatchBody) {
   EXPECT_TRUE(Match(body_request_));
   EXPECT_TRUE(ResponseMetadataEqual(*SetCacheName(CreateBlobBodyResponse()),
                                     *callback_response_));
-  blink::mojom::BlobPtr blob(std::move(callback_response_->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(
+      std::move(callback_response_->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, MatchBodyHead) {
@@ -1144,8 +1141,8 @@ TEST_P(CacheStorageCacheTestP, MatchAll_Body) {
   ASSERT_EQ(1u, responses.size());
   EXPECT_TRUE(ResponseMetadataEqual(*SetCacheName(CreateBlobBodyResponse()),
                                     *responses[0]));
-  blink::mojom::BlobPtr blob(std::move(responses[0]->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(std::move(responses[0]->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, MatchAll_TwoResponsesThenOne) {
@@ -1162,8 +1159,8 @@ TEST_P(CacheStorageCacheTestP, MatchAll_TwoResponsesThenOne) {
   EXPECT_FALSE(responses[0]->blob);
   EXPECT_TRUE(ResponseMetadataEqual(*SetCacheName(CreateBlobBodyResponse()),
                                     *responses[1]));
-  blink::mojom::BlobPtr blob(std::move(responses[1]->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(std::move(responses[1]->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
 
   responses.clear();
 
@@ -1180,9 +1177,10 @@ TEST_P(CacheStorageCacheTestP, Match_IgnoreSearch) {
   EXPECT_TRUE(Put(body_request_with_query_, CreateBlobBodyResponseWithQuery()));
 
   EXPECT_FALSE(Match(body_request_));
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
-  EXPECT_TRUE(Match(body_request_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
+  EXPECT_TRUE(Match(body_request_, std::move(match_options)));
 }
 
 TEST_P(CacheStorageCacheTestP, Match_IgnoreMethod) {
@@ -1193,9 +1191,10 @@ TEST_P(CacheStorageCacheTestP, Match_IgnoreMethod) {
   post_request->method = "POST";
   EXPECT_FALSE(Match(post_request));
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_method = true;
-  EXPECT_TRUE(Match(post_request, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_method = true;
+  EXPECT_TRUE(Match(post_request, std::move(match_options)));
 }
 
 TEST_P(CacheStorageCacheTestP, Match_IgnoreVary) {
@@ -1208,15 +1207,16 @@ TEST_P(CacheStorageCacheTestP, Match_IgnoreVary) {
   body_request_->headers["vary_foo"] = "bar";
   EXPECT_FALSE(Match(body_request_));
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_vary = true;
-  EXPECT_TRUE(Match(body_request_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_vary = true;
+  EXPECT_TRUE(Match(body_request_, std::move(match_options)));
 }
 
 TEST_P(CacheStorageCacheTestP, GetAllMatchedEntries_RequestsIncluded) {
   EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
 
-  std::vector<CacheStorageCache::CacheEntry> cache_entries;
+  std::vector<LegacyCacheStorageCache::CacheEntry> cache_entries;
   EXPECT_TRUE(GetAllMatchedEntries(&cache_entries));
 
   ASSERT_EQ(1u, cache_entries.size());
@@ -1228,8 +1228,8 @@ TEST_P(CacheStorageCacheTestP, GetAllMatchedEntries_RequestsIncluded) {
   auto& response = cache_entries[0].second;
   EXPECT_TRUE(ResponseMetadataEqual(*SetCacheName(CreateBlobBodyResponse()),
                                     *response));
-  blink::mojom::BlobPtr blob(std::move(response->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(std::move(response->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, Keys_IgnoreSearch) {
@@ -1238,9 +1238,10 @@ TEST_P(CacheStorageCacheTestP, Keys_IgnoreSearch) {
   EXPECT_TRUE(Keys(body_request_));
   EXPECT_EQ(0u, callback_strings_.size());
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
-  EXPECT_TRUE(Keys(body_request_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
+  EXPECT_TRUE(Keys(body_request_, std::move(match_options)));
   EXPECT_EQ(1u, callback_strings_.size());
 }
 
@@ -1253,9 +1254,10 @@ TEST_P(CacheStorageCacheTestP, Keys_IgnoreMethod) {
   EXPECT_TRUE(Keys(post_request));
   EXPECT_EQ(0u, callback_strings_.size());
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_method = true;
-  EXPECT_TRUE(Keys(post_request, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_method = true;
+  EXPECT_TRUE(Keys(post_request, std::move(match_options)));
   EXPECT_EQ(1u, callback_strings_.size());
 }
 
@@ -1271,9 +1273,10 @@ TEST_P(CacheStorageCacheTestP, Keys_IgnoreVary) {
   EXPECT_TRUE(Keys(body_request_));
   EXPECT_EQ(0u, callback_strings_.size());
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_vary = true;
-  EXPECT_TRUE(Keys(body_request_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_vary = true;
+  EXPECT_TRUE(Keys(body_request_, std::move(match_options)));
   EXPECT_EQ(1u, callback_strings_.size());
 }
 
@@ -1281,9 +1284,10 @@ TEST_P(CacheStorageCacheTestP, Delete_IgnoreSearch) {
   EXPECT_TRUE(Put(body_request_with_query_, CreateBlobBodyResponseWithQuery()));
 
   EXPECT_FALSE(Delete(body_request_));
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
-  EXPECT_TRUE(Delete(body_request_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
+  EXPECT_TRUE(Delete(body_request_, std::move(match_options)));
 }
 
 TEST_P(CacheStorageCacheTestP, Delete_IgnoreMethod) {
@@ -1294,9 +1298,10 @@ TEST_P(CacheStorageCacheTestP, Delete_IgnoreMethod) {
   post_request->method = "POST";
   EXPECT_FALSE(Delete(post_request));
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_method = true;
-  EXPECT_TRUE(Delete(post_request, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_method = true;
+  EXPECT_TRUE(Delete(post_request, std::move(match_options)));
 }
 
 TEST_P(CacheStorageCacheTestP, Delete_IgnoreVary) {
@@ -1308,9 +1313,10 @@ TEST_P(CacheStorageCacheTestP, Delete_IgnoreVary) {
   body_request_->headers["vary_foo"] = "bar";
   EXPECT_FALSE(Delete(body_request_));
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_vary = true;
-  EXPECT_TRUE(Delete(body_request_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_vary = true;
+  EXPECT_TRUE(Delete(body_request_, std::move(match_options)));
 }
 
 TEST_P(CacheStorageCacheTestP, MatchAll_IgnoreMethod) {
@@ -1324,9 +1330,10 @@ TEST_P(CacheStorageCacheTestP, MatchAll_IgnoreMethod) {
   EXPECT_TRUE(MatchAll(post_request, nullptr, &responses));
   EXPECT_EQ(0u, responses.size());
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_method = true;
-  EXPECT_TRUE(MatchAll(post_request, std::move(match_params), &responses));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_method = true;
+  EXPECT_TRUE(MatchAll(post_request, std::move(match_options), &responses));
   EXPECT_EQ(1u, responses.size());
 }
 
@@ -1344,9 +1351,10 @@ TEST_P(CacheStorageCacheTestP, MatchAll_IgnoreVary) {
   EXPECT_TRUE(MatchAll(body_request_, nullptr, &responses));
   EXPECT_EQ(0u, responses.size());
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_vary = true;
-  EXPECT_TRUE(MatchAll(body_request_, std::move(match_params), &responses));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_vary = true;
+  EXPECT_TRUE(MatchAll(body_request_, std::move(match_options), &responses));
   EXPECT_EQ(1u, responses.size());
 }
 
@@ -1356,9 +1364,10 @@ TEST_P(CacheStorageCacheTestP, MatchAll_IgnoreSearch) {
   EXPECT_TRUE(Put(no_body_request_, CreateNoBodyResponse()));
 
   std::vector<blink::mojom::FetchAPIResponsePtr> responses;
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
-  EXPECT_TRUE(MatchAll(body_request_, std::move(match_params), &responses));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
+  EXPECT_TRUE(MatchAll(body_request_, std::move(match_options), &responses));
 
   ASSERT_EQ(2u, responses.size());
 
@@ -1383,18 +1392,19 @@ TEST_P(CacheStorageCacheTestP, MatchAll_Head) {
   EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
 
   std::vector<blink::mojom::FetchAPIResponsePtr> responses;
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
-  EXPECT_TRUE(MatchAll(body_head_request_, match_params->Clone(), &responses));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
+  EXPECT_TRUE(MatchAll(body_head_request_, match_options->Clone(), &responses));
   EXPECT_TRUE(responses.empty());
 
-  match_params->ignore_method = true;
-  EXPECT_TRUE(MatchAll(body_head_request_, match_params->Clone(), &responses));
+  match_options->ignore_method = true;
+  EXPECT_TRUE(MatchAll(body_head_request_, match_options->Clone(), &responses));
   ASSERT_EQ(1u, responses.size());
   EXPECT_TRUE(ResponseMetadataEqual(*SetCacheName(CreateBlobBodyResponse()),
                                     *responses[0]));
-  blink::mojom::BlobPtr blob(std::move(responses[0]->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(std::move(responses[0]->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, Vary) {
@@ -1495,10 +1505,11 @@ TEST_P(CacheStorageCacheTestP, KeysWithIgnoreSearchTrue) {
   EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
   EXPECT_TRUE(Put(body_request_with_query_, CreateBlobBodyResponseWithQuery()));
 
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
 
-  EXPECT_TRUE(Keys(body_request_with_query_, std::move(match_params)));
+  EXPECT_TRUE(Keys(body_request_with_query_, std::move(match_options)));
   std::vector<std::string> expected_keys = {
       body_request_->url.spec(), body_request_with_query_->url.spec()};
   EXPECT_EQ(expected_keys, callback_strings_);
@@ -1510,10 +1521,11 @@ TEST_P(CacheStorageCacheTestP, KeysWithIgnoreSearchFalse) {
   EXPECT_TRUE(Put(body_request_with_query_, CreateBlobBodyResponseWithQuery()));
 
   // Default value of ignore_search is false.
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  EXPECT_EQ(match_params->ignore_search, false);
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  EXPECT_EQ(match_options->ignore_search, false);
 
-  EXPECT_TRUE(Keys(body_request_with_query_, std::move(match_params)));
+  EXPECT_TRUE(Keys(body_request_with_query_, std::move(match_options)));
   std::vector<std::string> expected_keys = {
       body_request_with_query_->url.spec()};
   EXPECT_EQ(expected_keys, callback_strings_);
@@ -1554,9 +1566,10 @@ TEST_P(CacheStorageCacheTestP, DeleteWithIgnoreSearchTrue) {
 
   // The following delete operation will remove both of body_request_ and
   // body_request_with_query_ from cache storage.
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  match_params->ignore_search = true;
-  EXPECT_TRUE(Delete(body_request_with_query_, std::move(match_params)));
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  match_options->ignore_search = true;
+  EXPECT_TRUE(Delete(body_request_with_query_, std::move(match_options)));
 
   EXPECT_TRUE(Keys());
   expected_keys.clear();
@@ -1576,10 +1589,11 @@ TEST_P(CacheStorageCacheTestP, DeleteWithIgnoreSearchFalse) {
   EXPECT_EQ(expected_keys, callback_strings_);
 
   // Default value of ignore_search is false.
-  blink::mojom::QueryParamsPtr match_params = blink::mojom::QueryParams::New();
-  EXPECT_EQ(match_params->ignore_search, false);
+  blink::mojom::CacheQueryOptionsPtr match_options =
+      blink::mojom::CacheQueryOptions::New();
+  EXPECT_EQ(match_options->ignore_search, false);
 
-  EXPECT_TRUE(Delete(body_request_with_query_, std::move(match_params)));
+  EXPECT_TRUE(Delete(body_request_with_query_, std::move(match_options)));
 
   EXPECT_TRUE(Keys());
   std::vector<std::string> expected_keys2{no_body_request_->url.spec(),
@@ -1619,28 +1633,29 @@ TEST_P(CacheStorageCacheTestP, PutWithSideData) {
   blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
 
   const std::string expected_side_data = "SideData";
-  std::unique_ptr<storage::BlobDataHandle> side_data_blob_handle =
-      BuildBlobHandle("blob-id:mysideblob", expected_side_data);
-
-  CopySideDataToResponse(side_data_blob_handle.get(), response.get());
+  CopySideDataToResponse("blob-id:mysideblob", expected_side_data,
+                         response.get());
   EXPECT_TRUE(Put(body_request_, std::move(response)));
 
   EXPECT_TRUE(Match(body_request_));
   ASSERT_TRUE(callback_response_->blob);
-  blink::mojom::BlobPtr blob(std::move(callback_response_->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
-  EXPECT_TRUE(ResponseSideDataEqual(expected_side_data, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(
+      std::move(callback_response_->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
+  EXPECT_EQ(expected_side_data, CopySideData(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, PutWithSideData_QuotaExceeded) {
-  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
-                                expected_blob_data_.size() - 1);
   blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size - 1);
   const std::string expected_side_data = "SideData";
-  std::unique_ptr<storage::BlobDataHandle> side_data_blob_handle =
-      BuildBlobHandle("blob-id:mysideblob", expected_side_data);
-
-  CopySideDataToResponse(side_data_blob_handle.get(), response.get());
+  CopySideDataToResponse("blob-id:mysideblob", expected_side_data,
+                         response.get());
   // When the available space is not enough for the body, Put operation must
   // fail.
   EXPECT_FALSE(Put(body_request_, std::move(response)));
@@ -1648,24 +1663,27 @@ TEST_P(CacheStorageCacheTestP, PutWithSideData_QuotaExceeded) {
 }
 
 TEST_P(CacheStorageCacheTestP, PutWithSideData_QuotaExceededSkipSideData) {
-  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
-                                expected_blob_data_.size());
   blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
   const std::string expected_side_data = "SideData";
-  std::unique_ptr<storage::BlobDataHandle> side_data_blob_handle =
-      BuildBlobHandle("blob-id:mysideblob", expected_side_data);
-
-  CopySideDataToResponse(side_data_blob_handle.get(), response.get());
+  CopySideDataToResponse("blob-id:mysideblob", expected_side_data,
+                         response.get());
   // When the available space is enough for the body but not enough for the side
   // data, Put operation must succeed.
   EXPECT_TRUE(Put(body_request_, std::move(response)));
 
   EXPECT_TRUE(Match(body_request_));
   ASSERT_TRUE(callback_response_->blob);
-  blink::mojom::BlobPtr blob(std::move(callback_response_->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  mojo::Remote<blink::mojom::Blob> blob(
+      std::move(callback_response_->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
   // The side data should not be written.
-  EXPECT_TRUE(ResponseSideDataEqual("", blob.get()));
+  EXPECT_EQ("", CopySideData(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, PutWithSideData_BadMessage) {
@@ -1673,17 +1691,16 @@ TEST_P(CacheStorageCacheTestP, PutWithSideData_BadMessage) {
   blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
 
   const std::string expected_side_data = "SideData";
-  std::unique_ptr<storage::BlobDataHandle> side_data_blob_handle =
-      BuildBlobHandle("blob-id:mysideblob", expected_side_data);
-
-  CopySideDataToResponse(side_data_blob_handle.get(), response.get());
+  CopySideDataToResponse("blob-id:mysideblob", expected_side_data,
+                         response.get());
 
   blink::mojom::BatchOperationPtr operation =
       blink::mojom::BatchOperation::New();
   operation->operation_type = blink::mojom::OperationType::kPut;
   operation->request = BackgroundFetchSettledFetch::CloneRequest(body_request_);
   operation->response = std::move(response);
-  operation->response->blob->size = std::numeric_limits<uint64_t>::max();
+  operation->response->side_data_blob_for_cache_put->size =
+      std::numeric_limits<uint64_t>::max();
 
   std::vector<blink::mojom::BatchOperationPtr> operations;
   operations.emplace_back(std::move(operation));
@@ -1711,9 +1728,10 @@ TEST_P(CacheStorageCacheTestP, WriteSideData) {
 
   EXPECT_TRUE(Match(body_request_));
   ASSERT_TRUE(callback_response_->blob);
-  blink::mojom::BlobPtr blob1(std::move(callback_response_->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob1.get()));
-  EXPECT_TRUE(ResponseSideDataEqual(expected_side_data1, blob1.get()));
+  mojo::Remote<blink::mojom::Blob> blob1(
+      std::move(callback_response_->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob1.get()));
+  EXPECT_EQ(expected_side_data1, CopySideData(blob1.get()));
 
   const std::string expected_side_data2 = "New data";
   scoped_refptr<net::IOBuffer> buffer2 =
@@ -1722,9 +1740,10 @@ TEST_P(CacheStorageCacheTestP, WriteSideData) {
                             expected_side_data2.length()));
   EXPECT_TRUE(Match(body_request_));
   ASSERT_TRUE(callback_response_->blob);
-  blink::mojom::BlobPtr blob2(std::move(callback_response_->blob->blob));
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob2.get()));
-  EXPECT_TRUE(ResponseSideDataEqual(expected_side_data2, blob2.get()));
+  mojo::Remote<blink::mojom::Blob> blob2(
+      std::move(callback_response_->blob->blob));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob2.get()));
+  EXPECT_EQ(expected_side_data2, CopySideData(blob2.get()));
 
   ASSERT_TRUE(Delete(body_request_));
 }
@@ -1847,6 +1866,162 @@ TEST_P(CacheStorageCacheTestP, PutObeysQuotaLimits) {
   EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
 }
 
+TEST_P(CacheStorageCacheTestP, PutObeysQuotaLimitsWithEmptyResponse) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  // The first Put will completely fill the quota, leaving no space for the
+  // second operation, which will fail even with empty response, due to the size
+  // of the headers.
+  EXPECT_TRUE(Put(body_request_, std::move(response)));
+  EXPECT_FALSE(Put(no_body_request_, CreateNoBodyResponse()));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutSafeSpaceIsEnough) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  EXPECT_TRUE(Put(body_request_, std::move(response)));
+}
+
+TEST_P(CacheStorageCacheTestP, PutRequestUrlObeysQuotaLimits) {
+  const GURL url("http://example.com/body.html");
+  const GURL longerUrl("http://example.com/longer-body.html");
+  blink::mojom::FetchAPIRequestPtr request = CreateFetchAPIRequest(
+      url, "GET", kHeaders, blink::mojom::Referrer::New(), false);
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(request) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  request->url = longerUrl;
+  EXPECT_FALSE(Put(request, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutRequestMethodObeysQuotaLimits) {
+  blink::mojom::FetchAPIRequestPtr request = CreateFetchAPIRequest(
+      kBodyUrl, "GET", kHeaders, blink::mojom::Referrer::New(), false);
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(request) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  request->method = "LongerMethodThanGet";
+  EXPECT_FALSE(Put(request, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutRequestHeadersObeyQuotaLimits) {
+  blink::mojom::FetchAPIRequestPtr request = CreateFetchAPIRequest(
+      kBodyUrl, "GET", kHeaders, blink::mojom::Referrer::New(), false);
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(request) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  request->headers["New-Header"] = "foo";
+  EXPECT_FALSE(Put(request, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutResponseStatusObeysQuotaLimits) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  response->status_text = "LongerThanOK";
+  EXPECT_FALSE(Put(body_request_, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutResponseBlobObeysQuotaLimits) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  response->blob->size += 1;
+  EXPECT_FALSE(Put(body_request_, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutResponseHeadersObeyQuotaLimits) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  response->headers["New-Header"] = "foo";
+  EXPECT_FALSE(Put(body_request_, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutResponseCorsHeadersObeyQuotaLimits) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  response->cors_exposed_header_names.push_back("AnotherOne");
+  EXPECT_FALSE(Put(body_request_, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutResponseUrlListObeysQuotaLimits) {
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  base::CheckedNumeric<uint64_t> safe_expected_entry_size =
+      cache_->GetRequiredSafeSpaceForRequest(body_request_) +
+      cache_->GetRequiredSafeSpaceForResponse(response);
+  uint64_t expected_entry_size = safe_expected_entry_size.ValueOrDie();
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                expected_entry_size);
+
+  response->url_list.push_back(GURL("http://example.com/another-url"));
+  EXPECT_FALSE(Put(body_request_, std::move(response)));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, PutObeysQuotaLimitsWithEmptyResponseZeroQuota) {
+  mock_quota_manager_->SetQuota(kOrigin, blink::mojom::StorageType::kTemporary,
+                                0);
+  EXPECT_FALSE(Put(body_request_, CreateNoBodyResponse()));
+  EXPECT_EQ(CacheStorageError::kErrorQuotaExceeded, callback_error_);
+}
+
 TEST_P(CacheStorageCacheTestP, Size) {
   EXPECT_EQ(0, Size());
   EXPECT_TRUE(Put(no_body_request_, CreateNoBodyResponse()));
@@ -1872,7 +2047,7 @@ TEST_F(CacheStorageCacheTest, VerifyOpaqueSizePadding) {
   blink::mojom::FetchAPIResponsePtr non_opaque_response =
       CreateBlobBodyResponse();
   non_opaque_response->response_time = response_time;
-  EXPECT_EQ(0, CacheStorageCache::CalculateResponsePadding(
+  EXPECT_EQ(0, LegacyCacheStorageCache::CalculateResponsePadding(
                    *non_opaque_response, CreateTestPaddingKey().get(),
                    0 /* side_data_size */));
   EXPECT_TRUE(Put(non_opaque_request, std::move(non_opaque_response)));
@@ -1892,7 +2067,7 @@ TEST_F(CacheStorageCacheTest, VerifyOpaqueSizePadding) {
   blink::mojom::FetchAPIResponsePtr non_opaque_response_clone =
       CreateBlobBodyResponse();
   non_opaque_response_clone->response_time = response_time;
-  EXPECT_EQ(0, CacheStorageCache::CalculateResponsePadding(
+  EXPECT_EQ(0, LegacyCacheStorageCache::CalculateResponsePadding(
                    *non_opaque_response_clone, CreateTestPaddingKey().get(),
                    unpadded_side_data_size));
 
@@ -1993,7 +2168,8 @@ TEST_P(CacheStorageCacheTestP, GetSizeThenClose) {
   EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
   // Get a reference to the response in the cache.
   EXPECT_TRUE(Match(body_request_));
-  blink::mojom::BlobPtr blob(std::move(callback_response_->blob->blob));
+  mojo::Remote<blink::mojom::Blob> blob(
+      std::move(callback_response_->blob->blob));
   callback_response_ = nullptr;
 
   int64_t cache_size = Size();
@@ -2001,7 +2177,7 @@ TEST_P(CacheStorageCacheTestP, GetSizeThenClose) {
   VerifyAllOpsFail();
 
   // Reading blob should fail.
-  EXPECT_TRUE(ResponseBodiesEqual("", blob.get()));
+  EXPECT_EQ("", storage::BlobToString(blob.get()));
 }
 
 TEST_P(CacheStorageCacheTestP, OpsFailOnClosedBackend) {
@@ -2011,24 +2187,71 @@ TEST_P(CacheStorageCacheTestP, OpsFailOnClosedBackend) {
   VerifyAllOpsFail();
 }
 
+// Shutdown the cache in the middle of its writing the response body. Upon
+// restarting, that response shouldn't be available. See crbug.com/617683.
+TEST_P(CacheStorageCacheTestP, UnfinishedPutsShouldNotBeReusable) {
+  // Create a response with a blob that takes forever to write its bytes to the
+  // mojo pipe. Guaranteeing that the response isn't finished writing by the
+  // time we close the backend.
+  base::RunLoop run_loop;
+  auto blob = blink::mojom::SerializedBlob::New();
+  blob->uuid = "mock blob";
+  blob->size = 100;
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<SlowBlob>(run_loop.QuitClosure()),
+      blob->blob.InitWithNewPipeAndPassReceiver());
+  blink::mojom::FetchAPIResponsePtr response = CreateNoBodyResponse();
+  response->url_list = {kBodyUrl};
+  response->blob = std::move(blob);
+
+  blink::mojom::BatchOperationPtr operation =
+      blink::mojom::BatchOperation::New();
+  operation->operation_type = blink::mojom::OperationType::kPut;
+  operation->request = BackgroundFetchSettledFetch::CloneRequest(body_request_);
+  operation->response = std::move(response);
+  std::vector<blink::mojom::BatchOperationPtr> operations;
+  operations.emplace_back(std::move(operation));
+
+  // Start the put operation and let it run until the blob is supposed to write
+  // to its pipe.
+  cache_->BatchOperation(std::move(operations), /* trace_id = */ 0,
+                         base::DoNothing(), base::DoNothing());
+  run_loop.Run();
+
+  // Shut down the cache. Doing so causes the write to cease, and the entry
+  // should be erased.
+  cache_ = nullptr;
+  base::RunLoop().RunUntilIdle();
+
+  // Create a new Cache in the same space.
+  cache_ = std::make_unique<TestCacheStorageCache>(
+      kOrigin, kCacheName, temp_dir_path_, nullptr /* CacheStorage */,
+      quota_manager_proxy_, blob_storage_context_);
+  cache_->Init();
+
+  // Now attempt to read the same response from the cache. It should fail.
+  EXPECT_FALSE(Match(body_request_));
+}
+
 TEST_P(CacheStorageCacheTestP, BlobReferenceDelaysClose) {
   // Create the backend and put something in it.
   EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
   // Get a reference to the response in the cache.
   EXPECT_TRUE(Match(body_request_));
-  blink::mojom::BlobPtr blob(std::move(callback_response_->blob->blob));
+  mojo::Remote<blink::mojom::Blob> blob(
+      std::move(callback_response_->blob->blob));
   callback_response_ = nullptr;
 
   base::RunLoop loop;
   cache_->Close(base::BindOnce(&CacheStorageCacheTest::CloseCallback,
                                base::Unretained(this),
                                base::Unretained(&loop)));
-  browser_thread_bundle_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
   // If MemoryOnly closing does succeed right away.
   EXPECT_EQ(MemoryOnly(), callback_closed_);
 
   // Reading blob should succeed.
-  EXPECT_TRUE(ResponseBodiesEqual(expected_blob_data_, blob.get()));
+  EXPECT_EQ(expected_blob_data_, storage::BlobToString(blob.get()));
   blob.reset();
 
   loop.Run();
@@ -2041,6 +2264,10 @@ TEST_P(CacheStorageCacheTestP, VerifySerialScheduling) {
   EXPECT_TRUE(Keys());  // Opens the backend.
   DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
   delayable_backend->set_delay_open_entry(true);
+
+  base::RunLoop open_started_loop;
+  delayable_backend->set_open_entry_started_callback(
+      open_started_loop.QuitClosure());
 
   int sequence_out = -1;
 
@@ -2055,14 +2282,15 @@ TEST_P(CacheStorageCacheTestP, VerifySerialScheduling) {
   std::vector<blink::mojom::BatchOperationPtr> operations1;
   operations1.emplace_back(std::move(operation1));
   cache_->BatchOperation(
-      std::move(operations1), true /* fail_on_duplicate */,
+      std::move(operations1), /* trace_id = */ 0,
       base::BindOnce(&CacheStorageCacheTest::SequenceCallback,
                      base::Unretained(this), 1, &sequence_out,
                      close_loop1.get()),
       CacheStorageCache::BadMessageCallback());
 
-  // Blocks on creating the cache entry.
-  base::RunLoop().RunUntilIdle();
+  // Wait until the first operation attempts to open the entry and becomes
+  // delayed.
+  open_started_loop.Run();
 
   blink::mojom::BatchOperationPtr operation2 =
       blink::mojom::BatchOperation::New();
@@ -2076,7 +2304,7 @@ TEST_P(CacheStorageCacheTestP, VerifySerialScheduling) {
   std::vector<blink::mojom::BatchOperationPtr> operations2;
   operations2.emplace_back(std::move(operation2));
   cache_->BatchOperation(
-      std::move(operations2), true /* fail_on_duplicate */,
+      std::move(operations2), /* trace_id = */ 0,
       base::BindOnce(&CacheStorageCacheTest::SequenceCallback,
                      base::Unretained(this), 2, &sequence_out,
                      close_loop2.get()),
@@ -2084,7 +2312,7 @@ TEST_P(CacheStorageCacheTestP, VerifySerialScheduling) {
 
   // The second put operation should wait for the first to complete.
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(callback_response_);
+  EXPECT_EQ(-1, sequence_out);
 
   EXPECT_TRUE(delayable_backend->OpenEntryContinue());
   close_loop1->Run();
@@ -2093,9 +2321,247 @@ TEST_P(CacheStorageCacheTestP, VerifySerialScheduling) {
   EXPECT_EQ(2, sequence_out);
 }
 
-INSTANTIATE_TEST_CASE_P(CacheStorageCacheTest,
-                        CacheStorageCacheTestP,
-                        ::testing::Values(false, true));
+#if defined(OS_WIN)
+// TODO(crbug.com/936129): Flaky on Windows.
+#define MAYBE_KeysWithManyCacheEntries DISABLED_KeysWithManyCacheEntries
+#else
+#define MAYBE_KeysWithManyCacheEntries KeysWithManyCacheEntries
+#endif
+TEST_P(CacheStorageCacheTestP, MAYBE_KeysWithManyCacheEntries) {
+  // Use a smaller list in disk mode to reduce test runtime.
+  const int kNumEntries = MemoryOnly() ? 1000 : 250;
 
+  std::vector<std::string> expected_keys;
+  for (int i = 0; i < kNumEntries; ++i) {
+    GURL url(kNoBodyUrl.spec() + "?n=" + std::to_string(i));
+    expected_keys.push_back(url.spec());
+    blink::mojom::FetchAPIRequestPtr request = CreateFetchAPIRequest(
+        url, "GET", kHeaders, blink::mojom::Referrer::New(), false);
+    EXPECT_TRUE(Put(request, CreateNoBodyResponse()));
+  }
+
+  EXPECT_TRUE(Keys());
+  EXPECT_EQ(expected_keys.size(), callback_strings_.size());
+  EXPECT_EQ(expected_keys, callback_strings_);
+}
+
+TEST_P(CacheStorageCacheTestP, SelfRefsDuringMatch) {
+  EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
+
+  // When there are no operations outstanding and we're not holding an
+  // explicit reference the cache should consider itself unreferenced.
+  EXPECT_TRUE(cache_->IsUnreferenced());
+
+  DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
+  delayable_backend->set_delay_open_entry(true);
+
+  std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
+  cache_->Match(CopyFetchRequest(body_request_), /* match_options = */ nullptr,
+                CacheStorageSchedulerPriority::kNormal, /* trace_id = */ 0,
+                base::BindOnce(&CacheStorageCacheTest::ResponseAndErrorCallback,
+                               base::Unretained(this), loop.get()));
+
+  // Blocks on opening the cache entry.
+  base::RunLoop().RunUntilIdle();
+
+  // Since an operation is outstanding the cache should consider itself
+  // referenced.
+  EXPECT_FALSE(cache_->IsUnreferenced());
+
+  // Allow the operation to continue.
+  EXPECT_TRUE(delayable_backend->OpenEntryContinue());
+  loop->Run();
+
+  // The operation should succeed.
+  EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, SelfRefsDuringMatchAll) {
+  EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
+
+  // When there are no operations outstanding and we're not holding an
+  // explicit reference the cache should consider itself unreferenced.
+  EXPECT_TRUE(cache_->IsUnreferenced());
+
+  DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
+  delayable_backend->set_delay_open_entry(true);
+
+  std::vector<blink::mojom::FetchAPIResponsePtr> responses;
+
+  std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
+  cache_->MatchAll(
+      CopyFetchRequest(body_request_), /* match_options = */ nullptr,
+      /* trace_id = */ 0,
+      base::BindOnce(&CacheStorageCacheTest::ResponsesAndErrorCallback,
+                     base::Unretained(this), loop->QuitClosure(), &responses));
+
+  // Blocks on opening the cache entry.
+  base::RunLoop().RunUntilIdle();
+
+  // Since an operation is outstanding the cache should consider itself
+  // referenced.
+  EXPECT_FALSE(cache_->IsUnreferenced());
+
+  // Allow the operation to continue.
+  EXPECT_TRUE(delayable_backend->OpenEntryContinue());
+  loop->Run();
+
+  // The operation should succeed.
+  EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
+  EXPECT_EQ(1u, responses.size());
+}
+
+TEST_P(CacheStorageCacheTestP, SelfRefsDuringWriteSideData) {
+  base::Time response_time(base::Time::Now());
+  blink::mojom::FetchAPIResponsePtr response = CreateBlobBodyResponse();
+  response->response_time = response_time;
+  EXPECT_TRUE(Put(body_request_, std::move(response)));
+
+  // When there are no operations outstanding and we're not holding an
+  // explicit reference the cache should consider itself unreferenced.
+  EXPECT_TRUE(cache_->IsUnreferenced());
+
+  DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
+  delayable_backend->set_delay_open_entry(true);
+
+  const std::string expected_side_data = "SideDataSample";
+  scoped_refptr<net::IOBuffer> buffer =
+      base::MakeRefCounted<net::StringIOBuffer>(expected_side_data);
+
+  std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
+  cache_->WriteSideData(
+      base::BindOnce(&CacheStorageCacheTest::ErrorTypeCallback,
+                     base::Unretained(this), base::Unretained(loop.get())),
+      kBodyUrl, response_time, /* trace_id = */ 0, buffer,
+      expected_side_data.length());
+
+  // Blocks on opening the cache entry.
+  base::RunLoop().RunUntilIdle();
+
+  // Since an operation is outstanding the cache should consider itself
+  // referenced.
+  EXPECT_FALSE(cache_->IsUnreferenced());
+
+  // Allow the operation to continue.
+  EXPECT_TRUE(delayable_backend->OpenEntryContinue());
+  loop->Run();
+
+  // The operation should succeed.
+  EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, SelfRefsDuringBatchOperation) {
+  // Open the backend
+  EXPECT_TRUE(Keys());
+
+  blink::mojom::BatchOperationPtr operation =
+      blink::mojom::BatchOperation::New();
+  operation->operation_type = blink::mojom::OperationType::kPut;
+  operation->request = BackgroundFetchSettledFetch::CloneRequest(body_request_);
+  operation->request->url = GURL("http://example.com/1");
+  operation->response = CreateBlobBodyResponse();
+  operation->response->url_list.push_back(GURL("http://example.com/1"));
+
+  std::vector<blink::mojom::BatchOperationPtr> operations;
+  operations.push_back(std::move(operation));
+
+  // When there are no operations outstanding and we're not holding an
+  // explicit reference the cache should consider itself unreferenced.
+  EXPECT_TRUE(cache_->IsUnreferenced());
+
+  DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
+  delayable_backend->set_delay_open_entry(true);
+
+  std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
+  cache_->BatchOperation(
+      std::move(operations), /* trace_id = */ 0,
+      base::BindOnce(&CacheStorageCacheTest::VerboseErrorTypeCallback,
+                     base::Unretained(this), base::Unretained(loop.get())),
+      base::BindOnce(&OnBadMessage, base::Unretained(&bad_message_reason_)));
+
+  // Blocks on opening the cache entry.
+  base::RunLoop().RunUntilIdle();
+
+  // Since an operation is outstanding the cache should consider itself
+  // referenced.
+  EXPECT_FALSE(cache_->IsUnreferenced());
+
+  // Allow the operation to continue.
+  EXPECT_TRUE(delayable_backend->OpenEntryContinue());
+  loop->Run();
+
+  // The operation should succeed.
+  EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, SelfRefsDuringKeys) {
+  EXPECT_TRUE(Put(body_request_, CreateBlobBodyResponse()));
+
+  // When there are no operations outstanding and we're not holding an
+  // explicit reference the cache should consider itself unreferenced.
+  EXPECT_TRUE(cache_->IsUnreferenced());
+
+  DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
+  delayable_backend->set_delay_open_entry(true);
+
+  std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
+  cache_->Keys(
+      BackgroundFetchSettledFetch::CloneRequest(body_request_),
+      /* match_options = */ nullptr,
+      /* trace_id = */ 0,
+      base::BindOnce(&CacheStorageCacheTest::RequestsCallback,
+                     base::Unretained(this), base::Unretained(loop.get())));
+
+  // Blocks on opening the cache entry.
+  base::RunLoop().RunUntilIdle();
+
+  // Since an operation is outstanding the cache should consider itself
+  // referenced.
+  EXPECT_FALSE(cache_->IsUnreferenced());
+
+  // Allow the operation to continue.
+  EXPECT_TRUE(delayable_backend->OpenEntryContinue());
+  loop->Run();
+
+  // The operation should succeed.
+  EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
+}
+
+TEST_P(CacheStorageCacheTestP, SelfRefsDuringPut) {
+  // Open the backend
+  EXPECT_TRUE(Keys());
+
+  // When there are no operations outstanding and we're not holding an
+  // explicit reference the cache should consider itself unreferenced.
+  EXPECT_TRUE(cache_->IsUnreferenced());
+
+  DelayableBackend* delayable_backend = cache_->UseDelayableBackend();
+  delayable_backend->set_delay_open_entry(true);
+
+  std::unique_ptr<base::RunLoop> loop(new base::RunLoop());
+  cache_->Put(
+      BackgroundFetchSettledFetch::CloneRequest(body_request_),
+      CreateBlobBodyResponse(), /* trace_id = */ 0,
+      base::BindOnce(&CacheStorageCacheTest::ErrorTypeCallback,
+                     base::Unretained(this), base::Unretained(loop.get())));
+
+  // Blocks on opening the cache entry.
+  base::RunLoop().RunUntilIdle();
+
+  // Since an operation is outstanding the cache should consider itself
+  // referenced.
+  EXPECT_FALSE(cache_->IsUnreferenced());
+
+  // Allow the operation to continue.
+  EXPECT_TRUE(delayable_backend->OpenEntryContinue());
+  loop->Run();
+
+  // The operation should succeed.
+  EXPECT_EQ(CacheStorageError::kSuccess, callback_error_);
+}
+
+INSTANTIATE_TEST_SUITE_P(CacheStorageCacheTest,
+                         CacheStorageCacheTestP,
+                         ::testing::Values(false, true));
 }  // namespace cache_storage_cache_unittest
 }  // namespace content

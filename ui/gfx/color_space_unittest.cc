@@ -101,10 +101,13 @@ TEST(ColorSpace, RasterAndBlend) {
 
 TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
   const size_t kNumTests = 5;
-  SkMatrix44 primary_matrix;
-  primary_matrix.set3x3(0.205276f, 0.149185f, 0.609741f, 0.625671f, 0.063217f,
-                        0.311111f, 0.060867f, 0.744553f, 0.019470f);
-  SkColorSpaceTransferFn transfer_fn = {2.1f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+  skcms_Matrix3x3 primary_matrix = {{
+      {0.205276f, 0.625671f, 0.060867f},
+      {0.149185f, 0.063217f, 0.744553f},
+      {0.609741f, 0.311111f, 0.019470f},
+  }};
+  skcms_TransferFunction transfer_fn = {2.1f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+
   ColorSpace color_spaces[kNumTests] = {
       ColorSpace(ColorSpace::PrimaryID::BT709,
                  ColorSpace::TransferID::IEC61966_2_1),
@@ -118,35 +121,18 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
   };
   sk_sp<SkColorSpace> sk_color_spaces[kNumTests] = {
       SkColorSpace::MakeSRGB(),
-      SkColorSpace::MakeRGB(SkColorSpace::kSRGB_RenderTargetGamma,
-                            SkColorSpace::kAdobeRGB_Gamut),
-      SkColorSpace::MakeRGB(SkColorSpace::kLinear_RenderTargetGamma,
-                            SkColorSpace::kDCIP3_D65_Gamut),
-      SkColorSpace::MakeRGB(SkColorSpace::kSRGB_RenderTargetGamma,
-                            SkColorSpace::kRec2020_Gamut),
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kAdobeRGB),
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kLinear, SkNamedGamut::kDCIP3),
+      SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kRec2020),
       SkColorSpace::MakeRGB(transfer_fn, primary_matrix),
   };
 
   // Test that converting from ColorSpace to SkColorSpace is producing an
-  // equivalent representation, and that the SkColorSpace ref-pointers are being
-  // globally cached.
-  sk_sp<SkColorSpace> got_sk_color_spaces[kNumTests];
-  for (size_t i = 0; i < kNumTests; ++i)
-    got_sk_color_spaces[i] = color_spaces[i].ToSkColorSpace();
+  // equivalent representation.
   for (size_t i = 0; i < kNumTests; ++i) {
-    EXPECT_TRUE(SkColorSpace::Equals(got_sk_color_spaces[i].get(),
+    EXPECT_TRUE(SkColorSpace::Equals(color_spaces[i].ToSkColorSpace().get(),
                                      sk_color_spaces[i].get()))
         << " on iteration i = " << i;
-    // ToSkColorSpace should return the same thing every time.
-    EXPECT_EQ(got_sk_color_spaces[i].get(),
-              color_spaces[i].ToSkColorSpace().get())
-        << " on iteration i = " << i;
-    // But there is no cache within Skia, except for sRGB.
-    // This test may start failing if this behavior changes.
-    if (i != 0) {
-      EXPECT_NE(got_sk_color_spaces[i].get(), sk_color_spaces[i].get())
-          << " on iteration i = " << i;
-    }
   }
 
   // Invariant test: Test that converting a SkColorSpace to a ColorSpace is
@@ -159,6 +145,38 @@ TEST(ColorSpace, ConversionToAndFromSkColorSpace) {
     EXPECT_TRUE(SkColorSpace::Equals(
         sk_color_spaces[i].get(), from_sk_color_space.ToSkColorSpace().get()));
   }
+}
+
+TEST(ColorSpace, MixedInvalid) {
+  ColorSpace color_space;
+  color_space = color_space.GetWithMatrixAndRange(ColorSpace::MatrixID::INVALID,
+                                                  ColorSpace::RangeID::INVALID);
+  EXPECT_TRUE(!color_space.IsValid());
+  color_space = color_space.GetWithMatrixAndRange(
+      ColorSpace::MatrixID::SMPTE170M, ColorSpace::RangeID::LIMITED);
+  EXPECT_TRUE(!color_space.IsValid());
+}
+
+TEST(ColorSpace, MixedSRGBWithRec601) {
+  const ColorSpace expected_color_space = ColorSpace(
+      ColorSpace::PrimaryID::BT709, ColorSpace::TransferID::IEC61966_2_1,
+      ColorSpace::MatrixID::SMPTE170M, ColorSpace::RangeID::LIMITED);
+  ColorSpace color_space = ColorSpace::CreateSRGB();
+  color_space = color_space.GetWithMatrixAndRange(
+      ColorSpace::MatrixID::SMPTE170M, ColorSpace::RangeID::LIMITED);
+  EXPECT_TRUE(expected_color_space.IsValid());
+  EXPECT_EQ(color_space, expected_color_space);
+}
+
+TEST(ColorSpace, MixedHDR10WithRec709) {
+  const ColorSpace expected_color_space = ColorSpace(
+      ColorSpace::PrimaryID::BT2020, ColorSpace::TransferID::SMPTEST2084,
+      ColorSpace::MatrixID::BT709, ColorSpace::RangeID::LIMITED);
+  ColorSpace color_space = ColorSpace::CreateHDR10();
+  color_space = color_space.GetWithMatrixAndRange(ColorSpace::MatrixID::BT709,
+                                                  ColorSpace::RangeID::LIMITED);
+  EXPECT_TRUE(expected_color_space.IsValid());
+  EXPECT_EQ(color_space, expected_color_space);
 }
 
 }  // namespace

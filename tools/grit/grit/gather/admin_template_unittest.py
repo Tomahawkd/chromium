@@ -5,14 +5,16 @@
 
 '''Unit tests for the admin template gatherer.'''
 
+from __future__ import print_function
+
 import os
 import sys
 if __name__ == '__main__':
   sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
-import StringIO
-import tempfile
 import unittest
+
+from six import StringIO
 
 from grit.gather import admin_template
 from grit import util
@@ -23,7 +25,7 @@ from grit.tool import build
 
 class AdmGathererUnittest(unittest.TestCase):
   def testParsingAndTranslating(self):
-    pseudofile = StringIO.StringIO(
+    pseudofile = StringIO(
       'bingo bongo\n'
       'ding dong\n'
       '[strings] \n'
@@ -39,7 +41,7 @@ class AdmGathererUnittest(unittest.TestCase):
     self.failUnless(translation == gatherer.GetText().strip())
 
   def testErrorHandling(self):
-    pseudofile = StringIO.StringIO(
+    pseudofile = StringIO(
       'bingo bongo\n'
       'ding dong\n'
       'whatcha="bingo bongo"\n'
@@ -71,7 +73,7 @@ class AdmGathererUnittest(unittest.TestCase):
     self.VerifyCliquesFromAdmFile(cliques)
 
   def MakeGrd(self):
-    grd = grd_reader.Parse(StringIO.StringIO('''<?xml version="1.0" encoding="UTF-8"?>
+    grd = grd_reader.Parse(StringIO('''<?xml version="1.0" encoding="UTF-8"?>
       <grit latest_public_release="2" source_lang_id="en-US" current_release="3">
         <release seq="3">
           <structures>
@@ -96,22 +98,18 @@ class AdmGathererUnittest(unittest.TestCase):
 
   def testFileIsOutput(self):
     grd = self.MakeGrd()
-    dirname = tempfile.mkdtemp()
+    dirname = util.TempDir({})
     try:
       tool = build.RcBuilder()
       tool.o = grit_runner.Options()
-      tool.output_directory = dirname
+      tool.output_directory = dirname.GetPath()
       tool.res = grd
       tool.Process()
 
-      self.failUnless(os.path.isfile(
-        os.path.join(dirname, 'de_GoogleDesktop.adm')))
-      self.failUnless(os.path.isfile(
-        os.path.join(dirname, 'de_README.txt')))
+      self.failUnless(os.path.isfile(dirname.GetPath('de_GoogleDesktop.adm')))
+      self.failUnless(os.path.isfile(dirname.GetPath('de_README.txt')))
     finally:
-      for f in os.listdir(dirname):
-        os.unlink(os.path.join(dirname, f))
-      os.rmdir(dirname)
+      dirname.CleanUp()
 
 if __name__ == '__main__':
   unittest.main()

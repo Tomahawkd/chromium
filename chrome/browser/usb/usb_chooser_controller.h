@@ -16,9 +16,9 @@
 #include "base/scoped_observer.h"
 #include "chrome/browser/chooser_controller/chooser_controller.h"
 #include "chrome/browser/usb/usb_chooser_context.h"
-#include "device/usb/public/mojom/device.mojom.h"
+#include "services/device/public/mojom/usb_device.mojom.h"
 #include "third_party/blink/public/mojom/usb/web_usb_service.mojom.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 class RenderFrameHost;
@@ -28,7 +28,7 @@ class WebContents;
 // UsbChooserController creates a chooser for WebUSB.
 // It is owned by ChooserBubbleDelegate.
 class UsbChooserController : public ChooserController,
-                             public UsbChooserContext::Observer {
+                             public UsbChooserContext::DeviceObserver {
  public:
   UsbChooserController(
       content::RenderFrameHost* render_frame_host,
@@ -47,7 +47,7 @@ class UsbChooserController : public ChooserController,
   void Close() override;
   void OpenHelpCenterUrl() const override;
 
-  // UsbChooserContext::Observer implementation:
+  // UsbChooserContext::DeviceObserver implementation:
   void OnDeviceAdded(const device::mojom::UsbDeviceInfo& device_info) override;
   void OnDeviceRemoved(
       const device::mojom::UsbDeviceInfo& device_info) override;
@@ -59,18 +59,19 @@ class UsbChooserController : public ChooserController,
 
   std::vector<device::mojom::UsbDeviceFilterPtr> filters_;
   blink::mojom::WebUsbService::GetPermissionCallback callback_;
-  GURL requesting_origin_;
-  GURL embedding_origin_;
+  url::Origin requesting_origin_;
+  url::Origin embedding_origin_;
 
   content::WebContents* const web_contents_;
   base::WeakPtr<UsbChooserContext> chooser_context_;
-  ScopedObserver<UsbChooserContext, UsbChooserContext::Observer> observer_;
+  ScopedObserver<UsbChooserContext, UsbChooserContext::DeviceObserver>
+      observer_;
 
   // Each pair is a (device guid, device name).
   std::vector<std::pair<std::string, base::string16>> devices_;
   // Maps from device name to number of devices.
   std::unordered_map<base::string16, int> device_name_map_;
-  base::WeakPtrFactory<UsbChooserController> weak_factory_;
+  base::WeakPtrFactory<UsbChooserController> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UsbChooserController);
 };

@@ -13,11 +13,11 @@
 
 #include "base/files/file_path.h"
 #include "base/i18n/rtl.h"
-#include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/font.h"
@@ -43,6 +43,9 @@ struct Testcase {
 struct FileTestcase {
   const base::FilePath::StringType input;
   const std::string output;
+  // If this value is specified, we will try to cut the path down to the render
+  // width of this string; if not specified, output will be used.
+  const std::string using_width_of = std::string();
 };
 
 struct UTF16Testcase {
@@ -104,7 +107,7 @@ TEST(TextEliderTest, ElideEmail) {
   };
 
   const FontList font_list;
-  for (size_t i = 0; i < arraysize(testcases); ++i) {
+  for (size_t i = 0; i < base::size(testcases); ++i) {
     const base::string16 expected_output = UTF8ToUTF16(testcases[i].output);
     EXPECT_EQ(expected_output,
               ElideText(UTF8ToUTF16(testcases[i].input), font_list,
@@ -114,12 +117,12 @@ TEST(TextEliderTest, ElideEmail) {
 }
 
 TEST(TextEliderTest, ElideEmailMoreSpace) {
-  const int test_width_factors[] = {
-      100,
-      10000,
-      1000000,
+  const int test_widths_extra_spaces[] = {
+      10,
+      1000,
+      100000,
   };
-  const std::string test_emails[] = {
+  const char* test_emails[] = {
       "a@c",
       "test@email.com",
       "short@verysuperdupperlongdomain.com",
@@ -127,14 +130,14 @@ TEST(TextEliderTest, ElideEmailMoreSpace) {
   };
 
   const FontList font_list;
-  for (size_t i = 0; i < arraysize(test_width_factors); ++i) {
-    const int test_width =
-        font_list.GetExpectedTextWidth(test_width_factors[i]);
-    for (size_t j = 0; j < arraysize(test_emails); ++j) {
+  for (const auto* test_email : test_emails) {
+    const base::string16 test_email16 = UTF8ToUTF16(test_email);
+    const int mimimum_width = GetStringWidth(test_email16, font_list);
+    for (int extra_space : test_widths_extra_spaces) {
       // Extra space is available: the email should not be elided.
-      const base::string16 test_email = UTF8ToUTF16(test_emails[j]);
-      EXPECT_EQ(test_email,
-                ElideText(test_email, font_list, test_width, ELIDE_EMAIL));
+      EXPECT_EQ(test_email16,
+                ElideText(test_email16, font_list, mimimum_width + extra_space,
+                          ELIDE_EMAIL));
     }
   }
 }
@@ -145,49 +148,50 @@ TEST(TextEliderTest, TestFilenameEliding) {
       base::FilePath::StringType().append(1, base::FilePath::kSeparators[0]);
 
   FileTestcase testcases[] = {
-    {FILE_PATH_LITERAL(""), ""},
-    {FILE_PATH_LITERAL("."), "."},
-    {FILE_PATH_LITERAL("filename.exe"), "filename.exe"},
-    {FILE_PATH_LITERAL(".longext"), ".longext"},
-    {FILE_PATH_LITERAL("pie"), "pie"},
-    {FILE_PATH_LITERAL("c:") + kPathSeparator + FILE_PATH_LITERAL("path") +
-      kPathSeparator + FILE_PATH_LITERAL("filename.pie"),
-      "filename.pie"},
-    {FILE_PATH_LITERAL("c:") + kPathSeparator + FILE_PATH_LITERAL("path") +
-      kPathSeparator + FILE_PATH_LITERAL("longfilename.pie"),
-      "long" + kEllipsisStr + ".pie"},
-    {FILE_PATH_LITERAL("http://path.com/filename.pie"), "filename.pie"},
-    {FILE_PATH_LITERAL("http://path.com/longfilename.pie"),
-      "long" + kEllipsisStr + ".pie"},
-    {FILE_PATH_LITERAL("piesmashingtacularpants"), "pie" + kEllipsisStr},
-    {FILE_PATH_LITERAL(".piesmashingtacularpants"), ".pie" + kEllipsisStr},
-    {FILE_PATH_LITERAL("cheese."), "cheese."},
-    {FILE_PATH_LITERAL("file name.longext"),
-      "file" + kEllipsisStr + ".longext"},
-    {FILE_PATH_LITERAL("fil ename.longext"),
-      "fil " + kEllipsisStr + ".longext"},
-    {FILE_PATH_LITERAL("filename.longext"),
-      "file" + kEllipsisStr + ".longext"},
-    {FILE_PATH_LITERAL("filename.middleext.longext"),
-      "filename.mid" + kEllipsisStr + ".longext"},
-    {FILE_PATH_LITERAL("filename.superduperextremelylongext"),
-      "filename.sup" + kEllipsisStr + "emelylongext"},
-    {FILE_PATH_LITERAL("filenamereallylongtext.superduperextremelylongext"),
-      "filenamereall" + kEllipsisStr + "emelylongext"},
-    {FILE_PATH_LITERAL("file.name.really.long.text.superduperextremelylongext"),
-      "file.name.re" + kEllipsisStr + "emelylongext"}
-  };
+      {FILE_PATH_LITERAL(""), ""},
+      {FILE_PATH_LITERAL("."), "."},
+      {FILE_PATH_LITERAL("filename.exe"), "filename.exe"},
+      {FILE_PATH_LITERAL(".longext"), ".longext"},
+      {FILE_PATH_LITERAL("pie"), "pie"},
+      {FILE_PATH_LITERAL("c:") + kPathSeparator + FILE_PATH_LITERAL("path") +
+           kPathSeparator + FILE_PATH_LITERAL("filename.pie"),
+       "filename.pie"},
+      {FILE_PATH_LITERAL("c:") + kPathSeparator + FILE_PATH_LITERAL("path") +
+           kPathSeparator + FILE_PATH_LITERAL("longfilename.pie"),
+       "long" + kEllipsisStr + ".pie"},
+      {FILE_PATH_LITERAL("http://path.com/filename.pie"), "filename.pie"},
+      {FILE_PATH_LITERAL("http://path.com/longfilename.pie"),
+       "long" + kEllipsisStr + ".pie"},
+      {FILE_PATH_LITERAL("piesmashingtacularpants"), "pie" + kEllipsisStr},
+      {FILE_PATH_LITERAL(".piesmashingtacularpants"), ".pie" + kEllipsisStr},
+      {FILE_PATH_LITERAL("cheese."), "cheese."},
+      {FILE_PATH_LITERAL("file name.longext"),
+       "file" + kEllipsisStr + ".longext"},
+      {FILE_PATH_LITERAL("fil ename.longext"),
+       "fil" + kEllipsisStr + ".longext", "fil " + kEllipsisStr + ".longext"},
+      {FILE_PATH_LITERAL("filename.longext"),
+       "file" + kEllipsisStr + ".longext"},
+      {FILE_PATH_LITERAL("filename.middleext.longext"),
+       "filename.mid" + kEllipsisStr + ".longext"},
+      {FILE_PATH_LITERAL("filename.superduperextremelylongext"),
+       "filename.sup" + kEllipsisStr + "emelylongext"},
+      {FILE_PATH_LITERAL("filenamereallylongtext.superdeduperextremelylongext"),
+       "filenamereall" + kEllipsisStr + "emelylongext"},
+      {FILE_PATH_LITERAL(
+           "file.name.really.long.text.superduperextremelylongext"),
+       "file.name.re" + kEllipsisStr + "emelylongext"}};
 
   static const FontList font_list;
-  for (size_t i = 0; i < arraysize(testcases); ++i) {
+  for (size_t i = 0; i < base::size(testcases); ++i) {
     base::FilePath filepath(testcases[i].input);
     base::string16 expected = UTF8ToUTF16(testcases[i].output);
+    base::string16 using_width_of = UTF8ToUTF16(
+        testcases[i].using_width_of.empty() ? testcases[i].output
+                                            : testcases[i].using_width_of);
     expected = base::i18n::GetDisplayStringInLTRDirectionality(expected);
     EXPECT_EQ(expected,
-              ElideFilename(
-                  filepath, font_list,
-                  GetStringWidthF(UTF8ToUTF16(testcases[i].output), font_list),
-                  Typesetter::DEFAULT));
+              ElideFilename(filepath, font_list,
+                            GetStringWidthF(using_width_of, font_list)));
   }
 }
 
@@ -207,7 +211,7 @@ TEST(TextEliderTest, ElideTextTruncate) {
     { "Tests", kTestWidth, "Test" },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     base::string16 result = ElideText(UTF8ToUTF16(cases[i].input), font_list,
                                       cases[i].width, TRUNCATE);
     EXPECT_EQ(cases[i].output, UTF16ToUTF8(result));
@@ -233,7 +237,7 @@ TEST(TextEliderTest, ElideTextEllipsis) {
     { "Test", kTestWidth, "Test" },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     base::string16 result = ElideText(UTF8ToUTF16(cases[i].input), font_list,
                                       cases[i].width, ELIDE_TAIL);
     EXPECT_EQ(cases[i].output, UTF16ToUTF8(result));
@@ -262,7 +266,7 @@ TEST(TextEliderTest, ElideTextEllipsisFront) {
     { "Test123", kEllipsis23Width, UTF8ToUTF16(kEllipsisStr + "23") },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     base::string16 result = ElideText(UTF8ToUTF16(cases[i].input), font_list,
                                       cases[i].width, ELIDE_HEAD);
     EXPECT_EQ(cases[i].output, result);
@@ -289,7 +293,8 @@ static void CheckCodeUnitPairs(const base::string16& text,
 TEST(TextEliderTest, ElideTextAtomicSequences) {
 #if defined(OS_WIN)
   // Needed to bypass DCHECK in GetFallbackFont.
-  base::MessageLoopForUI message_loop;
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
 #endif
   const FontList font_list;
   // The below is 'MUSICAL SYMBOL G CLEF' (U+1D11E), which is represented in
@@ -357,7 +362,7 @@ TEST(TextEliderTest, ElideTextLongStrings) {
 
   const FontList font_list;
   float ellipsis_width = GetStringWidthF(kEllipsisStr, font_list);
-  for (size_t i = 0; i < arraysize(testcases_end); ++i) {
+  for (size_t i = 0; i < base::size(testcases_end); ++i) {
     // Compare sizes rather than actual contents because if the test fails,
     // output is rather long.
     EXPECT_EQ(testcases_end[i].output.size(),
@@ -382,7 +387,7 @@ TEST(TextEliderTest, ElideTextLongStrings) {
      { data_scheme + million_a,          long_string_middle },
   };
 
-  for (size_t i = 0; i < arraysize(testcases_middle); ++i) {
+  for (size_t i = 0; i < base::size(testcases_middle); ++i) {
     // Compare sizes rather than actual contents because if the test fails,
     // output is rather long.
     EXPECT_EQ(testcases_middle[i].output.size(),
@@ -404,7 +409,7 @@ TEST(TextEliderTest, ElideTextLongStrings) {
      { data_scheme + hundred_thousand_a, long_string_beginning },
      { data_scheme + million_a,          long_string_beginning },
   };
-  for (size_t i = 0; i < arraysize(testcases_beginning); ++i) {
+  for (size_t i = 0; i < base::size(testcases_beginning); ++i) {
     EXPECT_EQ(testcases_beginning[i].output.size(),
               ElideText(
                   testcases_beginning[i].input, font_list,
@@ -445,6 +450,168 @@ TEST(TextEliderTest, StringSlicerBasicTest) {
             slicer_mid.CutString(5, true));
 }
 
+TEST(TextEliderTest, StringSlicerWhitespace_UseDefault) {
+  // Must store strings in variables (StringSlicer retains a reference to them).
+  base::string16 text(UTF8ToUTF16("Hello, world!"));
+  base::string16 ellipsis(kEllipsisUTF16);
+
+  // Eliding the end of a string should result in whitespace being removed
+  // before the ellipsis by default.
+  StringSlicer slicer_end(text, ellipsis, false, false);
+  EXPECT_EQ(UTF8ToUTF16("Hello,") + kEllipsisUTF16,
+            slicer_end.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hello,") + kEllipsisUTF16,
+            slicer_end.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hello, w") + kEllipsisUTF16,
+            slicer_end.CutString(8, true));
+
+  // Eliding the start of a string should result in whitespace being removed
+  // after the ellipsis by default.
+  StringSlicer slicer_begin(text, ellipsis, false, true);
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16("world!"),
+            slicer_begin.CutString(6, true));
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16("world!"),
+            slicer_begin.CutString(7, true));
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16(", world!"),
+            slicer_begin.CutString(8, true));
+
+  // Eliding the middle of a string should *NOT* result in whitespace being
+  // removed around the ellipsis by default.
+  StringSlicer slicer_mid(text, ellipsis, true, false);
+  text = UTF8ToUTF16("Hey world!");
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("ld!"),
+            slicer_mid.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16("ld!"),
+            slicer_mid.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16("rld!"),
+            slicer_mid.CutString(8, true));
+}
+
+TEST(TextEliderTest, StringSlicerWhitespace_NoTrim) {
+  // Must store strings in variables (StringSlicer retains a reference to them).
+  base::string16 text(UTF8ToUTF16("Hello, world!"));
+  base::string16 ellipsis(kEllipsisUTF16);
+
+  // Eliding the end of a string should not result in whitespace being removed
+  // before the ellipsis in no-trim mode.
+  StringSlicer slicer_end(text, ellipsis, false, false, false);
+  EXPECT_EQ(UTF8ToUTF16("Hello,") + kEllipsisUTF16,
+            slicer_end.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hello, ") + kEllipsisUTF16,
+            slicer_end.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hello, w") + kEllipsisUTF16,
+            slicer_end.CutString(8, true));
+
+  // Eliding the start of a string should not result in whitespace being removed
+  // after the ellipsis in no-trim mode.
+  StringSlicer slicer_begin(text, ellipsis, false, true, false);
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16("world!"),
+            slicer_begin.CutString(6, true));
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16(" world!"),
+            slicer_begin.CutString(7, true));
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16(", world!"),
+            slicer_begin.CutString(8, true));
+
+  // Eliding the middle of a string should *NOT* result in whitespace being
+  // removed around the ellipsis in no-trim mode.
+  StringSlicer slicer_mid(text, ellipsis, true, false, false);
+  text = UTF8ToUTF16("Hey world!");
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("ld!"),
+            slicer_mid.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16("ld!"),
+            slicer_mid.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16("rld!"),
+            slicer_mid.CutString(8, true));
+}
+
+TEST(TextEliderTest, StringSlicerWhitespace_Trim) {
+  // Must store strings in variables (StringSlicer retains a reference to them).
+  base::string16 text(UTF8ToUTF16("Hello, world!"));
+  base::string16 ellipsis(kEllipsisUTF16);
+
+  // Eliding the end of a string should result in whitespace being removed
+  // before the ellipsis in trim mode.
+  StringSlicer slicer_end(text, ellipsis, false, false, true);
+  EXPECT_EQ(UTF8ToUTF16("Hello,") + kEllipsisUTF16,
+            slicer_end.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hello,") + kEllipsisUTF16,
+            slicer_end.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hello, w") + kEllipsisUTF16,
+            slicer_end.CutString(8, true));
+
+  // Eliding the start of a string should result in whitespace being removed
+  // after the ellipsis in trim mode.
+  StringSlicer slicer_begin(text, ellipsis, false, true, true);
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16("world!"),
+            slicer_begin.CutString(6, true));
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16("world!"),
+            slicer_begin.CutString(7, true));
+  EXPECT_EQ(kEllipsisUTF16 + UTF8ToUTF16(", world!"),
+            slicer_begin.CutString(8, true));
+
+  // Eliding the middle of a string *should* result in whitespace being removed
+  // around the ellipsis in trim mode.
+  StringSlicer slicer_mid(text, ellipsis, true, false, true);
+  text = UTF8ToUTF16("Hey world!");
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("ld!"),
+            slicer_mid.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("ld!"),
+            slicer_mid.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("rld!"),
+            slicer_mid.CutString(8, true));
+}
+
+TEST(TextEliderTest, StringSlicer_ElideMiddle_MultipleWhitespace) {
+  // Must store strings in variables (StringSlicer retains a reference to them).
+  base::string16 text(UTF8ToUTF16("Hello  world!"));
+  base::string16 ellipsis(kEllipsisUTF16);
+
+  // Eliding the middle of a string should not result in whitespace being
+  // removed around the ellipsis in default whitespace mode.
+  StringSlicer slicer_default(text, ellipsis, true, false);
+  text = UTF8ToUTF16("Hey  U  man");
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_default.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_default.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16(" man"),
+            slicer_default.CutString(8, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey  ") + kEllipsisUTF16 + UTF8ToUTF16(" man"),
+            slicer_default.CutString(9, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey  ") + kEllipsisUTF16 + UTF8ToUTF16("  man"),
+            slicer_default.CutString(10, true));
+
+  // Eliding the middle of a string should not result in whitespace being
+  // removed around the ellipsis in no-trim mode.
+  StringSlicer slicer_notrim(text, ellipsis, true, false, false);
+  text = UTF8ToUTF16("Hey  U  man");
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_notrim.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_notrim.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey ") + kEllipsisUTF16 + UTF8ToUTF16(" man"),
+            slicer_notrim.CutString(8, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey  ") + kEllipsisUTF16 + UTF8ToUTF16(" man"),
+            slicer_notrim.CutString(9, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey  ") + kEllipsisUTF16 + UTF8ToUTF16("  man"),
+            slicer_notrim.CutString(10, true));
+
+  // Eliding the middle of a string *should* result in whitespace being removed
+  // around the ellipsis in trim mode.
+  StringSlicer slicer_trim(text, ellipsis, true, false, true);
+  text = UTF8ToUTF16("Hey  U  man");
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_trim.CutString(6, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_trim.CutString(7, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_trim.CutString(8, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_trim.CutString(9, true));
+  EXPECT_EQ(UTF8ToUTF16("Hey") + kEllipsisUTF16 + UTF8ToUTF16("man"),
+            slicer_trim.CutString(10, true));
+}
+
 TEST(TextEliderTest, StringSlicerSurrogate) {
   // The below is 'MUSICAL SYMBOL G CLEF' (U+1D11E), which is represented in
   // UTF-16 as two code units forming a surrogate pair: 0xD834 0xDD1E.
@@ -458,9 +625,9 @@ TEST(TextEliderTest, StringSlicerSurrogate) {
   EXPECT_EQ(UTF8ToUTF16("abc") + kEllipsisUTF16, slicer.CutString(4, true));
   EXPECT_EQ(text + kEllipsisUTF16, slicer.CutString(text.length(), true));
 
-  // Cut surrogate on the left. Should round left and include the surrogate.
+  // Cut surrogate on the left. Should round right and exclude the surrogate.
   StringSlicer slicer_begin(text, ellipsis, false, true);
-  EXPECT_EQ(base::string16(kEllipsisUTF16) + kSurrogate + UTF8ToUTF16("xyz"),
+  EXPECT_EQ(base::string16(kEllipsisUTF16) + UTF8ToUTF16("xyz"),
             slicer_begin.CutString(4, true));
 
   // Cut surrogate in the middle. Should round right and exclude the surrogate.
@@ -493,18 +660,20 @@ TEST(TextEliderTest, StringSlicerCombining) {
 
   // Attempt to cut the string for all lengths. When a combining sequence is
   // cut, it should always round left and exclude the combining sequence.
+  // Whitespace is also cut adjacent to the ellipsis.
+
   // First sequence:
   EXPECT_EQ(base::string16(kEllipsisUTF16), slicer.CutString(0, true));
   EXPECT_EQ(base::string16(kEllipsisUTF16), slicer.CutString(1, true));
   EXPECT_EQ(base::string16(kEllipsisUTF16), slicer.CutString(2, true));
   EXPECT_EQ(text.substr(0, 3) + kEllipsisUTF16, slicer.CutString(3, true));
   // Second sequence:
-  EXPECT_EQ(text.substr(0, 4) + kEllipsisUTF16, slicer.CutString(4, true));
-  EXPECT_EQ(text.substr(0, 4) + kEllipsisUTF16, slicer.CutString(5, true));
+  EXPECT_EQ(text.substr(0, 3) + kEllipsisUTF16, slicer.CutString(4, true));
+  EXPECT_EQ(text.substr(0, 3) + kEllipsisUTF16, slicer.CutString(5, true));
   EXPECT_EQ(text.substr(0, 6) + kEllipsisUTF16, slicer.CutString(6, true));
   // Third sequence:
-  EXPECT_EQ(text.substr(0, 7) + kEllipsisUTF16, slicer.CutString(7, true));
-  EXPECT_EQ(text.substr(0, 7) + kEllipsisUTF16, slicer.CutString(8, true));
+  EXPECT_EQ(text.substr(0, 6) + kEllipsisUTF16, slicer.CutString(7, true));
+  EXPECT_EQ(text.substr(0, 6) + kEllipsisUTF16, slicer.CutString(8, true));
   EXPECT_EQ(text + kEllipsisUTF16, slicer.CutString(9, true));
 
   // Cut string in the middle, splitting the second sequence in half. Should
@@ -565,7 +734,7 @@ TEST(TextEliderTest, ElideString) {
     { "Hello, my name is Tom", 10, true, "Hell...Tom" },
     { "Hello, my name is Tom", 100, false, "Hello, my name is Tom" }
   };
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     base::string16 output;
     EXPECT_EQ(cases[i].result,
               ElideString(UTF8ToUTF16(cases[i].input),
@@ -613,7 +782,7 @@ TEST(TextEliderTest, ElideRectangleText) {
     { "Te  Te Test", test_width, 3 * line_height, false, "Te|Te|Test" },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     std::vector<base::string16> lines;
     EXPECT_EQ(cases[i].truncated_y ? INSUFFICIENT_SPACE_VERTICAL : 0,
               ElideRectangleText(UTF8ToUTF16(cases[i].input),
@@ -705,7 +874,7 @@ TEST(TextEliderTest, ElideRectangleTextPunctuation) {
     { "Test. Test", test_width, line_height * 3, true, false, "Test|.|Test" },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     std::vector<base::string16> lines;
     const WordWrapBehavior wrap_behavior =
         (cases[i].wrap_words ? WRAP_LONG_WORDS : TRUNCATE_LONG_WORDS);
@@ -771,7 +940,7 @@ TEST(TextEliderTest, ElideRectangleTextLongWords) {
     { "TestTestTestT", test_width, WRAP_LONG_WORDS, false, "Test|Test|Test|T" },
   };
 
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     std::vector<base::string16> lines;
     EXPECT_EQ(
         cases[i].truncated_x ? INSUFFICIENT_SPACE_HORIZONTAL : 0,
@@ -904,7 +1073,7 @@ TEST(TextEliderTest, ElideRectangleString) {
     { "Hi, my name is Tom",  1, 40, false, "Hi, my name is Tom" },
   };
   base::string16 output;
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     EXPECT_EQ(cases[i].result,
               ElideRectangleString(UTF8ToUTF16(cases[i].input),
                                    cases[i].max_rows, cases[i].max_cols,
@@ -986,7 +1155,7 @@ TEST(TextEliderTest, ElideRectangleStringNotStrict) {
     { "Hi, my name_is Dick",  1, 40, false, "Hi, my name_is Dick" },
   };
   base::string16 output;
-  for (size_t i = 0; i < arraysize(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     EXPECT_EQ(cases[i].result,
               ElideRectangleString(UTF8ToUTF16(cases[i].input),
                                    cases[i].max_rows, cases[i].max_cols,

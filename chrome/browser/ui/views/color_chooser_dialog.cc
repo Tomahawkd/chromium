@@ -9,8 +9,8 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -24,12 +24,14 @@ using content::BrowserThread;
 // static
 COLORREF ColorChooserDialog::g_custom_colors[16];
 
-ColorChooserDialog::ColorChooserDialog(views::ColorChooserListener* listener,
-                                       SkColor initial_color,
-                                       gfx::NativeWindow owning_window)
+ColorChooserDialog::ColorChooserDialog(views::ColorChooserListener* listener)
     : listener_(listener) {
   DCHECK(listener_);
   CopyCustomColors(g_custom_colors, custom_colors_);
+}
+
+void ColorChooserDialog::Open(SkColor initial_color,
+                              gfx::NativeWindow owning_window) {
   HWND owning_hwnd = views::HWNDForNativeWindow(owning_window);
 
   std::unique_ptr<RunState> run_state = BeginRun(owning_hwnd);
@@ -65,11 +67,10 @@ void ColorChooserDialog::ExecuteOpen(SkColor color,
   cc.Flags = CC_ANYCOLOR | CC_FULLOPEN | CC_RGBINIT;
   bool success = !!ChooseColor(&cc);
   DisableOwner(cc.hwndOwner);
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&ColorChooserDialog::DidCloseDialog, this, success,
-                     skia::COLORREFToSkColor(cc.rgbResult),
-                     std::move(run_state)));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&ColorChooserDialog::DidCloseDialog, this,
+                                success, skia::COLORREFToSkColor(cc.rgbResult),
+                                std::move(run_state)));
 }
 
 void ColorChooserDialog::DidCloseDialog(bool chose_color,
@@ -85,5 +86,5 @@ void ColorChooserDialog::DidCloseDialog(bool chose_color,
 }
 
 void ColorChooserDialog::CopyCustomColors(COLORREF* src, COLORREF* dst) {
-  memcpy(dst, src, sizeof(COLORREF) * arraysize(g_custom_colors));
+  memcpy(dst, src, sizeof(COLORREF) * base::size(g_custom_colors));
 }

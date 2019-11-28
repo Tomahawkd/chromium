@@ -20,6 +20,18 @@ Polymer({
       value: 'ltr',
       reflectToAttribute: true,
     },
+
+    /**
+     * An iron-icon resource name, e.g. "cr20:menu". If null, no icon will
+     * be shown.
+     */
+    iconName: {
+      type: String,
+      value: null,
+    },
+
+    /** Title attribute for the icon, if shown. */
+    iconTitle: String,
   },
 
   /** @type {boolean} */
@@ -33,16 +45,18 @@ Polymer({
 
   /** Toggles the drawer open and close. */
   toggle: function() {
-    if (this.open)
+    if (this.open) {
       this.cancel();
-    else
+    } else {
       this.openDrawer();
+    }
   },
 
   /** Shows drawer and slides it into view. */
   openDrawer: function() {
-    if (this.open)
+    if (this.open) {
       return;
+    }
     this.$.dialog.showModal();
     this.show_ = true;
     this.fire('cr-drawer-opening');
@@ -58,8 +72,9 @@ Polymer({
    * @param {boolean} cancel
    */
   dismiss_: function(cancel) {
-    if (!this.open)
+    if (!this.open) {
       return;
+    }
     this.show_ = false;
     listenOnce(this.$.dialog, 'transitionend', () => {
       this.$.dialog.close(cancel ? 'canceled' : 'closed');
@@ -77,6 +92,15 @@ Polymer({
   /** @return {boolean} */
   wasCanceled: function() {
     return !this.open && this.$.dialog.returnValue == 'canceled';
+  },
+
+  /**
+   * Handles a tap on the (optional) icon.
+   * @param {!Event} event
+   * @private
+   */
+  onIconTap_: function(event) {
+    this.cancel();
   },
 
   /**

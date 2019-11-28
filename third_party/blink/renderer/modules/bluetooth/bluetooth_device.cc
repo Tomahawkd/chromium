@@ -12,11 +12,11 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_attribute_instance_map.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_error.h"
 #include "third_party/blink/renderer/modules/bluetooth/bluetooth_remote_gatt_server.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
@@ -27,17 +27,8 @@ BluetoothDevice::BluetoothDevice(ExecutionContext* context,
       attribute_instance_map_(
           MakeGarbageCollected<BluetoothAttributeInstanceMap>(this)),
       device_(std::move(device)),
-      gatt_(BluetoothRemoteGATTServer::Create(context, this)),
+      gatt_(MakeGarbageCollected<BluetoothRemoteGATTServer>(context, this)),
       bluetooth_(bluetooth) {}
-
-// static
-BluetoothDevice* BluetoothDevice::Take(
-    ScriptPromiseResolver* resolver,
-    mojom::blink::WebBluetoothDevicePtr device,
-    Bluetooth* bluetooth) {
-  return MakeGarbageCollected<BluetoothDevice>(resolver->GetExecutionContext(),
-                                               std::move(device), bluetooth);
-}
 
 BluetoothRemoteGATTService* BluetoothDevice::GetOrCreateRemoteGATTService(
     mojom::blink::WebBluetoothRemoteGATTServicePtr service,

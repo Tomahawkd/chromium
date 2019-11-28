@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/i18n/rtl.h"
 #include "chrome/browser/browser_process.h"
@@ -20,7 +21,6 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/font_list_async.h"
 #include "content/public/browser/web_ui.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension_urls.h"
 
@@ -38,9 +38,7 @@ const char kAdvancedFontSettingsExtensionId[] =
 namespace settings {
 
 FontHandler::FontHandler(content::WebUI* webui)
-    : extension_registry_observer_(this),
-      profile_(Profile::FromWebUI(webui)),
-      weak_ptr_factory_(this) {
+    : profile_(Profile::FromWebUI(webui)) {
 #if defined(OS_MACOSX)
   // Perform validation for saved fonts.
   settings_utils::ValidateSavedFonts(profile_->GetPrefs());
@@ -104,14 +102,14 @@ const extensions::Extension* FontHandler::GetAdvancedFontSettingsExtension() {
       extensions::ExtensionSystem::Get(profile_)->extension_service();
   if (!service->IsExtensionEnabled(kAdvancedFontSettingsExtensionId))
     return nullptr;
-  return service->GetInstalledExtension(kAdvancedFontSettingsExtensionId);
+  extensions::ExtensionRegistry* registry =
+      extensions::ExtensionRegistry::Get(profile_);
+  return registry->GetInstalledExtension(kAdvancedFontSettingsExtensionId);
 }
 
 void FontHandler::NotifyAdvancedFontSettingsAvailability() {
-  CallJavascriptFunction(
-      "cr.webUIListenerCallback",
-      base::Value("advanced-font-settings-installed"),
-      base::Value(GetAdvancedFontSettingsExtension() != nullptr));
+  FireWebUIListener("advanced-font-settings-installed",
+                    base::Value(GetAdvancedFontSettingsExtension() != nullptr));
 }
 
 void FontHandler::OnExtensionLoaded(content::BrowserContext*,

@@ -5,7 +5,6 @@
 #include "chromecast/base/cast_features.h"
 
 #include "base/macros.h"
-#include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/values.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -25,17 +24,22 @@ const char kTestParamsFeatureName[] = "test_params_feature";
 
 class CastFeaturesTest : public testing::Test {
  public:
-  CastFeaturesTest() : field_trial_list_(nullptr) {}
+  CastFeaturesTest() {}
   ~CastFeaturesTest() override {}
 
   // testing::Test implementation:
-  void SetUp() override { ResetCastFeaturesForTesting(); }
-  void TearDown() override { ResetCastFeaturesForTesting(); }
+  void SetUp() override {
+    original_feature_list_ = base::FeatureList::ClearInstanceForTesting();
+    ResetCastFeaturesForTesting();
+  }
+  void TearDown() override {
+    ResetCastFeaturesForTesting();
+    base::FeatureList::RestoreInstanceForTesting(
+        std::move(original_feature_list_));
+  }
 
  private:
-  // A field trial list must be created before attempting to create FieldTrials.
-  // In production, this instance lives in CastBrowserMainParts.
-  base::FieldTrialList field_trial_list_;
+  std::unique_ptr<base::FeatureList> original_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(CastFeaturesTest);
 };
@@ -63,7 +67,7 @@ TEST_F(CastFeaturesTest, EnableDisableMultipleBooleanFeatures) {
   features->SetBoolean(kTestBooleanFeatureName3, true);
   features->SetBoolean(kTestBooleanFeatureName4, true);
 
-  InitializeFeatureList(*features, *experiments, "", "", "");
+  InitializeFeatureList(*features, *experiments, "", "", "", "");
 
   // Test that features are properly enabled (they should match the
   // DCS config).
@@ -91,7 +95,7 @@ TEST_F(CastFeaturesTest, EnableSingleFeatureWithParams) {
   params->SetString("bool_key", "true");
   features->Set(kTestParamsFeatureName, std::move(params));
 
-  InitializeFeatureList(*features, *experiments, "", "", "");
+  InitializeFeatureList(*features, *experiments, "", "", "", "");
 
   // Test that this feature is enabled, and params are correct.
   ASSERT_TRUE(chromecast::IsFeatureEnabled(test_feature));
@@ -150,7 +154,7 @@ TEST_F(CastFeaturesTest, CommandLineOverridesDcsAndDefault) {
                                       .append(kTestParamsFeatureName);
 
   InitializeFeatureList(*features, *experiments, enabled_features,
-                        disabled_features, "");
+                        disabled_features, "", "");
 
   // Test that features are properly enabled (they should match the
   // DCS config).
@@ -170,7 +174,7 @@ TEST_F(CastFeaturesTest, SetEmptyExperiments) {
   auto experiments = std::make_unique<base::ListValue>();
   auto features = std::make_unique<base::DictionaryValue>();
 
-  InitializeFeatureList(*features, *experiments, "", "", "");
+  InitializeFeatureList(*features, *experiments, "", "", "", "");
   ASSERT_EQ(0u, GetDCSExperimentIds().size());
 }
 
@@ -186,7 +190,7 @@ TEST_F(CastFeaturesTest, SetGoodExperiments) {
     expected.insert(id);
   }
 
-  InitializeFeatureList(*features, *experiments, "", "", "");
+  InitializeFeatureList(*features, *experiments, "", "", "", "");
   ASSERT_EQ(expected, GetDCSExperimentIds());
 }
 
@@ -204,7 +208,7 @@ TEST_F(CastFeaturesTest, SetSomeGoodExperiments) {
   expected.insert(1234);
   expected.insert(1);
 
-  InitializeFeatureList(*features, *experiments, "", "", "");
+  InitializeFeatureList(*features, *experiments, "", "", "", "");
   ASSERT_EQ(expected, GetDCSExperimentIds());
 }
 
@@ -218,7 +222,7 @@ TEST_F(CastFeaturesTest, SetAllBadExperiments) {
 
   std::unordered_set<int32_t> expected;
 
-  InitializeFeatureList(*features, *experiments, "", "", "");
+  InitializeFeatureList(*features, *experiments, "", "", "", "");
   ASSERT_EQ(expected, GetDCSExperimentIds());
 }
 

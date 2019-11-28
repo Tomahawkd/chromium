@@ -4,76 +4,76 @@
 
 #include "android_webview/browser/aw_print_manager.h"
 
+#include <utility>
+
+#include "base/bind.h"
+#include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "components/printing/browser/print_manager_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/render_view_host.h"
 
 namespace android_webview {
 
-struct AwPrintManager::FrameDispatchHelper {
-  AwPrintManager* manager;
-  content::RenderFrameHost* render_frame_host;
+namespace {
 
-  bool Send(IPC::Message* msg) { return render_frame_host->Send(msg); }
-
-  void OnGetDefaultPrintSettings(IPC::Message* reply_msg) {
-    manager->OnGetDefaultPrintSettings(render_frame_host, reply_msg);
+int SaveDataToFd(int fd,
+                 int page_count,
+                 scoped_refptr<base::RefCountedSharedMemoryMapping> data) {
+  bool result = fd > base::kInvalidFd &&
+                base::IsValueInRangeForNumericType<int>(data->size());
+  if (result) {
+    int size = data->size();
+    result = base::WriteFileDescriptor(fd, data->front_as<char>(), size);
   }
+  return result ? page_count : 0;
+}
 
-  void OnScriptedPrint(const PrintHostMsg_ScriptedPrint_Params& scripted_params,
-                       IPC::Message* reply_msg) {
-    manager->OnScriptedPrint(render_frame_host, scripted_params, reply_msg);
-  }
-};
+}  // namespace
 
 // static
 AwPrintManager* AwPrintManager::CreateForWebContents(
     content::WebContents* contents,
-    const printing::PrintSettings& settings,
-    const base::FileDescriptor& file_descriptor,
+    std::unique_ptr<printing::PrintSettings> settings,
+    int file_descriptor,
     PrintManager::PdfWritingDoneCallback callback) {
   AwPrintManager* print_manager = new AwPrintManager(
-      contents, settings, file_descriptor, std::move(callback));
+      contents, std::move(settings), file_descriptor, std::move(callback));
   contents->SetUserData(UserDataKey(), base::WrapUnique(print_manager));
   return print_manager;
 }
 
-AwPrintManager::AwPrintManager(content::WebContents* contents,
-                               const printing::PrintSettings& settings,
-                               const base::FileDescriptor& file_descriptor,
-                               PdfWritingDoneCallback callback)
-    : PrintManager(contents), settings_(settings) {
-  set_file_descriptor(file_descriptor);
+AwPrintManager::AwPrintManager(
+    content::WebContents* contents,
+    std::unique_ptr<printing::PrintSettings> settings,
+    int file_descriptor,
+    PdfWritingDoneCallback callback)
+    : PrintManager(contents),
+      settings_(std::move(settings)),
+      fd_(file_descriptor) {
+  DCHECK(settings_);
   pdf_writing_done_callback_ = std::move(callback);
-  cookie_ = 1;
+  DCHECK(pdf_writing_done_callback_);
+  cookie_ = 1;  // Set a valid dummy cookie value.
 }
 
-AwPrintManager::~AwPrintManager() {
+AwPrintManager::~AwPrintManager() = default;
+
+void AwPrintManager::PdfWritingDone(int page_count) {
+  pdf_writing_done_callback_.Run(page_count);
+  // Invalidate the file descriptor so it doesn't get reused.
+  fd_ = -1;
 }
 
 bool AwPrintManager::PrintNow() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   auto* rfh = web_contents()->GetMainFrame();
-  return rfh->Send(new PrintMsg_PrintPages(rfh->GetRoutingID()));
-}
-
-bool AwPrintManager::OnMessageReceived(
-    const IPC::Message& message,
-    content::RenderFrameHost* render_frame_host) {
-  FrameDispatchHelper helper = {this, render_frame_host};
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(AwPrintManager, message)
-    IPC_MESSAGE_FORWARD_DELAY_REPLY(
-        PrintHostMsg_GetDefaultPrintSettings, &helper,
-        FrameDispatchHelper::OnGetDefaultPrintSettings)
-    IPC_MESSAGE_FORWARD_DELAY_REPLY(PrintHostMsg_ScriptedPrint, &helper,
-                                    FrameDispatchHelper::OnScriptedPrint)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled ? true
-                 : PrintManager::OnMessageReceived(message, render_frame_host);
+  GetPrintRenderFrame(rfh)->PrintRequestedPages();
+  return true;
 }
 
 void AwPrintManager::OnGetDefaultPrintSettings(
@@ -82,7 +82,7 @@ void AwPrintManager::OnGetDefaultPrintSettings(
   // Unlike the printing_message_filter, we do process this in UI thread.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   PrintMsg_Print_Params params;
-  printing::RenderParamsFromPrintSettings(settings_, &params);
+  printing::RenderParamsFromPrintSettings(*settings_, &params);
   params.document_cookie = cookie_;
   PrintHostMsg_GetDefaultPrintSettings::WriteReplyParams(reply_msg, params);
   render_frame_host->Send(reply_msg);
@@ -94,11 +94,56 @@ void AwPrintManager::OnScriptedPrint(
     IPC::Message* reply_msg) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   PrintMsg_PrintPages_Params params;
-  printing::RenderParamsFromPrintSettings(settings_, &params.params);
+  printing::RenderParamsFromPrintSettings(*settings_, &params.params);
   params.params.document_cookie = scripted_params.cookie;
-  params.pages = printing::PageRange::GetPages(settings_.ranges());
+  params.pages = printing::PageRange::GetPages(settings_->ranges());
   PrintHostMsg_ScriptedPrint::WriteReplyParams(reply_msg, params);
   render_frame_host->Send(reply_msg);
+}
+
+void AwPrintManager::OnDidPrintDocument(
+    content::RenderFrameHost* render_frame_host,
+    const PrintHostMsg_DidPrintDocument_Params& params,
+    std::unique_ptr<DelayedFrameDispatchHelper> helper) {
+  if (params.document_cookie != cookie_)
+    return;
+
+  const PrintHostMsg_DidPrintContent_Params& content = params.content;
+  if (!content.metafile_data_region.IsValid()) {
+    NOTREACHED() << "invalid memory handle";
+    web_contents()->Stop();
+    PdfWritingDone(0);
+    return;
+  }
+
+  auto data = base::RefCountedSharedMemoryMapping::CreateFromWholeRegion(
+      content.metafile_data_region);
+  if (!data) {
+    NOTREACHED() << "couldn't map";
+    web_contents()->Stop();
+    PdfWritingDone(0);
+    return;
+  }
+
+  DCHECK(pdf_writing_done_callback_);
+  base::PostTaskAndReplyWithResult(
+      base::CreateTaskRunner({base::ThreadPool(), base::MayBlock(),
+                              base::TaskPriority::BEST_EFFORT,
+                              base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})
+          .get(),
+      FROM_HERE, base::BindOnce(&SaveDataToFd, fd_, number_pages_, data),
+      base::BindOnce(&AwPrintManager::OnDidPrintDocumentWritingDone,
+                     pdf_writing_done_callback_, std::move(helper)));
+}
+
+// static
+void AwPrintManager::OnDidPrintDocumentWritingDone(
+    const PdfWritingDoneCallback& callback,
+    std::unique_ptr<DelayedFrameDispatchHelper> helper,
+    int page_count) {
+  if (callback)
+    callback.Run(page_count);
+  helper->SendCompleted();
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(AwPrintManager)

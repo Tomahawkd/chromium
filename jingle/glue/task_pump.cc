@@ -10,11 +10,7 @@
 
 namespace jingle_glue {
 
-TaskPump::TaskPump()
-    : posted_wake_(false),
-      stopped_(false),
-      weak_factory_(this) {
-}
+TaskPump::TaskPump() : posted_wake_(false), stopped_(false) {}
 
 TaskPump::~TaskPump() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -25,17 +21,10 @@ void TaskPump::WakeTasks() {
   if (!stopped_ && !posted_wake_) {
     // Do the requested wake up.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&TaskPump::CheckAndRunTasks, weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&TaskPump::CheckAndRunTasks,
+                                  weak_factory_.GetWeakPtr()));
     posted_wake_ = true;
   }
-}
-
-int64_t TaskPump::CurrentTime() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Only timeout tasks rely on this function.  Since we're not using
-  // libjingle tasks for timeout, it's safe to return 0 here.
-  return 0;
 }
 
 void TaskPump::Stop() {

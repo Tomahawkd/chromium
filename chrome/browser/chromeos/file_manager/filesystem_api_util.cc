@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_content_file_system_url_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_file_system_operation_runner.h"
+#include "chrome/browser/chromeos/drive/drive_integration_service.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
@@ -22,33 +24,29 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/arc/arc_service_manager.h"
-#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/file_errors.h"
 #include "components/drive/file_system_core_util.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/drive/task_util.h"
-#include "storage/browser/fileapi/file_system_context.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "storage/browser/file_system/file_system_context.h"
 
 namespace file_manager {
 namespace util {
 namespace {
 
-// Helper function used to implement GetNonNativeLocalPathMimeType. It extracts
-// the mime type from the passed Drive resource entry.
-void GetMimeTypeAfterGetResourceEntryForDrive(
+void GetMimeTypeAfterGetMetadata(
     base::OnceCallback<void(const base::Optional<std::string>&)> callback,
     drive::FileError error,
-    std::unique_ptr<drive::ResourceEntry> entry) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  if (error != drive::FILE_ERROR_OK || !entry->has_file_specific_info() ||
-      entry->file_specific_info().content_mime_type().empty()) {
+    drivefs::mojom::FileMetadataPtr metadata) {
+  if (error != drive::FILE_ERROR_OK || !metadata ||
+      metadata->content_mime_type.empty()) {
     std::move(callback).Run(base::nullopt);
     return;
   }
-  std::move(callback).Run(entry->file_specific_info().content_mime_type());
+  std::move(callback).Run(std::move(metadata->content_mime_type));
 }
 
 // Helper function used to implement GetNonNativeLocalPathMimeType. It extracts
@@ -132,6 +130,7 @@ bool IsNonNativeFileSystemType(storage::FileSystemType type) {
     case storage::kFileSystemTypeNativeLocal:
     case storage::kFileSystemTypeRestrictedNativeLocal:
     case storage::kFileSystemTypeDriveFs:
+    case storage::kFileSystemTypeSmbFs:
       return false;
     default:
       // The path indeed corresponds to a mount point not associated with a
@@ -159,27 +158,39 @@ bool IsUnderNonNativeLocalPath(Profile* profile,
   return IsNonNativeFileSystemType(filesystem_url.type());
 }
 
+bool HasNonNativeMimeTypeProvider(Profile* profile,
+                                  const base::FilePath& path) {
+  auto* drive_integration_service =
+      drive::util::GetIntegrationServiceByProfile(profile);
+  return (drive_integration_service &&
+          drive_integration_service->GetMountPointPath().IsParent(path)) ||
+         IsUnderNonNativeLocalPath(profile, path);
+}
+
 void GetNonNativeLocalPathMimeType(
     Profile* profile,
     const base::FilePath& path,
     base::OnceCallback<void(const base::Optional<std::string>&)> callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(IsUnderNonNativeLocalPath(profile, path));
+  DCHECK(HasNonNativeMimeTypeProvider(profile, path));
 
-  if (drive::util::IsUnderDriveMountPoint(path)) {
-    drive::FileSystemInterface* file_system =
-        drive::util::GetFileSystemByProfile(profile);
-    if (!file_system) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::UI},
-          base::BindOnce(std::move(callback), base::nullopt));
+  auto* drive_integration_service =
+      drive::util::GetIntegrationServiceByProfile(profile);
+  base::FilePath drive_relative_path;
+  if (drive_integration_service &&
+      drive_integration_service->GetRelativeDrivePath(path,
+                                                      &drive_relative_path)) {
+    if (auto* drivefs = drive_integration_service->GetDriveFsInterface()) {
+      drivefs->GetMetadata(
+          drive_relative_path,
+          mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+              base::BindOnce(&GetMimeTypeAfterGetMetadata, std::move(callback)),
+              drive::FILE_ERROR_SERVICE_UNAVAILABLE, nullptr));
+
       return;
     }
-
-    file_system->GetResourceEntry(
-        drive::util::ExtractDrivePath(path),
-        base::BindOnce(&GetMimeTypeAfterGetResourceEntryForDrive,
-                       std::move(callback)));
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
     return;
   }
 
@@ -187,9 +198,8 @@ void GetNonNativeLocalPathMimeType(
           path)) {
     chromeos::file_system_provider::util::LocalPathParser parser(profile, path);
     if (!parser.Parse()) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::UI},
-          base::BindOnce(std::move(callback), base::nullopt));
+      base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                     base::BindOnce(std::move(callback), base::nullopt));
       return;
     }
 
@@ -208,9 +218,8 @@ void GetNonNativeLocalPathMimeType(
     auto* runner =
         arc::ArcFileSystemOperationRunner::GetForBrowserContext(profile);
     if (!runner) {
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::UI},
-          base::BindOnce(std::move(callback), base::nullopt));
+      base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                     base::BindOnce(std::move(callback), base::nullopt));
       return;
     }
     runner->GetMimeType(
@@ -223,8 +232,8 @@ void GetNonNativeLocalPathMimeType(
   // We don't have a way to obtain metadata other than drive and FSP. Returns an
   // error with empty MIME type, that leads fallback guessing mime type from
   // file extensions.
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::BindOnce(std::move(callback), base::nullopt));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(std::move(callback), base::nullopt));
 }
 
 void IsNonNativeLocalPathDirectory(Profile* profile,
@@ -251,8 +260,8 @@ void PrepareNonNativeLocalFileForWritableApp(
            profile, path, kFileManagerAppId, &url)) {
     // Posting to the current thread, so that we always call back asynchronously
     // independent from whether or not the operation succeeds.
-    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                             base::BindOnce(std::move(callback), false));
+    base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                   base::BindOnce(std::move(callback), false));
     return;
   }
 
@@ -265,7 +274,7 @@ void PrepareNonNativeLocalFileForWritableApp(
   const storage::FileSystemURL internal_url =
       backend->CreateInternalURL(file_system_context.get(), path);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&PrepareFileOnIOThread, file_system_context, internal_url,
                      google_apis::CreateRelayCallback(std::move(callback))));

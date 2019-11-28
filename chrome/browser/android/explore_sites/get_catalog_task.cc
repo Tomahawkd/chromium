@@ -4,6 +4,7 @@
 
 #include "chrome/browser/android/explore_sites/get_catalog_task.h"
 
+#include "base/bind.h"
 #include "chrome/browser/android/explore_sites/explore_sites_schema.h"
 #include "sql/database.h"
 #include "sql/meta_table.h"
@@ -13,15 +14,21 @@
 namespace explore_sites {
 namespace {
 
-static const char kSelectCategorySql[] = R"(SELECT category_id, type, label
+static const char kSelectCategorySql[] = R"(SELECT
+category_id, type, label, ntp_shown_count, activityCount.count
 FROM categories
+LEFT JOIN (SELECT COUNT(url) as count, category_type
+FROM activity GROUP BY category_type) AS activityCount
+ON categories.type = activityCount.category_type
 WHERE version_token = ?
 ORDER BY category_id ASC;)";
 
-static const char kSelectSiteSql[] = R"(SELECT site_id, sites.url, title
+static const char kSelectSiteSql[] =
+    R"(SELECT site_id, sites.url, title,
+    site_blacklist.url IS NOT NULL as blacklisted
 FROM sites
 LEFT JOIN site_blacklist ON (sites.url = site_blacklist.url)
-WHERE category_id = ? AND site_blacklist.url IS NULL;)";
+WHERE category_id = ? ;)";
 
 const char kDeleteSiteSql[] = R"(DELETE FROM sites
 WHERE category_id NOT IN
@@ -42,7 +49,7 @@ std::string UpdateCurrentCatalogIfNewer(sql::MetaTable* meta_table,
   DCHECK(meta_table);
   std::string downloading_version_token;
   // See if there is a downloading catalog.
-  if (!meta_table->GetValue("downloading_catalog",
+  if (!meta_table->GetValue(ExploreSitesSchema::kDownloadingCatalogKey,
                             &downloading_version_token)) {
     // No downloading catalog means no change required.
     return current_version_token;
@@ -50,9 +57,10 @@ std::string UpdateCurrentCatalogIfNewer(sql::MetaTable* meta_table,
 
   // Update the current version.
   current_version_token = downloading_version_token;
-  if (!meta_table->SetValue("current_catalog", current_version_token))
+  if (!meta_table->SetValue(ExploreSitesSchema::kCurrentCatalogKey,
+                            current_version_token))
     return "";
-  meta_table->DeleteKey("downloading_catalog");
+  meta_table->DeleteKey(ExploreSitesSchema::kDownloadingCatalogKey);
 
   return downloading_version_token;
 }
@@ -83,13 +91,15 @@ GetCatalogSync(bool update_current, sql::Database* db) {
   // currently in use, don't change it.  This is an error, should have been
   // caught before we got here.
   std::string catalog_version_token;
-  if (!meta_table.GetValue("current_catalog", &catalog_version_token) ||
+  if (!meta_table.GetValue(ExploreSitesSchema::kCurrentCatalogKey,
+                           &catalog_version_token) ||
       catalog_version_token.empty()) {
     DVLOG(1)
         << "Didn't find current catalog value. Attempting to use downloading.";
     // If there is no current catalog, use downloading catalog and mark it as
     // current.  If there is no downloading catalog, return no catalog.
-    meta_table.GetValue("downloading_catalog", &catalog_version_token);
+    meta_table.GetValue(ExploreSitesSchema::kDownloadingCatalogKey,
+                        &catalog_version_token);
     if (catalog_version_token.empty())
       return std::make_pair(GetCatalogStatus::kNoCatalog, nullptr);
 
@@ -121,8 +131,10 @@ GetCatalogSync(bool update_current, sql::Database* db) {
   while (category_statement.Step()) {
     result->emplace_back(category_statement.ColumnInt(0),  // category_id
                          catalog_version_token,
-                         category_statement.ColumnInt(1),      // type
-                         category_statement.ColumnString(2));  // label
+                         category_statement.ColumnInt(1),     // type
+                         category_statement.ColumnString(2),  // label
+                         category_statement.ColumnInt(3),     // ntp_shown_count
+                         category_statement.ColumnInt(4));  // interaction_count
   }
   if (!category_statement.Succeeded())
     return std::make_pair(GetCatalogStatus::kFailed, nullptr);
@@ -134,10 +146,12 @@ GetCatalogSync(bool update_current, sql::Database* db) {
     site_statement.BindInt64(0, category.category_id);
 
     while (site_statement.Step()) {
-      category.sites.emplace_back(site_statement.ColumnInt(0),  // site_id
-                                  category.category_id,
-                                  GURL(site_statement.ColumnString(1)),  // url
-                                  site_statement.ColumnString(2));  // title
+      category.sites.emplace_back(
+          site_statement.ColumnInt(0),  // site_id
+          category.category_id,
+          GURL(site_statement.ColumnString(1)),  // url
+          site_statement.ColumnString(2),        // title
+          site_statement.ColumnBool(3));         // is_blacklisted
     }
     if (!site_statement.Succeeded())
       return std::make_pair(GetCatalogStatus::kFailed, nullptr);
@@ -165,8 +179,7 @@ GetCatalogTask::GetCatalogTask(ExploreSitesStore* store,
                                CatalogCallback callback)
     : store_(store),
       update_current_(update_current),
-      callback_(std::move(callback)),
-      weak_ptr_factory_(this) {}
+      callback_(std::move(callback)) {}
 
 GetCatalogTask::~GetCatalogTask() = default;
 

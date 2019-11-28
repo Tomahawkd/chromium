@@ -20,6 +20,8 @@ class TabMetricsLogger;
 
 namespace resource_coordinator {
 
+class LifecycleUnit;
+
 // Observes background tab activity in order to log UKMs for tabs and score tabs
 // using the Tab Ranker. Metrics will be compared against tab reactivation/close
 // events to determine the end state of each background tab.
@@ -33,14 +35,14 @@ class TabActivityWatcher : public BrowserListObserver,
   // Uses the Tab Ranker model to predict a score for the tab, where a higher
   // value indicates a higher likelihood of being reactivated.
   // Returns the score if the tab could be scored.
+  // This is only used in chrome://discards and unit tests.
   base::Optional<float> CalculateReactivationScore(
-      content::WebContents* web_contents,
-      bool also_log_to_ukm = false);
+      content::WebContents* web_contents);
 
-  // Generates a new query_id for logging CalculateReactivationScore calls.
-  // This function is called inside TabManager::GetSortedLifecycleUnits when
-  // reactivation scores are queried for all tabs.
-  void SetQueryIdForTabMetricsLogger(int64_t query_id);
+  // Logs TabMetrics of all |tabs|; and sorts them by descending importance,
+  // so that the last tab is the first candidate that will be discarded.
+  void LogAndMaybeSortLifecycleUnitWithTabRanker(
+      std::vector<LifecycleUnit*>* tabs);
 
   // Returns the single instance, creating it if necessary.
   static TabActivityWatcher* GetInstance();
@@ -67,9 +69,6 @@ class TabActivityWatcher : public BrowserListObserver,
   void TabPinnedStateChanged(TabStripModel* tab_strip_model,
                              content::WebContents* contents,
                              int index) override;
-  void WillCloseAllTabs(TabStripModel* tab_strip_model) override;
-  void CloseAllTabsStopped(TabStripModel* tab_strip_model,
-                           CloseAllStoppedReason reason) override;
 
   // BrowserTabStripTrackerDelegate:
   bool ShouldTrackBrowser(Browser* browser) override;
@@ -84,10 +83,7 @@ class TabActivityWatcher : public BrowserListObserver,
   BrowserTabStripTracker browser_tab_strip_tracker_;
 
   // Loads the Tab Ranker model on first use and calculates tab scores.
-  tab_ranker::TabScorePredictor predictor_;
-
-  // All WebContentsData of the browser that is currently in closing_all mode.
-  base::flat_set<WebContentsData*> all_closing_tabs_;
+  std::unique_ptr<tab_ranker::TabScorePredictor> predictor_;
 
   DISALLOW_COPY_AND_ASSIGN(TabActivityWatcher);
 };

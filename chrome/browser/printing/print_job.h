@@ -20,7 +20,6 @@
 namespace base {
 class Location;
 class RefCountedMemory;
-class SequencedTaskRunner;
 }
 
 namespace printing {
@@ -45,20 +44,31 @@ class PrintSettings;
 class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
                  public content::NotificationObserver {
  public:
+#if defined(OS_CHROMEOS)
+  // An enumeration of components where print jobs can come from.
+  enum class Source {
+    PRINT_PREVIEW,
+    ARC,
+    EXTENSION,
+  };
+#endif  // defined(OS_CHROMEOS)
+
   // Create a empty PrintJob. When initializing with this constructor,
   // post-constructor initialization must be done with Initialize().
+  // If PrintJob is created on Chrome OS, call SetSource() to set which
+  // component initiated this print job.
   PrintJob();
 
   // Grabs the ownership of the PrintJobWorker from a PrinterQuery along with
   // the print settings. Sets the expected page count of the print job based on
   // the settings.
-  virtual void Initialize(PrinterQuery* query,
+  virtual void Initialize(std::unique_ptr<PrinterQuery> query,
                           const base::string16& name,
                           int page_count);
 
 #if defined(OS_WIN)
   void StartConversionToNativeFormat(
-      const scoped_refptr<base::RefCountedMemory>& print_data,
+      scoped_refptr<base::RefCountedMemory> print_data,
       const gfx::Size& page_size,
       const gfx::Rect& content_area,
       const gfx::Point& physical_offsets);
@@ -104,9 +114,19 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
   // Access the current printed document. Warning: may be NULL.
   PrintedDocument* document() const;
 
-  // Returns true if tasks posted to this TaskRunner are sequenced
-  // with this call.
-  bool RunsTasksInCurrentSequence() const;
+  // Access stored settings.
+  const PrintSettings& settings() const;
+
+#if defined(OS_CHROMEOS)
+  // Sets the component which initiated the print job.
+  void SetSource(Source source, const std::string& source_id);
+
+  // Returns the source of print job.
+  Source source() const;
+
+  // Returns the ID of the source.
+  const std::string& source_id() const;
+#endif  // defined(OS_CHROMEOS)
 
   // Posts the given task to be run.
   bool PostTask(const base::Location& from_here, base::OnceClosure task);
@@ -119,7 +139,6 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
 
   // The functions below are used for tests only.
   void set_job_pending(bool pending);
-  void set_settings(const PrintSettings& settings);
 
   // Updates |document_| to a new instance. Protected so that tests can access
   // it.
@@ -152,18 +171,18 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
 
 #if defined(OS_WIN)
   virtual void StartPdfToEmfConversion(
-      const scoped_refptr<base::RefCountedMemory>& bytes,
+      scoped_refptr<base::RefCountedMemory> bytes,
       const gfx::Size& page_size,
       const gfx::Rect& content_area);
 
   virtual void StartPdfToPostScriptConversion(
-      const scoped_refptr<base::RefCountedMemory>& bytes,
+      scoped_refptr<base::RefCountedMemory> bytes,
       const gfx::Rect& content_area,
       const gfx::Point& physical_offsets,
       bool ps_level2);
 
   virtual void StartPdfToTextConversion(
-      const scoped_refptr<base::RefCountedMemory>& bytes,
+      scoped_refptr<base::RefCountedMemory> bytes,
       const gfx::Size& page_size);
 
   void OnPdfConversionStarted(int page_count);
@@ -183,18 +202,15 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
   // worker thread per print job.
   std::unique_ptr<PrintJobWorker> worker_;
 
-  // Cache of the print context settings for access in the UI thread.
-  PrintSettings settings_;
-
   // The printed document.
   scoped_refptr<PrintedDocument> document_;
 
   // Is the worker thread printing.
-  bool is_job_pending_;
+  bool is_job_pending_ = false;
 
   // Is Canceling? If so, try to not cause recursion if on FAILED notification,
   // the notified calls Cancel() again.
-  bool is_canceling_;
+  bool is_canceling_ = false;
 
 #if defined(OS_WIN)
   class PdfConversionState;
@@ -202,9 +218,14 @@ class PrintJob : public base::RefCountedThreadSafe<PrintJob>,
   std::vector<int> pdf_page_mapping_;
 #endif  // defined(OS_WIN)
 
-  // Task runner reference. Used to send notifications in the right
-  // thread.
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+#if defined(OS_CHROMEOS)
+  // The component which initiated the print job.
+  Source source_;
+
+  // ID of the source.
+  // This should be blank if the source is PRINT_PREVIEW or ARC.
+  std::string source_id_;
+#endif  // defined(OS_CHROMEOS)
 
   // Holds the quit closure while running a nested RunLoop to flush tasks.
   base::OnceClosure quit_closure_;

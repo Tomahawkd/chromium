@@ -101,11 +101,11 @@ _log = logging.getLogger(__name__)
 # This path is defined in Chromium's base/test/test_support_android.cc.
 DEVICE_SOURCE_ROOT_DIR = '/data/local/tmp/'
 
-# The layout tests directory on device, which has two usages:
+# The web tests directory on device, which has two usages:
 # 1. as a virtual path in file urls that will be bridged to HTTP.
 # 2. pointing to some files that are pushed to the device for tests that
 # don't work on file-over-http (e.g. blob protocol tests).
-DEVICE_LAYOUT_TESTS_DIR = DEVICE_SOURCE_ROOT_DIR + RELATIVE_WEB_TESTS
+DEVICE_WEB_TESTS_DIR = DEVICE_SOURCE_ROOT_DIR + RELATIVE_WEB_TESTS
 
 KPTR_RESTRICT_PATH = '/proc/sys/kernel/kptr_restrict'
 
@@ -143,7 +143,7 @@ TEST_RESOURCES_TO_PUSH = [
 ]
 
 
-# Information required when running layout tests using content_shell as the test runner.
+# Information required when running web tests using content_shell as the test runner.
 class ContentShellDriverDetails():
 
     def device_cache_directory(self):
@@ -187,7 +187,7 @@ class ContentShellDriverDetails():
 # instances and whether the device has been set up.
 class AndroidDevices(object):
     # Percentage of battery a device needs to have in order for it to be considered
-    # to participate in running the layout tests.
+    # to participate in running the web tests.
     MINIMUM_BATTERY_PERCENTAGE = 30
 
     def __init__(self, default_devices=None, debug_logging=False):
@@ -258,7 +258,7 @@ class AndroidPort(base.Port):
             self._dump_reader = DumpReaderAndroid(host, self._build_path())
 
         if self.driver_name() != self.CONTENT_SHELL_NAME:
-            raise AssertionError('Layout tests on Android only support content_shell as the driver.')
+            raise AssertionError('Web tests on Android only support content_shell as the driver.')
 
         self._driver_details = ContentShellDriverDetails()
 
@@ -273,7 +273,7 @@ class AndroidPort(base.Port):
         devil_chromium.Initialize(
             output_directory=self._build_path(),
             adb_path=self._path_from_chromium_base(
-                'third_party', 'android_tools', 'sdk', 'platform-tools', 'adb'))
+                'third_party', 'android_sdk', 'public', 'platform-tools', 'adb'))
         devil_env.config.InitializeLogging(
             logging.DEBUG
             if self._debug_logging and self.get_option('debug_rwt_logging')
@@ -306,11 +306,6 @@ class AndroidPort(base.Port):
             raise test_run_results.TestRunException(exit_codes.NO_DEVICES_EXIT_STATUS,
                                                     'Unable to find any attached Android devices.')
         return len(usable_devices)
-
-    def max_drivers_per_process(self):
-        # Android falls over when we try to run multiple content_shells per worker.
-        # See https://codereview.chromium.org/1158323009/
-        return 1
 
     def check_build(self, needs_http, printer):
         exit_status = super(AndroidPort, self).check_build(needs_http, printer)
@@ -404,8 +399,8 @@ class AndroidPort(base.Port):
 
             # - the test resources
             host_device_tuples.extend(
-                (self.host.filesystem.join(self.layout_tests_dir(), resource),
-                 posixpath.join(DEVICE_LAYOUT_TESTS_DIR, resource))
+                (self.host.filesystem.join(self.web_tests_dir(), resource),
+                 posixpath.join(DEVICE_WEB_TESTS_DIR, resource))
                 for resource in TEST_RESOURCES_TO_PUSH)
 
             # ... and then push them to the device.
@@ -467,13 +462,13 @@ class AndroidPort(base.Port):
 
     def requires_http_server(self):
         """Chromium Android runs tests on devices, and uses the HTTP server to
-        serve the actual layout tests to the test driver.
+        serve the actual web tests to the test driver.
         """
         return True
 
     def start_http_server(self, additional_dirs, number_of_drivers):
         additional_dirs[PERF_TEST_PATH_PREFIX] = self._perf_tests_dir()
-        additional_dirs[WEB_TESTS_PATH_PREFIX] = self.layout_tests_dir()
+        additional_dirs[WEB_TESTS_PATH_PREFIX] = self.web_tests_dir()
         super(AndroidPort, self).start_http_server(additional_dirs, number_of_drivers)
 
     def create_driver(self, worker_number, no_timeout=False):

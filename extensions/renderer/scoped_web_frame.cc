@@ -4,6 +4,7 @@
 
 #include "extensions/renderer/scoped_web_frame.h"
 
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/web/web_heap.h"
 #include "third_party/blink/public/web/web_view.h"
 #include "third_party/blink/public/web/web_widget.h"
@@ -12,7 +13,6 @@ namespace extensions {
 
 ScopedWebFrame::ScopedWebFrame()
     : view_(blink::WebView::Create(/*client=*/nullptr,
-                                   /*widget_client=*/nullptr,
                                    /*is_hidden=*/false,
                                    /*compositing_enabled=*/false,
                                    /*opener=*/nullptr)),
@@ -22,7 +22,7 @@ ScopedWebFrame::ScopedWebFrame()
                                                    nullptr)) {}
 
 ScopedWebFrame::~ScopedWebFrame() {
-  view_->MainFrameWidget()->Close();
+  view_->Close();
   blink::WebHeap::CollectAllGarbageForTesting();
 }
 

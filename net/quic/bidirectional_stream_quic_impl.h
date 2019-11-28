@@ -17,7 +17,7 @@
 #include "net/http/bidirectional_stream_impl.h"
 #include "net/quic/quic_chromium_client_session.h"
 #include "net/quic/quic_chromium_client_stream.h"
-#include "net/third_party/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
 
 namespace base {
 class OneShotTimer;
@@ -128,7 +128,7 @@ class NET_EXPORT_PRIVATE BidirectionalStreamQuicImpl
   // True when callbacks to the delegate may be invoked synchronously.
   bool may_invoke_callbacks_;
 
-  base::WeakPtrFactory<BidirectionalStreamQuicImpl> weak_factory_;
+  base::WeakPtrFactory<BidirectionalStreamQuicImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BidirectionalStreamQuicImpl);
 };

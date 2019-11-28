@@ -4,17 +4,21 @@
 
 #include "chrome/browser/ui/webui/interventions_internals/interventions_internals_ui.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "chrome/browser/previews/previews_service.h"
 #include "chrome/browser/previews/previews_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/interventions_internals/interventions_internals.mojom.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "components/previews/content/previews_ui_service.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 
 namespace {
 
@@ -24,11 +28,9 @@ content::WebUIDataSource* GetSource() {
   source->AddResourcePath("index.js", IDR_INTERVENTIONS_INTERNALS_INDEX_JS);
   source->AddResourcePath(
       "chrome/browser/ui/webui/interventions_internals/"
-      "interventions_internals.mojom.js",
-      IDR_INTERVENTIONS_INTERNALS_MOJO_INDEX_JS);
-  source->AddResourcePath("url/mojom/url.mojom.js", IDR_URL_MOJO_JS);
+      "interventions_internals.mojom-lite.js",
+      IDR_INTERVENTIONS_INTERNALS_MOJOM_LITE_JS);
   source->SetDefaultResource(IDR_INTERVENTIONS_INTERNALS_INDEX_HTML);
-  source->UseGzip(std::vector<std::string>());
   return source;
 }
 
@@ -36,7 +38,6 @@ content::WebUIDataSource* GetUnsupportedSource() {
   content::WebUIDataSource* source = content::WebUIDataSource::Create(
       chrome::kChromeUIInterventionsInternalsHost);
   source->SetDefaultResource(IDR_INTERVENTIONS_INTERNALS_UNSUPPORTED_PAGE_HTML);
-  source->UseGzip(std::vector<std::string>());
   return source;
 }
 
@@ -64,8 +65,8 @@ InterventionsInternalsUI::InterventionsInternalsUI(content::WebUI* web_ui)
 InterventionsInternalsUI::~InterventionsInternalsUI() {}
 
 void InterventionsInternalsUI::BindInterventionsInternalsPageHandler(
-    mojom::InterventionsInternalsPageHandlerRequest request) {
+    mojo::PendingReceiver<mojom::InterventionsInternalsPageHandler> receiver) {
   DCHECK(previews_ui_service_);
-  page_handler_.reset(new InterventionsInternalsPageHandler(
-      std::move(request), previews_ui_service_));
+  page_handler_ = std::make_unique<InterventionsInternalsPageHandler>(
+      std::move(receiver), previews_ui_service_, nullptr);
 }

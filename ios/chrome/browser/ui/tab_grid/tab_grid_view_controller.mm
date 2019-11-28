@@ -27,12 +27,12 @@
 #import "ios/chrome/browser/ui/tab_grid/transitions/grid_transition_layout.h"
 #import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
 #import "ios/chrome/browser/ui/util/rtl_geometry.h"
-#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
-#include "ios/web/public/web_task_traits.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -80,7 +80,12 @@ void RecordPageChangeInteraction(TabSwitcherPageChangeInteraction interaction) {
 // Computes the page from the offset and width of |scrollView|.
 TabGridPage GetPageFromScrollView(UIScrollView* scrollView) {
   CGFloat pageWidth = scrollView.frame.size.width;
-  NSUInteger page = lround(scrollView.contentOffset.x / pageWidth);
+  CGFloat offset = scrollView.contentOffset.x;
+  NSUInteger page = lround(offset / pageWidth);
+  // Fence |page| to valid values; page values of 3 (rounded up from 2.5) are
+  // possible, as are large int values if |pageWidth| is somehow very small.
+  page = page < TabGridPageIncognitoTabs ? TabGridPageIncognitoTabs : page;
+  page = page > TabGridPageRemoteTabs ? TabGridPageRemoteTabs : page;
   if (UseRTLLayout()) {
     // In RTL, page indexes are inverted, so subtract |page| from the highest-
     // index TabGridPage value.
@@ -99,8 +104,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 }
 }  // namespace
 
-@interface TabGridViewController ()<GridViewControllerDelegate,
-                                    UIScrollViewAccessibilityDelegate>
+@interface TabGridViewController () <GridViewControllerDelegate,
+                                     UIScrollViewAccessibilityDelegate>
 // It is programmer error to broadcast incognito content visibility when the
 // view is not visible. Bookkeeping is based on |-viewWillAppear:| and
 // |-viewWillDisappear methods. Note that the |Did| methods are not reliably
@@ -116,17 +121,12 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 @property(nonatomic, weak) UIView* scrollContentView;
 @property(nonatomic, weak) TabGridTopToolbar* topToolbar;
 @property(nonatomic, weak) TabGridBottomToolbar* bottomToolbar;
-@property(nonatomic, weak) UIButton* doneButton;
-@property(nonatomic, weak) UIButton* closeAllButton;
+@property(nonatomic, weak) UIBarButtonItem* doneButton;
+@property(nonatomic, weak) UIBarButtonItem* closeAllButton;
 @property(nonatomic, assign) BOOL undoCloseAllAvailable;
-// Clang does not allow property getters to start with the reserved word "new",
-// but provides a workaround. The getter must be set before the property is
-// declared.
-- (TabGridNewTabButton*)newTabButton __attribute__((objc_method_family(none)));
-@property(nonatomic, weak) TabGridNewTabButton* newTabButton;
-@property(nonatomic, weak) TabGridNewTabButton* floatingButton;
 @property(nonatomic, assign) TabGridConfiguration configuration;
-// Setting the current page will adjust the scroll view to the correct position.
+// Setting the current page doesn't scroll the scroll view; use
+// -scrollToPage:animated: for that.
 @property(nonatomic, assign) TabGridPage currentPage;
 // The UIViewController corresponding with |currentPage|.
 @property(nonatomic, readonly) UIViewController* currentPageViewController;
@@ -140,36 +140,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 @end
 
 @implementation TabGridViewController
-// Public properties.
-@synthesize dispatcher = _dispatcher;
-@synthesize tabPresentationDelegate = _tabPresentationDelegate;
-@synthesize regularTabsDelegate = _regularTabsDelegate;
-@synthesize incognitoTabsDelegate = _incognitoTabsDelegate;
-@synthesize regularTabsImageDataSource = _regularTabsImageDataSource;
-@synthesize incognitoTabsImageDataSource = _incognitoTabsImageDataSource;
 // TabGridPaging property.
 @synthesize activePage = _activePage;
-// Private properties.
-@synthesize broadcasting = _broadcasting;
-@synthesize regularTabsViewController = _regularTabsViewController;
-@synthesize incognitoTabsViewController = _incognitoTabsViewController;
-@synthesize remoteTabsViewController = _remoteTabsViewController;
-@synthesize pageViewControllers = _pageViewControllers;
-@synthesize scrollView = _scrollView;
-@synthesize scrollContentView = _scrollContentView;
-@synthesize topToolbar = _topToolbar;
-@synthesize bottomToolbar = _bottomToolbar;
-@synthesize doneButton = _doneButton;
-@synthesize closeAllButton = _closeAllButton;
-@synthesize undoCloseAllAvailable = _undoCloseAllAvailable;
-@synthesize newTabButton = _newTabButton;
-@synthesize floatingButton = _floatingButton;
-@synthesize configuration = _configuration;
-@synthesize currentPage = _currentPage;
-@synthesize initialFrame = _initialFrame;
-@synthesize scrollViewAnimatingContentOffset =
-    _scrollViewAnimatingContentOffset;
-@synthesize pageChangeInteraction = _pageChangeInteraction;
 
 - (instancetype)init {
   if (self = [super init]) {
@@ -188,18 +160,25 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 
 - (void)viewDidLoad {
   [super viewDidLoad];
-  self.view.backgroundColor = UIColorFromRGB(kGridBackgroundColor);
+  self.view.backgroundColor = [UIColor colorNamed:kGridBackgroundColor];
   [self setupScrollView];
   [self setupIncognitoTabsViewController];
   [self setupRegularTabsViewController];
   [self setupRemoteTabsViewController];
   [self setupTopToolbar];
   [self setupBottomToolbar];
-  [self setupFloatingButton];
 
   // Hide the toolbars and the floating button, so they can fade in the first
   // time there's a transition into this view controller.
   [self hideToolbars];
+
+  // Mark the non-current page view controllers' contents as hidden for
+  // VoiceOver.
+  for (UIViewController* pageViewController in self.pageViewControllers) {
+    if (pageViewController != self.currentPageViewController) {
+      pageViewController.view.accessibilityElementsHidden = YES;
+    }
+  }
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -253,9 +232,10 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
            (id<UIViewControllerTransitionCoordinator>)coordinator {
   [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
   auto animate = ^(id<UIViewControllerTransitionCoordinatorContext> context) {
-    // Call the current page setter to sync the scroll view offset to the
-    // current page value.
-    self.currentPage = _currentPage;
+    // Sync the scroll view offset to the  current page value. SInce this is
+    // already inside an animation block, the scrolling doesn't need to be
+    // animated.
+    [self scrollToPage:_currentPage animated:NO];
     [self configureViewControllerForCurrentSizeClassesAndPage];
     [self setInsetForRemoteTabs];
   };
@@ -285,8 +265,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
     self.topToolbar.pageControl.sliderPosition = offset;
 
     TabGridPage page = GetPageFromScrollView(scrollView);
-    if (page != _currentPage) {
-      _currentPage = page;
+    if (page != self.currentPage) {
+      self.currentPage = page;
       [self broadcastIncognitoContentVisibility];
       [self configureButtonsForActiveAndCurrentPage];
       // Records when the user drags the scrollView to switch pages.
@@ -314,24 +294,19 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   // cause other interactions to be mislabeled.
   self.pageChangeInteraction = PageChangeInteractionNone;
 
-  // Update _currentPage if scroll view has moved to a new page. Especially
+  // Update currentPage if scroll view has moved to a new page. Especially
   // important here for 3-finger accessibility swipes since it's not registered
   // as dragging in scrollViewDidScroll:
   TabGridPage page = GetPageFromScrollView(scrollView);
-  if (page != _currentPage) {
-    // Original current page is about to not be visible. Disable it from being
-    // focused by VoiceOver.
-    self.currentPageViewController.view.accessibilityElementsHidden = YES;
-    _currentPage = page;
-    // Allow VoiceOver to focus on the new current page's elements.
-    self.currentPageViewController.view.accessibilityElementsHidden = NO;
+  if (page != self.currentPage) {
+    self.currentPage = page;
     [self broadcastIncognitoContentVisibility];
     [self configureButtonsForActiveAndCurrentPage];
   }
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView*)scrollView {
-  _currentPage = GetPageFromScrollView(scrollView);
+  self.currentPage = GetPageFromScrollView(scrollView);
   self.scrollViewAnimatingContentOffset = NO;
   [self broadcastIncognitoContentVisibility];
   [self configureButtonsForActiveAndCurrentPage];
@@ -386,7 +361,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 
 - (UIView*)proxyPositionForTransitionContext:
     (id<UIViewControllerContextTransitioning>)context {
-  return self.floatingButton;
+  return self.scrollView;
 }
 
 #pragma mark - Public Methods
@@ -438,7 +413,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 #pragma mark - TabGridPaging
 
 - (void)setActivePage:(TabGridPage)activePage {
-  [self setCurrentPage:activePage animated:YES];
+  [self scrollToPage:activePage animated:YES];
   _activePage = activePage;
 }
 
@@ -447,16 +422,14 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 // Sets the proper insets for the Remote Tabs ViewController to accomodate for
 // the safe area, toolbar, and status bar.
 - (void)setInsetForRemoteTabs {
-  // Call the current page setter to sync the scroll view offset to the current
-  // page value, if the scroll view isn't scrolling. Don't animate this.
+  // Sync the scroll view offset to the current page value if the scroll view
+  // isn't scrolling. Don't animate this.
   if (!self.scrollView.dragging && !self.scrollView.decelerating) {
-    self.currentPage = _currentPage;
+    [self scrollToPage:self.currentPage animated:NO];
   }
   // The content inset of the tab grids must be modified so that the toolbars
   // do not obscure the tabs. This may change depending on orientation.
-  CGFloat bottomInset = self.configuration == TabGridConfigurationBottomToolbar
-                            ? self.bottomToolbar.intrinsicContentSize.height
-                            : 0;
+  CGFloat bottomInset = self.bottomToolbar.intrinsicContentSize.height;
   UIEdgeInsets inset = UIEdgeInsetsMake(
       self.topToolbar.intrinsicContentSize.height, 0, bottomInset, 0);
   // Left and right side could be missing correct safe area
@@ -482,10 +455,10 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 // Sets the proper insets for the Grid ViewControllers to accomodate for the
 // safe area and toolbar.
 - (void)setInsetForGridViews {
-  // Call the current page setter to sync the scroll view offset to the current
-  // page value, if the scroll view isn't scrolling. Don't animate this.
+  // Sync the scroll view offset to the current page value if the scroll view
+  // isn't scrolling. Don't animate this.
   if (!self.scrollView.dragging && !self.scrollView.decelerating) {
-    self.currentPage = _currentPage;
+    [self scrollToPage:self.currentPage animated:NO];
   }
   // The content inset of the tab grids must be modified so that the toolbars
   // do not obscure the tabs. This may change depending on orientation.
@@ -516,58 +489,65 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 }
 
 - (void)setCurrentPage:(TabGridPage)currentPage {
-  // Setting the current page will adjust the scroll view to the correct
-  // position.
-  [self setCurrentPage:currentPage animated:NO];
+  // Original current page is about to not be visible. Disable it from being
+  // focused by VoiceOver.
+  self.currentPageViewController.view.accessibilityElementsHidden = YES;
+  _currentPage = currentPage;
+  self.currentPageViewController.view.accessibilityElementsHidden = NO;
+  // Force VoiceOver to update its accessibility element tree immediately.
+  UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,
+                                  nil);
 }
 
 // Sets the value of |currentPage|, adjusting the position of the scroll view
 // to match. If |animated| is YES, the scroll view change may animate; if it is
 // NO, it will never animate.
-- (void)setCurrentPage:(TabGridPage)currentPage animated:(BOOL)animated {
-  // This method should never early return if |currentPage| == |_currentPage|;
+- (void)scrollToPage:(TabGridPage)targetPage animated:(BOOL)animated {
+  // This method should never early return if |targetPage| == |_currentPage|;
   // the ivar may have been set before the scroll view could be updated. Calling
   // this method should always update the scroll view's offset if possible.
 
-  // Original current page is about to not be visible. Disable it from being
-  // focused by VoiceOver.
-  self.currentPageViewController.view.accessibilityElementsHidden = YES;
+  // When VoiceOver is running, the animation can cause state to get out of
+  // sync. If the user swipes right during the animation, the VoiceOver cursor
+  // goes to the old page, instead of the new page. See crbug.com/978673 for
+  // more details.
+  if (UIAccessibilityIsVoiceOverRunning()) {
+    animated = NO;
+  }
 
-  // If the view isn't loaded yet, just do bookkeeping on _currentPage.
+  // If the view isn't loaded yet, just do bookkeeping on |currentPage|.
   if (!self.viewLoaded) {
-    _currentPage = currentPage;
-    // Allow VoiceOver to focus on the new current page's elements.
-    self.currentPageViewController.view.accessibilityElementsHidden = NO;
+    self.currentPage = targetPage;
     return;
   }
+
   CGFloat pageWidth = self.scrollView.frame.size.width;
-  NSUInteger pageIndex = GetPageIndexFromPage(currentPage);
-  CGPoint offset = CGPointMake(pageIndex * pageWidth, 0);
+  NSUInteger pageIndex = GetPageIndexFromPage(targetPage);
+  CGPoint targetOffset = CGPointMake(pageIndex * pageWidth, 0);
+
   // If the view is visible and |animated| is YES, animate the change.
   // Otherwise don't.
   if (self.view.window == nil || !animated) {
-    [self.scrollView setContentOffset:offset animated:NO];
-    _currentPage = currentPage;
+    [self.scrollView setContentOffset:targetOffset animated:NO];
+    self.currentPage = targetPage;
   } else {
     // Only set |scrollViewAnimatingContentOffset| to YES if there's an actual
     // change in the contentOffset, as |-scrollViewDidEndScrollingAnimation:| is
     // never called if the animation does not occur.
-    if (!CGPointEqualToPoint(self.scrollView.contentOffset, offset)) {
+    if (!CGPointEqualToPoint(self.scrollView.contentOffset, targetOffset)) {
       self.scrollViewAnimatingContentOffset = YES;
-      [self.scrollView setContentOffset:offset animated:YES];
-      // _currentPage is set in scrollViewDidEndScrollingAnimation:
+      [self.scrollView setContentOffset:targetOffset animated:YES];
+      // |self.currentPage| is set in scrollViewDidEndScrollingAnimation:
     } else {
-      _currentPage = currentPage;
+      self.currentPage = targetPage;
     }
   }
-  // Allow VoiceOver to focus on the new current page's elements.
-  self.currentPageViewController.view.accessibilityElementsHidden = NO;
 
   // TODO(crbug.com/872303) : This is a workaround because TabRestoreService
   // does not notify observers when entries are removed. When close all tabs
   // removes entries, the remote tabs page in the tab grid are not updated. This
   // ensures that the table is updated whenever scrolling to it.
-  if (currentPage == TabGridPageRemoteTabs) {
+  if (targetPage == TabGridPageRemoteTabs) {
     [self.remoteTabsViewController loadModel];
     [self.remoteTabsViewController.tableView reloadData];
   }
@@ -689,13 +669,9 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   // TODO(crbug.com/804589) : Dark style on remote tabs.
   // The styler must be set before the view controller is loaded.
   ChromeTableViewStyler* styler = [[ChromeTableViewStyler alloc] init];
-  styler.tableViewSectionHeaderBlurEffect = nil;
-  styler.tableViewBackgroundColor = UIColorFromRGB(kGridBackgroundColor);
-  styler.cellTitleColor = UIColorFromRGB(kGridDarkThemeCellTitleColor);
-  styler.headerFooterTitleColor = UIColorFromRGB(kGridDarkThemeCellTitleColor);
-  styler.cellHighlightColor =
-      [UIColor colorWithWhite:0 alpha:kGridDarkThemeCellHighlightColorAlpha];
-  styler.cellSeparatorColor = UIColorFromRGB(kGridDarkThemeCellSeparatorColor);
+  styler.tableViewBackgroundColor = [UIColor colorNamed:kGridBackgroundColor];
+  // To make using the compile guards easier, use a separate method.
+  [self setupRemoteTabsViewControllerForDarkModeWithStyler:styler];
   self.remoteTabsViewController.styler = styler;
 
   UIView* contentView = self.scrollContentView;
@@ -720,79 +696,90 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   [NSLayoutConstraint activateConstraints:constraints];
 }
 
+// The iOS 13 compile guards are much easier to use in a separate function that
+// can be returned from.
+- (void)setupRemoteTabsViewControllerForDarkModeWithStyler:
+    (ChromeTableViewStyler*)styler {
+  // For iOS 13, setting the overrideUserInterfaceStyle to dark forces the use
+  // of dark mode colors for all the colors in this view. However, this
+  // override is not available on pre-iOS 13 devices, so the dark mode colors
+  // must be provided manually.
+  if (@available(iOS 13, *)) {
+    styler.cellHighlightColor = [UIColor colorNamed:kTableViewRowHighlightColor];
+    self.remoteTabsViewController.overrideUserInterfaceStyle =
+        UIUserInterfaceStyleDark;
+    return;
+  }
+  styler.cellHighlightColor =
+      [UIColor colorNamed:kTableViewRowHighlightDarkColor];
+  styler.cellTitleColor = UIColorFromRGB(kGridDarkThemeCellTitleColor);
+  styler.headerFooterTitleColor = UIColorFromRGB(kGridDarkThemeCellTitleColor);
+  styler.cellDetailColor = UIColorFromRGB(kGridDarkThemeCellDetailColor,
+                                          kGridDarkThemeCellDetailAlpha);
+  styler.headerFooterDetailColor = UIColorFromRGB(
+      kGridDarkThemeCellDetailColor, kGridDarkThemeCellDetailAlpha);
+  styler.tintColor = UIColorFromRGB(kGridDarkThemeCellTintColor);
+  styler.solidButtonTextColor =
+      UIColorFromRGB(kGridDarkThemeCellSolidButtonTextColor);
+}
+
 // Adds the top toolbar and sets constraints.
 - (void)setupTopToolbar {
   TabGridTopToolbar* topToolbar = [[TabGridTopToolbar alloc] init];
+  self.topToolbar = topToolbar;
   topToolbar.translatesAutoresizingMaskIntoConstraints = NO;
   [self.view addSubview:topToolbar];
-  self.topToolbar = topToolbar;
-  // Configure and initialize the page control.
-  [self.topToolbar.pageControl addTarget:self
-                                  action:@selector(pageControlChangedValue:)
-                        forControlEvents:UIControlEventValueChanged];
-  [self.topToolbar.pageControl addTarget:self
-                                  action:@selector(pageControlChangedPage:)
-                        forControlEvents:UIControlEventTouchUpInside];
 
-  NSArray* constraints = @[
-    [topToolbar.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+  topToolbar.leadingButton.target = self;
+  topToolbar.leadingButton.action = @selector(closeAllButtonTapped:);
+  topToolbar.trailingButton.title =
+      l10n_util::GetNSString(IDS_IOS_TAB_GRID_DONE_BUTTON);
+  topToolbar.trailingButton.accessibilityIdentifier =
+      kTabGridDoneButtonIdentifier;
+  topToolbar.trailingButton.target = self;
+  topToolbar.trailingButton.action = @selector(doneButtonTapped:);
+
+  // Configure and initialize the page control.
+  [topToolbar.pageControl addTarget:self
+                             action:@selector(pageControlChangedValue:)
+                   forControlEvents:UIControlEventValueChanged];
+  [topToolbar.pageControl addTarget:self
+                             action:@selector(pageControlChangedPage:)
+                   forControlEvents:UIControlEventTouchUpInside];
+
+  [NSLayoutConstraint activateConstraints:@[
+    [topToolbar.topAnchor
+        constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
     [topToolbar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-    [topToolbar.trailingAnchor
-        constraintEqualToAnchor:self.view.trailingAnchor],
-  ];
-  [NSLayoutConstraint activateConstraints:constraints];
-  // Set the height of the toolbar, including unsafe areas.
-  [topToolbar.bottomAnchor
-      constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor
-                     constant:topToolbar.intrinsicContentSize.height]
-      .active = YES;
+    [topToolbar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor]
+  ]];
 }
 
 // Adds the bottom toolbar and sets constraints.
 - (void)setupBottomToolbar {
   TabGridBottomToolbar* bottomToolbar = [[TabGridBottomToolbar alloc] init];
+  self.bottomToolbar = bottomToolbar;
   bottomToolbar.translatesAutoresizingMaskIntoConstraints = NO;
   [self.view addSubview:bottomToolbar];
-  self.bottomToolbar = bottomToolbar;
-  NSArray* constraints = @[
+  [NSLayoutConstraint activateConstraints:@[
     [bottomToolbar.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
     [bottomToolbar.leadingAnchor
         constraintEqualToAnchor:self.view.leadingAnchor],
     [bottomToolbar.trailingAnchor
         constraintEqualToAnchor:self.view.trailingAnchor],
-  ];
-  [NSLayoutConstraint activateConstraints:constraints];
-  // Adds the height of the toolbar above the bottom safe area.
-  [self.view.safeAreaLayoutGuide.bottomAnchor
-      constraintEqualToAnchor:bottomToolbar.topAnchor
-                     constant:bottomToolbar.intrinsicContentSize.height]
-      .active = YES;
-}
-
-// Adds floating button and constraints.
-- (void)setupFloatingButton {
-  TabGridNewTabButton* button = [TabGridNewTabButton
-      buttonWithSizeClass:TabGridNewTabButtonSizeClassLarge];
-  button.translatesAutoresizingMaskIntoConstraints = NO;
-  // Position the floating button over the scroll view, so transition animations
-  // can be above the button but below the toolbars.
-  [self.view insertSubview:button aboveSubview:self.scrollView];
-  self.floatingButton = button;
-  CGFloat verticalInset = kTabGridFloatingButtonVerticalInsetSmall;
-  if (self.traitCollection.verticalSizeClass ==
-          UIUserInterfaceSizeClassRegular &&
-      self.traitCollection.horizontalSizeClass ==
-          UIUserInterfaceSizeClassRegular) {
-    verticalInset = kTabGridFloatingButtonVerticalInsetLarge;
-  }
-  id<LayoutGuideProvider> safeAreaGuide = self.view.safeAreaLayoutGuide;
-  [NSLayoutConstraint activateConstraints:@[
-    [button.trailingAnchor
-        constraintEqualToAnchor:safeAreaGuide.trailingAnchor
-                       constant:-kTabGridFloatingButtonHorizontalInset],
-    [button.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor
-                                        constant:-verticalInset]
   ]];
+
+  bottomToolbar.leadingButton.target = self;
+  bottomToolbar.leadingButton.action = @selector(closeAllButtonTapped:);
+  bottomToolbar.trailingButton.title =
+      l10n_util::GetNSString(IDS_IOS_TAB_GRID_DONE_BUTTON);
+  bottomToolbar.trailingButton.accessibilityIdentifier =
+      kTabGridDoneButtonIdentifier;
+  bottomToolbar.trailingButton.target = self;
+  bottomToolbar.trailingButton.action = @selector(doneButtonTapped:);
+
+  [bottomToolbar setNewTabButtonTarget:self
+                                action:@selector(newTabButtonTapped:)];
 }
 
 - (void)configureViewControllerForCurrentSizeClassesAndPage {
@@ -807,51 +794,19 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   }
   switch (self.configuration) {
     case TabGridConfigurationBottomToolbar:
-      self.topToolbar.leadingButton.hidden = YES;
-      self.topToolbar.trailingButton.hidden = YES;
-      self.bottomToolbar.hidden = NO;
-      self.floatingButton.hidden = YES;
       self.doneButton = self.bottomToolbar.trailingButton;
       self.closeAllButton = self.bottomToolbar.leadingButton;
-      self.newTabButton = self.bottomToolbar.centerButton;
       break;
     case TabGridConfigurationFloatingButton:
-      self.topToolbar.leadingButton.hidden = NO;
-      self.topToolbar.trailingButton.hidden = NO;
-      self.bottomToolbar.hidden = YES;
-      self.floatingButton.hidden = NO;
       self.doneButton = self.topToolbar.trailingButton;
       self.closeAllButton = self.topToolbar.leadingButton;
-      self.newTabButton = self.floatingButton;
       break;
   }
-
-  [self.doneButton setTitle:l10n_util::GetNSString(IDS_IOS_TAB_GRID_DONE_BUTTON)
-                   forState:UIControlStateNormal];
-  self.doneButton.titleLabel.font =
-      [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-  self.closeAllButton.titleLabel.font =
-      [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-  self.doneButton.titleLabel.adjustsFontForContentSizeCategory = YES;
-  self.closeAllButton.titleLabel.adjustsFontForContentSizeCategory = YES;
-  self.doneButton.accessibilityIdentifier = kTabGridDoneButtonIdentifier;
-  self.doneButton.exclusiveTouch = YES;
-  [self.doneButton addTarget:self
-                      action:@selector(doneButtonTapped:)
-            forControlEvents:UIControlEventTouchUpInside];
-  [self.closeAllButton addTarget:self
-                          action:@selector(closeAllButtonTapped:)
-                forControlEvents:UIControlEventTouchUpInside];
-  self.closeAllButton.exclusiveTouch = YES;
-  [self.newTabButton addTarget:self
-                        action:@selector(newTabButtonTapped:)
-              forControlEvents:UIControlEventTouchUpInside];
-  self.newTabButton.exclusiveTouch = YES;
   [self configureButtonsForActiveAndCurrentPage];
 }
 
 - (void)configureButtonsForActiveAndCurrentPage {
-  self.newTabButton.page = self.currentPage;
+  self.bottomToolbar.page = self.currentPage;
   if (self.currentPage == TabGridPageRemoteTabs) {
     [self configureDoneButtonBasedOnPage:self.activePage];
   } else {
@@ -875,9 +830,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
       self.currentPage == TabGridPageRegularTabs) {
     // Setup closeAllButton as undo button.
     self.closeAllButton.enabled = YES;
-    [self.closeAllButton
-        setTitle:l10n_util::GetNSString(IDS_IOS_TAB_GRID_UNDO_CLOSE_ALL_BUTTON)
-        forState:UIControlStateNormal];
+    self.closeAllButton.title =
+        l10n_util::GetNSString(IDS_IOS_TAB_GRID_UNDO_CLOSE_ALL_BUTTON);
     self.closeAllButton.accessibilityIdentifier =
         kTabGridUndoCloseAllButtonIdentifier;
     return;
@@ -887,9 +841,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
       [self gridViewControllerForPage:self.currentPage];
   self.closeAllButton.enabled =
       gridViewController == nil ? NO : !gridViewController.gridEmpty;
-  [self.closeAllButton
-      setTitle:l10n_util::GetNSString(IDS_IOS_TAB_GRID_CLOSE_ALL_BUTTON)
-      forState:UIControlStateNormal];
+  self.closeAllButton.title =
+      l10n_util::GetNSString(IDS_IOS_TAB_GRID_CLOSE_ALL_BUTTON);
   self.closeAllButton.accessibilityIdentifier =
       kTabGridCloseAllButtonIdentifier;
 }
@@ -897,37 +850,14 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 // Shows the two toolbars and the floating button. Suitable for use in
 // animations.
 - (void)showToolbars {
-  // To show a toolbar, set its background to be clear, and its controls to have
-  // an alpha of 1.0.
-  self.topToolbar.backgroundColor = UIColor.clearColor;
-  self.topToolbar.leadingButton.alpha = 1.0;
-  self.topToolbar.trailingButton.alpha = 1.0;
-  self.topToolbar.pageControl.alpha = 1.0;
-
-  self.bottomToolbar.backgroundColor = UIColor.clearColor;
-  self.bottomToolbar.leadingButton.alpha = 1.0;
-  self.bottomToolbar.trailingButton.alpha = 1.0;
-  self.bottomToolbar.centerButton.alpha = 1.0;
-
-  self.floatingButton.alpha = 1.0;
+  [self.topToolbar show];
+  [self.bottomToolbar show];
 }
 
-// Hides the two toolbars and the floating button. Suitable for use in
-// animations.
+// Hides the two toolbars. Suitable for use in animations.
 - (void)hideToolbars {
-  // To hide a toolbar, set its background to be black, and its controls to have
-  // an alpha of 0.0.
-  self.topToolbar.backgroundColor = UIColor.blackColor;
-  self.topToolbar.leadingButton.alpha = 0.0;
-  self.topToolbar.trailingButton.alpha = 0.0;
-  self.topToolbar.pageControl.alpha = 0.0;
-
-  self.bottomToolbar.backgroundColor = UIColor.blackColor;
-  self.bottomToolbar.leadingButton.alpha = 0.0;
-  self.bottomToolbar.trailingButton.alpha = 0.0;
-  self.bottomToolbar.centerButton.alpha = 0.0;
-
-  self.floatingButton.alpha = 0.0;
+  [self.topToolbar hide];
+  [self.bottomToolbar hide];
 }
 
 // Translates the toolbar views offscreen and then animates them back in using
@@ -1015,25 +945,19 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
       // There are duplicate metrics below that correspond to the previous
       // separate implementations for iPhone and iPad. Having both allow for
       // comparisons to the previous implementations.
-      // TODO(crbug.com/856965) : Consolidate and rename metrics.
       base::RecordAction(
-          base::UserMetricsAction("MobileStackViewIncognitoMode"));
-      base::RecordAction(base::UserMetricsAction(
-          "MobileTabSwitcherHeaderViewSelectIncognitoPanel"));
+          base::UserMetricsAction("MobileTabGridSelectIncognitoPanel"));
       break;
     case TabGridPageRegularTabs:
       // There are duplicate metrics below that correspond to the previous
       // separate implementations for iPhone and iPad. Having both allow for
       // comparisons to the previous implementations.
-      // TODO(crbug.com/856965) : Consolidate and rename metrics.
-      base::RecordAction(base::UserMetricsAction("MobileStackViewNormalMode"));
-      base::RecordAction(base::UserMetricsAction(
-          "MobileTabSwitcherHeaderViewSelectNonIncognitoPanel"));
+      base::RecordAction(
+          base::UserMetricsAction("MobileTabGridSelectRegularPanel"));
       break;
     case TabGridPageRemoteTabs:
-      // TODO(crbug.com/856965) : Rename metrics.
-      base::RecordAction(base::UserMetricsAction(
-          "MobileTabSwitcherHeaderViewSelectDistantSessionPanel"));
+      base::RecordAction(
+          base::UserMetricsAction("MobileTabGridSelectRemotePanel"));
       break;
   }
   switch (self.pageChangeInteraction) {
@@ -1065,18 +989,10 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
     case TabGridPageIncognitoTabs:
       [self.incognitoTabsViewController prepareForDismissal];
       [self.incognitoTabsDelegate addNewItem];
-      // Record when new incognito tab is created.
-      // TODO(crbug.com/856965) : Rename metrics.
-      base::RecordAction(
-          base::UserMetricsAction("MobileTabSwitcherCreateIncognitoTab"));
       break;
     case TabGridPageRegularTabs:
       [self.regularTabsViewController prepareForDismissal];
       [self.regularTabsDelegate addNewItem];
-      // Record when new regular tab is created.
-      // TODO(crbug.com/856965) : Rename metrics.
-      base::RecordAction(
-          base::UserMetricsAction("MobileTabSwitcherCreateNonIncognitoTab"));
       break;
     case TabGridPageRemoteTabs:
       NOTREACHED() << "It is invalid to have an active tab in remote tabs.";
@@ -1090,19 +1006,30 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 // Creates and shows a new regular tab.
 - (void)openNewRegularTabForKeyboardCommand {
   [self openNewTabInPage:TabGridPageRegularTabs focusOmnibox:YES];
+  base::RecordAction(
+      base::UserMetricsAction("MobileTabGridCreateRegularTabKeyboard"));
 }
 
 // Creates and shows a new incognito tab.
 - (void)openNewIncognitoTabForKeyboardCommand {
   [self openNewTabInPage:TabGridPageIncognitoTabs focusOmnibox:YES];
+  base::RecordAction(
+      base::UserMetricsAction("MobileTabGridCreateIncognitoTabKeyboard"));
 }
 
 // Creates and shows a new tab in the current page.
 - (void)openNewTabInCurrentPageForKeyboardCommand {
-  // Tabs cannot be opened with ⌘-t from the remote tabs page.
-  if (self.currentPage == TabGridPageRemoteTabs)
-    return;
-  [self openNewTabInPage:self.currentPage focusOmnibox:YES];
+  switch (self.currentPage) {
+    case TabGridPageIncognitoTabs:
+      [self openNewIncognitoTabForKeyboardCommand];
+      break;
+    case TabGridPageRegularTabs:
+      [self openNewRegularTabForKeyboardCommand];
+      break;
+    case TabGridPageRemoteTabs:
+      // Tabs cannot be opened with ⌘-t from the remote tabs page.
+      break;
+  }
 }
 
 // Broadcasts whether incognito tabs are showing.
@@ -1132,12 +1059,12 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 
 // Sets both the current page and page control's selected page to |page|.
 // Animation is used if |animated| is YES.
-- (void)setCurrentPageAndPageControlSelectedPage:(TabGridPage)page
-                                        animated:(BOOL)animated {
+- (void)setCurrentPageAndPageControl:(TabGridPage)page animated:(BOOL)animated {
   if (self.topToolbar.pageControl.selectedPage != page)
     [self.topToolbar.pageControl setSelectedPage:page animated:animated];
-  if (self.currentPage != page)
-    [self setCurrentPage:page animated:animated];
+  if (self.currentPage != page) {
+    [self scrollToPage:page animated:animated];
+  }
 }
 
 #pragma mark - GridViewControllerDelegate
@@ -1151,15 +1078,12 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   if (gridViewController == self.regularTabsViewController) {
     [self.regularTabsDelegate selectItemWithID:itemID];
     // Record when a regular tab is opened.
-    // TODO(crbug.com/856965) : Rename metrics.
-    base::RecordAction(
-        base::UserMetricsAction("MobileTabSwitcherOpenNonIncognitoTab"));
+    base::RecordAction(base::UserMetricsAction("MobileTabGridOpenRegularTab"));
   } else if (gridViewController == self.incognitoTabsViewController) {
     [self.incognitoTabsDelegate selectItemWithID:itemID];
     // Record when an incognito tab is opened.
-    // TODO(crbug.com/856965) : Rename metrics.
     base::RecordAction(
-        base::UserMetricsAction("MobileTabSwitcherOpenIncognitoTab"));
+        base::UserMetricsAction("MobileTabGridOpenIncognitoTab"));
   }
   self.activePage = self.currentPage;
   [self.tabPresentationDelegate showActiveTabInPage:self.currentPage
@@ -1172,15 +1096,12 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   if (gridViewController == self.regularTabsViewController) {
     [self.regularTabsDelegate closeItemWithID:itemID];
     // Record when a regular tab is closed.
-    // TODO(crbug.com/856965) : Rename metrics.
-    base::RecordAction(
-        base::UserMetricsAction("MobileTabSwitcherCloseNonIncognitoTab"));
+    base::RecordAction(base::UserMetricsAction("MobileTabGridCloseRegularTab"));
   } else if (gridViewController == self.incognitoTabsViewController) {
     [self.incognitoTabsDelegate closeItemWithID:itemID];
     // Record when an incognito tab is closed.
-    // TODO(crbug.com/856965) : Rename metrics.
     base::RecordAction(
-        base::UserMetricsAction("MobileTabSwitcherCloseIncognitoTab"));
+        base::UserMetricsAction("MobileTabGridCloseIncognitoTab"));
   }
 }
 
@@ -1206,26 +1127,32 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
     // No assumption is made as to the state of the UI. This method can be
     // called with an incognito view controller and a current page that is not
     // the incognito tabs.
-    if (IsClosingLastIncognitoTabEnabled() && count == 0 &&
-        self.currentPage == TabGridPageIncognitoTabs) {
+    if (count == 0 && self.currentPage == TabGridPageIncognitoTabs) {
       // Show the regular tabs to the user if the last incognito tab is closed.
+      self.activePage = TabGridPageRegularTabs;
       if (self.viewLoaded && self.view.window) {
         // Visibly scroll to the regular tabs panel after a slight delay when
         // the user is already in the tab switcher.
+        // Per crbug.com/980844, if the user has VoiceOver enabled, don't delay
+        // and just animate immediately; delaying the scrolling will cause
+        // VoiceOver to focus the text on the Incognito page.
         __weak TabGridViewController* weakSelf = self;
-        base::PostDelayedTaskWithTraits(
-            FROM_HERE, {web::WebThread::UI}, base::BindOnce(^{
-              [weakSelf setCurrentPageAndPageControlSelectedPage:
-                            TabGridPageRegularTabs
-                                                        animated:YES];
-            }),
-            base::TimeDelta::FromMilliseconds(
-                kTabGridScrollAnimationDelayInMilliseconds));
+        auto scrollToRegularTabs = ^{
+          [weakSelf setCurrentPageAndPageControl:TabGridPageRegularTabs
+                                        animated:YES];
+        };
+        if (UIAccessibilityIsVoiceOverRunning()) {
+          scrollToRegularTabs();
+        } else {
+          base::TimeDelta delay = base::TimeDelta::FromMilliseconds(
+              kTabGridScrollAnimationDelayInMilliseconds);
+          base::PostDelayedTask(FROM_HERE, {web::WebThread::UI},
+                                base::BindOnce(scrollToRegularTabs), delay);
+        }
       } else {
-        // Directly show the regular tabs in tab switcher without animation if
+        // Directly show the regular tab page without animation if
         // the user was not already in tab switcher.
-        [self setCurrentPageAndPageControlSelectedPage:TabGridPageRegularTabs
-                                              animated:NO];
+        [self setCurrentPageAndPageControl:TabGridPageRegularTabs animated:NO];
       }
     }
   }
@@ -1249,9 +1176,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
                                          focusOmnibox:NO];
     // Record when users exit the tab grid to return to the current foreground
     // tab.
-    // TODO(crbug.com/856965) : Rename metrics.
-    base::RecordAction(
-        base::UserMetricsAction("MobileTabReturnedToCurrentTab"));
+    base::RecordAction(base::UserMetricsAction("MobileTabGridDone"));
   }
 }
 
@@ -1285,9 +1210,20 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 
 - (void)newTabButtonTapped:(id)sender {
   [self openNewTabInPage:self.currentPage focusOmnibox:NO];
-  // Record only when a new tab is created through the + button.
-  // TODO(crbug.com/856965) : Rename metrics.
-  base::RecordAction(base::UserMetricsAction("MobileToolbarStackViewNewTab"));
+  // Record metrics for button taps
+  switch (self.currentPage) {
+    case TabGridPageIncognitoTabs:
+      base::RecordAction(
+          base::UserMetricsAction("MobileTabGridCreateIncognitoTab"));
+      break;
+    case TabGridPageRegularTabs:
+      base::RecordAction(
+          base::UserMetricsAction("MobileTabGridCreateRegularTab"));
+      break;
+    case TabGridPageRemoteTabs:
+      // No-op.
+      break;
+  }
 }
 
 - (void)pageControlChangedValue:(id)sender {
@@ -1319,7 +1255,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
     self.pageChangeInteraction = PageChangeInteractionPageControlTap;
 
   TabGridPage currentPage = self.currentPage;
-  [self setCurrentPage:newPage animated:YES];
+  [self scrollToPage:newPage animated:YES];
   // Records when the user uses the pageControl to switch pages.
   if (currentPage != newPage)
     [self recordActionSwitchingToPage:newPage];

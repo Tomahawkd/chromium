@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
@@ -217,13 +218,12 @@ void DeclarativeContentCssConditionTracker::StopTrackingPredicates(
 
 void DeclarativeContentCssConditionTracker::TrackForWebContents(
     content::WebContents* contents) {
-  per_web_contents_tracker_[contents] =
-      make_linked_ptr(new PerWebContentsTracker(
-          contents,
-          base::Bind(&Delegate::RequestEvaluation, base::Unretained(delegate_)),
-          base::Bind(&DeclarativeContentCssConditionTracker::
-                     DeletePerWebContentsTracker,
-                     base::Unretained(this))));
+  per_web_contents_tracker_[contents] = std::make_unique<PerWebContentsTracker>(
+      contents,
+      base::Bind(&Delegate::RequestEvaluation, base::Unretained(delegate_)),
+      base::Bind(
+          &DeclarativeContentCssConditionTracker::DeletePerWebContentsTracker,
+          base::Unretained(this)));
   // Note: the condition is always false until we receive OnWatchedPageChange,
   // so there's no need to evaluate it here.
 }
@@ -231,7 +231,7 @@ void DeclarativeContentCssConditionTracker::TrackForWebContents(
 void DeclarativeContentCssConditionTracker::OnWebContentsNavigation(
     content::WebContents* contents,
     content::NavigationHandle* navigation_handle) {
-  DCHECK(base::ContainsKey(per_web_contents_tracker_, contents));
+  DCHECK(base::Contains(per_web_contents_tracker_, contents));
   per_web_contents_tracker_[contents]->OnWebContentsNavigation(
       navigation_handle);
 }
@@ -244,11 +244,11 @@ bool DeclarativeContentCssConditionTracker::EvaluatePredicate(
       static_cast<const DeclarativeContentCssPredicate*>(predicate);
   auto loc = per_web_contents_tracker_.find(tab);
   DCHECK(loc != per_web_contents_tracker_.end());
-  const base::hash_set<std::string>& matching_css_selectors =
+  const std::unordered_set<std::string>& matching_css_selectors =
       loc->second->matching_css_selectors();
   for (const std::string& predicate_css_selector :
            typed_predicate->css_selectors()) {
-    if (!base::ContainsKey(matching_css_selectors, predicate_css_selector))
+    if (!base::Contains(matching_css_selectors, predicate_css_selector))
       return false;
   }
 
@@ -302,7 +302,7 @@ InstructRenderProcessIfManagingBrowserContext(
 
 void DeclarativeContentCssConditionTracker::DeletePerWebContentsTracker(
     content::WebContents* contents) {
-  DCHECK(base::ContainsKey(per_web_contents_tracker_, contents));
+  DCHECK(base::Contains(per_web_contents_tracker_, contents));
   per_web_contents_tracker_.erase(contents);
 }
 

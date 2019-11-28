@@ -8,8 +8,9 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/strings/string16.h"
 #include "chrome/browser/ui/webui/chromeos/system_web_dialog_delegate.h"
+#include "chromeos/services/network_config/public/mojom/cros_network_config.mojom-forward.h"  // nogncheck
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 
 namespace chromeos {
@@ -25,15 +26,22 @@ class InternetConfigDialog : public SystemWebDialogDelegate {
   static void ShowDialogForNetworkType(const std::string& network_type);
 
  protected:
-  InternetConfigDialog(const std::string& network_type,
+  // |dialog_id| provides a pre-calculated identifier for the dialog based on
+  // the network type and the network id.
+  InternetConfigDialog(const std::string& dialog_id,
+                       const std::string& network_type,
                        const std::string& network_id);
   ~InternetConfigDialog() override;
+
+  // SystemWebDialogDelegate
+  const std::string& Id() override;
 
   // ui::WebDialogDelegate
   void GetDialogSize(gfx::Size* size) const override;
   std::string GetDialogArgs() const override;
 
  private:
+  std::string dialog_id_;
   std::string network_type_;
   std::string network_id_;
 
@@ -42,12 +50,16 @@ class InternetConfigDialog : public SystemWebDialogDelegate {
 
 // A WebUI to host the network configuration UI in a dialog, used in the
 // login screen and when a new network is configured from the system tray.
-class InternetConfigDialogUI : public ui::WebDialogUI {
+class InternetConfigDialogUI : public ui::MojoWebDialogUI {
  public:
   explicit InternetConfigDialogUI(content::WebUI* web_ui);
   ~InternetConfigDialogUI() override;
 
  private:
+  void BindCrosNetworkConfig(
+      mojo::PendingReceiver<chromeos::network_config::mojom::CrosNetworkConfig>
+          receiver);
+
   DISALLOW_COPY_AND_ASSIGN(InternetConfigDialogUI);
 };
 

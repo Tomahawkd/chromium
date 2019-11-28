@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_UNINSTALL_DIALOG_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_UNINSTALL_DIALOG_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
@@ -12,10 +14,12 @@
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/extensions/chrome_app_icon.h"
 #include "chrome/browser/extensions/chrome_app_icon_delegate.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
+#include "url/gurl.h"
 
 class NativeWindowTracker;
 class Profile;
@@ -33,10 +37,10 @@ class ExtensionUninstallDialog
       base::RepeatingCallback<void(ExtensionUninstallDialog*)>;
 
   // The type of action the dialog took at close.
-  // Do not reorder this enum, as it is used in UMA histograms.
+  // Do not reorder this enum as it is used in UMA histograms.
   enum CloseAction {
     CLOSE_ACTION_UNINSTALL = 0,
-    CLOSE_ACTION_UNINSTALL_AND_REPORT_ABUSE = 1,
+    CLOSE_ACTION_UNINSTALL_AND_CHECKBOX_CHECKED = 1,
     CLOSE_ACTION_CANCELED = 2,
     CLOSE_ACTION_LAST = 3,
   };
@@ -59,15 +63,13 @@ class ExtensionUninstallDialog
   // Creates a platform specific implementation of ExtensionUninstallDialog. The
   // dialog will be modal to |parent|, or a non-modal dialog if |parent| is
   // NULL.
-  static ExtensionUninstallDialog* Create(Profile* profile,
-                                          gfx::NativeWindow parent,
-                                          Delegate* delegate);
+  static std::unique_ptr<ExtensionUninstallDialog>
+  Create(Profile* profile, gfx::NativeWindow parent, Delegate* delegate);
 
   // Create the Views implementation of ExtensionUninstallDialog, for use on
   // platforms where that is not the native platform implementation.
-  static ExtensionUninstallDialog* CreateViews(Profile* profile,
-                                               gfx::NativeWindow parent,
-                                               Delegate* delegate);
+  static std::unique_ptr<ExtensionUninstallDialog>
+  CreateViews(Profile* profile, gfx::NativeWindow parent, Delegate* delegate);
 
   ~ExtensionUninstallDialog() override;
 
@@ -89,8 +91,14 @@ class ExtensionUninstallDialog
 
   std::string GetHeadingText();
 
-  // Returns true if a checkbox for reporting abuse should be shown.
-  bool ShouldShowReportAbuseCheckbox() const;
+  GURL GetLaunchURL() const;
+
+  // Returns true if a checkbox should be shown in the dialog.
+  bool ShouldShowCheckbox() const;
+
+  // Returns the string to be displayed with the checkbox. Must not be called if
+  // ShouldShowCheckbox() returns false.
+  base::string16 GetCheckboxLabel() const;
 
   // Called when the dialog is closing to do any book-keeping.
   void OnDialogClosed(CloseAction action);
@@ -134,6 +142,12 @@ class ExtensionUninstallDialog
   // The implementations of this method are platform-specific.
   virtual void Show() = 0;
 
+  // Returns true if a checkbox for reporting abuse should be shown.
+  bool ShouldShowReportAbuseCheckbox() const;
+
+  // Returns true if a checkbox for removing associated data should be shown.
+  bool ShouldShowRemoveDataCheckbox() const;
+
   Profile* const profile_;
 
   // The dialog's parent window.
@@ -159,7 +173,7 @@ class ExtensionUninstallDialog
 
   UninstallReason uninstall_reason_ = UNINSTALL_REASON_FOR_TESTING;
 
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver> observer_;
+  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver> observer_{this};
 
   base::ThreadChecker thread_checker_;
 

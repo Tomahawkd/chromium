@@ -11,15 +11,14 @@
 
 namespace autofill_assistant {
 
-UnsupportedAction::UnsupportedAction(const ActionProto& proto)
-    : Action(proto) {}
+UnsupportedAction::UnsupportedAction(ActionDelegate* delegate,
+                                     const ActionProto& proto)
+    : Action(delegate, proto) {}
 
 UnsupportedAction::~UnsupportedAction() {}
 
-void UnsupportedAction::InternalProcessAction(ActionDelegate* delegate,
-                                              ProcessActionCallback callback) {
-  // TODO(crbug.com/806868): Add 'unsupported action' status to the protocol.
-  UpdateProcessedAction(UNKNOWN_ACTION_STATUS);
+void UnsupportedAction::InternalProcessAction(ProcessActionCallback callback) {
+  UpdateProcessedAction(UNSUPPORTED_ACTION);
   std::move(callback).Run(std::move(processed_action_proto_));
 }
 

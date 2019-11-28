@@ -4,8 +4,6 @@
 
 #include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
 
-#include <memory>
-
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/web/web_custom_element.h"
@@ -29,6 +27,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -61,7 +60,7 @@ class CustomElementRegistryTest : public PageTestBase {
 
 TEST_F(CustomElementRegistryTest,
        collectCandidates_shouldNotIncludeElementsRemovedFromDocument) {
-  Element* element = CreateElement("a-a").InDocument(&GetDocument());
+  Element& element = *CreateElement("a-a").InDocument(&GetDocument());
   Registry().AddCandidate(element);
 
   HeapVector<Member<Element>> elements;
@@ -77,9 +76,9 @@ TEST_F(CustomElementRegistryTest,
 TEST_F(CustomElementRegistryTest,
        collectCandidates_shouldNotIncludeElementsInDifferentDocument) {
   Element* element = CreateElement("a-a").InDocument(&GetDocument());
-  Registry().AddCandidate(element);
+  Registry().AddCandidate(*element);
 
-  Document* other_document = HTMLDocument::CreateForTest();
+  auto* other_document = MakeGarbageCollected<HTMLDocument>();
   other_document->AppendChild(element);
   EXPECT_EQ(other_document, element->ownerDocument())
       << "sanity: another document should have adopted an element on append";
@@ -99,18 +98,18 @@ TEST_F(CustomElementRegistryTest,
   CustomElementDescriptor descriptor("hello-world", "hello-world");
 
   // Does not match: namespace is not HTML
-  Element* element_a = CreateElement("hello-world")
-                           .InDocument(&GetDocument())
-                           .InNamespace("data:text/date,1981-03-10");
+  Element& element_a = *CreateElement("hello-world")
+                            .InDocument(&GetDocument())
+                            .InNamespace("data:text/date,1981-03-10");
   // Matches
-  Element* element_b = CreateElement("hello-world").InDocument(&GetDocument());
+  Element& element_b = *CreateElement("hello-world").InDocument(&GetDocument());
   // Does not match: local name is not hello-world
-  Element* element_c = CreateElement("button")
-                           .InDocument(&GetDocument())
-                           .WithIsValue("hello-world");
-  GetDocument().documentElement()->AppendChild(element_a);
-  element_a->AppendChild(element_b);
-  element_a->AppendChild(element_c);
+  Element& element_c = *CreateElement("button")
+                            .InDocument(&GetDocument())
+                            .WithIsValue("hello-world");
+  GetDocument().documentElement()->AppendChild(&element_a);
+  element_a.AppendChild(&element_b);
+  element_a.AppendChild(&element_c);
 
   Registry().AddCandidate(element_a);
   Registry().AddCandidate(element_b);
@@ -126,9 +125,9 @@ TEST_F(CustomElementRegistryTest,
 }
 
 TEST_F(CustomElementRegistryTest, collectCandidates_oneCandidate) {
-  Element* element = CreateElement("a-a").InDocument(&GetDocument());
+  Element& element = *CreateElement("a-a").InDocument(&GetDocument());
   Registry().AddCandidate(element);
-  GetDocument().documentElement()->AppendChild(element);
+  GetDocument().documentElement()->AppendChild(&element);
 
   HeapVector<Member<Element>> elements;
   CollectCandidates(CustomElementDescriptor("a-a", "a-a"), &elements);
@@ -146,9 +145,9 @@ TEST_F(CustomElementRegistryTest, collectCandidates_shouldBeInDocumentOrder) {
   Element* element_b = factory.WithId("b");
   Element* element_c = factory.WithId("c");
 
-  Registry().AddCandidate(element_b);
-  Registry().AddCandidate(element_a);
-  Registry().AddCandidate(element_c);
+  Registry().AddCandidate(*element_b);
+  Registry().AddCandidate(*element_a);
+  Registry().AddCandidate(*element_c);
 
   GetDocument().documentElement()->AppendChild(element_a);
   element_a->AppendChild(element_b);
@@ -174,7 +173,7 @@ class LogUpgradeDefinition : public TestCustomElementDefinition {
             },
             {}) {}
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     TestCustomElementDefinition::Trace(visitor);
     visitor->Trace(element_);
     visitor->Trace(adopted_);
@@ -200,13 +199,13 @@ class LogUpgradeDefinition : public TestCustomElementDefinition {
   Vector<AttributeChanged> attribute_changed_;
 
   struct Adopted : public GarbageCollected<Adopted> {
-    Adopted(Document* old_owner, Document* new_owner)
+    Adopted(Document& old_owner, Document& new_owner)
         : old_owner_(old_owner), new_owner_(new_owner) {}
 
     Member<Document> old_owner_;
     Member<Document> new_owner_;
 
-    void Trace(blink::Visitor* visitor) {
+    void Trace(Visitor* visitor) {
       visitor->Trace(old_owner_);
       visitor->Trace(new_owner_);
     }
@@ -218,7 +217,7 @@ class LogUpgradeDefinition : public TestCustomElementDefinition {
     attribute_changed_.clear();
   }
 
-  bool RunConstructor(Element* element) override {
+  bool RunConstructor(Element& element) override {
     logs_.push_back(kConstructor);
     element_ = element;
     return TestCustomElementDefinition::RunConstructor(element);
@@ -228,30 +227,30 @@ class LogUpgradeDefinition : public TestCustomElementDefinition {
   bool HasDisconnectedCallback() const override { return true; }
   bool HasAdoptedCallback() const override { return true; }
 
-  void RunConnectedCallback(Element* element) override {
+  void RunConnectedCallback(Element& element) override {
     logs_.push_back(kConnectedCallback);
-    EXPECT_EQ(element, element_);
+    EXPECT_EQ(&element, element_);
   }
 
-  void RunDisconnectedCallback(Element* element) override {
+  void RunDisconnectedCallback(Element& element) override {
     logs_.push_back(kDisconnectedCallback);
-    EXPECT_EQ(element, element_);
+    EXPECT_EQ(&element, element_);
   }
 
-  void RunAdoptedCallback(Element* element,
-                          Document* old_owner,
-                          Document* new_owner) override {
+  void RunAdoptedCallback(Element& element,
+                          Document& old_owner,
+                          Document& new_owner) override {
     logs_.push_back(kAdoptedCallback);
-    EXPECT_EQ(element, element_);
+    EXPECT_EQ(&element, element_);
     adopted_.push_back(MakeGarbageCollected<Adopted>(old_owner, new_owner));
   }
 
-  void RunAttributeChangedCallback(Element* element,
+  void RunAttributeChangedCallback(Element& element,
                                    const QualifiedName& name,
                                    const AtomicString& old_value,
                                    const AtomicString& new_value) override {
     logs_.push_back(kAttributeChangedCallback);
-    EXPECT_EQ(element, element_);
+    EXPECT_EQ(&element, element_);
     attribute_changed_.push_back(AttributeChanged{name, old_value, new_value});
   }
 
@@ -399,7 +398,7 @@ TEST_F(CustomElementRegistryTest, adoptedCallback) {
       static_cast<LogUpgradeDefinition*>(Registry().DefinitionForName("a-a"));
 
   definition->Clear();
-  Document* other_document = HTMLDocument::CreateForTest();
+  auto* other_document = MakeGarbageCollected<HTMLDocument>();
   {
     CEReactionsScope reactions;
     other_document->adoptNode(element, ASSERT_NO_EXCEPTION);

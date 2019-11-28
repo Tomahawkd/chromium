@@ -95,16 +95,23 @@ void TransformToFlattenedSkMatrix(const gfx::Transform& transform,
 }
 
 bool BitmapsAreEqual(const SkBitmap& bitmap1, const SkBitmap& bitmap2) {
-  void* addr1 = NULL;
-  void* addr2 = NULL;
-  size_t size1 = 0;
-  size_t size2 = 0;
+  if (bitmap1.isNull() != bitmap2.isNull() ||
+      bitmap1.dimensions() != bitmap2.dimensions())
+    return false;
 
-  addr1 = bitmap1.getAddr32(0, 0);
-  size1 = bitmap1.computeByteSize();
+  if (bitmap1.getGenerationID() == bitmap2.getGenerationID() ||
+      (bitmap1.empty() && bitmap2.empty()))
+    return true;
 
-  addr2 = bitmap2.getAddr32(0, 0);
-  size2 = bitmap2.computeByteSize();
+  // Calling getAddr32() on null or empty bitmaps will assert. The conditions
+  // above should return early if either bitmap is empty or null.
+  DCHECK(!bitmap1.isNull() && !bitmap2.isNull());
+  DCHECK(!bitmap1.empty() && !bitmap2.empty());
+
+  void* addr1 = bitmap1.getAddr32(0, 0);
+  void* addr2 = bitmap2.getAddr32(0, 0);
+  size_t size1 = bitmap1.computeByteSize();
+  size_t size2 = bitmap2.computeByteSize();
 
   return (size1 == size2) && (0 == memcmp(addr1, addr2, size1));
 }
@@ -156,38 +163,5 @@ float HarfBuzzUnitsToFloat(int value) {
   static const float kFloatToHbRatio = 1.0f / kHbUnit1;
   return kFloatToHbRatio * value;
 }
-
-#if BUILDFLAG(ENABLE_VULKAN)
-VkFormat SkColorTypeToVkFormat(SkColorType color_type) {
-  switch (color_type) {
-    case kUnknown_SkColorType:
-      break;
-    case kAlpha_8_SkColorType:
-      return VK_FORMAT_R8_UNORM;
-    case kRGB_565_SkColorType:
-      return VK_FORMAT_R5G6B5_UNORM_PACK16;
-    case kARGB_4444_SkColorType:
-      return VK_FORMAT_B4G4R4A4_UNORM_PACK16;
-    case kRGBA_8888_SkColorType:
-      return VK_FORMAT_R8G8B8A8_UNORM;  // or VK_FORMAT_R8G8B8A8_SRGB
-    case kRGB_888x_SkColorType:  // Skia doesn't support it yet.
-      break;
-    case kBGRA_8888_SkColorType:
-      return VK_FORMAT_B8G8R8A8_UNORM;  // or VK_FORMAT_B8G8R8A8_SRGB
-    case kRGBA_1010102_SkColorType:
-      return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-    case kGray_8_SkColorType:
-      return VK_FORMAT_R8_UNORM;
-    case kRGBA_F16_SkColorType:
-      return VK_FORMAT_R16G16B16A16_SFLOAT;
-    case kRGBA_F32_SkColorType:
-      return VK_FORMAT_R32G32B32A32_SFLOAT;
-    case kRGB_101010x_SkColorType:  // Skia doesn't support it yet.
-      break;
-  }
-  NOTREACHED();
-  return VK_FORMAT_UNDEFINED;
-}
-#endif
 
 }  // namespace gfx

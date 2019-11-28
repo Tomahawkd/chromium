@@ -10,7 +10,12 @@
 Polymer({
   is: 'settings-about-page',
 
-  behaviors: [WebUIListenerBehavior, MainPageBehavior, I18nBehavior],
+  behaviors: [
+    WebUIListenerBehavior,
+    settings.MainPageBehavior,
+    settings.RouteObserverBehavior,
+    I18nBehavior,
+  ],
 
   properties: {
     /** @private {?UpdateStatusChangedEvent} */
@@ -21,6 +26,18 @@ Polymer({
         progress: 0,
         rollback: false,
         status: UpdateStatus.DISABLED
+      },
+    },
+
+    /**
+     * Whether the browser/ChromeOS is managed by their organization
+     * through enterprise policies.
+     * @private
+     */
+    isManaged_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('isManaged');
       },
     },
 
@@ -47,7 +64,25 @@ Polymer({
     },
 
     /** @private */
+    hasReleaseNotes_: {
+      type: Boolean,
+      value: false,
+    },
+
+    /** @private */
     showCrostini: Boolean,
+
+    /**
+     * When the SplitSettings feature is disabled, the about page shows the OS-
+     * specific parts. When SplitSettings is enabled, the OS-specific parts
+     * will only show up in chrome://os-settings/help.
+     * TODO(aee): remove after SplitSettings feature flag is removed.
+     * @private
+     */
+    showOsSettings_: {
+      type: Boolean,
+      value: () => loadTimeData.getBoolean('showOSSettings'),
+    },
 
     /** @private */
     showCrostiniLicense_: {
@@ -55,6 +90,12 @@ Polymer({
       value: false,
     },
     // </if>
+
+    /** @private */
+    hasInternetConnection_: {
+      type: Boolean,
+      value: false,
+    },
 
     // <if expr="_google_chrome and is_macosx">
     /** @private {!PromoteUpdaterStatus} */
@@ -126,7 +167,10 @@ Polymer({
     },
 
     /** @private */
-    showTPMFirmwareUpdateLineItem_: Boolean,
+    showTPMFirmwareUpdateLineItem_: {
+      type: Boolean,
+      value: false,
+    },
 
     /** @private */
     showTPMFirmwareUpdateDialog_: Boolean,
@@ -156,7 +200,6 @@ Polymer({
     // </if>
   ],
 
-
   /** @private {?settings.AboutPageBrowserProxy} */
   aboutBrowserProxy_: null,
 
@@ -172,6 +215,10 @@ Polymer({
         settings.LifetimeBrowserProxyImpl.getInstance();
 
     // <if expr="chromeos">
+    if (!this.showOsSettings_) {
+      return;
+    }
+
     this.addEventListener('target-channel-changed', e => {
       this.targetChannel_ = e.detail;
     });
@@ -186,9 +233,18 @@ Polymer({
       this.regulatoryInfo_ = info;
     });
 
-    this.aboutBrowserProxy_.getHasEndOfLife().then(result => {
-      this.hasEndOfLife_ = result;
+    this.aboutBrowserProxy_.getEndOfLifeInfo().then(result => {
+      this.hasEndOfLife_ = !!result.hasEndOfLife;
     });
+
+    this.aboutBrowserProxy_.getEnabledReleaseNotes().then(result => {
+      this.hasReleaseNotes_ = result;
+    });
+
+    this.aboutBrowserProxy_.checkInternetConnection().then(result => {
+      this.hasInternetConnection_ = result;
+    });
+
     // </if>
     // <if expr="not chromeos">
     this.startListening_();
@@ -196,6 +252,20 @@ Polymer({
     if (settings.getQueryParameters().get('checkForUpdate') == 'true') {
       this.onCheckUpdatesTap_();
     }
+  },
+
+  /**
+   * @param {!settings.Route} newRoute
+   * @param {settings.Route} oldRoute
+   */
+  currentRouteChanged: function(newRoute, oldRoute) {
+    settings.MainPageBehavior.currentRouteChanged.call(
+        this, newRoute, oldRoute);
+  },
+
+  // Override settings.MainPageBehavior method.
+  containsRoute: function(route) {
+    return !route || settings.routes.ABOUT.contains(route);
   },
 
   /** @private */
@@ -248,8 +318,9 @@ Polymer({
   onPromoteUpdaterTap_: function() {
     // This is necessary because #promoteUpdater is not a button, so by default
     // disable doesn't do anything.
-    if (this.promoteUpdaterStatus_.disabled)
+    if (this.promoteUpdaterStatus_.disabled) {
       return;
+    }
     this.aboutBrowserProxy_.promoteUpdater();
   },
   // </if>
@@ -262,6 +333,11 @@ Polymer({
     // Stop the propagation of events, so that clicking on links inside
     // actionable items won't trigger action.
     event.stopPropagation();
+  },
+
+  /** @private */
+  onReleaseNotesTap_: function() {
+    this.aboutBrowserProxy_.launchReleaseNotes();
   },
 
   /** @private */
@@ -347,10 +423,12 @@ Polymer({
         return this.i18nAdvanced('aboutUpgradeCheckStarted');
       case UpdateStatus.NEARLY_UPDATED:
         // <if expr="chromeos">
-        if (this.currentChannel_ != this.targetChannel_)
+        if (this.currentChannel_ != this.targetChannel_) {
           return this.i18nAdvanced('aboutUpgradeSuccessChannelSwitch');
-        if (this.currentUpdateStatusEvent_.rollback)
+        }
+        if (this.currentUpdateStatusEvent_.rollback) {
           return this.i18nAdvanced('aboutRollbackSuccess');
+        }
         // </if>
         return this.i18nAdvanced('aboutUpgradeRelaunch');
       case UpdateStatus.UPDATED:
@@ -393,11 +471,13 @@ Polymer({
         }
         let result = '';
         const message = this.currentUpdateStatusEvent_.message;
-        if (message)
+        if (message) {
           result += formatMessage(message);
+        }
         const connectMessage = this.currentUpdateStatusEvent_.connectionTypes;
-        if (connectMessage)
+        if (connectMessage) {
           result += '<div>' + formatMessage(connectMessage) + '</div>';
+        }
         return result;
     }
   },
@@ -411,15 +491,16 @@ Polymer({
     // If Chrome OS has reached end of life, display a special icon and
     // ignore UpdateStatus.
     if (this.hasEndOfLife_) {
-      return 'settings:end-of-life';
+      return 'os-settings:end-of-life';
     }
     // </if>
 
     // <if expr="not chromeos">
     // If this platform has reached the end of the line, display an error icon
     // and ignore UpdateStatus.
-    if (this.obsoleteSystemInfo_.endOfLine)
+    if (this.obsoleteSystemInfo_.endOfLine) {
       return 'cr:error';
+    }
     // </if>
 
     switch (this.currentUpdateStatusEvent_.status) {
@@ -447,8 +528,9 @@ Polymer({
     // </if>
 
     // <if expr="not chromeos">
-    if (this.obsoleteSystemInfo_.endOfLine)
+    if (this.obsoleteSystemInfo_.endOfLine) {
       return null;
+    }
     // </if>
 
     switch (this.currentUpdateStatusEvent_.status) {
@@ -467,6 +549,11 @@ Polymer({
    */
   checkStatus_: function(status) {
     return this.currentUpdateStatusEvent_.status == status;
+  },
+
+  /** @private */
+  onManagementPageTap_: function() {
+    window.location.href = 'chrome://management';
   },
 
   // <if expr="chromeos">
@@ -545,6 +632,20 @@ Polymer({
         this.i18nAdvanced('aboutProductOsLicense');
   },
 
+  // <if expr="chromeos">
+  /**
+   * @return {string}
+   * @private
+   */
+  getUpdateOsSettingsLink_: function() {
+    // Note: This string contains raw HTML and thus requires i18nAdvanced().
+    // Since the i18n template syntax (e.g., $i18n{}) does not include an
+    // "advanced" version, it's not possible to inline this link directly in the
+    // HTML.
+    return this.i18nAdvanced('aboutUpdateOsSettingsLink');
+  },
+  // </if>
+
   /**
    * @param {boolean} enabled True if Crostini is enabled.
    * @private
@@ -574,7 +675,8 @@ Polymer({
    * @private
    */
   shouldShowRegulatoryOrSafetyInfo_: function() {
-    return this.shouldShowSafetyInfo_() || this.shouldShowRegulatoryInfo_();
+    return this.showOsSettings_ &&
+        (this.shouldShowSafetyInfo_() || this.shouldShowRegulatoryInfo_());
   },
 
   /** @private */
@@ -629,17 +731,15 @@ Polymer({
    */
   shouldShowIcons_: function() {
     // <if expr="chromeos">
-    if (this.hasEndOfLife_)
+    if (this.hasEndOfLife_) {
       return true;
+    }
     // </if>
     // <if expr="not chromeos">
-    if (this.obsoleteSystemInfo_.endOfLine)
+    if (this.obsoleteSystemInfo_.endOfLine) {
       return true;
+    }
     // </if>
     return this.showUpdateStatus_;
-  },
-
-  focusSection: function() {
-    this.$$('settings-section[section="about"]').show();
   },
 });

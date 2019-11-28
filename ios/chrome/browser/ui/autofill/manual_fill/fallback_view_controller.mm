@@ -9,6 +9,7 @@
 #import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
@@ -24,12 +25,40 @@ typedef NS_ENUM(NSInteger, SectionIdentifier) {
 namespace {
 
 // This is the width used for |self.preferredContentSize|.
-constexpr float PopoverPreferredWidth = 320;
+constexpr CGFloat PopoverPreferredWidth = 320;
 
 // This is the maximum height used for |self.preferredContentSize|.
-constexpr float PopoverMaxHeight = 360;
+constexpr CGFloat PopoverMaxHeight = 360;
+
+// This is the height used for |self.preferredContentSize| when showing the
+// loading indicator on iPad.
+constexpr CGFloat PopoverLoadingHeight = 185.5;
+
+// If the loading indicator was shown, it will be on screen for at least this
+// amount of seconds.
+constexpr CGFloat kMinimumLoadingTime = 0.5;
+
+// Height of the section header.
+constexpr CGFloat kSectionHeaderHeight = 6;
+
+// Height of the section footer.
+constexpr CGFloat kSectionFooterHeight = 8;
 
 }  // namespace
+
+@interface FallbackViewController ()
+
+// The date when the loading indicator started or [NSDate distantPast] if it
+// hasn't been shown.
+@property(nonatomic, strong) NSDate* loadingIndicatorStartingDate;
+
+// Data Items to be shown when the loading indicator disappears.
+@property(nonatomic, strong) NSArray<TableViewItem*>* queuedDataItems;
+
+// Action Items to be shown when the loading indicator disappears.
+@property(nonatomic, strong) NSArray<TableViewItem*>* queuedActionItems;
+
+@end
 
 @implementation FallbackViewController
 
@@ -47,6 +76,7 @@ constexpr float PopoverMaxHeight = 360;
            selector:@selector(handleKeyboardDidHide:)
                name:UIKeyboardDidHideNotification
              object:nil];
+    _loadingIndicatorStartingDate = [NSDate distantPast];
   }
   return self;
 }
@@ -54,49 +84,126 @@ constexpr float PopoverMaxHeight = 360;
 - (void)viewDidLoad {
   // Super's |viewDidLoad| uses |styler.tableViewBackgroundColor| so it needs to
   // be set before.
-  self.styler.tableViewBackgroundColor = [UIColor whiteColor];
+  self.styler.tableViewBackgroundColor = [UIColor colorNamed:kBackgroundColor];
 
   [super viewDidLoad];
 
   self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-  self.tableView.sectionHeaderHeight = 0;
-  self.tableView.sectionFooterHeight = 20.0;
-  self.tableView.estimatedRowHeight = 200;
+  self.tableView.sectionHeaderHeight = kSectionHeaderHeight;
+  self.tableView.sectionFooterHeight = kSectionFooterHeight;
+  self.tableView.estimatedRowHeight = 1;
   self.tableView.separatorInset = UIEdgeInsetsMake(0, 0, 0, 0);
   self.tableView.allowsSelection = NO;
   self.definesPresentationContext = YES;
-
-  [self startLoadingIndicatorWithLoadingMessage:@""];
+  if (!self.tableViewModel) {
+    if (self.popoverPresentationController) {
+      self.preferredContentSize = CGSizeMake(
+          PopoverPreferredWidth, AlignValueToPixel(PopoverLoadingHeight));
+    }
+    [self startLoadingIndicatorWithLoadingMessage:@""];
+    self.loadingIndicatorStartingDate = [NSDate date];
+  }
 }
 
 - (void)presentDataItems:(NSArray<TableViewItem*>*)items {
+  if (![self shouldPresentItems]) {
+    if (self.queuedDataItems) {
+      self.queuedDataItems = items;
+      return;
+    }
+    self.queuedDataItems = items;
+    NSTimeInterval remainingTime =
+        kMinimumLoadingTime - [self timeSinceLoadingIndicatorStarted];
+    __weak __typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(remainingTime * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     [weakSelf presentQueuedDataItems];
+                   });
+    return;
+  }
+  self.queuedDataItems = items;
+  [self presentQueuedDataItems];
+}
+
+- (void)presentActionItems:(NSArray<TableViewItem*>*)actions {
+  if (![self shouldPresentItems]) {
+    if (self.queuedActionItems) {
+      self.queuedActionItems = actions;
+      return;
+    }
+    self.queuedActionItems = actions;
+    NSTimeInterval remainingTime =
+        kMinimumLoadingTime - [self timeSinceLoadingIndicatorStarted];
+    __weak __typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(remainingTime * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     [weakSelf presentQueuedActionItems];
+                   });
+    return;
+  }
+  self.queuedActionItems = actions;
+  [self presentQueuedActionItems];
+}
+
+#pragma mark - Getters
+
+- (BOOL)contentInsetsAlwaysEqualToSafeArea {
+  if (@available(iOS 13, *)) {
+    return NO;
+  }
+  return _contentInsetsAlwaysEqualToSafeArea;
+}
+
+#pragma mark - Private
+
+// Presents the data items currently in queue.
+- (void)presentQueuedDataItems {
+  DCHECK(self.queuedDataItems);
   [self createModelIfNeeded];
   BOOL sectionExist = [self.tableViewModel
       hasSectionForSectionIdentifier:ItemsSectionIdentifier];
   // If there are no passed items, remove section if exist.
-  if (!items.count && sectionExist) {
+  if (!self.queuedDataItems.count && sectionExist) {
     [self.tableViewModel removeSectionWithIdentifier:ItemsSectionIdentifier];
-  } else if (items.count && !sectionExist) {
+  } else if (self.queuedDataItems.count && !sectionExist) {
     [self.tableViewModel insertSectionWithIdentifier:ItemsSectionIdentifier
                                              atIndex:0];
   }
-  [self presentFallbackItems:items inSection:ItemsSectionIdentifier];
+  [self presentFallbackItems:self.queuedDataItems
+                   inSection:ItemsSectionIdentifier];
+  self.queuedDataItems = nil;
 }
 
-- (void)presentActionItems:(NSArray<TableViewItem*>*)actions {
+// Presents the action items currently in queue.
+- (void)presentQueuedActionItems {
+  DCHECK(self.queuedActionItems);
   [self createModelIfNeeded];
   BOOL sectionExist = [self.tableViewModel
       hasSectionForSectionIdentifier:ActionsSectionIdentifier];
   // If there are no passed items, remove section if exist.
-  if (!actions.count && sectionExist) {
+  if (!self.queuedActionItems.count && sectionExist) {
     [self.tableViewModel removeSectionWithIdentifier:ActionsSectionIdentifier];
-  } else if (actions.count && !sectionExist) {
+  } else if (self.queuedActionItems.count && !sectionExist) {
     [self.tableViewModel addSectionWithIdentifier:ActionsSectionIdentifier];
   }
-  [self presentFallbackItems:actions inSection:ActionsSectionIdentifier];
+  [self presentFallbackItems:self.queuedActionItems
+                   inSection:ActionsSectionIdentifier];
+  self.queuedActionItems = nil;
 }
 
-#pragma mark - Private
+// Seconds since the loading indicator started. This is >> kMinimumLoadingTime
+// if the loading indicator wasn't shown.
+- (NSTimeInterval)timeSinceLoadingIndicatorStarted {
+  return
+      [[NSDate date] timeIntervalSinceDate:self.loadingIndicatorStartingDate];
+}
+
+// Indicates if the view is ready for data to be presented.
+- (BOOL)shouldPresentItems {
+  return [self timeSinceLoadingIndicatorStarted] >= kMinimumLoadingTime;
+}
 
 - (void)createModelIfNeeded {
   if (!self.tableViewModel) {
@@ -142,7 +249,7 @@ constexpr float PopoverMaxHeight = 360;
     }
   }
   [self.tableView reloadData];
-  if (IsIPadIdiom()) {
+  if (self.popoverPresentationController) {
     // Update the preffered content size on iPad so the popover shows the right
     // size.
     [self.tableView layoutIfNeeded];

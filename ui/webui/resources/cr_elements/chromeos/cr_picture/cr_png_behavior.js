@@ -4,8 +4,8 @@
 
 /**
  * @fileoverview
- * 'CrPngBehavior' is a behavior to convert image sequences into animated
- * PNG images.
+ * 'CrPngBehavior' is a behavior to convert image sequences into APNG (animated
+ * PNG) images.
  */
 
 /**
@@ -181,8 +181,9 @@ const CrPngBehavior = {
     png.chunks.push(acTL);
 
     /** Append each image as a PNG frame. */
-    for (let i = 0; i < images.length; ++i)
+    for (let i = 0; i < images.length; ++i) {
       this.appendFrameFromDataURL_(images[i], png);
+    }
 
     /** Update IHDR now that size and colour is known. */
     this.writeUInt32_(IHDR, png.width, 8);
@@ -205,6 +206,21 @@ const CrPngBehavior = {
                    return String.fromCharCode.apply(null, chunk);
                  })
                  .join(''));
+  },
+
+  /**
+   * Returns true if the data URL is an animated PNG image.  If the PNG is
+   * animated, then 'acTL' will have been set by convertImageSequenceToPng().
+   * acTL is the animation control chunk in the data stream of an animated PNG.
+   * If it exists we assume the image is animated, regardless of the number of
+   * frames. The offset is the PNG signature ( 8 bytes) + IHDR (25 bytes) + 4
+   * bytes of padding zeros. See https://wiki.mozilla.org/APNG_Specification
+   * @param {string} url An btoa encoded data URL for a PNG image.
+   * @return {boolean} True if data URL is an animated PNG image.
+   */
+  isEncodedPngDataUrlAnimated: function(url) {
+    const decoded = atob(url.substr('data:image/png;base64,'.length));
+    return decoded.substr(37, 4) == 'acTL';
   },
 
   /**
@@ -424,20 +440,27 @@ const CrPngBehavior = {
           }
 
           /** Check that header matches our expectations. */
-          if (width != png.width)
+          if (width != png.width) {
             console.error('Bad PNG width: ' + width);
-          if (height != png.height)
+          }
+          if (height != png.height) {
             console.error('Bad PNG height: ' + height);
-          if (depth != PNG_BIT_DEPTH)
+          }
+          if (depth != PNG_BIT_DEPTH) {
             console.error('Bad PNG bit depth: ' + depth);
-          if (colour != png.colour)
+          }
+          if (colour != png.colour) {
             console.error('Bad PNG colour type: ' + colour);
-          if (compression != PNG_COMPRESSION_METHOD)
+          }
+          if (compression != PNG_COMPRESSION_METHOD) {
             console.error('Bad PNG compression method: ' + compression);
-          if (filter != PNG_FILTER_METHOD)
+          }
+          if (filter != PNG_FILTER_METHOD) {
             console.error('Bad PNG filter method: ' + filter);
-          if (interlace != PNG_INTERLACE_METHOD)
+          }
+          if (interlace != PNG_INTERLACE_METHOD) {
             console.error('Bad PNG interlace method: ' + interlace);
+          }
           break;
         case 'IDAT':
           /** Append as IDAT chunk if this is the first frame. */

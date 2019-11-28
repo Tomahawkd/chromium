@@ -1,9 +1,8 @@
-dtrainor@chromium.org
+file://chrome/android/OWNERS
+
 jbudorick@chromium.org
-nyquist@chromium.org
-skyostil@chromium.org
-tedchoc@chromium.org
-yfriedman@chromium.org
+
+per-file BUILD.gn=*
 
 # COMPONENT: Test>Android
 # OS: Android

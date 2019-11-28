@@ -9,11 +9,12 @@
 #include <string>
 
 #include "content/common/content_export.h"
-#include "content/public/common/media_stream_request.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/video_capture_device_info.h"
 #include "media/capture/video/video_frame_receiver.h"
 #include "media/capture/video_capture_types.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "ui/gfx/native_widget_types.h"
 
 namespace content {
 
@@ -44,7 +45,7 @@ class CONTENT_EXPORT VideoCaptureDeviceLauncher {
   // during the asynchronous processing stays alive.
   virtual void LaunchDeviceAsync(
       const std::string& device_id,
-      MediaStreamType stream_type,
+      blink::mojom::MediaStreamType stream_type,
       const media::VideoCaptureParams& params,
       base::WeakPtr<media::VideoFrameReceiver> receiver,
       base::OnceClosure connection_lost_cb,
@@ -59,7 +60,7 @@ class CONTENT_EXPORT LaunchedVideoCaptureDevice
  public:
   // Device operation methods.
   virtual void GetPhotoState(
-      media::VideoCaptureDevice::GetPhotoStateCallback callback) const = 0;
+      media::VideoCaptureDevice::GetPhotoStateCallback callback) = 0;
   virtual void SetPhotoOptions(
       media::mojom::PhotoSettingsPtr settings,
       media::VideoCaptureDevice::SetPhotoOptionsCallback callback) = 0;

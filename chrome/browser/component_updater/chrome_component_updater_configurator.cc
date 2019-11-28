@@ -10,11 +10,15 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/callback.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/version.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/component_updater/component_updater_utils.h"
+#include "chrome/browser/component_updater/recovery_improved_component_installer.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/update_client/chrome_update_query_params_delegate.h"
@@ -24,15 +28,20 @@
 #include "components/component_updater/configurator_impl.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/services/patch/content/patch_service.h"
+#include "components/services/unzip/content/unzip_service.h"
 #include "components/update_client/activity_data_service.h"
+#include "components/update_client/net/network_chromium.h"
+#include "components/update_client/patch/patch_impl.h"
 #include "components/update_client/protocol_handler.h"
+#include "components/update_client/unzip/unzip_impl.h"
+#include "components/update_client/unzipper.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if defined(OS_WIN)
-#include "base/win/win_util.h"
+#include "base/enterprise_util.h"
 #include "chrome/install_static/install_util.h"
 #include "chrome/installer/util/google_update_settings.h"
 #endif
@@ -61,10 +70,10 @@ class ChromeConfigurator : public update_client::Configurator {
   std::string GetOSLongName() const override;
   base::flat_map<std::string, std::string> ExtraRequestParams() const override;
   std::string GetDownloadPreference() const override;
-  scoped_refptr<network::SharedURLLoaderFactory> URLLoaderFactory()
-      const override;
-  std::unique_ptr<service_manager::Connector> CreateServiceManagerConnector()
-      const override;
+  scoped_refptr<update_client::NetworkFetcherFactory> GetNetworkFetcherFactory()
+      override;
+  scoped_refptr<update_client::UnzipperFactory> GetUnzipperFactory() override;
+  scoped_refptr<update_client::PatcherFactory> GetPatcherFactory() override;
   bool EnabledDeltas() const override;
   bool EnabledComponentUpdates() const override;
   bool EnabledBackgroundDownloader() const override;
@@ -76,12 +85,16 @@ class ChromeConfigurator : public update_client::Configurator {
   std::string GetAppGuid() const override;
   std::unique_ptr<update_client::ProtocolHandlerFactory>
   GetProtocolHandlerFactory() const override;
+  update_client::RecoveryCRXElevator GetRecoveryCRXElevator() const override;
 
  private:
   friend class base::RefCountedThreadSafe<ChromeConfigurator>;
 
   ConfiguratorImpl configurator_impl_;
   PrefService* pref_service_;  // This member is not owned by this class.
+  scoped_refptr<update_client::NetworkFetcherFactory> network_fetcher_factory_;
+  scoped_refptr<update_client::UnzipperFactory> unzip_factory_;
+  scoped_refptr<update_client::PatcherFactory> patch_factory_;
 
   ~ChromeConfigurator() override {}
 };
@@ -156,7 +169,7 @@ ChromeConfigurator::ExtraRequestParams() const {
 std::string ChromeConfigurator::GetDownloadPreference() const {
 #if defined(OS_WIN)
   // This group policy is supported only on Windows and only for enterprises.
-  return base::win::IsEnterpriseManaged()
+  return base::IsMachineExternallyManaged()
              ? base::SysWideToUTF8(
                    GoogleUpdateSettings::GetDownloadPreference())
              : std::string();
@@ -165,22 +178,37 @@ std::string ChromeConfigurator::GetDownloadPreference() const {
 #endif
 }
 
-scoped_refptr<network::SharedURLLoaderFactory>
-ChromeConfigurator::URLLoaderFactory() const {
-  SystemNetworkContextManager* system_network_context_manager =
-      g_browser_process->system_network_context_manager();
-  // Manager will be null if called from InitializeForTesting.
-  if (!system_network_context_manager)
-    return nullptr;
-  return system_network_context_manager->GetSharedURLLoaderFactory();
+scoped_refptr<update_client::NetworkFetcherFactory>
+ChromeConfigurator::GetNetworkFetcherFactory() {
+  if (!network_fetcher_factory_) {
+    network_fetcher_factory_ =
+        base::MakeRefCounted<update_client::NetworkFetcherChromiumFactory>(
+            g_browser_process->system_network_context_manager()
+                ->GetSharedURLLoaderFactory(),
+            // Never send cookies for component update downloads.
+            base::BindRepeating([](const GURL& url) { return false; }));
+  }
+  return network_fetcher_factory_;
 }
 
-std::unique_ptr<service_manager::Connector>
-ChromeConfigurator::CreateServiceManagerConnector() const {
+scoped_refptr<update_client::UnzipperFactory>
+ChromeConfigurator::GetUnzipperFactory() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  return content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->Clone();
+  if (!unzip_factory_) {
+    unzip_factory_ = base::MakeRefCounted<update_client::UnzipChromiumFactory>(
+        base::BindRepeating(&unzip::LaunchUnzipper));
+  }
+  return unzip_factory_;
+}
+
+scoped_refptr<update_client::PatcherFactory>
+ChromeConfigurator::GetPatcherFactory() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (!patch_factory_) {
+    patch_factory_ = base::MakeRefCounted<update_client::PatchChromiumFactory>(
+        base::BindRepeating(&patch::LaunchFilePatcher));
+  }
+  return patch_factory_;
 }
 
 bool ChromeConfigurator::EnabledDeltas() const {
@@ -227,6 +255,13 @@ std::string ChromeConfigurator::GetAppGuid() const {
 std::unique_ptr<update_client::ProtocolHandlerFactory>
 ChromeConfigurator::GetProtocolHandlerFactory() const {
   return configurator_impl_.GetProtocolHandlerFactory();
+}
+
+// TODO(sorin): remove the members related to elevation, action runners, and
+// recovery component. crbug.com/1027395
+update_client::RecoveryCRXElevator ChromeConfigurator::GetRecoveryCRXElevator()
+    const {
+  return configurator_impl_.GetRecoveryCRXElevator();
 }
 
 }  // namespace

@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/escape.h"
@@ -46,16 +46,15 @@ struct ParsingTestcase {
 
 #if !defined(OS_ANDROID)
 
-// Returns the width of a utf8 or utf16 string using the BROWSER typesetter and
-// default UI font, or the provided |font_list|.
+// Returns the width of a utf8 or utf16 string using default UI font, or the
+// provided |font_list|.
 float GetWidth(const std::string& utf8,
                const gfx::FontList& font_list = gfx::FontList()) {
-  return gfx::GetStringWidthF(base::UTF8ToUTF16(utf8), font_list,
-                              gfx::Typesetter::BROWSER);
+  return gfx::GetStringWidthF(base::UTF8ToUTF16(utf8), font_list);
 }
 float GetWidth(const base::string16& utf16,
                const gfx::FontList& font_list = gfx::FontList()) {
-  return gfx::GetStringWidthF(utf16, font_list, gfx::Typesetter::BROWSER);
+  return gfx::GetStringWidthF(utf16, font_list);
 }
 
 // Verify that one or more URLs passes through an explicit sequence of elided
@@ -97,8 +96,7 @@ void RunProgressiveElisionTest(
     for (size_t i = 0; i < testcase.output.size(); i++) {
       const auto& expected = testcase.output[i];
       base::string16 expected_utf16 = base::UTF8ToUTF16(expected);
-      base::string16 elided = url_formatter::ElideUrl(url, font_list, width,
-                                                      gfx::Typesetter::BROWSER);
+      base::string16 elided = url_formatter::ElideUrl(url, font_list, width);
       if (expected_utf16 != elided) {
         if (i > 0 && i < testcase.output.size() - 1 &&
             mismatches < kMaxConsecutiveMismatches) {
@@ -124,8 +122,7 @@ void RunElisionTest(const std::vector<Testcase>& testcases) {
     const GURL url(testcase.input);
     const float available_width = GetWidth(testcase.output, font_list);
     EXPECT_EQ(base::UTF8ToUTF16(testcase.output),
-              url_formatter::ElideUrl(url, font_list, available_width,
-                                      gfx::Typesetter::BROWSER));
+              url_formatter::ElideUrl(url, font_list, available_width));
   }
 }
 
@@ -237,12 +234,11 @@ TEST(TextEliderTest, TestTrailingEllipsisSlashEllipsisHack) {
   ASSERT_GT(GetWidth(kEllipsisStr + "/" + kEllipsisStr, font_list),
             GetWidth("d" + kEllipsisStr, font_list));
   GURL long_url("http://battersbox.com/directorynameisreallylongtoforcetrunc");
-  base::string16 expected = url_formatter::ElideUrl(
-      long_url, font_list, available_width, gfx::Typesetter::BROWSER);
+  base::string16 expected =
+      url_formatter::ElideUrl(long_url, font_list, available_width);
   // Ensure that the expected result still contains part of the directory name.
   ASSERT_GT(expected.length(), std::string("battersbox.com/d").length());
-  EXPECT_EQ(expected, url_formatter::ElideUrl(url, font_list, available_width,
-                                              gfx::Typesetter::BROWSER));
+  EXPECT_EQ(expected, url_formatter::ElideUrl(url, font_list, available_width));
 
   // Regression test for https://crbug.com/756717. An empty path, eliding to a
   // width in between the full domain ("www.angelfire.lycos.com") and a bit
@@ -251,8 +247,7 @@ TEST(TextEliderTest, TestTrailingEllipsisSlashEllipsisHack) {
   url = GURL("http://www.angelfire.lycos.com/");
   available_width = GetWidth(kEllipsisStr + "angelfire.lycos.com", font_list);
   EXPECT_EQ(base::UTF8ToUTF16(kEllipsisStr + "lycos.com"),
-            url_formatter::ElideUrl(url, font_list, available_width,
-                                    gfx::Typesetter::BROWSER));
+            url_formatter::ElideUrl(url, font_list, available_width));
 
   // More space available - elide directories, partially elide filename.
   const std::vector<Testcase> testcases = {
@@ -266,8 +261,8 @@ TEST(TextEliderTest, TestTrailingEllipsisSlashEllipsisHack) {
 TEST(TextEliderTest, TestElisionSpecialCases) {
 #if defined(OS_WIN)
   // Needed to bypass DCHECK in GetFallbackFont.
-  base::test::ScopedTaskEnvironment task_environment(
-      base::test::ScopedTaskEnvironment::MainThreadType::UI);
+  base::test::SingleThreadTaskEnvironment task_environment(
+      base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
 #endif
   const std::string kEllipsisStr(gfx::kEllipsis);
   const std::vector<Testcase> testcases = {
@@ -382,11 +377,8 @@ TEST(TextEliderTest, TestHostEliding) {
      kEllipsisStr + ".\xCE\xB5.\xCE\xB6.com"},
   };
 
-  for (size_t i = 0; i < arraysize(testcases); ++i) {
-    // Note this does not use GetWidth(), so typesetting will be done with
-    // gfx::Typesetter::DEFAULT. ElideHost() supports either typesetter on Mac.
-    const float available_width = gfx::GetStringWidthF(
-        base::UTF8ToUTF16(testcases[i].output), gfx::FontList());
+  for (size_t i = 0; i < base::size(testcases); ++i) {
+    const float available_width = GetWidth(testcases[i].output);
     EXPECT_EQ(base::UTF8ToUTF16(testcases[i].output),
               url_formatter::ElideHost(GURL(testcases[i].input),
                                        gfx::FontList(), available_width));
@@ -453,9 +445,8 @@ const OriginTestData common_tests[] = {
      L"https://www.google.com", L"www.google.com", L"www.google.com"},
     {"Unusual secure scheme (wss)", "wss://www.google.com/",
      L"wss://www.google.com", L"wss://www.google.com", L"www.google.com"},
-    {"Unusual non-secure scheme (gopher)", "gopher://www.google.com/",
-     L"gopher://www.google.com", L"gopher://www.google.com",
-     L"gopher://www.google.com"},
+    {"Unusual non-secure scheme (ftp)", "ftp://www.google.com/",
+     L"ftp://www.google.com", L"ftp://www.google.com", L"ftp://www.google.com"},
     {"Unlisted scheme (chrome)", "chrome://version", L"chrome://version",
      L"chrome://version", L"chrome://version"},
     {"HTTP IP address", "http://173.194.65.103", L"http://173.194.65.103",
@@ -489,7 +480,7 @@ const OriginTestData common_tests[] = {
      L"https://www.example.com.", L"www.example.com.", L"www.example.com."}};
 
 TEST(TextEliderTest, FormatUrlForSecurityDisplay) {
-  for (size_t i = 0; i < arraysize(common_tests); ++i) {
+  for (size_t i = 0; i < base::size(common_tests); ++i) {
     base::string16 formatted =
         url_formatter::FormatUrlForSecurityDisplay(GURL(common_tests[i].input));
     EXPECT_EQ(base::WideToUTF16(common_tests[i].output), formatted)
@@ -562,7 +553,7 @@ TEST(TextEliderTest, FormatUrlForSecurityDisplay) {
        L"blob:http://www.html5rocks.com/"
        L"4d4ff040-6d61-4446-86d3-13ca07ec9ab9"}};
 
-  for (size_t i = 0; i < arraysize(tests); ++i) {
+  for (size_t i = 0; i < base::size(tests); ++i) {
     base::string16 formatted =
         url_formatter::FormatUrlForSecurityDisplay(GURL(tests[i].input));
     EXPECT_EQ(base::WideToUTF16(tests[i].output), formatted)
@@ -602,7 +593,7 @@ TEST(TextEliderTest, FormatUrlForSecurityDisplay) {
 }
 
 TEST(TextEliderTest, FormatOriginForSecurityDisplay) {
-  for (size_t i = 0; i < arraysize(common_tests); ++i) {
+  for (size_t i = 0; i < base::size(common_tests); ++i) {
     base::string16 formatted = url_formatter::FormatOriginForSecurityDisplay(
         url::Origin::Create(GURL(common_tests[i].input)));
     EXPECT_EQ(base::WideToUTF16(common_tests[i].output), formatted)
@@ -652,7 +643,7 @@ TEST(TextEliderTest, FormatOriginForSecurityDisplay) {
        L"http://www.html5rocks.com", L"www.html5rocks.com",
        L"http://www.html5rocks.com"}};
 
-  for (size_t i = 0; i < arraysize(tests); ++i) {
+  for (size_t i = 0; i < base::size(tests); ++i) {
     base::string16 formatted = url_formatter::FormatOriginForSecurityDisplay(
         url::Origin::Create(GURL(tests[i].input)));
     EXPECT_EQ(base::WideToUTF16(tests[i].output), formatted)

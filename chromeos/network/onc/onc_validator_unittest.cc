@@ -141,7 +141,7 @@ TEST_P(ONCValidatorValidTest, LiberalValidationValid) {
 // OncParams(string: Filename of a ONC file that is to be validated,
 //           OncValueSignature: signature of that ONC,
 //           bool: true if the ONC is managed).
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ONCValidatorValidTest,
     ONCValidatorValidTest,
     ::testing::Values(
@@ -224,9 +224,6 @@ INSTANTIATE_TEST_CASE_P(
         OncParams("translation_of_shill_cellular_with_state.onc",
                   &kNetworkWithStateSignature,
                   false),
-        OncParams("translation_of_shill_wimax_with_state.onc",
-                  &kNetworkWithStateSignature,
-                  false),
         OncParams("valid_openvpn_with_cert_pems.onc",
                   &kNetworkConfigurationSignature,
                   false),
@@ -237,7 +234,11 @@ INSTANTIATE_TEST_CASE_P(
                   &kNetworkConfigurationSignature,
                   false),
         OncParams("arc_vpn.onc", &kNetworkConfigurationSignature, false),
-        OncParams("tether.onc", &kNetworkWithStateSignature, false)));
+        OncParams("tether.onc", &kNetworkWithStateSignature, false),
+        OncParams("cert_with_valid_scope.onc", &kCertificateSignature, false),
+        OncParams("cert_with_explicit_default_scope.onc",
+                  &kCertificateSignature,
+                  false)));
 
 namespace {
 
@@ -344,7 +345,7 @@ TEST_P(ONCValidatorTestRepairable, LiberalValidation) {
 
 // Strict validator returns INVALID. Liberal validator returns
 // VALID_WITH_WARNINGS (unrepaired).
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictInvalidLiberalValidWithWarnings,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -392,7 +393,7 @@ INSTANTIATE_TEST_CASE_P(
                                           "tether-missing-signal-strength"))));
 
 // Strict validator returns INVALID. Liberal validator repairs.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictInvalidLiberalRepair,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -440,7 +441,7 @@ INSTANTIATE_TEST_CASE_P(
                                           "toplevel-with-repaired-networks"))));
 
 // Strict and liberal validator repair identically.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictAndLiberalRepairIdentically,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -487,7 +488,7 @@ INSTANTIATE_TEST_CASE_P(
                                           "wifi-ssid-and-hexssid-repaired"))));
 
 // Strict and liberal validator both repair, but with different results.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictAndLiberalRepairDifferently,
     ONCValidatorTestRepairable,
     ::testing::Values(std::make_pair(OncParams("toplevel-with-nested-warning",
@@ -497,7 +498,7 @@ INSTANTIATE_TEST_CASE_P(
                                                         "toplevel-repaired"))));
 
 // Strict and liberal validator return both INVALID.
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     StrictAndLiberalInvalid,
     ONCValidatorTestRepairable,
     ::testing::Values(
@@ -578,7 +579,28 @@ INSTANTIATE_TEST_CASE_P(
         std::make_pair(OncParams("tether-signal-strength-over-100",
                                  &kNetworkWithStateSignature,
                                  true),
-                       ExpectBothNotValid("", ""))));
+                       ExpectBothNotValid("", "")),
+        std::make_pair(
+            OncParams("invalid-scope-due-to-type", &kScopeSignature, true),
+            ExpectBothNotValid("", "")),
+        std::make_pair(OncParams("invalid-scope-due-to-missing-id",
+                                 &kScopeSignature,
+                                 true),
+                       ExpectBothNotValid("",
+                                          "invalid-scope-due-to-missing-id")),
+        std::make_pair(OncParams("invalid-scope-due-to-invalid-id-length",
+                                 &kScopeSignature,
+                                 true),
+                       ExpectBothNotValid("", "")),
+        std::make_pair(OncParams("invalid-scope-due-to-invalid-id-character",
+                                 &kScopeSignature,
+                                 true),
+                       ExpectBothNotValid("", "")),
+        std::make_pair(
+            OncParams("invalid-scope-due-to-missing-type",
+                      &kScopeSignature,
+                      true),
+            ExpectBothNotValid("", "invalid-scope-due-to-missing-type"))));
 
 }  // namespace onc
 }  // namespace chromeos

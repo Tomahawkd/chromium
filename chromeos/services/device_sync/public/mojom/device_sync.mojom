@@ -4,46 +4,12 @@
 
 module chromeos.device_sync.mojom;
 
+import "chromeos/components/multidevice/mojom/multidevice_types.mojom";
 import "mojo/public/mojom/base/time.mojom";
 
-// Enumeration of software features which can be enabled/disabled for a given
-// device. Each feature has a host and client portion; here, "host" refers to
-// the associated phone which provides the feature (at most one host per
-// account), and "client" refers to the Chromebook which consumes the feature
-// (multiple clients allowed per account).
-enum SoftwareFeature {
-  UNKNOWN_FEATURE,
-
-  // The Better Together (MultiDevice) setup flow feature allows users to go
-  // through a unified setup flow which enrolls the device for all multi-device
-  // features.
-  BETTER_TOGETHER_HOST,
-  BETTER_TOGETHER_CLIENT,
-
-  // EasyUnlock gives users the ability to unlock their Chromebooks with their
-  // phone instead of by typing a password.
-  EASY_UNLOCK_HOST,
-  EASY_UNLOCK_CLIENT,
-
-  // Magic Tether (Instant Tethering) gives users the ability to use their
-  // phone's Internet connectivity on their Chromebooks via an automated flow
-  // which does not require any phone-side interaction.
-  MAGIC_TETHER_HOST,
-  MAGIC_TETHER_CLIENT,
-
-  // SMS Connect gives users the ability to read and reply to their text
-  // messages from their Chromebooks.
-  SMS_CONNECT_HOST,
-  SMS_CONNECT_CLIENT
-};
-
-// Enumeration of what value a SoftwareFeature can be.
-enum SoftwareFeatureState {
-  kNotSupported,
-  kSupported,
-  kEnabled
-};
-
+// Denotes the outcome of an HTTP request, where results like kBadRequest map
+// onto HTTP error codes while others like kRequestServiceNotYetInitialized
+// reflect issues adjacent to the actual HTTP request.
 enum NetworkRequestResult {
   // Successful network request.
   kSuccess,
@@ -79,52 +45,43 @@ enum NetworkRequestResult {
   kUnknown
 };
 
-// Used to generate rotating BLE advertisement data, which is necessary to
-// establish a BLE communication channel between two devices. To
-// create the BLE channel, both devices must possess the other's BeaconSeeds.
-struct BeaconSeed {
-  string data;
-  mojo_base.mojom.Time start_time;
-  mojo_base.mojom.Time end_time;
+// Describes the desired state of a device's software feature.
+enum FeatureStatusChange {
+  // Enables a feature on a device and disables the feature on all other
+  // devices associated with the account.
+  kEnableExclusively,
+
+  // Enables a feature on a device; other devices on the account are
+  // unaffected.
+  kEnableNonExclusively,
+
+  // Disables a feature on a device; other devices on the account are
+  // unaffected.
+  kDisable
 };
 
-// Metadata describing a remote device with which the current device can
-// communicate.
-struct RemoteDevice {
-  // Unique identifier of the device. Unlike |public_key|, this field is
-  // guaranteed to be human-readable (i.e., it does not contain non-ASCII
-  // characters).
-  string device_id;
+// Denotes the relevant CryptAuth service.
+enum CryptAuthService {
+  kEnrollment,
+  kDeviceSync
+};
 
-  // Identifier for the user to whom this device is registered.
-  string user_id;
-
-  // Human-readable device name; by default, this is the name of the device
-  // model, but this value is editable.
-  string device_name;
-
-  // Encryption key used for communication with this device.
-  string persistent_symmetric_key;
-
-  // The time at which this device's metadata was last updated on the CryptAuth
-  // back-end.
-  mojo_base.mojom.Time last_update_time;
-
-  // The features which this device either does not support, supports, or has
-  // enabled.
-  map<SoftwareFeature, SoftwareFeatureState> software_features;
-
-  // Seeds belonging to the device. Each seed has start and end timestamps which
-  // indicate how long the seed is valid, and each device has enough associated
-  // seeds to keep the device connectable for over 30 days. If no new device
-  // metadata synced for over 30 days, it is possible that a connection will not
-  // be able to be established over BLE.
-  array<BeaconSeed> beacon_seeds;
+// Describes a device's network reachability.
+enum ConnectivityStatus {
+  kOnline,
+  kOffline,
+  kUnknownConnectivity
 };
 
 struct FindEligibleDevicesResponse {
-  array<RemoteDevice> eligible_devices;
-  array<RemoteDevice> ineligible_devices;
+  array<chromeos.multidevice.mojom.RemoteDevice> eligible_devices;
+  array<chromeos.multidevice.mojom.RemoteDevice> ineligible_devices;
+};
+
+struct DeviceActivityStatus {
+  string device_id;
+  mojo_base.mojom.Time last_activity_time;
+  ConnectivityStatus connectivity_status;
 };
 
 struct DebugInfo {
@@ -155,9 +112,10 @@ interface DeviceSyncObserver {
 };
 
 // TODO(khorimoto): Flesh out API.
+// Calls to this API run in the browser process.
 interface DeviceSync {
   // Adds an Observer of this API.
-  AddObserver(DeviceSyncObserver observer) => ();
+  AddObserver(pending_remote<DeviceSyncObserver> observer) => ();
 
   // Triggers an enrollment; result is relayed via the OnEnrollmentFinished()
   // observer function. Returns whether the call could be completed
@@ -179,11 +137,13 @@ interface DeviceSync {
 
   // Returns all synced devices associated with the primary account. If this
   // device has not yet registered with the back-end, no list is provided.
-  GetSyncedDevices() => (array<RemoteDevice>? devices);
+  GetSyncedDevices() =>
+      (array<chromeos.multidevice.mojom.RemoteDevice>? devices);
 
   // Returns the RemoteDevice object associated with this device. If this device
   // has not yet registered with the back-end, no device is provided.
-  GetLocalDeviceMetadata() => (RemoteDevice? local_device);
+  GetLocalDeviceMetadata() =>
+      (chromeos.multidevice.mojom.RemoteDevice? local_device);
 
   // Enables or disables the given software feature for the device with the
   // given public key. If |enabled| and |is_exclusive| are both true, this
@@ -199,11 +159,25 @@ interface DeviceSync {
   // SoftwareFeature::EASY_UNLOCK_HOST and |enabled| = false, |public_key| is
   // ignored, because that combination of arguments disables EASY_UNLOCK_HOST on
   // all of the user's devices.
+  //
+  // TODO(https://crbug.com/1019206): Remove this function when v1 DeviceSync
+  // is deprecated.
   SetSoftwareFeatureState(
       string device_public_key,
-      SoftwareFeature software_feature,
+      chromeos.multidevice.mojom.SoftwareFeature software_feature,
       bool enabled,
       bool is_exclusive) => (NetworkRequestResult result_code);
+
+  // Enables or disables |feature| for the device with Instance ID
+  // |device_instance_id|.
+  //
+  // This function can only affect devices using CryptAuth v2 DeviceSync since
+  // it requires an Instance ID. See SetSoftwareFeatureState() for the v1
+  // DeviceSync analog.
+  SetFeatureStatus(
+      string device_instance_id,
+      chromeos.multidevice.mojom.SoftwareFeature feature,
+      FeatureStatusChange status_change) => (NetworkRequestResult result_code);
 
   // Finds devices which are eligible for the given feature. When this function
   // is invoked, a network request will be sent to each eligible device which
@@ -213,8 +187,39 @@ interface DeviceSync {
   // On success, this function returns a null error_code with a valid response
   // to the callback; on error, it returns a valid error_code string indicating
   // the reason for failure along with a null response.
-  FindEligibleDevices(SoftwareFeature software_feature) =>
-      (NetworkRequestResult result_code, FindEligibleDevicesResponse? response);
+  //
+  // TODO(https://crbug.com/1019206): Remove this function when v1 DeviceSync
+  // is deprecated.
+  FindEligibleDevices(
+      chromeos.multidevice.mojom.SoftwareFeature software_feature) =>
+          (NetworkRequestResult result_code,
+           FindEligibleDevicesResponse? response);
+
+  // Sends a GCM message--via CryptAuth--to devices with Instance IDs
+  // |device_instance_ids|. The message includes the CryptAuth
+  // service--Enrollment or DeviceSync--and the feature
+  // type--kBetterTogetherHost, for example--indicating the reason for the
+  // notification; these are specified by |cryptauth_service| and |feature|,
+  // respectively.
+  NotifyDevices(
+      array<string> device_instance_ids,
+      CryptAuthService cryptauth_service,
+      chromeos.multidevice.mojom.SoftwareFeature feature) =>
+    (NetworkRequestResult result_code);
+
+  // Retrieves the activity status of the user's devices. When this function
+  // is invoked, a network request will be sent to the CryptAuth server to
+  // retrieve the last time a device was used.
+  //
+  // On success, this function returns a null error_code with the activity
+  // statuses to the callback; on error, it returns a valid error_code string
+  // indicating the reason for failure along with a null activity statuses.
+  //
+  // This method is expected to be used by multidevice_setup service running
+  // in the browser process.
+  GetDevicesActivityStatus() =>
+          (NetworkRequestResult result_code,
+           array<DeviceActivityStatus>? device_activity_statuses);
 
   // Functions below are implemented for chrome://proximity-auth page, which is
   // intended for debugging purposes only.
@@ -222,3 +227,4 @@ interface DeviceSync {
   //                  refactored out of DeviceSync.
   GetDebugInfo() => (DebugInfo? debug_info);
 };
+

@@ -8,10 +8,9 @@
 #include "base/files/file_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "net/spdy/fuzzing/hpack_fuzz_util.h"
-#include "net/third_party/spdy/core/hpack/hpack_constants.h"
-#include "net/third_party/spdy/core/hpack/hpack_encoder.h"
-#include "net/third_party/spdy/core/spdy_protocol.h"
-#include "net/third_party/spdy/platform/api/spdy_string.h"
+#include "net/third_party/quiche/src/spdy/core/hpack/hpack_constants.h"
+#include "net/third_party/quiche/src/spdy/core/hpack/hpack_encoder.h"
+#include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 
 namespace {
 
@@ -24,7 +23,6 @@ const char kExampleCount[] = "example-count";
 }  // namespace
 
 using spdy::HpackFuzzUtil;
-using spdy::SpdyString;
 using std::map;
 
 // Generates a configurable number of header sets (using HpackFuzzUtil), and
@@ -44,8 +42,7 @@ int main(int argc, char** argv) {
                << " --" << kExampleCount << "=1000";
     return -1;
   }
-  spdy::SpdyString file_to_write =
-      command_line.GetSwitchValueASCII(kFileToWrite);
+  std::string file_to_write = command_line.GetSwitchValueASCII(kFileToWrite);
 
   int example_count = 0;
   base::StringToInt(command_line.GetSwitchValueASCII(kExampleCount),
@@ -64,10 +61,10 @@ int main(int argc, char** argv) {
     spdy::SpdyHeaderBlock headers =
         HpackFuzzUtil::NextGeneratedHeaderSet(&context);
 
-    spdy::SpdyString buffer;
+    std::string buffer;
     CHECK(encoder.EncodeHeaderSet(headers, &buffer));
 
-    spdy::SpdyString prefix = HpackFuzzUtil::HeaderBlockPrefix(buffer.size());
+    std::string prefix = HpackFuzzUtil::HeaderBlockPrefix(buffer.size());
 
     CHECK_LT(0, file_out.WriteAtCurrentPos(prefix.data(), prefix.size()));
     CHECK_LT(0, file_out.WriteAtCurrentPos(buffer.data(), buffer.size()));

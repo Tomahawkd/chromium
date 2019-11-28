@@ -4,11 +4,13 @@
 
 #include "third_party/blink/renderer/core/frame/frame.h"
 
-#include "base/test/metrics/histogram_tester.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -26,17 +28,12 @@ class FrameTest : public PageTestBase {
 
   void Navigate(const String& destinationUrl, bool user_activated) {
     const KURL& url = KURL(NullURL(), destinationUrl);
+    auto navigation_params =
+        WebNavigationParams::CreateWithHTMLBuffer(SharedBuffer::Create(), url);
+    if (user_activated)
+      navigation_params->is_user_activated = true;
     GetDocument().GetFrame()->Loader().CommitNavigation(
-        ResourceRequest(url), SubstituteData(SharedBuffer::Create()),
-        ClientRedirectPolicy::kNotClientRedirect,
-        base::UnguessableToken::Create());
-    if (user_activated) {
-      GetDocument()
-          .GetFrame()
-          ->Loader()
-          .GetProvisionalDocumentLoader()
-          ->SetUserActivated();
-    }
+        std::move(navigation_params), nullptr /* extra_data */);
     blink::test::RunPendingTasks();
     ASSERT_EQ(url.GetString(), GetDocument().Url().GetString());
   }
@@ -77,8 +74,7 @@ TEST_F(FrameTest, PossiblyExisting) {
 TEST_F(FrameTest, NewGesture) {
   // UserGestureToken::Status doesn't impact Document gesture state.
   std::unique_ptr<UserGestureIndicator> holder =
-      LocalFrame::NotifyUserActivation(GetDocument().GetFrame(),
-                                       UserGestureToken::kNewGesture);
+      LocalFrame::NotifyUserActivation(GetDocument().GetFrame());
   EXPECT_TRUE(GetDocument().GetFrame()->HasBeenActivated());
 }
 
@@ -167,8 +163,6 @@ TEST_F(FrameTest, NavigateSameDomainNoGesture) {
 }
 
 TEST_F(FrameTest, UserActivationInterfaceTest) {
-  RuntimeEnabledFeatures::SetUserActivationV2Enabled(true);
-
   // Initially both sticky and transient bits are false.
   EXPECT_FALSE(GetDocument().GetFrame()->HasBeenActivated());
   EXPECT_FALSE(
@@ -188,35 +182,6 @@ TEST_F(FrameTest, UserActivationInterfaceTest) {
       LocalFrame::HasTransientUserActivation(GetDocument().GetFrame()));
   EXPECT_FALSE(
       LocalFrame::ConsumeTransientUserActivation(GetDocument().GetFrame()));
-}
-
-TEST_F(FrameTest, UserActivationHistograms) {
-  RuntimeEnabledFeatures::SetUserActivationV2Enabled(true);
-  base::HistogramTester histograms;
-
-  LocalFrame::HasTransientUserActivation(GetDocument().GetFrame());
-  histograms.ExpectBucketCount("UserActivation.AvailabilityCheck.FrameResult",
-                               0, 1);
-
-  LocalFrame::ConsumeTransientUserActivation(GetDocument().GetFrame());
-  histograms.ExpectBucketCount("UserActivation.Consumption.FrameResult", 0, 1);
-
-  LocalFrame::NotifyUserActivation(GetDocument().GetFrame());
-
-  LocalFrame::HasTransientUserActivation(GetDocument().GetFrame());
-  LocalFrame::HasTransientUserActivation(GetDocument().GetFrame());
-  histograms.ExpectBucketCount("UserActivation.AvailabilityCheck.FrameResult",
-                               3, 2);
-
-  LocalFrame::ConsumeTransientUserActivation(GetDocument().GetFrame());
-  histograms.ExpectBucketCount("UserActivation.Consumption.FrameResult", 3, 1);
-
-  LocalFrame::ConsumeTransientUserActivation(GetDocument().GetFrame());
-  histograms.ExpectBucketCount("UserActivation.Consumption.FrameResult", 0, 2);
-
-  histograms.ExpectTotalCount("UserActivation.AvailabilityCheck.FrameResult",
-                              3);
-  histograms.ExpectTotalCount("UserActivation.Consumption.FrameResult", 3);
 }
 
 }  // namespace blink

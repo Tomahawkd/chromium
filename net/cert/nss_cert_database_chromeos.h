@@ -26,7 +26,6 @@ class NET_EXPORT NSSCertDatabaseChromeOS : public NSSCertDatabase {
   void SetSystemSlot(crypto::ScopedPK11Slot system_slot);
 
   // NSSCertDatabase implementation.
-  ScopedCERTCertificateList ListCertsSync() override;
   void ListCerts(NSSCertDatabase::ListCertsCallback callback) override;
   void ListModules(std::vector<crypto::ScopedPK11Slot>* modules,
                    bool need_rw) const override;
@@ -36,23 +35,13 @@ class NET_EXPORT NSSCertDatabaseChromeOS : public NSSCertDatabase {
   // in multiple slots.
   // TODO(mattm): handle trust setting correctly for certs in read-only slots.
 
-  // TODO(https://crbug.com/844537): Remove this after we've collected logs that
-  // show device-wide certificates disappearing. Logs basic information about
-  // known user certificates.
-  void LogUserCertificates(const std::string& log_reason) const override;
-
  private:
-  // Certificate listing implementation used by |ListCerts| and |ListCertsSync|.
+  // Certificate listing implementation used by |ListCerts|.
   // The certificate list normally returned by NSSCertDatabase::ListCertsImpl
   // is additionally filtered by |profile_filter|.
   // Static so it may safely be used on the worker thread.
   static ScopedCERTCertificateList ListCertsImpl(
       const NSSProfileFilterChromeOS& profile_filter);
-
-  // TODO(https://crbug.com/844537): Remove this after we've collected logs that
-  // show device-wide certificates disappearing.
-  static void LogUserCertificatesImpl(const std::string& log_reason,
-                                      crypto::ScopedPK11Slot system_slot);
 
   NSSProfileFilterChromeOS profile_filter_;
   crypto::ScopedPK11Slot system_slot_;

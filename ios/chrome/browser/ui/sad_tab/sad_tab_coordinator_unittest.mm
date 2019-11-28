@@ -11,7 +11,7 @@
 #import "ios/chrome/browser/ui/util/named_guide.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/public/test/web_task_environment.h"
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -31,7 +31,7 @@ class SadTabCoordinatorTest : public PlatformTest {
     [base_view_controller_.view addLayoutGuide:guide];
     AddSameConstraints(guide, base_view_controller_.view);
   }
-  web::TestWebThreadBundle thread_bundle_;
+  web::WebTaskEnvironment task_environment_;
   UIViewController* base_view_controller_;
   std::unique_ptr<TestChromeBrowserState> browser_state_;
 };
@@ -53,21 +53,6 @@ TEST_F(SadTabCoordinatorTest, Start) {
   // Verify SadTabViewController state.
   EXPECT_FALSE(view_controller.offTheRecord);
   EXPECT_FALSE(view_controller.repeatedFailure);
-}
-
-// Tests |sadTabCoordinatorDidStart:| delegate call.
-TEST_F(SadTabCoordinatorTest, Delegate) {
-  SadTabCoordinator* coordinator = [[SadTabCoordinator alloc]
-      initWithBaseViewController:base_view_controller_
-                    browserState:browser_state_.get()];
-
-  id delegate = OCMStrictProtocolMock(@protocol(SadTabCoordinatorDelegate));
-  coordinator.delegate = delegate;
-  OCMExpect([delegate sadTabCoordinatorDidStart:coordinator]);
-
-  [coordinator start];
-
-  EXPECT_OCMOCK_VERIFY(delegate);
 }
 
 // Tests stopping coordinator.

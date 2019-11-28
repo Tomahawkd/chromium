@@ -125,56 +125,51 @@ void NonBlockingPushClient::Core::SendPing() {
 void NonBlockingPushClient::Core::OnNotificationsEnabled() {
   DCHECK(delegate_task_runner_->BelongsToCurrentThread());
   parent_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingPushClient::OnNotificationsEnabled,
-                 parent_push_client_));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::OnNotificationsEnabled,
+                                parent_push_client_));
 }
 
 void NonBlockingPushClient::Core::OnNotificationsDisabled(
     NotificationsDisabledReason reason) {
   DCHECK(delegate_task_runner_->BelongsToCurrentThread());
   parent_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingPushClient::OnNotificationsDisabled,
-                 parent_push_client_, reason));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::OnNotificationsDisabled,
+                                parent_push_client_, reason));
 }
 
 void NonBlockingPushClient::Core::OnIncomingNotification(
     const Notification& notification) {
   DCHECK(delegate_task_runner_->BelongsToCurrentThread());
   parent_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingPushClient::OnIncomingNotification,
-                 parent_push_client_, notification));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::OnIncomingNotification,
+                                parent_push_client_, notification));
 }
 
 void NonBlockingPushClient::Core::OnPingResponse() {
   DCHECK(delegate_task_runner_->BelongsToCurrentThread());
   parent_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingPushClient::OnPingResponse,
-                 parent_push_client_));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::OnPingResponse,
+                                parent_push_client_));
 }
 
 NonBlockingPushClient::NonBlockingPushClient(
     const scoped_refptr<base::SingleThreadTaskRunner>& delegate_task_runner,
     const CreateBlockingPushClientCallback&
         create_blocking_push_client_callback)
-    : delegate_task_runner_(delegate_task_runner),
-      weak_ptr_factory_(this) {
+    : delegate_task_runner_(delegate_task_runner) {
   core_ = new Core(delegate_task_runner_, weak_ptr_factory_.GetWeakPtr());
   delegate_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::CreateOnDelegateThread,
-                 core_, create_blocking_push_client_callback));
+      base::BindOnce(&NonBlockingPushClient::Core::CreateOnDelegateThread,
+                     core_, create_blocking_push_client_callback));
 }
 
 NonBlockingPushClient::~NonBlockingPushClient() {
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::DestroyOnDelegateThread,
-                 core_));
+      base::BindOnce(&NonBlockingPushClient::Core::DestroyOnDelegateThread,
+                     core_));
 }
 
 void NonBlockingPushClient::AddObserver(PushClientObserver* observer) {
@@ -192,8 +187,8 @@ void NonBlockingPushClient::UpdateSubscriptions(
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::UpdateSubscriptions,
-                 core_, subscriptions));
+      base::BindOnce(&NonBlockingPushClient::Core::UpdateSubscriptions, core_,
+                     subscriptions));
 }
 
 void NonBlockingPushClient::UpdateCredentials(
@@ -202,24 +197,22 @@ void NonBlockingPushClient::UpdateCredentials(
     const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&NonBlockingPushClient::Core::UpdateCredentials,
-                            core_, email, token, traffic_annotation));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::Core::UpdateCredentials,
+                                core_, email, token, traffic_annotation));
 }
 
 void NonBlockingPushClient::SendNotification(
     const Notification& notification) {
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::SendNotification, core_,
-                 notification));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::Core::SendNotification,
+                                core_, notification));
 }
 
 void NonBlockingPushClient::SendPing() {
   DCHECK(thread_checker_.CalledOnValidThread());
   delegate_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&NonBlockingPushClient::Core::SendPing, core_));
+      FROM_HERE, base::BindOnce(&NonBlockingPushClient::Core::SendPing, core_));
 }
 
 void NonBlockingPushClient::OnNotificationsEnabled() {

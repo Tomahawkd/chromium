@@ -9,13 +9,15 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
 #include "build/build_config.h"
+#include "build/buildflag.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "mojo/core/embedder/embedder.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
@@ -25,6 +27,7 @@
 #include "components/test/ios_components_test_initializer.h"
 #else
 #include "content/public/common/content_client.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/test/content_test_suite_base.h"
 #include "content/public/test/test_content_client_initializer.h"
 #include "content/public/test/unittest_test_suite.h"
@@ -53,10 +56,12 @@ class ComponentsTestSuite : public base::TestSuite {
     mojo::core::Init();
 
     // Before registering any schemes, clear GURL's internal state.
-    url::Shutdown();
+    url::ResetForTests();
 
 #if !defined(OS_IOS)
     gl::GLSurfaceTestSupport::InitializeOneOff();
+
+    content::ForceInProcessNetworkService(true);
 
     // Setup content scheme statics.
     {
@@ -86,12 +91,13 @@ class ComponentsTestSuite : public base::TestSuite {
     // autocomplete_input_unittest.cc and content_settings_pattern*
     url::AddStandardScheme("chrome", url::SCHEME_WITH_HOST);
     url::AddStandardScheme("chrome-extension", url::SCHEME_WITH_HOST);
-    url::AddStandardScheme("chrome-devtools", url::SCHEME_WITH_HOST);
+    url::AddStandardScheme("devtools", url::SCHEME_WITH_HOST);
     url::AddStandardScheme("chrome-search", url::SCHEME_WITH_HOST);
+    url::AddStandardScheme("chrome-distiller", url::SCHEME_WITH_HOST);
 
     ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(
         kNonWildcardDomainNonPortSchemes,
-        arraysize(kNonWildcardDomainNonPortSchemes));
+        base::size(kNonWildcardDomainNonPortSchemes));
   }
 
   void Shutdown() override {
@@ -157,6 +163,6 @@ base::RunTestSuiteCallback GetLaunchCallback(int argc, char** argv) {
   return base::BindOnce(&content::UnitTestTestSuite::Run,
                         std::move(test_suite));
 #else
-  return base::Bind(&base::TestSuite::Run, std::move(test_suite));
+  return base::BindOnce(&base::TestSuite::Run, std::move(test_suite));
 #endif
 }

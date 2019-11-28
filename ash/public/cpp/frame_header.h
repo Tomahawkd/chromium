@@ -10,8 +10,8 @@
 #include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ui_base_types.h"
-#include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/animation/slide_animation.h"
+#include "ui/views/animation/animation_delegate_views.h"
 #include "ui/views/window/frame_caption_button.h"
 
 namespace gfx {
@@ -26,13 +26,20 @@ class Widget;
 }  // namespace views
 
 namespace ash {
+class CaptionButtonModel;
 
 // Helper class for managing the window header.
-class ASH_PUBLIC_EXPORT FrameHeader : public gfx::AnimationDelegate {
+class ASH_PUBLIC_EXPORT FrameHeader : public views::AnimationDelegateViews {
  public:
   enum Mode { MODE_ACTIVE, MODE_INACTIVE };
 
+  static FrameHeader* Get(views::Widget* widget);
+
   ~FrameHeader() override;
+
+  const base::string16& frame_text_override() const {
+    return frame_text_override_;
+  }
 
   // Returns the header's minimum width.
   int GetMinimumHeaderWidth() const;
@@ -65,22 +72,17 @@ class ASH_PUBLIC_EXPORT FrameHeader : public gfx::AnimationDelegate {
   void SetLeftHeaderView(views::View* view);
   void SetBackButton(views::FrameCaptionButton* view);
   views::FrameCaptionButton* GetBackButton() const;
+  const CaptionButtonModel* GetCaptionButtonModel() const;
 
-  // Sets the active and inactive frame colors. Note the inactive frame color
-  // will have some transparency added when the frame is drawn.
-  void SetFrameColors(SkColor active_frame_color, SkColor inactive_frame_color);
+  // Updates the frame header painting to reflect a change in frame colors.
+  virtual void UpdateFrameColors() = 0;
 
   // Sets text to display in place of the window's title. This will be shown
   // regardless of what WidgetDelegate::ShouldShowWindowTitle() returns.
   void SetFrameTextOverride(const base::string16& frame_text_override);
 
-  // gfx::AnimationDelegate:
+  // views::AnimationDelegateViews:
   void AnimationProgressed(const gfx::Animation* animation) override;
-
-  void set_button_color_mode(
-      views::FrameCaptionButton::ColorMode button_color_mode) {
-    button_color_mode_ = button_color_mode;
-  }
 
  protected:
   FrameHeader(views::Widget* target_widget, views::View* view);
@@ -113,11 +115,6 @@ class ASH_PUBLIC_EXPORT FrameHeader : public gfx::AnimationDelegate {
   }
 
   virtual void DoPaintHeader(gfx::Canvas* canvas) = 0;
-  // Updates the frame colors. The parameters may or may not be ignored.
-  // TODO(estade): remove these parameters and instead always set them via Aura
-  // window properties, as is done with CustomFrameHeader.
-  virtual void DoSetFrameColors(SkColor active_frame_color,
-                                SkColor inactive_frame_color) = 0;
   virtual views::CaptionButtonLayoutSize GetButtonLayoutSize() const = 0;
   virtual SkColor GetTitleColor() const = 0;
   virtual SkColor GetCurrentFrameColor() const = 0;
@@ -130,9 +127,6 @@ class ASH_PUBLIC_EXPORT FrameHeader : public gfx::AnimationDelegate {
   void LayoutHeaderInternal();
 
   gfx::Rect GetTitleBounds() const;
-
-  views::FrameCaptionButton::ColorMode button_color_mode_ =
-      views::FrameCaptionButton::ColorMode::kDefault;
 
   // The widget that the caption buttons act on. This can be different from
   // |view_|'s widget.

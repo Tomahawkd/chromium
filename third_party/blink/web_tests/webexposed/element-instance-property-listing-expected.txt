@@ -2,7 +2,6 @@ This test documents all properties on all element instances.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
 
-
 [HTML NAMESPACE ELEMENT PROPERTIES]
 namespace http://www.w3.org/1999/xhtml
 <common>
@@ -31,7 +30,7 @@ namespace http://www.w3.org/1999/xhtml
     property animate
     property append
     property appendChild
-    property ariaActiveDescendant
+    property ariaActiveDescendantElement
     property ariaAtomic
     property ariaAutoComplete
     property ariaBusy
@@ -39,23 +38,26 @@ namespace http://www.w3.org/1999/xhtml
     property ariaColCount
     property ariaColIndex
     property ariaColSpan
-    property ariaControls
+    property ariaControlsElements
     property ariaCurrent
-    property ariaDescribedBy
-    property ariaDetails
+    property ariaDescribedByElements
+    property ariaDetailsElement
     property ariaDisabled
+    property ariaErrorMessageElement
     property ariaExpanded
+    property ariaFlowToElements
     property ariaHasPopup
     property ariaHidden
+    property ariaKeyShortcuts
     property ariaLabel
-    property ariaLabelledBy
+    property ariaLabelledByElements
     property ariaLevel
     property ariaLive
     property ariaModal
     property ariaMultiLine
     property ariaMultiSelectable
     property ariaOrientation
-    property ariaOwns
+    property ariaOwnsElements
     property ariaPlaceholder
     property ariaPosInSet
     property ariaPressed
@@ -78,6 +80,7 @@ namespace http://www.w3.org/1999/xhtml
     property attributeStyleMap
     property attributes
     property autocapitalize
+    property autofocus
     property baseURI
     property before
     property blur
@@ -104,6 +107,8 @@ namespace http://www.w3.org/1999/xhtml
     property dir
     property dispatchEvent
     property draggable
+    property elementTiming
+    property enterKeyHint
     property firstChild
     property firstElementChild
     property focus
@@ -163,6 +168,9 @@ namespace http://www.w3.org/1999/xhtml
     property offsetWidth
     property onabort
     property onactivateinvisible
+    property onanimationend
+    property onanimationiteration
+    property onanimationstart
     property onauxclick
     property onbeforecopy
     property onbeforecut
@@ -213,6 +221,7 @@ namespace http://www.w3.org/1999/xhtml
     property onmouseover
     property onmouseup
     property onmousewheel
+    property onoverscroll
     property onpaste
     property onpause
     property onplay
@@ -224,13 +233,15 @@ namespace http://www.w3.org/1999/xhtml
     property onpointermove
     property onpointerout
     property onpointerover
-    property onpointerrawmove
+    property onpointerrawupdate
     property onpointerup
     property onprogress
     property onratechange
+    property onrendersubtreeactivation
     property onreset
     property onresize
     property onscroll
+    property onscrollend
     property onsearch
     property onseeked
     property onseeking
@@ -246,6 +257,7 @@ namespace http://www.w3.org/1999/xhtml
     property ontouchend
     property ontouchmove
     property ontouchstart
+    property ontransitionend
     property onvolumechange
     property onwaiting
     property onwebkitfullscreenchange
@@ -270,10 +282,12 @@ namespace http://www.w3.org/1999/xhtml
     property removeAttributeNode
     property removeChild
     property removeEventListener
+    property renderSubtree
     property replaceChild
     property replaceWith
     property requestFullscreen
     property requestPointerLock
+    property resetSubtreeRendered
     property role
     property scroll
     property scrollBy
@@ -300,6 +314,7 @@ namespace http://www.w3.org/1999/xhtml
     property toString
     property toggleAttribute
     property translate
+    property updateRendering
     property webkitMatchesSelector
     property webkitRequestFullScreen
     property webkitRequestFullscreen
@@ -384,6 +399,7 @@ html element audio
     property duration
     property ended
     property error
+    property latencyHint
     property load
     property loop
     property mediaKeys
@@ -438,6 +454,7 @@ html element body
     property onpagehide
     property onpageshow
     property onpopstate
+    property onportalactivate
     property onrejectionhandled
     property onstorage
     property onunhandledrejection
@@ -447,7 +464,6 @@ html element body
 html element br
     property clear
 html element button
-    property autofocus
     property checkValidity
     property disabled
     property form
@@ -561,6 +577,7 @@ html element form
     property name
     property noValidate
     property reportValidity
+    property requestSubmit
     property reset
     property submit
     property target
@@ -589,6 +606,7 @@ html element frameset
     property onpagehide
     property onpageshow
     property onpopstate
+    property onportalactivate
     property onrejectionhandled
     property onstorage
     property onunhandledrejection
@@ -626,14 +644,15 @@ html element iframe
     property contentDocument
     property contentWindow
     property csp
+    property featurePolicy
     property frameBorder
     property getSVGDocument
     property height
+    property loading
     property longDesc
     property marginHeight
     property marginWidth
     property name
-    property policy
     property referrerPolicy
     property sandbox
     property scrolling
@@ -652,8 +671,8 @@ html element img
     property height
     property hspace
     property importance
-    property intrinsicSize
     property isMap
+    property loading
     property longDesc
     property lowsrc
     property name
@@ -673,7 +692,6 @@ html element input
     property align
     property alt
     property autocomplete
-    property autofocus
     property checkValidity
     property checked
     property defaultChecked
@@ -873,6 +891,10 @@ html element picture
 html element plaintext
 html element portal
     property activate
+    property onmessage
+    property onmessageerror
+    property postMessage
+    property referrerPolicy
     property src
 html element pre
     property width
@@ -897,6 +919,7 @@ html element script
     property defer
     property event
     property htmlFor
+    property importance
     property integrity
     property noModule
     property referrerPolicy
@@ -907,7 +930,6 @@ html element section
 html element select
     property add
     property autocomplete
-    property autofocus
     property checkValidity
     property disabled
     property form
@@ -1006,7 +1028,6 @@ html element template
     property content
 html element textarea
     property autocomplete
-    property autofocus
     property checkValidity
     property cols
     property defaultValue
@@ -1113,6 +1134,7 @@ html element video
     property NETWORK_NO_SOURCE
     property addTextTrack
     property audioTracks
+    property autoPictureInPicture
     property autoplay
     property buffered
     property canPlayType
@@ -1131,7 +1153,7 @@ html element video
     property error
     property getVideoPlaybackQuality
     property height
-    property intrinsicSize
+    property latencyHint
     property load
     property loop
     property mediaKeys
@@ -1140,13 +1162,13 @@ html element video
     property onencrypted
     property onenterpictureinpicture
     property onleavepictureinpicture
-    property onpictureinpicturecontrolclick
     property onwaitingforkey
     property pause
     property paused
     property play
     property playbackRate
     property played
+    property playsInline
     property poster
     property preload
     property readyState
@@ -1155,7 +1177,6 @@ html element video
     property seekable
     property seeking
     property setMediaKeys
-    property setPictureInPictureControls
     property setSinkId
     property sinkId
     property src
@@ -1206,7 +1227,7 @@ namespace http://www.w3.org/2000/svg
     property animate
     property append
     property appendChild
-    property ariaActiveDescendant
+    property ariaActiveDescendantElement
     property ariaAtomic
     property ariaAutoComplete
     property ariaBusy
@@ -1214,23 +1235,26 @@ namespace http://www.w3.org/2000/svg
     property ariaColCount
     property ariaColIndex
     property ariaColSpan
-    property ariaControls
+    property ariaControlsElements
     property ariaCurrent
-    property ariaDescribedBy
-    property ariaDetails
+    property ariaDescribedByElements
+    property ariaDetailsElement
     property ariaDisabled
+    property ariaErrorMessageElement
     property ariaExpanded
+    property ariaFlowToElements
     property ariaHasPopup
     property ariaHidden
+    property ariaKeyShortcuts
     property ariaLabel
-    property ariaLabelledBy
+    property ariaLabelledByElements
     property ariaLevel
     property ariaLive
     property ariaModal
     property ariaMultiLine
     property ariaMultiSelectable
     property ariaOrientation
-    property ariaOwns
+    property ariaOwnsElements
     property ariaPlaceholder
     property ariaPosInSet
     property ariaPressed
@@ -1251,6 +1275,7 @@ namespace http://www.w3.org/2000/svg
     property attachShadow
     property attributeStyleMap
     property attributes
+    property autofocus
     property baseURI
     property before
     property blur
@@ -1273,6 +1298,7 @@ namespace http://www.w3.org/2000/svg
     property createShadowRoot
     property dataset
     property dispatchEvent
+    property elementTiming
     property firstChild
     property firstElementChild
     property focus
@@ -1321,6 +1347,9 @@ namespace http://www.w3.org/2000/svg
     property normalize
     property onabort
     property onactivateinvisible
+    property onanimationend
+    property onanimationiteration
+    property onanimationstart
     property onauxclick
     property onbeforecopy
     property onbeforecut
@@ -1371,6 +1400,7 @@ namespace http://www.w3.org/2000/svg
     property onmouseover
     property onmouseup
     property onmousewheel
+    property onoverscroll
     property onpaste
     property onpause
     property onplay
@@ -1382,13 +1412,15 @@ namespace http://www.w3.org/2000/svg
     property onpointermove
     property onpointerout
     property onpointerover
-    property onpointerrawmove
+    property onpointerrawupdate
     property onpointerup
     property onprogress
     property onratechange
+    property onrendersubtreeactivation
     property onreset
     property onresize
     property onscroll
+    property onscrollend
     property onsearch
     property onseeked
     property onseeking
@@ -1404,6 +1436,7 @@ namespace http://www.w3.org/2000/svg
     property ontouchend
     property ontouchmove
     property ontouchstart
+    property ontransitionend
     property onvolumechange
     property onwaiting
     property onwebkitfullscreenchange
@@ -1428,10 +1461,12 @@ namespace http://www.w3.org/2000/svg
     property removeAttributeNode
     property removeChild
     property removeEventListener
+    property renderSubtree
     property replaceChild
     property replaceWith
     property requestFullscreen
     property requestPointerLock
+    property resetSubtreeRendered
     property role
     property scroll
     property scrollBy
@@ -1454,6 +1489,7 @@ namespace http://www.w3.org/2000/svg
     property tagName
     property textContent
     property toggleAttribute
+    property updateRendering
     property viewportElement
     property webkitMatchesSelector
     property webkitRequestFullScreen
@@ -1898,7 +1934,6 @@ svg element image
     property getScreenCTM
     property height
     property href
-    property intrinsicSize
     property nearestViewportElement
     property preserveAspectRatio
     property requiredExtensions

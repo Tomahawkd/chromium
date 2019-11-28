@@ -34,9 +34,10 @@ class TtsHandler : public SettingsPageUIHandler,
   void OnVoicesChanged() override;
 
   // UtteranceEventDelegate implementation.
-  void OnTtsEvent(content::Utterance* utterance,
+  void OnTtsEvent(content::TtsUtterance* utterance,
                   content::TtsEventType event_type,
                   int char_index,
+                  int length,
                   const std::string& error_message) override;
 
  private:
@@ -45,7 +46,7 @@ class TtsHandler : public SettingsPageUIHandler,
   int GetVoiceLangMatchScore(const content::VoiceData* voice,
                              const std::string& app_locale);
 
-  base::WeakPtrFactory<TtsHandler> weak_factory_;
+  base::WeakPtrFactory<TtsHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TtsHandler);
 };

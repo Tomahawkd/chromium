@@ -16,6 +16,7 @@ import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.Tab.TabHidingType;
+import org.chromium.chrome.browser.tab.TabImpl;
 import org.chromium.chrome.browser.tab.TabObserver;
 
 /**
@@ -35,8 +36,8 @@ public class AutoSigninSnackbarController
      */
     @CalledByNative
     private static void showSnackbar(Tab tab, String text) {
-        SnackbarManager snackbarManager = tab.getSnackbarManager();
-        if (snackbarManager == null) return;
+        if (((TabImpl) tab).getActivity() == null) return;
+        SnackbarManager snackbarManager = ((TabImpl) tab).getActivity().getSnackbarManager();
         AutoSigninSnackbarController snackbarController =
                 new AutoSigninSnackbarController(snackbarManager, tab);
         Snackbar snackbar = Snackbar.make(text, snackbarController, Snackbar.TYPE_NOTIFICATION,
@@ -48,7 +49,7 @@ public class AutoSigninSnackbarController
         snackbar.setSingleLine(false)
                 .setBackgroundColor(backgroundColor)
                 .setProfileImage(icon)
-                .setTextAppearance(R.style.WhiteBody);
+                .setTextAppearance(R.style.TextAppearance_WhiteBody);
         snackbarManager.showSnackbar(snackbar);
     }
 

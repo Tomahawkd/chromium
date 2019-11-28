@@ -12,9 +12,38 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "ui/aura/window.h"
+#include "ui/base/ime/ime_bridge.h"
+#include "ui/base/ime/input_method.h"
+#include "ui/base/ime/text_input_client.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/view.h"
+#include "ui/views/widget/widget.h"
+
+namespace {
+
+// Returns the RenderWidgetHostView contained by |window|.
+content::RenderWidgetHostView* GetHostViewForWindow(aura::Window* window) {
+  std::unique_ptr<content::RenderWidgetHostIterator> hosts(
+      content::RenderWidgetHost::GetRenderWidgetHosts());
+  while (content::RenderWidgetHost* host = hosts->GetNextHost()) {
+    content::RenderWidgetHostView* view = host->GetView();
+    if (view && window->Contains(view->GetNativeView()))
+      return view;
+  }
+  return nullptr;
+}
+
+ui::InputMethod* GetCurrentInputMethod() {
+  ui::IMEBridge* bridge = ui::IMEBridge::Get();
+  if (bridge && bridge->GetInputContextHandler())
+    return bridge->GetInputContextHandler()->GetInputMethod();
+  return nullptr;
+}
+
+}  // namespace
 
 ChromeKeyboardBoundsObserver::ChromeKeyboardBoundsObserver(
     aura::Window* keyboard_window)
@@ -32,34 +61,43 @@ ChromeKeyboardBoundsObserver::~ChromeKeyboardBoundsObserver() {
 }
 
 void ChromeKeyboardBoundsObserver::OnKeyboardOccludedBoundsChanged(
-    const gfx::Rect& bounds) {
+    const gfx::Rect& screen_bounds) {
+  DVLOG(1) << "OnKeyboardOccludedBoundsChanged: " << screen_bounds.ToString();
   UpdateOccludedBounds(
       ChromeKeyboardControllerClient::Get()->IsKeyboardOverscrollEnabled()
-          ? bounds
+          ? screen_bounds
           : gfx::Rect());
 }
 
 void ChromeKeyboardBoundsObserver::UpdateOccludedBounds(
-    const gfx::Rect& occluded_bounds) {
-  DVLOG(1) << "UpdateOccludedBounds: " << occluded_bounds.ToString();
-  occluded_bounds_ = occluded_bounds;
+    const gfx::Rect& screen_bounds) {
+  DVLOG(1) << "UpdateOccludedBounds: " << screen_bounds.ToString();
+  occluded_bounds_in_screen_ = screen_bounds;
+
+  std::unique_ptr<content::RenderWidgetHostIterator> hosts(
+      content::RenderWidgetHost::GetRenderWidgetHosts());
+
+  // If the keyboard is hidden or floating then reset the insets for all
+  // RenderWidgetHosts and remove observers.
+  if (occluded_bounds_in_screen_.IsEmpty()) {
+    while (content::RenderWidgetHost* host = hosts->GetNextHost()) {
+      content::RenderWidgetHostView* view = host->GetView();
+      if (view)
+        view->SetInsets(gfx::Insets());
+    }
+    RemoveAllObservedWindows();
+    return;
+  }
 
   // Adjust the height of the viewport for visible windows on the primary
   // display. TODO(kevers): Add EnvObserver to properly initialize insets if a
   // window is created while the keyboard is visible.
-  std::unique_ptr<content::RenderWidgetHostIterator> widgets(
-      content::RenderWidgetHost::GetRenderWidgetHosts());
-  while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
-    content::RenderWidgetHostView* view = widget->GetView();
+  while (content::RenderWidgetHost* host = hosts->GetNextHost()) {
+    content::RenderWidgetHostView* view = host->GetView();
     // Can be null, e.g. if the RenderWidget is being destroyed or
     // the render process crashed.
     if (!view)
       continue;
-
-    if (occluded_bounds.IsEmpty()) {
-      view->SetInsets(gfx::Insets());
-      continue;
-    }
 
     aura::Window* window = view->GetNativeView();
     // Added while we determine if RenderWidgetHostViewChildFrame can be
@@ -71,72 +109,78 @@ void ChromeKeyboardBoundsObserver::UpdateOccludedBounds(
     if (!ShouldWindowOverscroll(window))
       continue;
 
-    UpdateInsetsForHostView(view);
+    UpdateInsets(window, view);
     AddObservedWindow(window);
   }
 
-  if (occluded_bounds.IsEmpty())
-    RemoveAllObservedWindows();
+  // Window reshape can race with the IME trying to keep the text input caret
+  // visible. Do this here because the widget bounds change happens before the
+  // occluded bounds are updated. https://crbug.com/937722
+  ui::InputMethod* ime = GetCurrentInputMethod();
+  if (ime && ime->GetTextInputClient())
+    ime->GetTextInputClient()->EnsureCaretNotInRect(occluded_bounds_in_screen_);
 }
 
 void ChromeKeyboardBoundsObserver::AddObservedWindow(aura::Window* window) {
-  // Only observe top level windows.
-  window = window->GetToplevelWindow();
-  if (!window->HasObserver(this)) {
-    window->AddObserver(this);
-    observed_windows_.insert(window);
-  }
+  // Only observe top level widget.
+  views::Widget* widget =
+      views::Widget::GetWidgetForNativeView(window->GetToplevelWindow());
+  if (!widget || widget->HasObserver(this))
+    return;
+
+  widget->AddObserver(this);
+  observed_widgets_.insert(widget);
 }
 
 void ChromeKeyboardBoundsObserver::RemoveAllObservedWindows() {
-  for (aura::Window* window : observed_windows_)
-    window->RemoveObserver(this);
-  observed_windows_.clear();
+  for (views::Widget* widget : observed_widgets_)
+    widget->RemoveObserver(this);
+  observed_widgets_.clear();
 }
 
-void ChromeKeyboardBoundsObserver::OnWindowBoundsChanged(
-    aura::Window* window,
-    const gfx::Rect& old_bounds,
-    const gfx::Rect& new_bounds,
-    ui::PropertyChangeReason reason) {
-  DVLOG(1) << "OnWindowBoundsChanged: " << new_bounds.ToString();
-  UpdateInsetsForWindow(window);
-}
+void ChromeKeyboardBoundsObserver::OnWidgetBoundsChanged(
+    views::Widget* widget,
+    const gfx::Rect& new_bounds) {
+  DVLOG(1) << "OnWidgetBoundsChanged: " << widget->GetName() << " "
+           << new_bounds.ToString();
 
-void ChromeKeyboardBoundsObserver::OnWindowDestroyed(aura::Window* window) {
-  if (window->HasObserver(this))
-    window->RemoveObserver(this);
-  observed_windows_.erase(window);
-}
-
-void ChromeKeyboardBoundsObserver::UpdateInsetsForWindow(aura::Window* window) {
+  aura::Window* window = widget->GetNativeView();
   if (!ShouldWindowOverscroll(window))
     return;
 
-  std::unique_ptr<content::RenderWidgetHostIterator> widgets(
-      content::RenderWidgetHost::GetRenderWidgetHosts());
-  while (content::RenderWidgetHost* widget = widgets->GetNextHost()) {
-    content::RenderWidgetHostView* view = widget->GetView();
-    if (view && window->Contains(view->GetNativeView())) {
-      if (ShouldEnableInsets(window))
-        UpdateInsetsForHostView(view);
-      else
-        view->SetInsets(gfx::Insets());
-    }
-  }
+  content::RenderWidgetHostView* host_view = GetHostViewForWindow(window);
+  if (!host_view)
+    return;  // Transition edge case
+
+  UpdateInsets(window, host_view);
 }
 
-void ChromeKeyboardBoundsObserver::UpdateInsetsForHostView(
+void ChromeKeyboardBoundsObserver::OnWidgetDestroying(views::Widget* widget) {
+  if (widget->HasObserver(this))
+    widget->RemoveObserver(this);
+  observed_widgets_.erase(widget);
+}
+
+void ChromeKeyboardBoundsObserver::UpdateInsets(
+    aura::Window* window,
     content::RenderWidgetHostView* view) {
-  gfx::Rect view_bounds = view->GetViewBounds();
-  gfx::Rect intersect = gfx::IntersectRects(view_bounds, occluded_bounds_);
-  int overlap = intersect.height();
-  if (overlap > 0 && overlap < view_bounds.height()) {
-    DVLOG(2) << "SetInsets for: " << view << " Overlap: " << overlap;
-    view->SetInsets(gfx::Insets(0, 0, overlap, 0));
-  } else {
+  gfx::Rect view_bounds_in_screen = view->GetViewBounds();
+  if (!ShouldEnableInsets(window)) {
+    DVLOG(2) << "ResetInsets: " << window->GetName()
+             << " Bounds: " << view_bounds_in_screen.ToString();
     view->SetInsets(gfx::Insets());
+    return;
   }
+  gfx::Rect intersect =
+      gfx::IntersectRects(view_bounds_in_screen, occluded_bounds_in_screen_);
+  int overlap = intersect.height();
+  DVLOG(2) << "SetInsets: " << window->GetName()
+           << " Bounds: " << view_bounds_in_screen.ToString()
+           << " Overlap: " << overlap;
+  if (overlap > 0 && overlap < view_bounds_in_screen.height())
+    view->SetInsets(gfx::Insets(0, 0, overlap, 0));
+  else
+    view->SetInsets(gfx::Insets());
 }
 
 bool ChromeKeyboardBoundsObserver::ShouldWindowOverscroll(
@@ -156,7 +200,11 @@ bool ChromeKeyboardBoundsObserver::ShouldWindowOverscroll(
 }
 
 bool ChromeKeyboardBoundsObserver::ShouldEnableInsets(aura::Window* window) {
-  return keyboard_window_->IsVisible() &&
-         keyboard_window_->GetRootWindow() == window->GetRootWindow() &&
-         ChromeKeyboardControllerClient::Get()->IsKeyboardOverscrollEnabled();
+  if (!keyboard_window_->IsVisible() ||
+      !ChromeKeyboardControllerClient::Get()->IsKeyboardOverscrollEnabled()) {
+    return false;
+  }
+  const auto* screen = display::Screen::GetScreen();
+  return screen->GetDisplayNearestWindow(window).id() ==
+         screen->GetDisplayNearestWindow(keyboard_window_).id();
 }

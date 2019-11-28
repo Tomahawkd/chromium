@@ -4,14 +4,14 @@
 
 #include "rlz/win/lib/rlz_value_store_registry.h"
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "rlz/lib/assert.h"
 #include "rlz/lib/lib_values.h"
-#include "rlz/lib/rlz_lib.h"
 #include "rlz/lib/string_utils.h"
+#include "rlz/lib/supplementary_branding.h"
 #include "rlz/win/lib/registry_util.h"
 
 using base::ASCIIToUTF16;
@@ -287,7 +287,7 @@ bool RlzValueStoreRegistry::ReadProductEvents(Product product,
     // Max 32767 bytes according to MSDN, but we never use that much.
     const size_t kMaxValueNameLength = 2048;
     char buffer[kMaxValueNameLength];
-    DWORD size = arraysize(buffer);
+    DWORD size = base::size(buffer);
 
     result = RegEnumValueA(events_key.Handle(), num_values, buffer, &size,
                            NULL, NULL, NULL, NULL);
@@ -355,7 +355,7 @@ void RlzValueStoreRegistry::CollectGarbage() {
     kPingTimesSubkeyName
   };
 
-  for (size_t i = 0; i < arraysize(subkeys); i++) {
+  for (size_t i = 0; i < base::size(subkeys); i++) {
     std::string subkey_name;
     base::StringAppendF(&subkey_name, "%s\\%s", kLibKeyName, subkeys[i]);
     AppendBrandToString(&subkey_name);

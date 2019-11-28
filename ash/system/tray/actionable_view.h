@@ -53,7 +53,6 @@ class ASH_EXPORT ActionableView : public views::ButtonListener,
   std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
   std::unique_ptr<views::InkDropHighlight> CreateInkDropHighlight()
       const override;
-  std::unique_ptr<views::InkDropMask> CreateInkDropMask() const override;
 
   // Overridden from views::ButtonListener.
   void ButtonPressed(Button* sender, const ui::Event& event) override;
@@ -65,7 +64,7 @@ class ASH_EXPORT ActionableView : public views::ButtonListener,
   bool* destroyed_;
 
   // Defines the flavor of ink drop ripple/highlight that should be constructed.
-  TrayPopupInkDropStyle ink_drop_style_;
+  const TrayPopupInkDropStyle ink_drop_style_;
 
   DISALLOW_COPY_AND_ASSIGN(ActionableView);
 };

@@ -5,6 +5,7 @@
 
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/file_manager/mount_test_util.h"
 #include "chrome/browser/chromeos/file_system_provider/fake_extension_provider.h"
@@ -14,7 +15,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_service_manager_context.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -37,7 +38,7 @@ constexpr char kFileSystemId[] = "test-filesystem";
 TEST(FileManagerFileAPIUtilTest,
      ConvertSelectedFileInfoListToFileChooserFileInfoList) {
   // Prepare the test environment.
-  content::TestBrowserThreadBundle threads;
+  content::BrowserTaskEnvironment task_environment_;
   content::TestServiceManagerContext service_manager_context;
   TestingProfileManager profile_manager(TestingBrowserProcess::GetGlobal());
   ASSERT_TRUE(profile_manager.SetUp());
@@ -118,7 +119,7 @@ TEST(FileManagerFileAPIUtilTest,
   EXPECT_TRUE(result[2]->get_file_system()->url.is_valid());
   const storage::FileSystemURL url =
       context->CrackURL(result[2]->get_file_system()->url);
-  EXPECT_EQ(GURL("http://example.com"), url.origin());
+  EXPECT_EQ(GURL("http://example.com"), url.origin().GetURL());
   EXPECT_EQ(storage::kFileSystemTypeIsolated, url.mount_type());
   EXPECT_EQ(storage::kFileSystemTypeProvided, url.type());
   EXPECT_EQ(55u, result[2]->get_file_system()->length);

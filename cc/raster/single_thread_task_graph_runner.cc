@@ -9,7 +9,6 @@
 #include <string>
 
 #include "base/threading/simple_thread.h"
-#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 
 namespace cc {
@@ -29,7 +28,7 @@ void SingleThreadTaskGraphRunner::Start(
     const base::SimpleThread::Options& thread_options) {
   thread_.reset(
       new base::DelegateSimpleThread(this, thread_name, thread_options));
-  thread_->Start();
+  thread_->StartAsync();
 }
 
 void SingleThreadTaskGraphRunner::Shutdown() {
@@ -83,8 +82,6 @@ void SingleThreadTaskGraphRunner::WaitForTasksToFinishRunning(
 
   {
     base::AutoLock lock(lock_);
-    // http://crbug.com/902823
-    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
 
     auto* task_namespace = work_queue_.GetNamespaceForToken(token);
 

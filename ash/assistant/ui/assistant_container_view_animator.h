@@ -7,6 +7,8 @@
 
 #include <memory>
 
+#include "ash/assistant/model/assistant_ui_model_observer.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/view_observer.h"
@@ -18,26 +20,35 @@ class View;
 namespace ash {
 
 class AssistantContainerView;
-class AssistantController;
+class AssistantViewDelegate;
 
 // The AssistantContainerViewAnimator is the class responsible for smoothly
 // animating bound changes for the AssistantContainerView.
-class AssistantContainerViewAnimator : public views::ViewObserver {
+class COMPONENT_EXPORT(ASSISTANT_UI) AssistantContainerViewAnimator
+    : public views::ViewObserver,
+      public AssistantUiModelObserver {
  public:
   ~AssistantContainerViewAnimator() override;
 
   // Returns a newly created instance of an AssistantContainerViewAnimator.
   static std::unique_ptr<AssistantContainerViewAnimator> Create(
-      AssistantController* assistant_controller,
+      AssistantViewDelegate* delegate,
       AssistantContainerView* assistant_container_view);
 
   // Invoked when AssistantContainerView has been fully constructed to give the
   // AssistantContainerViewAnimator an opportunity to perform initialization.
   virtual void Init();
 
+  // AssistantUiModelObserver:
+  void OnUiVisibilityChanged(
+      AssistantVisibility new_visibility,
+      AssistantVisibility old_visibility,
+      base::Optional<AssistantEntryPoint> entry_point,
+      base::Optional<AssistantExitPoint> exit_point) override;
+
  protected:
   AssistantContainerViewAnimator(
-      AssistantController* assistant_controller,
+      AssistantViewDelegate* delegate,
       AssistantContainerView* assistant_container_view);
 
   // Invoked when AssistantContainerView's bounds have changed.
@@ -46,7 +57,7 @@ class AssistantContainerViewAnimator : public views::ViewObserver {
   // Invoked when AssistantContainerView's preferred size has changed.
   virtual void OnPreferredSizeChanged();
 
-  AssistantController* const assistant_controller_;  // Owned by Shell.
+  AssistantViewDelegate* const delegate_;
 
   // Owned by view hierarchy.
   AssistantContainerView* const assistant_container_view_;

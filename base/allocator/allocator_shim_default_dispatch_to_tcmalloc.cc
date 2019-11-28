@@ -4,15 +4,9 @@
 
 #include "base/allocator/allocator_shim.h"
 #include "base/allocator/allocator_shim_internals.h"
-#include "base/allocator/buildflags.h"
 
-#if BUILDFLAG(USE_NEW_TCMALLOC)
 #include "third_party/tcmalloc/chromium/src/config.h"
 #include "third_party/tcmalloc/chromium/src/gperftools/tcmalloc.h"
-#else
-#include "third_party/tcmalloc/gperftools-2.0/chromium/src/config.h"
-#include "third_party/tcmalloc/gperftools-2.0/chromium/src/gperftools/tcmalloc.h"
-#endif
 
 namespace {
 
@@ -62,6 +56,9 @@ const AllocatorDispatch AllocatorDispatch::default_dispatch = {
     nullptr,            /* batch_malloc_function */
     nullptr,            /* batch_free_function */
     nullptr,            /* free_definite_size_function */
+    nullptr,            /* aligned_malloc_function */
+    nullptr,            /* aligned_realloc_function */
+    nullptr,            /* aligned_free_function */
     nullptr,            /* next */
 };
 
@@ -83,17 +80,5 @@ SHIM_ALWAYS_EXPORT struct mallinfo mallinfo(void) __THROW {
   return tc_mallinfo();
 }
 #endif
-
-SHIM_ALWAYS_EXPORT size_t malloc_size(void* address) __THROW {
-  return tc_malloc_size(address);
-}
-
-#if defined(__ANDROID__)
-SHIM_ALWAYS_EXPORT size_t malloc_usable_size(const void* address) __THROW {
-#else
-SHIM_ALWAYS_EXPORT size_t malloc_usable_size(void* address) __THROW {
-#endif
-  return tc_malloc_size(address);
-}
 
 }  // extern "C"

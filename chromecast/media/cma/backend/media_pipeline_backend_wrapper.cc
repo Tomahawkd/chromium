@@ -77,7 +77,9 @@ class ActiveMediaPipelineBackendWrapper : public DecoderCreatorCmaBackend {
  public:
   ActiveMediaPipelineBackendWrapper(
       const media::MediaPipelineDeviceParams& params,
-      MediaPipelineBackendManager* backend_manager);
+      MediaPipelineBackendWrapper* wrapping_backend,
+      MediaPipelineBackendManager* backend_manager,
+      MediaResourceTracker* media_resource_tracker);
   ~ActiveMediaPipelineBackendWrapper() override;
 
   // DecoderCreatorCmaBackend implementation:
@@ -106,12 +108,17 @@ class ActiveMediaPipelineBackendWrapper : public DecoderCreatorCmaBackend {
            media::MediaPipelineDeviceParams::kAudioStreamSoundEffects;
   }
 
-  bool audio_decoder_created_;
+  AudioDecoderWrapper* audio_decoder_ptr_;
   bool video_decoder_created_;
   const std::unique_ptr<MediaPipelineBackend> backend_;
+  MediaPipelineBackendWrapper* const wrapping_backend_;
   MediaPipelineBackendManager* const backend_manager_;
   const MediaPipelineDeviceParams::AudioStreamType audio_stream_type_;
   const AudioContentType content_type_;
+
+  // Acquire the media resource at construction. The resource will be released
+  // when this class is destructed.
+  MediaResourceTracker::ScopedUsage media_resource_usage_;
 
   bool playing_;
 
@@ -120,14 +127,18 @@ class ActiveMediaPipelineBackendWrapper : public DecoderCreatorCmaBackend {
 
 ActiveMediaPipelineBackendWrapper::ActiveMediaPipelineBackendWrapper(
     const media::MediaPipelineDeviceParams& params,
-    MediaPipelineBackendManager* backend_manager)
-    : audio_decoder_created_(false),
+    MediaPipelineBackendWrapper* wrapping_backend,
+    MediaPipelineBackendManager* backend_manager,
+    MediaResourceTracker* media_resource_tracker)
+    : audio_decoder_ptr_(nullptr),
       video_decoder_created_(false),
       backend_(base::WrapUnique(
           media::CastMediaShlib::CreateMediaPipelineBackend(params))),
+      wrapping_backend_(wrapping_backend),
       backend_manager_(backend_manager),
       audio_stream_type_(params.audio_type),
       content_type_(params.content_type),
+      media_resource_usage_(media_resource_tracker),
       playing_(false) {
   DCHECK(backend_);
   DCHECK(backend_manager_);
@@ -137,7 +148,7 @@ ActiveMediaPipelineBackendWrapper::~ActiveMediaPipelineBackendWrapper() {
   // When the backend is revoked,  the video/audio_decoder should be considered
   // gone to |backend_manager_|. The reason is that the replacement of the
   // Audio/VideoDecoderWrapper are dummy ones that are not actually playing.
-  if (audio_decoder_created_) {
+  if (audio_decoder_ptr_) {
     backend_manager_->DecrementDecoderCount(
         IsSfx() ? DecoderType::SFX_DECODER : DecoderType::AUDIO_DECODER);
     if (playing_) {
@@ -171,7 +182,7 @@ void ActiveMediaPipelineBackendWrapper::LogicalResume() {
 
 std::unique_ptr<AudioDecoderWrapper>
 ActiveMediaPipelineBackendWrapper::CreateAudioDecoderWrapper() {
-  DCHECK(!audio_decoder_created_);
+  DCHECK(!audio_decoder_ptr_);
 
   if (!backend_manager_->IncrementDecoderCount(
           IsSfx() ? DecoderType::SFX_DECODER : DecoderType::AUDIO_DECODER))
@@ -190,18 +201,20 @@ ActiveMediaPipelineBackendWrapper::CreateAudioDecoderWrapper() {
     delegate = backend_manager_->buffer_delegate();
   }
 
-  audio_decoder_created_ = true;
   auto audio_decoder = std::make_unique<AudioDecoderWrapper>(
-      backend_manager_, real_decoder, content_type_, delegate);
+      real_decoder, content_type_, delegate);
+  audio_decoder_ptr_ = audio_decoder.get();
   return audio_decoder;
 }
 
 std::unique_ptr<VideoDecoderWrapper>
 ActiveMediaPipelineBackendWrapper::CreateVideoDecoderWrapper() {
   DCHECK(!video_decoder_created_);
+  backend_manager_->BackendUseVideoDecoder(wrapping_backend_);
 
   if (!backend_manager_->IncrementDecoderCount(DecoderType::VIDEO_DECODER))
     return nullptr;
+
   MediaPipelineBackend::VideoDecoder* real_decoder =
       backend_->CreateVideoDecoder();
   if (!real_decoder) {
@@ -214,7 +227,11 @@ ActiveMediaPipelineBackendWrapper::CreateVideoDecoderWrapper() {
 }
 
 bool ActiveMediaPipelineBackendWrapper::Initialize() {
-  return backend_->Initialize();
+  bool success = backend_->Initialize();
+  if (success && audio_decoder_ptr_) {
+    audio_decoder_ptr_->OnInitialized();
+  }
+  return success;
 }
 
 bool ActiveMediaPipelineBackendWrapper::Start(int64_t start_pts) {
@@ -259,7 +276,7 @@ void ActiveMediaPipelineBackendWrapper::SetPlaying(bool playing) {
     return;
   }
   playing_ = playing;
-  if (audio_decoder_created_) {
+  if (audio_decoder_ptr_) {
     backend_manager_->UpdatePlayingAudioCount(IsSfx(), content_type_,
                                               (playing_ ? 1 : -1));
   }
@@ -267,12 +284,13 @@ void ActiveMediaPipelineBackendWrapper::SetPlaying(bool playing) {
 
 MediaPipelineBackendWrapper::MediaPipelineBackendWrapper(
     const media::MediaPipelineDeviceParams& params,
-    MediaPipelineBackendManager* backend_manager)
+    MediaPipelineBackendManager* backend_manager,
+    MediaResourceTracker* media_resource_tracker)
     : revoked_(false),
       backend_manager_(backend_manager),
       content_type_(params.content_type) {
   backend_ = std::make_unique<ActiveMediaPipelineBackendWrapper>(
-      params, backend_manager);
+      params, this, backend_manager, media_resource_tracker);
 }
 
 MediaPipelineBackendWrapper::~MediaPipelineBackendWrapper() {

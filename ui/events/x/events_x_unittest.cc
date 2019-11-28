@@ -10,7 +10,7 @@
 #include <set>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -76,15 +76,6 @@ float ComputeRotationAngle(float twist) {
   return rotation_angle;
 }
 
-class MockTimestampServer : public ui::TimestampServer {
- public:
-  Time GetCurrentServerTime() override { return base_time_; }
-  void SetBaseTime(Time time) { base_time_ = time; }
-
- private:
-  Time base_time_ = 0;
-};
-
 }  // namespace
 
 class EventsXTest : public testing::Test {
@@ -93,15 +84,13 @@ class EventsXTest : public testing::Test {
   ~EventsXTest() override {}
 
   void SetUp() override {
-    SetTimestampServer(&server_);
     DeviceDataManagerX11::CreateInstance();
     ui::TouchFactory::GetInstance()->ResetForTest();
+    ResetTimestampRolloverCountersForTesting();
   }
-
-  void TearDown() override { SetTimestampServer(nullptr); }
+  void TearDown() override { ResetTimestampRolloverCountersForTesting(); }
 
  private:
-  MockTimestampServer server_;
   DISALLOW_COPY_AND_ASSIGN(EventsXTest);
 };
 
@@ -349,42 +338,31 @@ int GetTouchIdForTrackingId(uint32_t tracking_id) {
 }
 
 TEST_F(EventsXTest, TouchEventNotRemovingFromNativeMapping) {
-  std::vector<int> devices;
-  devices.push_back(0);
+  const int kTrackingId = 5;
+  const int kDeviceId = 0;
+
+  std::vector<int> devices{kDeviceId};
   ui::SetUpTouchDevicesForTest(devices);
   std::vector<Valuator> valuators;
 
-  const int kTrackingId = 5;
-
   // Two touch presses with the same tracking id.
   ui::ScopedXI2Event xpress0;
-  xpress0.InitTouchEvent(
-      0, XI_TouchBegin, kTrackingId, gfx::Point(10, 10), valuators);
+  xpress0.InitTouchEvent(kDeviceId, XI_TouchBegin, kTrackingId,
+                         gfx::Point(10, 10), valuators);
   std::unique_ptr<ui::TouchEvent> upress0(new ui::TouchEvent(xpress0));
-  EXPECT_EQ(0, GetTouchIdForTrackingId(kTrackingId));
+  EXPECT_EQ(kDeviceId, GetTouchIdForTrackingId(kTrackingId));
 
   ui::ScopedXI2Event xpress1;
-  xpress1.InitTouchEvent(
-      0, XI_TouchBegin, kTrackingId, gfx::Point(20, 20), valuators);
+  xpress1.InitTouchEvent(kDeviceId, XI_TouchBegin, kTrackingId,
+                         gfx::Point(20, 20), valuators);
   ui::TouchEvent upress1(xpress1);
-  EXPECT_EQ(0, GetTouchIdForTrackingId(kTrackingId));
-
-  // The first touch release shouldn't clear the mapping from the
-  // tracking id.
-  ui::ScopedXI2Event xrelease0;
-  xrelease0.InitTouchEvent(
-      0, XI_TouchEnd, kTrackingId, gfx::Point(10, 10), valuators);
-  {
-    ui::TouchEvent urelease0(xrelease0);
-    urelease0.set_should_remove_native_touch_id_mapping(false);
-  }
-  EXPECT_EQ(0, GetTouchIdForTrackingId(kTrackingId));
+  EXPECT_EQ(kDeviceId, GetTouchIdForTrackingId(kTrackingId));
 
   // The second touch release should clear the mapping from the
   // tracking id.
   ui::ScopedXI2Event xrelease1;
-  xrelease1.InitTouchEvent(
-      0, XI_TouchEnd, kTrackingId, gfx::Point(10, 10), valuators);
+  xrelease1.InitTouchEvent(kDeviceId, XI_TouchEnd, kTrackingId,
+                           gfx::Point(10, 10), valuators);
   {
     ui::TouchEvent urelease1(xrelease1);
   }
@@ -507,7 +485,7 @@ TEST_F(EventsXTest, ImeFabricatedKeyEvents) {
   unsigned int state_to_be_fabricated[] = {
     0, ShiftMask, LockMask, ShiftMask | LockMask,
   };
-  for (size_t i = 0; i < arraysize(state_to_be_fabricated); ++i) {
+  for (size_t i = 0; i < base::size(state_to_be_fabricated); ++i) {
     unsigned int state = state_to_be_fabricated[i];
     for (int is_char = 0; is_char < 2; ++is_char) {
       XEvent x_event;
@@ -524,7 +502,7 @@ TEST_F(EventsXTest, ImeFabricatedKeyEvents) {
   unsigned int state_to_be_not_fabricated[] = {
     ControlMask, Mod1Mask, Mod2Mask, ShiftMask | ControlMask,
   };
-  for (size_t i = 0; i < arraysize(state_to_be_not_fabricated); ++i) {
+  for (size_t i = 0; i < base::size(state_to_be_not_fabricated); ++i) {
     unsigned int state = state_to_be_not_fabricated[i];
     for (int is_char = 0; is_char < 2; ++is_char) {
       XEvent x_event;
@@ -551,6 +529,54 @@ TEST_F(EventsXTest, IgnoresMotionEventForMouseWheelScroll) {
   // We shouldn't produce a mouse move event on a mouse wheel
   // scroll. These events are only produced for some mice.
   EXPECT_EQ(ui::ET_UNKNOWN, ui::EventTypeFromNative(xev));
+}
+
+namespace {
+
+// Returns a fake TimeTicks based on the given millisecond offset.
+base::TimeTicks TimeTicksFromMillis(int64_t millis) {
+  return base::TimeTicks() + base::TimeDelta::FromMilliseconds(millis);
+}
+
+}  // namespace
+
+TEST_F(EventsXTest, TimestampRolloverAndAdjustWhenDecreasing) {
+  XEvent event;
+  InitButtonEvent(&event, true, gfx::Point(5, 10), 1, 0);
+
+  test::ScopedEventTestTickClock clock;
+  clock.SetNowTicks(TimeTicksFromMillis(0x100000001));
+  ResetTimestampRolloverCountersForTesting();
+
+  event.xbutton.time = 0xFFFFFFFF;
+  EXPECT_EQ(TimeTicksFromMillis(0xFFFFFFFF), ui::EventTimeFromNative(&event));
+
+  clock.SetNowTicks(TimeTicksFromMillis(0x100000007));
+  ResetTimestampRolloverCountersForTesting();
+
+  event.xbutton.time = 3;
+  EXPECT_EQ(TimeTicksFromMillis(0x100000000 + 3),
+            ui::EventTimeFromNative(&event));
+}
+
+TEST_F(EventsXTest, NoTimestampRolloverWhenMonotonicIncreasing) {
+  XEvent event;
+  InitButtonEvent(&event, true, gfx::Point(5, 10), 1, 0);
+
+  test::ScopedEventTestTickClock clock;
+  clock.SetNowTicks(TimeTicksFromMillis(10));
+  ResetTimestampRolloverCountersForTesting();
+
+  event.xbutton.time = 6;
+  EXPECT_EQ(TimeTicksFromMillis(6), ui::EventTimeFromNative(&event));
+  event.xbutton.time = 7;
+  EXPECT_EQ(TimeTicksFromMillis(7), ui::EventTimeFromNative(&event));
+
+  clock.SetNowTicks(TimeTicksFromMillis(0x100000005));
+  ResetTimestampRolloverCountersForTesting();
+
+  event.xbutton.time = 0xFFFFFFFF;
+  EXPECT_EQ(TimeTicksFromMillis(0xFFFFFFFF), ui::EventTimeFromNative(&event));
 }
 
 }  // namespace ui

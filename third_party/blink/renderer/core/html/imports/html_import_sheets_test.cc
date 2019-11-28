@@ -16,13 +16,14 @@ class HTMLImportSheetsTest : public SimTest {
 
   void SetUp() override {
     SimTest::SetUp();
-    WebView().Resize(WebSize(640, 480));
+    WebView().MainFrameWidget()->Resize(WebSize(640, 480));
   }
 };
 
 TEST_F(HTMLImportSheetsTest, NeedsActiveStyleUpdate) {
   SimRequest main_resource("https://example.com/", "text/html");
-  SimRequest import_resource("https://example.com/import.html", "text/html");
+  SimSubresourceRequest import_resource("https://example.com/import.html",
+                                        "text/html");
 
   LoadURL("https://example.com/");
   main_resource.Complete("<link id=link rel=import href=import.html>");
@@ -30,7 +31,7 @@ TEST_F(HTMLImportSheetsTest, NeedsActiveStyleUpdate) {
 
   EXPECT_TRUE(GetDocument().GetStyleEngine().NeedsActiveStyleUpdate());
   Document* import_doc =
-      ToHTMLLinkElement(GetDocument().getElementById("link"))->import();
+      To<HTMLLinkElement>(GetDocument().getElementById("link"))->import();
   ASSERT_TRUE(import_doc);
   EXPECT_TRUE(import_doc->GetStyleEngine().NeedsActiveStyleUpdate());
 
@@ -42,7 +43,8 @@ TEST_F(HTMLImportSheetsTest, NeedsActiveStyleUpdate) {
 
 TEST_F(HTMLImportSheetsTest, UpdateStyleSheetList) {
   SimRequest main_resource("https://example.com/", "text/html");
-  SimRequest import_resource("https://example.com/import.html", "text/html");
+  SimSubresourceRequest import_resource("https://example.com/import.html",
+                                        "text/html");
 
   LoadURL("https://example.com/");
   main_resource.Complete("<link id=link rel=import href=import.html>");
@@ -50,7 +52,7 @@ TEST_F(HTMLImportSheetsTest, UpdateStyleSheetList) {
 
   EXPECT_TRUE(GetDocument().GetStyleEngine().NeedsActiveStyleUpdate());
   Document* import_doc =
-      ToHTMLLinkElement(GetDocument().getElementById("link"))->import();
+      To<HTMLLinkElement>(GetDocument().getElementById("link"))->import();
   ASSERT_TRUE(import_doc);
   EXPECT_TRUE(import_doc->GetStyleEngine().NeedsActiveStyleUpdate());
 

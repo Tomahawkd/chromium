@@ -6,26 +6,20 @@ package org.chromium.chrome.browser.webapps;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.os.StrictMode;
-import android.os.SystemClock;
 import android.util.Log;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.SecureRandomInitializer;
-import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
-import org.chromium.base.task.AsyncTask;
+import org.chromium.base.StrictModeContext;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.Mac;
@@ -33,13 +27,13 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Authenticate the source of Intents to launch web apps (see e.g. {@link #FullScreenActivity}).
+ * Authenticate the source of Intents to launch web apps (see {@link #WebappLauncherActivity}).
  *
  * Chrome does not keep a store of valid URLs for installed web apps (because it cannot know when
  * any have been uninstalled). Therefore, upon installation, it tells the Launcher a message
  * authentication code (MAC) along with the URL for the web app, and then Chrome can verify the MAC
- * when starting e.g. {@link #FullScreenActivity}. Chrome can thus distinguish between legitimate,
- * installed web apps and arbitrary other URLs.
+ * when starting e.g. {@link #WebappLauncherActivity}. Chrome can thus distinguish between
+ * legitimate, installed web apps and arbitrary other URLs.
  */
 public class WebappAuthenticator {
     private static final String TAG = "WebappAuthenticator";
@@ -48,11 +42,7 @@ public class WebappAuthenticator {
     private static final int MAC_KEY_BYTE_COUNT = 32;
     private static final Object sLock = new Object();
 
-    private static FutureTask<SecretKey> sMacKeyGenerator;
     private static SecretKey sKey;
-
-    private static final TimesHistogramSample sWebappValidationTimes = new TimesHistogramSample(
-            "Android.StrictMode.WebappAuthenticatorMac", TimeUnit.MILLISECONDS);
 
     /**
      * @see #getMacForUrl
@@ -63,15 +53,10 @@ public class WebappAuthenticator {
      * @return true if the MAC is a valid MAC for the URL, false otherwise.
      */
     public static boolean isUrlValid(String url, byte[] mac) {
-        byte[] goodMac = null;
-        // Temporarily allowing disk access while fixing. TODO: http://crbug.com/525785
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        try {
-            long time = SystemClock.elapsedRealtime();
+        byte[] goodMac;
+        // TODO(crbug.com/525785): Temporarily allowing disk access until more permanent fix is in.
+        try (StrictModeContext ignored = StrictModeContext.allowDiskReads()) {
             goodMac = getMacForUrl(url);
-            sWebappValidationTimes.record(SystemClock.elapsedRealtime() - time);
-        } finally {
-            StrictMode.setThreadPolicy(oldPolicy);
         }
         if (goodMac == null) {
             return false;
@@ -180,20 +165,12 @@ public class WebappAuthenticator {
                     return sKey;
                 }
 
-                triggerMacKeyGeneration();
-                try {
-                    sKey = sMacKeyGenerator.get();
-                    sMacKeyGenerator = null;
-                    if (!writeKeyToFile(context, MAC_KEY_BASENAME, sKey)) {
-                        sKey = null;
-                        return null;
-                    }
-                    return sKey;
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } catch (ExecutionException e) {
-                    throw new RuntimeException(e);
+                sKey = generateMacKey();
+                if (!writeKeyToFile(context, MAC_KEY_BASENAME, sKey)) {
+                    sKey = null;
+                    return null;
                 }
+                return sKey;
             }
             return sKey;
         }
@@ -201,27 +178,22 @@ public class WebappAuthenticator {
 
     /**
      * Generates the authentication encryption key in a background thread (if necessary).
+     * SecureRandomInitializer addresses the bug in SecureRandom that "TrulyRandom" warns about, so
+     * this lint warning can safely be suppressed.
      */
-    private static void triggerMacKeyGeneration() {
-        synchronized (sLock) {
-            if (sKey != null || sMacKeyGenerator != null) {
-                return;
-            }
-
-            sMacKeyGenerator = new FutureTask<SecretKey>(new Callable<SecretKey>() {
-                // SecureRandomInitializer addresses the bug in SecureRandom that "TrulyRandom"
-                // warns about, so this lint warning can safely be suppressed.
-                @SuppressLint("TrulyRandom")
-                @Override
-                public SecretKey call() throws Exception {
-                    KeyGenerator generator = KeyGenerator.getInstance(MAC_ALGORITHM_NAME);
-                    SecureRandom random = new SecureRandom();
-                    SecureRandomInitializer.initialize(random);
-                    generator.init(MAC_KEY_BYTE_COUNT * 8, random);
-                    return generator.generateKey();
-                }
-            });
-            AsyncTask.THREAD_POOL_EXECUTOR.execute(sMacKeyGenerator);
+    @SuppressLint("TrulyRandom")
+    private static SecretKey generateMacKey() {
+        if (sKey != null) {
+            return sKey;
+        }
+        try {
+            KeyGenerator generator = KeyGenerator.getInstance(MAC_ALGORITHM_NAME);
+            SecureRandom random = new SecureRandom();
+            SecureRandomInitializer.initialize(random);
+            generator.init(MAC_KEY_BYTE_COUNT * 8, random);
+            return generator.generateKey();
+        } catch (NoSuchAlgorithmException | IOException e) {
+            throw new RuntimeException(e);
         }
     }
 

@@ -8,13 +8,16 @@
 
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/vsync_provider.h"
+#include "ui/ozone/public/platform_window_surface.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
 
 namespace viz {
 
 SoftwareOutputDeviceOzone::SoftwareOutputDeviceOzone(
+    std::unique_ptr<ui::PlatformWindowSurface> platform_window_surface,
     std::unique_ptr<ui::SurfaceOzoneCanvas> surface_ozone)
-    : surface_ozone_(std::move(surface_ozone)) {
+    : platform_window_surface_(std::move(platform_window_surface)),
+      surface_ozone_(std::move(surface_ozone)) {
   vsync_provider_ = surface_ozone_->CreateVSyncProvider();
 }
 
@@ -43,6 +46,18 @@ void SoftwareOutputDeviceOzone::EndPaint() {
   SoftwareOutputDevice::EndPaint();
 
   surface_ozone_->PresentCanvas(damage_rect_);
+}
+
+void SoftwareOutputDeviceOzone::OnSwapBuffers(
+    SwapBuffersCallback swap_ack_callback) {
+  if (surface_ozone_->SupportsAsyncBufferSwap())
+    surface_ozone_->OnSwapBuffers(std::move(swap_ack_callback));
+  else
+    SoftwareOutputDevice::OnSwapBuffers(std::move(swap_ack_callback));
+}
+
+int SoftwareOutputDeviceOzone::MaxFramesPending() const {
+  return surface_ozone_->MaxFramesPending();
 }
 
 }  // namespace viz

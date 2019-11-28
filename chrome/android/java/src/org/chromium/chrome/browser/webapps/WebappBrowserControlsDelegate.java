@@ -6,8 +6,8 @@ package org.chromium.chrome.browser.webapps;
 
 import android.text.TextUtils;
 
-import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabImpl;
 import org.chromium.chrome.browser.tab.TabStateBrowserControlsVisibilityDelegate;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
 
@@ -24,12 +24,12 @@ class WebappBrowserControlsDelegate extends TabStateBrowserControlsVisibilityDel
         if (!super.canShowBrowserControls()) return false;
 
         return shouldShowBrowserControls(mActivity.scopePolicy(), mActivity.getWebappInfo(),
-                mTab.getUrl(), mTab.getSecurityLevel());
+                mTab.getUrl(), ((TabImpl) mTab).getSecurityLevel());
     }
 
     @Override
     public boolean canAutoHideBrowserControls() {
-        return canAutoHideBrowserControls(mTab.getSecurityLevel());
+        return canAutoHideBrowserControls(((TabImpl) mTab).getSecurityLevel());
     }
 
     static boolean canAutoHideBrowserControls(int securityLevel) {
@@ -68,8 +68,8 @@ class WebappBrowserControlsDelegate extends TabStateBrowserControlsVisibilityDel
                 // Also keep shown if toolbar is not visible, so that during the in and off-scope
                 // transitions we avoid button flickering when toolbar is appearing/disappearing.
                 || !shouldShowBrowserControls(activity.scopePolicy(), activity.getWebappInfo(),
-                           activity.getActivityTab().getUrl(),
-                           activity.getActivityTab().getSecurityLevel());
+                        activity.getActivityTab().getUrl(),
+                        ((TabImpl) activity.getActivityTab()).getSecurityLevel());
     }
 
     /**

@@ -62,20 +62,16 @@ class ProximityAuthProfilePrefManager
   int64_t GetLastPromotionCheckTimestampMs() const override;
   void SetPromotionShownCount(int count) override;
   int GetPromotionShownCount() const override;
-  void SetProximityThreshold(ProximityThreshold value) override;
-  ProximityThreshold GetProximityThreshold() const override;
   bool IsChromeOSLoginAllowed() const override;
   void SetIsChromeOSLoginEnabled(bool is_enabled) override;
   bool IsChromeOSLoginEnabled() const override;
+  void SetHasShownLoginDisabledMessage(bool has_shown) override;
+  bool HasShownLoginDisabledMessage() const override;
 
   // chromeos::multidevice_setup::MultiDeviceSetupClient::Observer:
   void OnFeatureStatesChanged(
       const chromeos::multidevice_setup::MultiDeviceSetupClient::
           FeatureStatesMap& feature_states_map) override;
-
-  // TODO(crbug.com/894585): Needed for legacy special case. Remove after M71.
-  // This is only to be used by EasyUnlockServiceRegular.
-  void SetIsInLegacyHostMode(bool is_in_legacy_host_mode);
 
  private:
   const base::DictionaryValue* GetRemoteBleDevices() const;
@@ -95,20 +91,11 @@ class ProximityAuthProfilePrefManager
   // The account id of the current profile.
   AccountId account_id_;
 
-  // Used to determine the FeatureState of Smart Lock. See |feature_state_|.
+  // Used to determine the FeatureState of Smart Lock.
   chromeos::multidevice_setup::MultiDeviceSetupClient*
       multidevice_setup_client_ = nullptr;
 
-  // Caches feature state of Smart Lock. Populated by using
-  // |multidevice_setup_client_|.
-  chromeos::multidevice_setup::mojom::FeatureState feature_state_ = chromeos::
-      multidevice_setup::mojom::FeatureState::kUnavailableNoVerifiedHost;
-
-  // TODO(https://crbug.com/894585): Needed for legacy special case. Remove
-  // after M71.
-  bool is_in_legacy_host_mode_ = false;
-
-  base::WeakPtrFactory<ProximityAuthProfilePrefManager> weak_ptr_factory_;
+  base::WeakPtrFactory<ProximityAuthProfilePrefManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ProximityAuthProfilePrefManager);
 };

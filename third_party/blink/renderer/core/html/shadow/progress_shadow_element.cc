@@ -36,19 +36,22 @@
 namespace blink {
 
 ProgressShadowElement::ProgressShadowElement(Document& document)
-    : HTMLDivElement(document) {}
-
-DEFINE_NODE_FACTORY(ProgressShadowElement)
-
-HTMLProgressElement* ProgressShadowElement::ProgressElement() const {
-  return ToHTMLProgressElement(OwnerShadowHost());
+    : HTMLDivElement(document) {
+  SetHasCustomStyleCallbacks();
 }
 
-bool ProgressShadowElement::LayoutObjectIsNeeded(
-    const ComputedStyle& style) const {
+HTMLProgressElement* ProgressShadowElement::ProgressElement() const {
+  return To<HTMLProgressElement>(OwnerShadowHost());
+}
+
+scoped_refptr<ComputedStyle>
+ProgressShadowElement::CustomStyleForLayoutObject() {
+  scoped_refptr<ComputedStyle> style = OriginalStyleForLayoutObject();
   const ComputedStyle* progress_style = ProgressElement()->GetComputedStyle();
-  return progress_style && !progress_style->HasAppearance() &&
-         HTMLDivElement::LayoutObjectIsNeeded(style);
+  DCHECK(progress_style);
+  if (progress_style->HasEffectiveAppearance())
+    style->SetDisplay(EDisplay::kNone);
+  return style;
 }
 
 }  // namespace blink

@@ -7,13 +7,13 @@
 
 #include <iosfwd>
 #include <memory>
-#include "third_party/blink/renderer/platform/geometry/float_rect.h"
+#include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/hit_test_data.h"
 #include "third_party/blink/renderer/platform/graphics/paint/raster_invalidation_tracking.h"
 #include "third_party/blink/renderer/platform/graphics/paint/ref_counted_property_tree_state.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -98,12 +98,14 @@ struct PLATFORM_EXPORT PaintChunk {
 
   // The total bounds of this paint chunk's contents, in the coordinate space of
   // the containing transform node.
-  FloatRect bounds;
+  IntRect bounds;
 
   // Some raster effects can exceed |bounds| in the rasterization space. This
   // is the maximum DisplayItemClient::VisualRectOutsetForRasterEffects() of
   // all clients of items in this chunk.
   float outset_for_raster_effects = 0;
+
+  SkColor safe_opaque_background_color = 0;
 
   // True if the bounds are filled entirely with opaque contents.
   bool known_to_be_opaque = false;

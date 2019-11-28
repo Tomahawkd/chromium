@@ -90,6 +90,9 @@ class MediaSinkInternal {
   const MediaSink& sink() const { return sink_; }
   MediaSink& sink() { return sink_; }
 
+  // TOOD(jrw): Use this method where appropriate.
+  const MediaSink::Id& id() const { return sink_.id(); }
+
   void set_dial_data(const DialSinkExtraData& dial_data);
 
   // Must only be called if the sink is a DIAL sink.
@@ -100,6 +103,9 @@ class MediaSinkInternal {
   // Must only be called if the sink is a Cast sink.
   const CastSinkExtraData& cast_data() const;
   CastSinkExtraData& cast_data();
+
+  // TOOD(jrw): Use this method where appropriate.
+  int cast_channel_id() const { return cast_data().cast_channel_id; }
 
   bool is_dial_sink() const { return sink_type_ == SinkType::DIAL; }
   bool is_cast_sink() const { return sink_type_ == SinkType::CAST; }

@@ -69,6 +69,18 @@ LEGACY_EMBEDDED_JSON_WHITELIST = [
     # complex schemas using stringified JSON - instead, store them as dicts.
 ]
 
+# 100 MiB upper limit on the total device policy external data max size limits
+# due to the security reasons.
+# You can increase this limit if you're introducing new external data type
+# device policy, but be aware that too heavy policies could result in user
+# profiles not having enough space on the device.
+TOTAL_DEVICE_POLICY_EXTERNAL_DATA_MAX_SIZE = 1024 * 1024 * 100
+
+# Each policy must have a description message shorter than 4096 characters in
+# all its translations (ADM format limitation). However, translations of the
+# description might exceed this limit, so a lower limit of is used instead.
+POLICY_DESCRIPTION_LENGTH_SOFT_LIMIT = 3500
+
 
 class PolicyTemplateChecker(object):
 
@@ -206,7 +218,7 @@ class PolicyTemplateChecker(object):
         self._Error('Schema is invalid for policy %s' % policy.get('name'))
         self.has_schema_error = True
 
-    if policy.has_key('validation_schema'):
+    if 'validation_schema' in policy:
       validation_schema = policy.get('validation_schema')
       if not self.schema_validator.ValidateSchema(validation_schema):
         self._Error(
@@ -223,7 +235,7 @@ class PolicyTemplateChecker(object):
 
     # Checks that the policy doesn't have a validation_schema - the whole
     # schema should be defined in 'schema'- unless whitelisted as legacy.
-    if (policy.has_key('validation_schema') and
+    if ('validation_schema' in policy and
         policy.get('name') not in LEGACY_EMBEDDED_JSON_WHITELIST):
       self._Error(('"validation_schema" is defined for new policy %s - ' +
                    'entire schema data should be contained in "schema"') %
@@ -237,6 +249,21 @@ class PolicyTemplateChecker(object):
                    'not store complex data as stringified JSON - instead, ' +
                    'store it in a dict and define it in "schema".') %
                   policy.get('name'))
+
+  def _CheckTotalDevicePolicyExternalDataMaxSize(self, policy_definitions):
+    total_device_policy_external_data_max_size = 0
+    for policy in policy_definitions:
+      if (policy.get('device_only', False) and
+          self._CheckContains(policy, 'type', str) == 'external'):
+        total_device_policy_external_data_max_size += self._CheckContains(
+            policy, 'max_size', int)
+    if (total_device_policy_external_data_max_size >
+        TOTAL_DEVICE_POLICY_EXTERNAL_DATA_MAX_SIZE):
+      self._Error(
+          ('Total sum of device policy external data maximum size limits ' +
+           'should not exceed %d bytes, current sum is %d bytes.') %
+          (TOTAL_DEVICE_POLICY_EXTERNAL_DATA_MAX_SIZE,
+           total_device_policy_external_data_max_size))
 
   # Returns True if the example value for a policy seems to contain JSON
   # embedded inside a string. Simply checks if strings start with '{', so it
@@ -252,6 +279,66 @@ class PolicyTemplateChecker(object):
           self._AppearsToContainEmbeddedJson(v)
           for v in example_value.itervalues())
 
+  # Checks that there are no duplicate proto paths in device_policy_proto_map.
+  def _CheckDevicePolicyProtoMappingUniqueness(self, device_policy_proto_map,
+                                               legacy_device_policy_proto_map):
+    # Check that device_policy_proto_map does not have duplicate values.
+    proto_paths = set()
+    for proto_path in device_policy_proto_map.itervalues():
+      if proto_path in proto_paths:
+        self._Error(
+            "Duplicate proto path '%s' in device_policy_proto_map. Did you set "
+            "the right path for your device policy?" % proto_path)
+      proto_paths.add(proto_path)
+
+    # Check that legacy_device_policy_proto_map only contains pairs
+    # [policy_name, proto_path] and does not have duplicate proto_paths.
+    for policy_and_path in legacy_device_policy_proto_map:
+      if len(policy_and_path) != 2 or not isinstance(
+          policy_and_path[0], str) or not isinstance(policy_and_path[1], str):
+        self._Error(
+            "Every entry in legacy_device_policy_proto_map must be an array of "
+            "two strings, but found '%s'" % policy_and_path)
+      if policy_and_path[1] != '' and policy_and_path[1] in proto_paths:
+        self._Error(
+            "Duplicate proto path '%s' in legacy_device_policy_proto_map. Did "
+            "you set the right path for your device policy?" %
+            policy_and_path[1])
+      proto_paths.add(policy_and_path[1])
+
+  # If 'device only' field is true, the policy must be mapped to its proto
+  # field in device_policy_proto_map.json.
+  def _CheckDevicePolicyProtoMappingDeviceOnly(
+      self, policy, device_policy_proto_map, legacy_device_policy_proto_map):
+    if not policy.get('device_only', False):
+      return
+
+    name = policy.get('name')
+    if not name in device_policy_proto_map and not any(
+        name == policy_and_path[0]
+        for policy_and_path in legacy_device_policy_proto_map):
+      self._Error(
+          "Please add '%s' to device_policy_proto_map and map it to "
+          "the corresponding field in chrome_device_policy.proto." % name)
+      return
+
+  # Performs a quick check whether all fields in |device_policy_proto_map| are
+  # actually present in the device policy proto at |device_policy_proto_path|.
+  # Note that this presubmit check can't compile the proto to pb2.py easily (or
+  # can it?).
+  def _CheckDevicePolicyProtoMappingExistence(self, device_policy_proto_map,
+                                              device_policy_proto_path):
+    with open(device_policy_proto_path, 'r') as file:
+      device_policy_proto = file.read()
+
+    for policy, proto_path in device_policy_proto_map.items():
+      fields = proto_path.split(".")
+      for field in fields:
+        if field not in device_policy_proto:
+          self._Error("Bad device_policy_proto_map for policy '%s': "
+                      "Field '%s' not present in device policy proto." %
+                      (policy, field))
+
   def _CheckPolicy(self, policy, is_in_group, policy_ids, deleted_policy_ids):
     if not isinstance(policy, dict):
       self._Error('Each policy must be a dictionary.', 'policy', None, policy)
@@ -259,10 +346,11 @@ class PolicyTemplateChecker(object):
 
     # There should not be any unknown keys in |policy|.
     for key in policy:
-      if key not in ('name', 'type', 'caption', 'desc', 'device_only',
+      if key not in ('name', 'owners', 'type', 'caption', 'desc', 'device_only',
                      'supported_on', 'label', 'policies', 'items',
                      'example_value', 'features', 'deprecated', 'future', 'id',
-                     'schema', 'validation_schema', 'max_size', 'tags',
+                     'schema', 'validation_schema', 'description_schema',
+                     'url_schema', 'max_size', 'tags',
                      'default_for_enterprise_users',
                      'default_for_managed_devices_doc_only', 'arc_support',
                      'supported_chrome_os_management'):
@@ -285,8 +373,18 @@ class PolicyTemplateChecker(object):
     # Each policy must have a caption message.
     self._CheckContains(policy, 'caption', str)
 
-    # Each policy must have a description message.
-    self._CheckContains(policy, 'desc', str)
+    # Each policy's description should be within the limit.
+    desc = self._CheckContains(policy, 'desc', str)
+    if len(desc.decode("UTF-8")) > POLICY_DESCRIPTION_LENGTH_SOFT_LIMIT:
+      self._Error(
+          'Length of description is more than %d characters, which might '
+          'exceed the limit of 4096 characters in one of its '
+          'translations. If there is no alternative to reducing the length '
+          'of the description, it is recommended to add a page under %s '
+          'instead and provide a link to it.' %
+          (POLICY_DESCRIPTION_LENGTH_SOFT_LIMIT,
+           'https://www.chromium.org/administrators'), 'policy',
+          policy.get('name'))
 
     # If 'label' is present, it must be a string.
     self._CheckContains(policy, 'label', str, True)
@@ -325,6 +423,11 @@ class PolicyTemplateChecker(object):
       # Each policy must have a protobuf ID.
       id = self._CheckContains(policy, 'id', int)
       self._AddPolicyID(id, policy_ids, policy, deleted_policy_ids)
+
+      # Each policy must have an owner.
+      # TODO(pastarmovj): Verify that each owner is either an OWNERS file or an
+      # email of a committer.
+      self._CheckContains(policy, 'owners', list)
 
       # Each policy must have a tag list.
       self._CheckContains(policy, 'tags', list)
@@ -453,8 +556,12 @@ class PolicyTemplateChecker(object):
           self._Error(('Example for policy %s does not comply to the policy\'s '
                        'schema or does not use all properties at least once.') %
                       policy.get('name'))
-        if policy.has_key('validation_schema'):
-          validation_schema = policy['validation_schema']
+        if 'validation_schema' in policy and 'description_schema' in policy:
+          self._Error(('validation_schema and description_schema both defined '
+                       'for policy %s.') % policy.get('name'))
+        secondary_schema = policy.get('validation_schema',
+                                      policy.get('description_schema'))
+        if secondary_schema:
           real_example = {}
           if policy_type == 'string':
             real_example = json.loads(example)
@@ -463,7 +570,7 @@ class PolicyTemplateChecker(object):
           else:
             self._Error('Unsupported type for legacy embedded json policy.')
           if not self.schema_validator.ValidateValue(
-              validation_schema, real_example, enforce_use_entire_schema=True):
+              secondary_schema, real_example, enforce_use_entire_schema=True):
             self._Error(('Example for policy %s does not comply to the ' +
                          'policy\'s validation_schema') % policy.get('name'))
 
@@ -627,6 +734,26 @@ class PolicyTemplateChecker(object):
       with open(filename, 'w') as f:
         f.writelines(fixed_lines)
 
+  def _ValidatePolicyAtomicGroups(self, atomic_groups, max_id):
+    ids = [x['id'] for x in atomic_groups]
+    actual_highest_id = max(ids)
+    if actual_highest_id != max_id:
+      self._Error(
+          ("\'highest_atomic_group_id_currently_used\' must be set to the "
+           "highest atomic group id in use, which is currently %s (vs %s).") %
+          (actual_highest_id, max_id))
+      return
+
+    ids_set = set()
+    for i in range(len(ids)):
+      if (ids[i] in ids_set):
+        self._Error('Duplicate atomic group id %s' % (ids[i]))
+        return
+      ids_set.add(ids[i])
+      if i + 1 != ids[i]:
+        self._Error('Missing atomic group id %s' % (i + 1))
+        return
+
   def Main(self, filename, options):
     try:
       with open(filename, "rb") as f:
@@ -679,13 +806,52 @@ class PolicyTemplateChecker(object):
         parent_element=None,
         container_name='The root element',
         offending=None)
+    highest_atomic_group_id = self._CheckContains(
+        data,
+        'highest_atomic_group_id_currently_used',
+        int,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+    device_policy_proto_map = self._CheckContains(
+        data,
+        'device_policy_proto_map',
+        dict,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+    legacy_device_policy_proto_map = self._CheckContains(
+        data,
+        'legacy_device_policy_proto_map',
+        list,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+    policy_atomic_group_definitions = self._CheckContains(
+        data,
+        'policy_atomic_group_definitions',
+        list,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+
+    self._ValidatePolicyAtomicGroups(policy_atomic_group_definitions,
+                                     highest_atomic_group_id)
+    self._CheckDevicePolicyProtoMappingUniqueness(
+        device_policy_proto_map, legacy_device_policy_proto_map)
+    self._CheckDevicePolicyProtoMappingExistence(
+        device_policy_proto_map, options.device_policy_proto_path)
+
     if policy_definitions is not None:
       policy_ids = set()
       for policy in policy_definitions:
         self._CheckPolicy(policy, False, policy_ids, deleted_policy_ids)
+        self._CheckDevicePolicyProtoMappingDeviceOnly(
+            policy, device_policy_proto_map, legacy_device_policy_proto_map)
       self._CheckPolicyIDs(policy_ids, deleted_policy_ids)
       if highest_id is not None:
         self._CheckHighestId(policy_ids, highest_id)
+      self._CheckTotalDevicePolicyExternalDataMaxSize(policy_definitions)
 
     # Made it as a dict (policy_name -> True) to reuse _CheckContains.
     policy_names = {
@@ -707,6 +873,20 @@ class PolicyTemplateChecker(object):
           self._Error('Policy %s defined in several groups.' % (policy_name))
         else:
           policy_in_groups.add(policy_name)
+
+    policy_in_atomic_groups = set()
+    for group in policy_atomic_group_definitions:
+      for policy_name in group['policies']:
+        self._CheckContains(
+            policy_names,
+            policy_name,
+            bool,
+            parent_element='policy_definitions')
+        if policy_name in policy_in_atomic_groups:
+          self._Error('Policy %s defined in several atomic policy groups.' %
+                      (policy_name))
+        else:
+          policy_in_atomic_groups.add(policy_name)
 
     # Second part: check formatting.
     self._CheckFormat(filename)
@@ -731,6 +911,10 @@ class PolicyTemplateChecker(object):
         usage='usage: %prog [options] filename',
         description='Syntax check a policy_templates.json file.')
     parser.add_option(
+        '--device_policy_proto_path',
+        help='[REQUIRED] File path of the device policy proto file.',
+        type='string')
+    parser.add_option(
         '--fix', action='store_true', help='Automatically fix formatting.')
     parser.add_option(
         '--backup',
@@ -742,8 +926,11 @@ class PolicyTemplateChecker(object):
     if filename is None:
       if len(args) != 2:
         parser.print_help()
-        sys.exit(1)
+        return 1
       filename = args[1]
+    if options.device_policy_proto_path is None:
+      print('Error: Missing --device_policy_proto_path argument.')
+      return 1
     return self.Main(filename, options)
 
 

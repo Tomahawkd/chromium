@@ -229,9 +229,11 @@ IN_PROC_BROWSER_TEST_P(MediaCapabilitiesTestWithConfigType,
             CanDecodeAudio(config_type, "'audio/ogg; codecs=\"vorbis\"'"));
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        MediaCapabilitiesTestWithConfigType,
-                        ::testing::Values(ConfigType::kFile,
-                                          ConfigType::kMediaSource));
+INSTANTIATE_TEST_SUITE_P(File,
+                         MediaCapabilitiesTestWithConfigType,
+                         ::testing::Values(ConfigType::kFile));
+INSTANTIATE_TEST_SUITE_P(MediaSource,
+                         MediaCapabilitiesTestWithConfigType,
+                         ::testing::Values(ConfigType::kMediaSource));
 
 }  // namespace content

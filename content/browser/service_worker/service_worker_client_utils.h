@@ -21,6 +21,10 @@ class ServiceWorkerContextCore;
 class ServiceWorkerProviderHost;
 class ServiceWorkerVersion;
 
+// TODO(crbug.com/824858): Many of these functions can return a synchronous
+// value instead of using a callback once the core thread moves to the UI
+// thread.
+
 namespace service_worker_client_utils {
 
 using NavigationCallback = base::OnceCallback<void(
@@ -69,7 +73,7 @@ void NavigateClient(const GURL& url,
 
 // Gets the client specified by |provider_host|. |callback| is called with the
 // client information on completion.
-void GetClient(const ServiceWorkerProviderHost* provider_host,
+void GetClient(ServiceWorkerProviderHost* provider_host,
                ClientCallback callback);
 
 // Collects clients matched with |options|. |callback| is called with the client
@@ -81,7 +85,7 @@ void GetClients(const base::WeakPtr<ServiceWorkerVersion>& controller,
 // Finds the provider host for |origin| in |context| then uses
 // |render_process_id| and |render_process_host| to create a relevant
 // blink::mojom::ServiceWorkerClientInfo struct and calls |callback| with it.
-// Must be called on the IO thread.
+// Must be called on the core thread.
 void DidNavigate(const base::WeakPtr<ServiceWorkerContextCore>& context,
                  const GURL& origin,
                  NavigationCallback callback,

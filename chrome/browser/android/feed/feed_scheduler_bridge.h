@@ -56,7 +56,7 @@ class FeedSchedulerBridge {
   void OnSuggestionConsumed(JNIEnv* env,
                             const base::android::JavaRef<jobject>& j_this);
 
-  void OnArticlesCleared(JNIEnv* env,
+  bool OnArticlesCleared(JNIEnv* env,
                          const base::android::JavaRef<jobject>& j_this,
                          jboolean j_suppress_refreshes);
 
@@ -81,7 +81,7 @@ class FeedSchedulerBridge {
   // Object to which all Java to native calls are delegated.
   FeedSchedulerHost* scheduler_host_;
 
-  base::WeakPtrFactory<FeedSchedulerBridge> weak_factory_;
+  base::WeakPtrFactory<FeedSchedulerBridge> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FeedSchedulerBridge);
 };

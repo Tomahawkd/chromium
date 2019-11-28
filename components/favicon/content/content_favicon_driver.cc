@@ -73,8 +73,7 @@ void ContentFaviconDriver::SaveFaviconEvenIfInIncognito() {
 gfx::Image ContentFaviconDriver::GetFavicon() const {
   // Like GetTitle(), we also want to use the favicon for the last committed
   // entry rather than a pending navigation entry.
-  const content::NavigationController& controller =
-      web_contents()->GetController();
+  content::NavigationController& controller = web_contents()->GetController();
   content::NavigationEntry* entry = controller.GetTransientEntry();
   if (entry)
     return entry->GetFavicon().image;
@@ -86,8 +85,7 @@ gfx::Image ContentFaviconDriver::GetFavicon() const {
 }
 
 bool ContentFaviconDriver::FaviconIsValid() const {
-  const content::NavigationController& controller =
-      web_contents()->GetController();
+  content::NavigationController& controller = web_contents()->GetController();
   content::NavigationEntry* entry = controller.GetTransientEntry();
   if (entry)
     return entry->GetFavicon().valid;
@@ -120,8 +118,9 @@ int ContentFaviconDriver::DownloadImage(const GURL& url,
   bool bypass_cache = (bypass_cache_page_url_ == GetActiveURL());
   bypass_cache_page_url_ = GURL();
 
-  return web_contents()->DownloadImage(url, true, max_image_size, bypass_cache,
-                                       std::move(callback));
+  return web_contents()->DownloadImage(
+      url, true, /*preferred_size=*/max_image_size,
+      /*max_bitmap_size=*/max_image_size, bypass_cache, std::move(callback));
 }
 
 void ContentFaviconDriver::DownloadManifest(const GURL& url,
@@ -143,7 +142,8 @@ void ContentFaviconDriver::OnFaviconUpdated(
     const gfx::Image& image) {
   content::NavigationEntry* entry =
       web_contents()->GetController().GetLastCommittedEntry();
-  DCHECK(entry && entry->GetURL() == page_url);
+  DCHECK(entry);
+  DCHECK_EQ(entry->GetURL(), page_url);
 
   if (notification_icon_type == FaviconDriverObserver::NON_TOUCH_16_DIP) {
     entry->GetFavicon().valid = true;

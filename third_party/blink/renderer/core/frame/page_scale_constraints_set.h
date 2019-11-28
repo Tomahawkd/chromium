@@ -40,7 +40,7 @@
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -51,11 +51,7 @@ class Page;
 class CORE_EXPORT PageScaleConstraintsSet
     : public GarbageCollected<PageScaleConstraintsSet> {
  public:
-  static PageScaleConstraintsSet* Create(Page* page) {
-    return MakeGarbageCollected<PageScaleConstraintsSet>(page);
-  }
-
-  PageScaleConstraintsSet(Page* page);
+  explicit PageScaleConstraintsSet(Page* page);
 
   void Trace(blink::Visitor*);
 
@@ -68,7 +64,7 @@ class CORE_EXPORT PageScaleConstraintsSet
     return page_defined_constraints_;
   }
   void UpdatePageDefinedConstraints(const ViewportDescription&,
-                                    Length legacy_fallback_width);
+                                    const Length& legacy_fallback_width);
   void AdjustForAndroidWebViewQuirks(const ViewportDescription&,
                                      int layout_fallback_width,
                                      float device_scale_factor,

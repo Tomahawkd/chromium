@@ -29,8 +29,8 @@
 
 using std::make_pair;
 
-DEFINE_UI_CLASS_PROPERTY_TYPE(ui::Shadow*);
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::Shadow, kShadowLayerKey, nullptr);
+DEFINE_UI_CLASS_PROPERTY_TYPE(ui::Shadow*)
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ui::Shadow, kShadowLayerKey, nullptr)
 
 namespace wm {
 
@@ -53,8 +53,7 @@ int GetShadowElevationForActiveState(aura::Window* window) {
 int GetShadowElevationForWindowLosingActive(aura::Window* losing_active,
                                             aura::Window* gaining_active) {
   if (gaining_active && GetHideOnDeactivate(gaining_active)) {
-    if (base::ContainsValue(GetTransientChildren(losing_active),
-                            gaining_active))
+    if (base::Contains(GetTransientChildren(losing_active), gaining_active))
       return kShadowElevationActiveWindow;
   }
   return kShadowElevationInactiveWindow;
@@ -86,6 +85,8 @@ class ShadowController::Impl :
   void OnWindowInitialized(aura::Window* window) override;
 
   // aura::WindowObserver overrides:
+  void OnWindowParentChanged(aura::Window* window,
+                             aura::Window* parent) override;
   void OnWindowPropertyChanged(aura::Window* window,
                                const void* key,
                                intptr_t old) override;
@@ -162,6 +163,12 @@ void ShadowController::Impl::OnWindowInitialized(aura::Window* window) {
   DCHECK(!window->parent());
   DCHECK(!window->TargetVisibility());
   observer_manager_.Add(window);
+}
+
+void ShadowController::Impl::OnWindowParentChanged(aura::Window* window,
+                                                   aura::Window* parent) {
+  if (parent && window->IsVisible())
+    HandlePossibleShadowVisibilityChange(window);
 }
 
 void ShadowController::Impl::OnWindowPropertyChanged(aura::Window* window,

@@ -4,7 +4,7 @@
 
 module chromeos.secure_channel.mojom;
 
-import "chromeos/services/device_sync/public/mojom/device_sync.mojom";
+import "chromeos/components/multidevice/mojom/multidevice_types.mojom";
 
 enum ConnectionAttemptFailureReason {
   // The local device could not authenticate with the remote device. This likely
@@ -92,7 +92,7 @@ struct ConnectionMetadata {
   // bytes were publicly visible over BLE when the connection with the remote
   // device was being established. It is used by some clients for further
   // cryptographic communication.
-  // Defined by //components/cryptauth/proto/securemessage.proto.
+  // Defined by //chromeos/services/device_sync/proto/securemessage.proto.
   string channel_binding_data;
 };
 
@@ -134,7 +134,8 @@ interface ConnectionDelegate {
   // |channel| to be notified when it has been invalidated due to a dropped
   // connection. Note that clients are expected to hold the reference to
   // |channel| until they are done using the connection.
-  OnConnection(Channel channel, MessageReceiver& message_receiver);
+  OnConnection(pending_remote<Channel> channel,
+               pending_receiver<MessageReceiver> message_receiver_receiver);
 };
 
 // Brokers connections between the current Chromebook and remote devices,
@@ -169,11 +170,11 @@ interface SecureChannel {
   // cancel a connection attempt (i.e., to stop listening for incoming
   // connections), disconnect |delegate|.
   ListenForConnectionFromDevice(
-      chromeos.device_sync.mojom.RemoteDevice device_to_connect,
-      chromeos.device_sync.mojom.RemoteDevice local_device,
+      chromeos.multidevice.mojom.RemoteDevice device_to_connect,
+      chromeos.multidevice.mojom.RemoteDevice local_device,
       string feature,
       ConnectionPriority connection_priority,
-      ConnectionDelegate delegate);
+      pending_remote<ConnectionDelegate> delegate);
 
   // Initiates a connection to |device|, which is presumed to be listening
   // for incoming connections. This function attempts to create a connection
@@ -183,9 +184,9 @@ interface SecureChannel {
   // if a connection was attempted and failed several retry attempts. To cancel
   // the connection attempt, disconnect |delegate|.
   InitiateConnectionToDevice(
-      chromeos.device_sync.mojom.RemoteDevice device_to_connect,
-      chromeos.device_sync.mojom.RemoteDevice local_device,
+      chromeos.multidevice.mojom.RemoteDevice device_to_connect,
+      chromeos.multidevice.mojom.RemoteDevice local_device,
       string feature,
       ConnectionPriority connection_priority,
-      ConnectionDelegate delegate);
+      pending_remote<ConnectionDelegate> delegate);
 };

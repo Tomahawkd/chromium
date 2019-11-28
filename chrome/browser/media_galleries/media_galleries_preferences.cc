@@ -10,9 +10,9 @@
 #include <utility>
 
 #include "base/base_paths_posix.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/i18n/time_formatting.h"
-#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
@@ -455,9 +455,7 @@ MediaGalleriesPreferences::GalleryChangeObserver::~GalleryChangeObserver() {}
 MediaGalleriesPreferences::MediaGalleriesPreferences(Profile* profile)
     : initialized_(false),
       profile_(profile),
-      extension_prefs_for_testing_(NULL),
-      weak_factory_(this) {
-}
+      extension_prefs_for_testing_(nullptr) {}
 
 MediaGalleriesPreferences::~MediaGalleriesPreferences() {
   if (StorageMonitor::GetInstance())
@@ -507,7 +505,7 @@ void MediaGalleriesPreferences::AddDefaultGalleries() {
     {chrome::DIR_USER_VIDEOS, MediaGalleryPrefInfo::kVideosDefault},
   };
 
-  for (size_t i = 0; i < arraysize(kDirectories); ++i) {
+  for (size_t i = 0; i < base::size(kDirectories); ++i) {
     base::FilePath path;
     if (!base::PathService::Get(kDirectories[i].directory_key, &path))
       continue;
@@ -693,7 +691,7 @@ base::FilePath MediaGalleriesPreferences::LookUpGalleryPathForExtension(
   DCHECK(IsInitialized());
   DCHECK(extension);
   if (!include_unpermitted_galleries &&
-      !base::ContainsKey(GalleriesForExtension(*extension), gallery_id))
+      !base::Contains(GalleriesForExtension(*extension), gallery_id))
     return base::FilePath();
 
   MediaGalleriesPrefInfoMap::const_iterator it =
@@ -1008,7 +1006,7 @@ void MediaGalleriesPreferences::EraseOrBlacklistGalleryById(
       new ListPrefUpdate(prefs, prefs::kMediaGalleriesRememberedGalleries));
   base::ListValue* list = update->Get();
 
-  if (!base::ContainsKey(known_galleries_, id))
+  if (!base::Contains(known_galleries_, id))
     return;
 
   for (auto iter = list->begin(); iter != list->end(); ++iter) {
@@ -1047,7 +1045,7 @@ void MediaGalleriesPreferences::EraseOrBlacklistGalleryById(
 bool MediaGalleriesPreferences::NonAutoGalleryHasPermission(
     MediaGalleryPrefId id) const {
   DCHECK(IsInitialized());
-  DCHECK(!base::ContainsKey(known_galleries_, id) ||
+  DCHECK(!base::Contains(known_galleries_, id) ||
          known_galleries_.find(id)->second.type !=
              MediaGalleryPrefInfo::kAutoDetected);
   ExtensionPrefs* prefs = GetExtensionPrefs();

@@ -34,10 +34,18 @@ VisitRow::~VisitRow() {
 
 // QueryResults ----------------------------------------------------------------
 
-QueryResults::QueryResults() : reached_beginning_(false) {
-}
+QueryResults::QueryResults() {}
 
 QueryResults::~QueryResults() {}
+
+QueryResults::QueryResults(QueryResults&& other) noexcept {
+  Swap(&other);
+}
+
+QueryResults& QueryResults::operator=(QueryResults&& other) noexcept {
+  Swap(&other);
+  return *this;
+}
 
 const size_t* QueryResults::MatchesForURL(const GURL& url,
                                           size_t* num_matches) const {
@@ -67,7 +75,7 @@ void QueryResults::SetURLResults(std::vector<URLResult>&& results) {
 
   // Recreate the map for the results_ has been replaced.
   url_to_results_.clear();
-  for(size_t i = 0; i < results_.size(); ++i)
+  for (size_t i = 0; i < results_.size(); ++i)
     AddURLUsageAtIndex(results_[i].url(), i);
 }
 
@@ -168,47 +176,30 @@ int QueryOptions::EffectiveMaxCount() const {
 
 // QueryURLResult -------------------------------------------------------------
 
-QueryURLResult::QueryURLResult() {}
+QueryURLResult::QueryURLResult() = default;
 
-QueryURLResult::~QueryURLResult() {
-}
+QueryURLResult::~QueryURLResult() = default;
+
+QueryURLResult::QueryURLResult(const QueryURLResult&) = default;
+
+QueryURLResult::QueryURLResult(QueryURLResult&&) noexcept = default;
+
+QueryURLResult& QueryURLResult::operator=(const QueryURLResult&) = default;
+
+QueryURLResult& QueryURLResult::operator=(QueryURLResult&&) noexcept = default;
 
 // MostVisitedURL --------------------------------------------------------------
 
 MostVisitedURL::MostVisitedURL() {}
 
-MostVisitedURL::MostVisitedURL(const GURL& url,
-                               const base::string16& title,
-                               base::Time last_forced_time)
-    : url(url), title(title), last_forced_time(last_forced_time) {}
-
-MostVisitedURL::MostVisitedURL(const GURL& url,
-                               const base::string16& title,
-                               const RedirectList& preceding_redirects)
-    : url(url), title(title) {
-  InitRedirects(preceding_redirects);
-}
+MostVisitedURL::MostVisitedURL(const GURL& url, const base::string16& title)
+    : url(url), title(title) {}
 
 MostVisitedURL::MostVisitedURL(const MostVisitedURL& other) = default;
 
 MostVisitedURL::MostVisitedURL(MostVisitedURL&& other) noexcept = default;
 
-MostVisitedURL::~MostVisitedURL() {}
-
-void MostVisitedURL::InitRedirects(const RedirectList& redirects_from) {
-  redirects.clear();
-
-  if (redirects_from.empty()) {
-    // Redirects must contain at least the target URL.
-    redirects.push_back(url);
-  } else {
-    redirects = redirects_from;
-    if (redirects.back() != url) {
-      // The last url must be the target URL.
-      redirects.push_back(url);
-    }
-  }
-}
+MostVisitedURL::~MostVisitedURL() = default;
 
 MostVisitedURL& MostVisitedURL::operator=(const MostVisitedURL&) = default;
 
@@ -229,14 +220,6 @@ FilteredURL::~FilteredURL() {}
 // FilteredURL::ExtendedInfo ---------------------------------------------------
 
 FilteredURL::ExtendedInfo::ExtendedInfo() = default;
-
-// Images ---------------------------------------------------------------------
-
-Images::Images() {}
-
-Images::Images(const Images& other) = default;
-
-Images::~Images() {}
 
 // TopSitesDelta --------------------------------------------------------------
 
@@ -291,18 +274,6 @@ HistoryAddPageArgs::HistoryAddPageArgs(const HistoryAddPageArgs& other) =
     default;
 
 HistoryAddPageArgs::~HistoryAddPageArgs() {}
-
-// ThumbnailMigration ---------------------------------------------------------
-
-ThumbnailMigration::ThumbnailMigration() {}
-
-ThumbnailMigration::~ThumbnailMigration() {}
-
-// MostVisitedThumbnails ------------------------------------------------------
-
-MostVisitedThumbnails::MostVisitedThumbnails() {}
-
-MostVisitedThumbnails::~MostVisitedThumbnails() {}
 
 // IconMapping ----------------------------------------------------------------
 
@@ -405,7 +376,7 @@ DeletionInfo::DeletionInfo(const DeletionTimeRange& time_range,
   DCHECK(time_range_.IsValid() || !restrict_urls_.has_value());
   // If restrict_urls_ is defined, it should be non-empty.
   DCHECK(!restrict_urls_.has_value() || !restrict_urls_->empty());
-};
+}
 
 DeletionInfo::~DeletionInfo() = default;
 

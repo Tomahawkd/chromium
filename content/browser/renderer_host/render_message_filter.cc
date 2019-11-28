@@ -14,8 +14,8 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/debug/alias.h"
-#include "base/macros.h"
 #include "base/numerics/safe_math.h"
+#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
@@ -28,7 +28,6 @@
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
-#include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/pepper/pepper_security_helper.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -89,17 +88,14 @@ RenderMessageFilter::RenderMessageFilter(
     RenderWidgetHelper* render_widget_helper,
     MediaInternals* media_internals)
     : BrowserMessageFilter(kRenderFilteredMessageClasses,
-                           arraysize(kRenderFilteredMessageClasses)),
+                           base::size(kRenderFilteredMessageClasses)),
       BrowserAssociatedInterface<mojom::RenderMessageFilter>(this, this),
-      resource_dispatcher_host_(ResourceDispatcherHostImpl::Get()),
       resource_context_(browser_context->GetResourceContext()),
       render_widget_helper_(render_widget_helper),
       render_process_id_(render_process_id),
-      media_internals_(media_internals),
-      weak_ptr_factory_(this) {
-
+      media_internals_(media_internals) {
   if (render_widget_helper)
-    render_widget_helper_->Init(render_process_id_, resource_dispatcher_host_);
+    render_widget_helper_->Init(render_process_id_);
 }
 
 RenderMessageFilter::~RenderMessageFilter() {
@@ -133,9 +129,10 @@ void RenderMessageFilter::GenerateRoutingID(
   std::move(callback).Run(render_widget_helper_->GetNextRoutingID());
 }
 
-void RenderMessageFilter::CreateNewWidget(int32_t opener_id,
-                                          mojom::WidgetPtr widget,
-                                          CreateNewWidgetCallback callback) {
+void RenderMessageFilter::CreateNewWidget(
+    int32_t opener_id,
+    mojo::PendingRemote<mojom::Widget> widget,
+    CreateNewWidgetCallback callback) {
   int route_id = MSG_ROUTING_NONE;
   render_widget_helper_->CreateNewWidget(opener_id, std::move(widget),
                                          &route_id);
@@ -144,7 +141,7 @@ void RenderMessageFilter::CreateNewWidget(int32_t opener_id,
 
 void RenderMessageFilter::CreateFullscreenWidget(
     int opener_id,
-    mojom::WidgetPtr widget,
+    mojo::PendingRemote<mojom::Widget> widget,
     CreateFullscreenWidgetCallback callback) {
   int route_id = 0;
   render_widget_helper_->CreateNewFullscreenWidget(opener_id, std::move(widget),
@@ -177,9 +174,9 @@ void RenderMessageFilter::SetThreadPriorityOnFileThread(
 void RenderMessageFilter::SetThreadPriority(int32_t ns_tid,
                                             base::ThreadPriority priority) {
   constexpr base::TaskTraits kTraits = {
-      base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+      base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_BLOCKING,
       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN};
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, kTraits,
       base::BindOnce(&RenderMessageFilter::SetThreadPriorityOnFileThread, this,
                      static_cast<base::PlatformThreadId>(ns_tid), priority));

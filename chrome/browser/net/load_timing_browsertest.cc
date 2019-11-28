@@ -10,8 +10,10 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/net/profile_network_context_service.h"
 #include "chrome/browser/net/profile_network_context_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -148,7 +150,13 @@ IN_PROC_BROWSER_TEST_F(LoadTimingBrowserTest, HTTPS) {
             navigation_deltas.receive_headers_end);
 }
 
-IN_PROC_BROWSER_TEST_F(LoadTimingBrowserTest, Proxy) {
+// Flaky on Win10: crbug.com/997823
+#if defined(OS_WIN)
+#define MAYBE_Proxy DISABLED_Proxy
+#else
+#define MAYBE_Proxy Proxy
+#endif
+IN_PROC_BROWSER_TEST_F(LoadTimingBrowserTest, MAYBE_Proxy) {
   ASSERT_TRUE(spawned_test_server()->Start());
 
   browser()->profile()->GetPrefs()->Set(

@@ -6,16 +6,16 @@
 
 #include <memory>
 
-#include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/service/abstract_texture.h"
 #include "gpu/command_buffer/service/sequence_id.h"
 #include "gpu/ipc/common/gpu_messages.h"
-#include "media/gpu/fake_command_buffer_helper.h"
+#include "media/gpu/android/mock_abstract_texture.h"
+#include "media/gpu/test/fake_command_buffer_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -25,26 +25,6 @@ using gpu::gles2::AbstractTexture;
 using testing::_;
 using testing::NiceMock;
 using testing::Return;
-
-// SupportsWeakPtr so it's easy to tell when it has been destroyed.
-class MockAbstractTexture : public NiceMock<AbstractTexture>,
-                            public base::SupportsWeakPtr<MockAbstractTexture> {
- public:
-  MockAbstractTexture() {}
-  ~MockAbstractTexture() override {}
-
-  MOCK_METHOD0(ForceContextLost, void());
-  MOCK_CONST_METHOD0(GetTextureBase, gpu::TextureBase*());
-  MOCK_METHOD2(SetParameteri, void(GLenum pname, GLint param));
-  MOCK_METHOD2(BindStreamTextureImage,
-               void(gpu::gles2::GLStreamTextureImage* image,
-                    GLuint service_id));
-  MOCK_METHOD2(BindImage, void(gl::GLImage* image, bool client_managed));
-  MOCK_METHOD0(ReleaseImage, void());
-  MOCK_CONST_METHOD0(GetImage, gl::GLImage*());
-  MOCK_METHOD0(SetCleared, void());
-  MOCK_METHOD1(SetCleanupCallback, void(CleanupCallback));
-};
 
 class TexturePoolTest : public testing::Test {
  public:
@@ -75,7 +55,7 @@ class TexturePoolTest : public testing::Test {
     return texture_weak;
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 

@@ -86,6 +86,7 @@ class VideoFramePump : public VideoStream,
   void SetLosslessEncode(bool want_lossless) override;
   void SetLosslessColor(bool want_lossless) override;
   void SetObserver(Observer* observer) override;
+  void SelectSource(int id) override;
 
   protocol::VideoFeedbackStub* video_feedback_stub() {
     return &capture_scheduler_;
@@ -183,7 +184,7 @@ class VideoFramePump : public VideoStream,
 
   base::ThreadChecker thread_checker_;
 
-  base::WeakPtrFactory<VideoFramePump> weak_factory_;
+  base::WeakPtrFactory<VideoFramePump> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VideoFramePump);
 };

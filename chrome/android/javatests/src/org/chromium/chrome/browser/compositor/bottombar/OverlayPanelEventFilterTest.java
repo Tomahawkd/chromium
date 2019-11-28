@@ -123,7 +123,7 @@ public class OverlayPanelEventFilterTest {
          */
         private class MockOverlayPanelContent extends OverlayPanelContent {
             public MockOverlayPanelContent() {
-                super(null, null, null, 0);
+                super(null, null, null, false, 0);
             }
 
             @Override
@@ -206,7 +206,7 @@ public class OverlayPanelEventFilterTest {
     // --------------------------------------------------------------------------------------------
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         Context context = InstrumentationRegistry.getTargetContext();
 
         mDpToPx = context.getResources().getDisplayMetrics().density;

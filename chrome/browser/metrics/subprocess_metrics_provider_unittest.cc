@@ -14,7 +14,7 @@
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/persistent_memory_allocator.h"
 #include "base/metrics/statistics_recorder.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -48,8 +48,7 @@ class HistogramFlattenerDeltaRecorder : public base::HistogramFlattener {
 
 class SubprocessMetricsProviderTest : public testing::Test {
  protected:
-  SubprocessMetricsProviderTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::DEFAULT) {
+  SubprocessMetricsProviderTest() {
     // MergeHistogramDeltas needs to be called beause it uses a histogram
     // macro which caches a pointer to a histogram. If not done before setting
     // a persistent global allocator, then it would point into memory that
@@ -110,7 +109,7 @@ class SubprocessMetricsProviderTest : public testing::Test {
   // A thread-bundle makes the tests appear on the UI thread, something that is
   // checked in methods called from the SubprocessMetricsProvider class under
   // test. This must be constructed before the |provider_| field.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   SubprocessMetricsProvider provider_;
   std::unique_ptr<base::StatisticsRecorder> test_recorder_;

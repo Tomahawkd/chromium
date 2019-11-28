@@ -17,28 +17,30 @@
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
+#include "skia/ext/skia_utils_base.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/clipboard/clipboard_constants.h"
+#include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/clipboard/clipboard_monitor.h"
 #include "ui/base/clipboard/custom_data_helper.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/ozone/buildflags.h"
 
 namespace ui {
 
 namespace {
 
-const char kMimeTypeFilename[] = "chromium/filename";
-const char kMimeTypeBitmap[] = "image/bmp";
 const size_t kMaxClipboardSize = 1;
 
 // Clipboard data format used by AuraClipboard.
-enum AuraClipboardFormat {
-  TEXT      = 1 << 0,
-  HTML      = 1 << 1,
-  RTF       = 1 << 2,
-  BOOKMARK  = 1 << 3,
-  BITMAP    = 1 << 4,
-  CUSTOM    = 1 << 5,
-  WEB       = 1 << 6,
+enum class AuraClipboardFormat {
+  kText = 1 << 0,
+  kHtml = 1 << 1,
+  kRtf = 1 << 2,
+  kBookmark = 1 << 3,
+  kBitmap = 1 << 4,
+  kCustom = 1 << 5,
+  kWeb = 1 << 6,
 };
 
 // ClipboardData contains data copied to the Clipboard for a variety of formats.
@@ -49,7 +51,7 @@ class ClipboardData {
       : web_smart_paste_(false),
         format_(0) {}
 
-  virtual ~ClipboardData() {}
+  virtual ~ClipboardData() = default;
 
   // Bitmask of AuraClipboardFormat types.
   int format() const { return format_; }
@@ -57,46 +59,46 @@ class ClipboardData {
   const std::string& text() const { return text_; }
   void set_text(const std::string& text) {
     text_ = text;
-    format_ |= TEXT;
+    format_ |= static_cast<int>(AuraClipboardFormat::kText);
   }
 
   const std::string& markup_data() const { return markup_data_; }
   void set_markup_data(const std::string& markup_data) {
     markup_data_ = markup_data;
-    format_ |= HTML;
+    format_ |= static_cast<int>(AuraClipboardFormat::kHtml);
   }
 
   const std::string& rtf_data() const { return rtf_data_; }
   void SetRTFData(const std::string& rtf_data) {
     rtf_data_ = rtf_data;
-    format_ |= RTF;
+    format_ |= static_cast<int>(AuraClipboardFormat::kRtf);
   }
 
   const std::string& url() const { return url_; }
   void set_url(const std::string& url) {
     url_ = url;
-    format_ |= HTML;
+    format_ |= static_cast<int>(AuraClipboardFormat::kHtml);
   }
 
   const std::string& bookmark_title() const { return bookmark_title_; }
   void set_bookmark_title(const std::string& bookmark_title) {
     bookmark_title_ = bookmark_title;
-    format_ |= BOOKMARK;
+    format_ |= static_cast<int>(AuraClipboardFormat::kBookmark);
   }
 
   const std::string& bookmark_url() const { return bookmark_url_; }
   void set_bookmark_url(const std::string& bookmark_url) {
     bookmark_url_ = bookmark_url;
-    format_ |= BOOKMARK;
+    format_ |= static_cast<int>(AuraClipboardFormat::kBookmark);
   }
 
   const SkBitmap& bitmap() const { return bitmap_; }
   void SetBitmapData(const SkBitmap& bitmap) {
-    if (bitmap_.tryAllocPixels(bitmap.info())) {
-      bitmap.readPixels(bitmap_.info(), bitmap_.getPixels(), bitmap_.rowBytes(),
-                        0, 0);
+    if (!skia::SkBitmapToN32OpaqueOrPremul(bitmap, &bitmap_)) {
+      NOTREACHED() << "Unable to convert bitmap for clipboard";
+      return;
     }
-    format_ |= BITMAP;
+    format_ |= static_cast<int>(AuraClipboardFormat::kBitmap);
   }
 
   const std::string& custom_data_format() const { return custom_data_format_; }
@@ -110,13 +112,13 @@ class ClipboardData {
     }
     custom_data_data_ = data_data;
     custom_data_format_ = data_format;
-    format_ |= CUSTOM;
+    format_ |= static_cast<int>(AuraClipboardFormat::kCustom);
   }
 
   bool web_smart_paste() const { return web_smart_paste_; }
   void set_web_smart_paste(bool web_smart_paste) {
     web_smart_paste_ = web_smart_paste;
-    format_ |= WEB;
+    format_ |= static_cast<int>(AuraClipboardFormat::kWeb);
   }
 
  private:
@@ -152,6 +154,8 @@ class ClipboardData {
   DISALLOW_COPY_AND_ASSIGN(ClipboardData);
 };
 
+}  // namespace
+
 // Platform clipboard implementation for Aura. This handles things like format
 // conversion, versioning of clipboard items etc. The goal is to roughly provide
 // a substitute to platform clipboards on other platforms such as GtkClipboard
@@ -161,7 +165,7 @@ class AuraClipboard {
   AuraClipboard() : sequence_number_(0) {
   }
 
-  ~AuraClipboard() {}
+  ~AuraClipboard() = default;
 
   void Clear() {
     sequence_number_++;
@@ -173,11 +177,11 @@ class AuraClipboard {
     return sequence_number_;
   }
 
-  // Returns the data currently on the top of the clipboard stack, NULL if the
-  // clipboard stack is empty.
+  // Returns the data currently on the top of the clipboard stack, nullptr if
+  // the clipboard stack is empty.
   const ClipboardData* GetData() const {
     if (data_list_.empty())
-      return NULL;
+      return nullptr;
     return data_list_.front().get();
   }
 
@@ -185,8 +189,9 @@ class AuraClipboard {
   // or another format that can be converted to |format|.
   bool IsFormatAvailable(AuraClipboardFormat format) const {
     switch (format) {
-      case TEXT:
-        return HasFormat(TEXT) || HasFormat(BOOKMARK);
+      case AuraClipboardFormat::kText:
+        return HasFormat(AuraClipboardFormat::kText) ||
+               HasFormat(AuraClipboardFormat::kBookmark);
       default:
         return HasFormat(format);
     }
@@ -199,17 +204,17 @@ class AuraClipboard {
     *result = base::UTF8ToUTF16(utf8_result);
   }
 
-  // Reads ascii text from the data at the top of clipboard stack.
+  // Reads ASCII text from the data at the top of clipboard stack.
   void ReadAsciiText(std::string* result) const {
     result->clear();
     const ClipboardData* data = GetData();
     if (!data)
       return;
-    if (HasFormat(TEXT))
+    if (HasFormat(AuraClipboardFormat::kText))
       *result = data->text();
-    else if (HasFormat(HTML))
+    else if (HasFormat(AuraClipboardFormat::kHtml))
       *result = data->markup_data();
-    else if (HasFormat(BOOKMARK))
+    else if (HasFormat(AuraClipboardFormat::kBookmark))
       *result = data->bookmark_url();
   }
 
@@ -224,7 +229,7 @@ class AuraClipboard {
     *fragment_start = 0;
     *fragment_end = 0;
 
-    if (!HasFormat(HTML))
+    if (!HasFormat(AuraClipboardFormat::kHtml))
       return;
 
     const ClipboardData* data = GetData();
@@ -240,7 +245,7 @@ class AuraClipboard {
   void ReadRTF(std::string* result) const {
     result->clear();
     const ClipboardData* data = GetData();
-    if (!HasFormat(RTF))
+    if (!HasFormat(AuraClipboardFormat::kRtf))
       return;
 
     *result = data->rtf_data();
@@ -249,7 +254,7 @@ class AuraClipboard {
   // Reads image from the data at the top of clipboard stack.
   SkBitmap ReadImage() const {
     SkBitmap img;
-    if (!HasFormat(BITMAP))
+    if (!HasFormat(AuraClipboardFormat::kBitmap))
       return img;
 
     // A shallow copy should be fine here, but just to be safe...
@@ -266,7 +271,7 @@ class AuraClipboard {
                       base::string16* result) const {
     result->clear();
     const ClipboardData* data = GetData();
-    if (!HasFormat(CUSTOM))
+    if (!HasFormat(AuraClipboardFormat::kCustom))
       return;
 
     ui::ReadCustomDataForType(data->custom_data_data().c_str(),
@@ -276,20 +281,25 @@ class AuraClipboard {
 
   // Reads bookmark from the data at the top of clipboard stack.
   void ReadBookmark(base::string16* title, std::string* url) const {
-    title->clear();
-    url->clear();
-    if (!HasFormat(BOOKMARK))
+    if (title)
+      title->clear();
+    if (url)
+      url->clear();
+    if (!HasFormat(AuraClipboardFormat::kBookmark))
       return;
 
     const ClipboardData* data = GetData();
-    *title = base::UTF8ToUTF16(data->bookmark_title());
-    *url = data->bookmark_url();
+    if (title)
+      *title = base::UTF8ToUTF16(data->bookmark_title());
+    if (url)
+      *url = data->bookmark_url();
   }
 
   void ReadData(const std::string& type, std::string* result) const {
     result->clear();
     const ClipboardData* data = GetData();
-    if (!HasFormat(CUSTOM) || type != data->custom_data_format())
+    if (!HasFormat(AuraClipboardFormat::kCustom) ||
+        type != data->custom_data_format())
       return;
 
     *result = data->custom_data_data();
@@ -306,7 +316,7 @@ class AuraClipboard {
   // True if the data on top of the clipboard stack has format |format|.
   bool HasFormat(AuraClipboardFormat format) const {
     const ClipboardData* data = GetData();
-    return data ? data->format() & format : false;
+    return data ? data->format() & static_cast<int>(format) : false;
   }
 
   void AddToListEnsuringSize(std::unique_ptr<ClipboardData> data) {
@@ -330,24 +340,11 @@ class AuraClipboard {
   DISALLOW_COPY_AND_ASSIGN(AuraClipboard);
 };
 
-AuraClipboard* g_aura_clipboard = NULL;
-
-AuraClipboard* GetClipboard() {
-  if (!g_aura_clipboard)
-    g_aura_clipboard = new AuraClipboard();
-  return g_aura_clipboard;
-}
-
-void DeleteClipboard() {
-  delete g_aura_clipboard;
-  g_aura_clipboard = NULL;
-}
-
 // Helper class to build a ClipboardData object and write it to clipboard.
 class ClipboardDataBuilder {
  public:
-  static void CommitToClipboard() {
-    GetClipboard()->WriteData(TakeCurrentData());
+  static void CommitToClipboard(AuraClipboard* clipboard) {
+    clipboard->WriteData(TakeCurrentData());
   }
 
   static void WriteText(const char* text_data, size_t text_len) {
@@ -414,171 +411,58 @@ class ClipboardDataBuilder {
 
 ClipboardData* ClipboardDataBuilder::current_data_ = nullptr;
 
-}  // namespace
-
-// Clipboard::FormatType implementation.
-Clipboard::FormatType::FormatType() {
-}
-
-Clipboard::FormatType::FormatType(const std::string& native_format)
-    : data_(native_format) {
-}
-
-Clipboard::FormatType::~FormatType() {
-}
-
-std::string Clipboard::FormatType::Serialize() const {
-  return data_;
-}
-
-// static
-Clipboard::FormatType Clipboard::FormatType::Deserialize(
-    const std::string& serialization) {
-  return FormatType(serialization);
-}
-
-bool Clipboard::FormatType::operator<(const FormatType& other) const {
-  return data_ < other.data_;
-}
-
-bool Clipboard::FormatType::Equals(const FormatType& other) const {
-  return data_ == other.data_;
-}
-
-// Various predefined FormatTypes.
-// static
-Clipboard::FormatType Clipboard::GetFormatType(
-    const std::string& format_string) {
-  return FormatType::Deserialize(format_string);
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetUrlFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeURIList);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetUrlWFormatType() {
-  return GetUrlFormatType();
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetMozUrlFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeMozillaURL);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetPlainTextFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeText);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetPlainTextWFormatType() {
-  return GetPlainTextFormatType();
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetFilenameFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeFilename);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetFilenameWFormatType() {
-  return Clipboard::GetFilenameFormatType();
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetHtmlFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeHTML);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetRtfFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeRTF);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetBitmapFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeBitmap);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetWebKitSmartPasteFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeWebkitSmartPaste);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetWebCustomDataFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypeWebCustomData);
-  return *type;
-}
-
-// static
-const Clipboard::FormatType& Clipboard::GetPepperCustomDataFormatType() {
-  static base::NoDestructor<FormatType> type(kMimeTypePepperCustomData);
-  return *type;
-}
-
+// linux-chromeos uses aura clipboard by default, but supports ozone x11
+// with flag --use-system-clipbboard.
+#if !defined(OS_CHROMEOS) || !BUILDFLAG(OZONE_PLATFORM_X11)
 // Clipboard factory method.
 Clipboard* Clipboard::Create() {
   return new ClipboardAura;
 }
+#endif
 
 // ClipboardAura implementation.
-ClipboardAura::ClipboardAura() {
+ClipboardAura::ClipboardAura()
+    : clipboard_internal_(std::make_unique<AuraClipboard>()) {
   DCHECK(CalledOnValidThread());
-  // Make sure clipboard is created.
-  GetClipboard();
 }
 
 ClipboardAura::~ClipboardAura() {
   DCHECK(CalledOnValidThread());
-  DeleteClipboard();
 }
 
 void ClipboardAura::OnPreShutdown() {}
 
-uint64_t ClipboardAura::GetSequenceNumber(ClipboardType type) const {
+uint64_t ClipboardAura::GetSequenceNumber(ClipboardBuffer buffer) const {
   DCHECK(CalledOnValidThread());
-  return GetClipboard()->sequence_number();
+  return clipboard_internal_->sequence_number();
 }
 
-bool ClipboardAura::IsFormatAvailable(const FormatType& format,
-                                      ClipboardType type) const {
+bool ClipboardAura::IsFormatAvailable(const ClipboardFormatType& format,
+                                      ClipboardBuffer buffer) const {
   DCHECK(CalledOnValidThread());
-  DCHECK(IsSupportedClipboardType(type));
-  AuraClipboard* clipboard = GetClipboard();
-  if (GetPlainTextFormatType().Equals(format) ||
-      GetUrlFormatType().Equals(format))
-    return clipboard->IsFormatAvailable(TEXT);
-  if (GetHtmlFormatType().Equals(format))
-    return clipboard->IsFormatAvailable(HTML);
-  if (GetRtfFormatType().Equals(format))
-    return clipboard->IsFormatAvailable(RTF);
-  if (GetBitmapFormatType().Equals(format))
-    return clipboard->IsFormatAvailable(BITMAP);
-  if (GetWebKitSmartPasteFormatType().Equals(format))
-    return clipboard->IsFormatAvailable(WEB);
-  const ClipboardData* data = clipboard->GetData();
+  DCHECK(IsSupportedClipboardBuffer(buffer));
+  if (ClipboardFormatType::GetPlainTextType().Equals(format) ||
+      ClipboardFormatType::GetUrlType().Equals(format))
+    return clipboard_internal_->IsFormatAvailable(AuraClipboardFormat::kText);
+  if (ClipboardFormatType::GetHtmlType().Equals(format))
+    return clipboard_internal_->IsFormatAvailable(AuraClipboardFormat::kHtml);
+  if (ClipboardFormatType::GetRtfType().Equals(format))
+    return clipboard_internal_->IsFormatAvailable(AuraClipboardFormat::kRtf);
+  if (ClipboardFormatType::GetBitmapType().Equals(format))
+    return clipboard_internal_->IsFormatAvailable(AuraClipboardFormat::kBitmap);
+  if (ClipboardFormatType::GetWebKitSmartPasteType().Equals(format))
+    return clipboard_internal_->IsFormatAvailable(AuraClipboardFormat::kWeb);
+  const ClipboardData* data = clipboard_internal_->GetData();
   return data && data->custom_data_format() == format.ToString();
 }
 
-void ClipboardAura::Clear(ClipboardType type) {
+void ClipboardAura::Clear(ClipboardBuffer buffer) {
   DCHECK(CalledOnValidThread());
-  DCHECK(IsSupportedClipboardType(type));
-  AuraClipboard* clipboard = GetClipboard();
-  clipboard->Clear();
+  DCHECK(IsSupportedClipboardBuffer(buffer));
+  clipboard_internal_->Clear();
 }
 
-void ClipboardAura::ReadAvailableTypes(ClipboardType type,
+void ClipboardAura::ReadAvailableTypes(ClipboardBuffer buffer,
                                        std::vector<base::string16>* types,
                                        bool* contains_filenames) const {
   DCHECK(CalledOnValidThread());
@@ -589,77 +473,94 @@ void ClipboardAura::ReadAvailableTypes(ClipboardType type,
 
   types->clear();
   *contains_filenames = false;
-  if (IsFormatAvailable(GetPlainTextFormatType(), type))
-    types->push_back(base::UTF8ToUTF16(GetPlainTextFormatType().ToString()));
-  if (IsFormatAvailable(GetHtmlFormatType(), type))
-    types->push_back(base::UTF8ToUTF16(GetHtmlFormatType().ToString()));
-  if (IsFormatAvailable(GetRtfFormatType(), type))
-    types->push_back(base::UTF8ToUTF16(GetRtfFormatType().ToString()));
-  if (IsFormatAvailable(GetBitmapFormatType(), type))
+  if (IsFormatAvailable(ClipboardFormatType::GetPlainTextType(), buffer))
+    types->push_back(
+        base::UTF8ToUTF16(ClipboardFormatType::GetPlainTextType().ToString()));
+  if (IsFormatAvailable(ClipboardFormatType::GetHtmlType(), buffer))
+    types->push_back(
+        base::UTF8ToUTF16(ClipboardFormatType::GetHtmlType().ToString()));
+  if (IsFormatAvailable(ClipboardFormatType::GetRtfType(), buffer))
+    types->push_back(
+        base::UTF8ToUTF16(ClipboardFormatType::GetRtfType().ToString()));
+  if (IsFormatAvailable(ClipboardFormatType::GetBitmapType(), buffer))
     types->push_back(base::UTF8ToUTF16(kMimeTypePNG));
 
-  AuraClipboard* clipboard = GetClipboard();
-  if (clipboard->IsFormatAvailable(CUSTOM) && clipboard->GetData()) {
-    ui::ReadCustomDataTypes(clipboard->GetData()->custom_data_data().c_str(),
-        clipboard->GetData()->custom_data_data().size(), types);
+  if (clipboard_internal_->IsFormatAvailable(AuraClipboardFormat::kCustom) &&
+      clipboard_internal_->GetData()) {
+    ui::ReadCustomDataTypes(
+        clipboard_internal_->GetData()->custom_data_data().c_str(),
+        clipboard_internal_->GetData()->custom_data_data().size(), types);
   }
 }
 
-void ClipboardAura::ReadText(ClipboardType type, base::string16* result) const {
+void ClipboardAura::ReadText(ClipboardBuffer buffer,
+                             base::string16* result) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadText(result);
+  clipboard_internal_->ReadText(result);
 }
 
-void ClipboardAura::ReadAsciiText(ClipboardType type,
+void ClipboardAura::ReadAsciiText(ClipboardBuffer buffer,
                                   std::string* result) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadAsciiText(result);
+  clipboard_internal_->ReadAsciiText(result);
 }
 
-void ClipboardAura::ReadHTML(ClipboardType type,
+void ClipboardAura::ReadHTML(ClipboardBuffer buffer,
                              base::string16* markup,
                              std::string* src_url,
                              uint32_t* fragment_start,
                              uint32_t* fragment_end) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadHTML(markup, src_url, fragment_start, fragment_end);
+  clipboard_internal_->ReadHTML(markup, src_url, fragment_start, fragment_end);
 }
 
-void ClipboardAura::ReadRTF(ClipboardType type, std::string* result) const {
+void ClipboardAura::ReadRTF(ClipboardBuffer buffer, std::string* result) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadRTF(result);
+  clipboard_internal_->ReadRTF(result);
 }
 
-SkBitmap ClipboardAura::ReadImage(ClipboardType type) const {
+SkBitmap ClipboardAura::ReadImage(ClipboardBuffer buffer) const {
   DCHECK(CalledOnValidThread());
-  return GetClipboard()->ReadImage();
+  return clipboard_internal_->ReadImage();
 }
 
-void ClipboardAura::ReadCustomData(ClipboardType clipboard_type,
+void ClipboardAura::ReadCustomData(ClipboardBuffer buffer,
                                    const base::string16& type,
                                    base::string16* result) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadCustomData(type, result);
+  clipboard_internal_->ReadCustomData(type, result);
 }
 
 void ClipboardAura::ReadBookmark(base::string16* title,
                                  std::string* url) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadBookmark(title, url);
+  clipboard_internal_->ReadBookmark(title, url);
 }
 
-void ClipboardAura::ReadData(const FormatType& format,
+void ClipboardAura::ReadData(const ClipboardFormatType& format,
                              std::string* result) const {
   DCHECK(CalledOnValidThread());
-  GetClipboard()->ReadData(format.ToString(), result);
+  clipboard_internal_->ReadData(format.ToString(), result);
 }
 
-void ClipboardAura::WriteObjects(ClipboardType type, const ObjectMap& objects) {
+void ClipboardAura::WritePortableRepresentations(ClipboardBuffer buffer,
+                                                 const ObjectMap& objects) {
   DCHECK(CalledOnValidThread());
-  DCHECK(IsSupportedClipboardType(type));
+  DCHECK(IsSupportedClipboardBuffer(buffer));
   for (const auto& object : objects)
-    DispatchObject(static_cast<ObjectType>(object.first), object.second);
-  ClipboardDataBuilder::CommitToClipboard();
+    DispatchPortableRepresentation(object.first, object.second);
+  ClipboardDataBuilder::CommitToClipboard(clipboard_internal_.get());
+}
+
+void ClipboardAura::WritePlatformRepresentations(
+    ClipboardBuffer buffer,
+    std::vector<Clipboard::PlatformRepresentation> platform_representations) {
+  DCHECK(CalledOnValidThread());
+  DCHECK(IsSupportedClipboardBuffer(buffer));
+
+  DispatchPlatformRepresentations(std::move(platform_representations));
+
+  ClipboardDataBuilder::CommitToClipboard(clipboard_internal_.get());
 }
 
 void ClipboardAura::WriteText(const char* text_data, size_t text_len) {
@@ -692,7 +593,7 @@ void ClipboardAura::WriteBitmap(const SkBitmap& bitmap) {
   ClipboardDataBuilder::WriteBitmap(bitmap);
 }
 
-void ClipboardAura::WriteData(const FormatType& format,
+void ClipboardAura::WriteData(const ClipboardFormatType& format,
                               const char* data_data,
                               size_t data_len) {
   ClipboardDataBuilder::WriteData(format.ToString(), data_data, data_len);

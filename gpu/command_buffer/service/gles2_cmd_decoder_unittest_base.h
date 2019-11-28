@@ -11,7 +11,7 @@
 #include <array>
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
+#include "base/test/task_environment.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -61,11 +61,11 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   void OnConsoleMessage(int32_t id, const std::string& message) override;
   void CacheShader(const std::string& key, const std::string& shader) override;
   void OnFenceSyncRelease(uint64_t release) override;
-  bool OnWaitSyncToken(const gpu::SyncToken&) override;
   void OnDescheduleUntilFinished() override;
   void OnRescheduleAfterFinished() override;
   void OnSwapBuffers(uint64_t swap_id, uint32_t flags) override;
   void ScheduleGrContextCleanup() override {}
+  void HandleReturnData(base::span<const uint8_t> data) override {}
 
   // Template to call glGenXXX functions.
   template <typename T>
@@ -216,24 +216,29 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   struct InitState {
     InitState();
     InitState(const InitState& other);
+    InitState& operator=(const InitState& other);
 
-    std::string extensions;
-    std::string gl_version;
-    bool has_alpha;
-    bool has_depth;
-    bool has_stencil;
-    bool request_alpha;
-    bool request_depth;
-    bool request_stencil;
-    bool bind_generates_resource;
-    bool lose_context_when_out_of_memory;
-    bool use_native_vao;  // default is true.
-    ContextType context_type;
+    std::string extensions = "GL_EXT_framebuffer_object";
+    std::string gl_version = "2.1";
+    bool has_alpha = false;
+    bool has_depth = false;
+    bool has_stencil = false;
+    bool request_alpha = false;
+    bool request_depth = false;
+    bool request_stencil = false;
+    bool bind_generates_resource = false;
+    bool lose_context_when_out_of_memory = false;
+    bool lose_context_on_init = false;
+    bool use_native_vao = true;
+    ContextType context_type = CONTEXT_TYPE_OPENGLES2;
   };
 
   void InitDecoder(const InitState& init);
   void InitDecoderWithWorkarounds(const InitState& init,
                                   const GpuDriverBugWorkarounds& workarounds);
+  ContextResult MaybeInitDecoderWithWorkarounds(
+      const InitState& init,
+      const GpuDriverBugWorkarounds& workarounds);
 
   void ResetDecoder();
 
@@ -272,10 +277,6 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
       GLuint client_id, GLuint service_id,
       GLuint vertex_shader_client_id, GLuint vertex_shader_service_id,
       GLuint fragment_shader_client_id, GLuint fragment_shader_service_id);
-
-  void SetupInitCapabilitiesExpectations(bool es3_capable);
-  void SetupInitStateExpectations(bool es3_capable);
-  void ExpectEnableDisable(GLenum cap, bool enable);
 
   // Setups up a shader for testing glUniform.
   void SetupShaderForUniform(GLenum uniform_type);
@@ -532,9 +533,7 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   void DoLockDiscardableTextureCHROMIUM(GLuint texture_id);
   bool IsDiscardableTextureUnlocked(GLuint texture_id);
 
-  GLvoid* BufferOffset(unsigned i) {
-    return static_cast<int8_t*>(nullptr) + (i);
-  }
+  GLvoid* BufferOffset(unsigned i) { return reinterpret_cast<GLvoid*>(i); }
 
   template <typename Command, typename Result>
   bool IsObjectHelper(GLuint client_id) {
@@ -562,11 +561,6 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   static const GLint kMaxVertexUniformVectors = 128;
   static const GLint kMaxViewportWidth = 8192;
   static const GLint kMaxViewportHeight = 8192;
-
-  static const GLint kViewportX = 0;
-  static const GLint kViewportY = 0;
-  static const GLint kViewportWidth = kBackBufferWidth;
-  static const GLint kViewportHeight = kBackBufferHeight;
 
   static const GLuint kServiceAttrib0BufferId = 801;
   static const GLuint kServiceFixedAttribBufferId = 802;
@@ -801,11 +795,6 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   void AddExpectationsForVertexAttribManager();
   void SetupMockGLBehaviors();
 
-  void SetupInitStateManualExpectations(bool es3_capable);
-  void SetupInitStateManualExpectationsForWindowRectanglesEXT(GLenum mode,
-                                                              GLint count);
-  void SetupInitStateManualExpectationsForDoLineWidth(GLfloat width);
-
   GpuPreferences gpu_preferences_;
   MailboxManagerImpl mailbox_manager_;
   ShaderTranslatorCache shader_translator_cache_;
@@ -815,7 +804,7 @@ class GLES2DecoderTestBase : public ::testing::TestWithParam<bool>,
   SharedImageManager shared_image_manager_;
   scoped_refptr<ContextGroup> group_;
   MockGLStates gl_states_;
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   MockCopyTextureResourceManager* copy_texture_manager_;     // not owned
   MockCopyTexImageResourceManager* copy_tex_image_blitter_;  // not owned
@@ -853,11 +842,11 @@ class GLES2DecoderPassthroughTestBase : public testing::Test,
   void OnConsoleMessage(int32_t id, const std::string& message) override;
   void CacheShader(const std::string& key, const std::string& shader) override;
   void OnFenceSyncRelease(uint64_t release) override;
-  bool OnWaitSyncToken(const gpu::SyncToken&) override;
   void OnDescheduleUntilFinished() override;
   void OnRescheduleAfterFinished() override;
   void OnSwapBuffers(uint64_t swap_id, uint32_t flags) override;
   void ScheduleGrContextCleanup() override {}
+  void HandleReturnData(base::span<const uint8_t> data) override {}
 
   void SetUp() override;
   void TearDown() override;
@@ -1003,6 +992,7 @@ class GLES2DecoderPassthroughTestBase : public testing::Test,
     return &passthrough_discardable_manager_;
   }
   ContextGroup* group() { return group_.get(); }
+  FeatureInfo* feature_info() { return group_->feature_info(); }
 
   static const size_t kSharedBufferSize = 2048;
   static const uint32_t kSharedMemoryOffset = 132;

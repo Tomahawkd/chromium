@@ -4,7 +4,7 @@
 
 #import "ios/chrome/browser/ui/alert_coordinator/action_sheet_coordinator.h"
 
-#import "base/logging.h"
+#include "base/logging.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -26,7 +26,7 @@ enum class AnchorMode {
   // Rectangle for the popover alert. Only used when |_anchorMode| is VIEW.
   CGRect _rect;
   // View for the popovert alert. Only used when |_anchorMode| is VIEW.
-  UIView* _view;
+  __weak UIView* _view;
 
   // Bar button item for the popover alert.  Only used when |_anchorMode| is
   // BAR_BUTTON_ITEM.
@@ -36,7 +36,6 @@ enum class AnchorMode {
 @end
 
 @implementation ActionSheetCoordinator
-@synthesize popoverArrowDirection = _popoverArrowDirection;
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                                      title:(NSString*)title
@@ -51,6 +50,7 @@ enum class AnchorMode {
     _rect = rect;
     _view = view;
     _popoverArrowDirection = UIPopoverArrowDirectionAny;
+    _alertStyle = UIAlertControllerStyleActionSheet;
   }
   return self;
 }
@@ -66,16 +66,17 @@ enum class AnchorMode {
     _anchorMode = AnchorMode::BAR_BUTTON_ITEM;
     _barButtonItem = barButtonItem;
     _popoverArrowDirection = UIPopoverArrowDirectionAny;
+    _alertStyle = UIAlertControllerStyleActionSheet;
   }
   return self;
 }
 
 - (UIAlertController*)alertControllerWithTitle:(NSString*)title
                                        message:(NSString*)message {
-  UIAlertController* alert = [UIAlertController
-      alertControllerWithTitle:title
-                       message:message
-                preferredStyle:UIAlertControllerStyleActionSheet];
+  UIAlertController* alert =
+      [UIAlertController alertControllerWithTitle:title
+                                          message:message
+                                   preferredStyle:_alertStyle];
   alert.popoverPresentationController.permittedArrowDirections =
       _popoverArrowDirection;
 
@@ -90,6 +91,17 @@ enum class AnchorMode {
   }
 
   return alert;
+}
+
+- (void)updateAttributedText {
+  // Use setValue to access unexposed attributed strings for title and message.
+  if (self.attributedTitle) {
+    [self.alertController setValue:_attributedTitle forKey:@"attributedTitle"];
+  }
+  if (self.attributedMessage) {
+    [self.alertController setValue:_attributedMessage
+                            forKey:@"attributedMessage"];
+  }
 }
 
 @end

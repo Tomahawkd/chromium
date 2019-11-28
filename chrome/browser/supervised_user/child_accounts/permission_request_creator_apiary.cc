@@ -4,6 +4,7 @@
 
 #include "chrome/browser/supervised_user/child_accounts/permission_request_creator_apiary.h"
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
@@ -17,7 +18,9 @@
 #include "chrome/browser/supervised_user/child_accounts/kids_management_api.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/signin/public/identity_manager/access_token_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -25,9 +28,6 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "services/identity/public/cpp/access_token_fetcher.h"
-#include "services/identity/public/cpp/access_token_info.h"
-#include "services/identity/public/cpp/identity_manager.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -46,8 +46,6 @@ const char kStateKey[] = "state";
 
 // Request values.
 const char kEventTypeURLRequest[] = "PERMISSION_CHROME_URL";
-const char kEventTypeInstallRequest[] = "PERMISSION_CHROME_CWS_ITEM_INSTALL";
-const char kEventTypeUpdateRequest[] = "PERMISSION_CHROME_CWS_ITEM_UPDATE";
 const char kState[] = "PENDING";
 
 // Response keys.
@@ -63,7 +61,8 @@ struct PermissionRequestCreatorApiary::Request {
   std::string request_type;
   std::string object_ref;
   SuccessCallback callback;
-  std::unique_ptr<identity::AccessTokenFetcher> access_token_fetcher;
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher>
+      access_token_fetcher;
   std::string access_token;
   bool access_token_expired;
   std::unique_ptr<network::SimpleURLLoader> simple_url_loader;
@@ -81,11 +80,9 @@ PermissionRequestCreatorApiary::Request::Request(
 PermissionRequestCreatorApiary::Request::~Request() {}
 
 PermissionRequestCreatorApiary::PermissionRequestCreatorApiary(
-    identity::IdentityManager* identity_manager,
-    const std::string& account_id,
+    signin::IdentityManager* identity_manager,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
     : identity_manager_(identity_manager),
-      account_id_(account_id),
       url_loader_factory_(std::move(url_loader_factory)),
       retry_on_network_change_(true) {}
 
@@ -95,10 +92,10 @@ PermissionRequestCreatorApiary::~PermissionRequestCreatorApiary() {}
 std::unique_ptr<PermissionRequestCreator>
 PermissionRequestCreatorApiary::CreateWithProfile(Profile* profile) {
   auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
-  return base::WrapUnique(new PermissionRequestCreatorApiary(
-      identity_manager, identity_manager->GetPrimaryAccountId(),
+  return std::make_unique<PermissionRequestCreatorApiary>(
+      identity_manager,
       content::BrowserContext::GetDefaultStoragePartition(profile)
-          ->GetURLLoaderFactoryForBrowserProcess()));
+          ->GetURLLoaderFactoryForBrowserProcess());
 }
 
 bool PermissionRequestCreatorApiary::IsEnabled() const {
@@ -110,18 +107,6 @@ void PermissionRequestCreatorApiary::CreateURLAccessRequest(
     SuccessCallback callback) {
   CreateRequest(kEventTypeURLRequest, url_requested.spec(),
                 std::move(callback));
-}
-
-void PermissionRequestCreatorApiary::CreateExtensionInstallRequest(
-    const std::string& id,
-    SuccessCallback callback) {
-  CreateRequest(kEventTypeInstallRequest, id, std::move(callback));
-}
-
-void PermissionRequestCreatorApiary::CreateExtensionUpdateRequest(
-    const std::string& id,
-    SuccessCallback callback) {
-  CreateRequest(kEventTypeUpdateRequest, id, std::move(callback));
 }
 
 GURL PermissionRequestCreatorApiary::GetApiUrl() const {
@@ -163,18 +148,18 @@ void PermissionRequestCreatorApiary::StartFetching(Request* request) {
   // will not be invoked if this object is deleted. Likewise, |request|
   // only comes from |requests_|, which are owned by this object too.
   request->access_token_fetcher =
-      identity_manager_->CreateAccessTokenFetcherForAccount(
-          account_id_, "permissions_creator", scopes,
+      std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
+          "permissions_creator", identity_manager_, scopes,
           base::BindOnce(
               &PermissionRequestCreatorApiary::OnAccessTokenFetchComplete,
               base::Unretained(this), request),
-          identity::AccessTokenFetcher::Mode::kImmediate);
+          signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate);
 }
 
 void PermissionRequestCreatorApiary::OnAccessTokenFetchComplete(
     Request* request,
     GoogleServiceAuthError error,
-    identity::AccessTokenInfo token_info) {
+    signin::AccessTokenInfo token_info) {
   auto it = requests_.begin();
   while (it != requests_.end()) {
     if (request->access_token_fetcher.get() ==
@@ -229,8 +214,7 @@ void PermissionRequestCreatorApiary::OnAccessTokenFetchComplete(
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = GetApiUrl();
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   resource_request->method = "POST";
   resource_request->headers.SetHeader(
       net::HttpRequestHeaders::kAuthorization,
@@ -244,9 +228,6 @@ void PermissionRequestCreatorApiary::OnAccessTokenFetchComplete(
         kNumPermissionRequestRetries,
         network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE);
   }
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // ID=data_use_measurement::DataUseUserData::SUPERVISED_USER
   (*it)->simple_url_loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       url_loader_factory_.get(),
       base::BindOnce(&PermissionRequestCreatorApiary::OnSimpleLoaderComplete,
@@ -271,8 +252,9 @@ void PermissionRequestCreatorApiary::OnSimpleLoaderComplete(
     request->access_token_expired = true;
     identity::ScopeSet scopes;
     scopes.insert(GetApiScope());
-    identity_manager_->RemoveAccessTokenFromCache(account_id_, scopes,
-                                                  request->access_token);
+    identity_manager_->RemoveAccessTokenFromCache(
+        identity_manager_->GetPrimaryAccountId(), scopes,
+        request->access_token);
     StartFetching(request);
     return;
   }
@@ -293,7 +275,7 @@ void PermissionRequestCreatorApiary::OnSimpleLoaderComplete(
   if (response_body)
     body = std::move(*response_body);
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(body);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(body);
   base::DictionaryValue* dict = NULL;
   if (!value || !value->GetAsDictionary(&dict)) {
     LOG(WARNING) << "Invalid top-level dictionary";

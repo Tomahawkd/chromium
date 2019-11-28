@@ -36,7 +36,7 @@ namespace blink {
 
 LayoutSVGPath::LayoutSVGPath(SVGGeometryElement* node)
     // <line> elements have no joins and thus needn't care about miters.
-    : LayoutSVGShape(node, IsSVGLineElement(node) ? kNoMiters : kComplex) {}
+    : LayoutSVGShape(node, IsA<SVGLineElement>(node) ? kNoMiters : kComplex) {}
 
 LayoutSVGPath::~LayoutSVGPath() = default;
 
@@ -60,7 +60,7 @@ void LayoutSVGPath::UpdateMarkers() {
   marker_positions_.clear();
 
   if (!StyleRef().SvgStyle().HasMarkers() ||
-      !SVGResources::SupportsMarkers(*ToSVGGraphicsElement(GetElement())))
+      !SVGResources::SupportsMarkers(*To<SVGGraphicsElement>(GetElement())))
     return;
 
   SVGResources* resources =

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/geolocation/geolocation_permission_context.h"
 #include "chrome/browser/media/midi_permission_context.h"
@@ -179,7 +180,7 @@ TEST_F(PermissionContextBaseFeaturePolicyTest, RequestPermission) {
   content::RenderFrameHost* parent = GetMainRFH(kOrigin1);
 
   HostContentSettingsMapFactory::GetForProfile(profile())
-      ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_GEOLOCATION,
+      ->SetDefaultContentSetting(ContentSettingsType::GEOLOCATION,
                                  CONTENT_SETTING_ALLOW);
 
   // Request geolocation in the top level frame, request should work.

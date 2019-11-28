@@ -5,18 +5,21 @@
 package org.chromium.chrome.browser.feed;
 
 import android.app.Activity;
-import android.support.annotation.IntDef;
 
-import com.google.android.libraries.feed.api.lifecycle.AppLifecycleListener;
+import androidx.annotation.IntDef;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.DeferredStartupHandler;
+import org.chromium.chrome.browser.feed.library.api.client.lifecycle.AppLifecycleListener;
+import org.chromium.chrome.browser.signin.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.SigninManager;
 
-import java.lang.ref.WeakReference;
-import java.util.List;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * Aggregation point for application lifecycle events that the Feed cares about. Events that
@@ -25,18 +28,23 @@ import java.util.List;
  */
 public class FeedAppLifecycle
         implements SigninManager.SignInStateObserver, ApplicationStatus.ActivityStateListener {
-    @IntDef({AppLifecycleEvent.ENTER_FOREGROUND, AppLifecycleEvent.ENTER_BACKGROUND,
-            AppLifecycleEvent.CLEAR_ALL, AppLifecycleEvent.INITIALIZE,
-            AppLifecycleEvent.NUM_ENTRIES})
-
     // Intdef used to assign each event a number for metrics logging purposes. This maps directly to
     // the AppLifecycleEvent enum defined in tools/metrics/enums.xml
+    @IntDef({AppLifecycleEvent.ENTER_FOREGROUND, AppLifecycleEvent.ENTER_BACKGROUND,
+            AppLifecycleEvent.CLEAR_ALL, AppLifecycleEvent.INITIALIZE, AppLifecycleEvent.SIGN_IN,
+            AppLifecycleEvent.SIGN_OUT, AppLifecycleEvent.HISTORY_DELETED,
+            AppLifecycleEvent.CACHED_DATA_CLEARED})
+    @Retention(RetentionPolicy.SOURCE)
     public @interface AppLifecycleEvent {
         int ENTER_FOREGROUND = 0;
         int ENTER_BACKGROUND = 1;
         int CLEAR_ALL = 2;
         int INITIALIZE = 3;
-        int NUM_ENTRIES = 4;
+        int SIGN_IN = 4;
+        int SIGN_OUT = 5;
+        int HISTORY_DELETED = 6;
+        int CACHED_DATA_CLEARED = 7;
+        int NUM_ENTRIES = 8;
     }
 
     private AppLifecycleListener mAppLifecycleListener;
@@ -45,6 +53,7 @@ public class FeedAppLifecycle
 
     private int mTabbedActivityCount;
     private boolean mInitializeCalled;
+    private boolean mDelayedInitializeStarted;
 
     /**
      * Create a FeedAppLifecycle instance. In normal use, this should only be called by {@link
@@ -53,6 +62,7 @@ public class FeedAppLifecycle
      *        interface that we will call into.
      * @param lifecycleBridge FeedLifecycleBridge JNI bridge over which native lifecycle events are
      *        delivered.
+     * @param feedScheduler Scheduler to be notified of several events.
      */
     public FeedAppLifecycle(AppLifecycleListener appLifecycleListener,
             FeedLifecycleBridge lifecycleBridge, FeedScheduler feedScheduler) {
@@ -61,10 +71,8 @@ public class FeedAppLifecycle
         mFeedScheduler = feedScheduler;
 
         int resumedActivityCount = 0;
-        List<WeakReference<Activity>> activities = ApplicationStatus.getRunningActivities();
-        for (final WeakReference<Activity> ref : activities) {
-            final Activity activity = ref.get();
-            if (activity != null && activity instanceof ChromeTabbedActivity) {
+        for (Activity activity : ApplicationStatus.getRunningActivities()) {
+            if (activity instanceof ChromeTabbedActivity) {
                 @ActivityState
                 int activityState = ApplicationStatus.getStateForActivity(activity);
                 if (activityState != ActivityState.STOPPED) {
@@ -87,7 +95,7 @@ public class FeedAppLifecycle
         }
 
         ApplicationStatus.registerStateListenerForAllActivities(this);
-        SigninManager.get().addSignInStateObserver(this);
+        IdentityServicesProvider.getSigninManager().addSignInStateObserver(this);
     }
 
     /**
@@ -102,6 +110,7 @@ public class FeedAppLifecycle
      * We call onClearAll to avoid presenting personalized suggestions based on deleted history.
      */
     public void onHistoryDeleted() {
+        reportEvent(AppLifecycleEvent.HISTORY_DELETED);
         onClearAll(/*suppressRefreshes*/ true);
     }
 
@@ -110,6 +119,7 @@ public class FeedAppLifecycle
      * Feed deletes its cached browsing data.
      */
     public void onCachedDataCleared() {
+        reportEvent(AppLifecycleEvent.CACHED_DATA_CLEARED);
         onClearAll(/*suppressRefreshes*/ false);
     }
 
@@ -117,7 +127,7 @@ public class FeedAppLifecycle
      * Unregisters listeners and cleans up any native resources held by FeedAppLifecycle.
      */
     public void destroy() {
-        SigninManager.get().removeSignInStateObserver(this);
+        IdentityServicesProvider.getSigninManager().removeSignInStateObserver(this);
         ApplicationStatus.unregisterActivityStateListener(this);
         mLifecycleBridge.destroy();
         mLifecycleBridge = null;
@@ -152,17 +162,35 @@ public class FeedAppLifecycle
 
     @Override
     public void onSignedIn() {
+        reportEvent(AppLifecycleEvent.SIGN_IN);
         onClearAll(/*suppressRefreshes*/ false);
     }
 
     @Override
     public void onSignedOut() {
+        reportEvent(AppLifecycleEvent.SIGN_OUT);
         onClearAll(/*suppressRefreshes*/ false);
     }
 
     private void onEnterForeground() {
         reportEvent(AppLifecycleEvent.ENTER_FOREGROUND);
         mAppLifecycleListener.onEnterForeground();
+
+        if (!mDelayedInitializeStarted) {
+            mDelayedInitializeStarted = true;
+            boolean initFeed = ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
+                    ChromeFeatureList.INTEREST_FEED_CONTENT_SUGGESTIONS, "init_feed_after_startup",
+                    false);
+            if (initFeed) {
+                DeferredStartupHandler.getInstance().addDeferredTask(() -> {
+                    // Since this is being run asynchronously, it's possible #destroy() is called
+                    // before the delay finishes. Must guard against this.
+                    if (mLifecycleBridge != null) {
+                        initialize();
+                    }
+                });
+            }
+        }
     }
 
     private void onEnterBackground() {
@@ -172,12 +200,15 @@ public class FeedAppLifecycle
 
     private void onClearAll(boolean suppressRefreshes) {
         reportEvent(AppLifecycleEvent.CLEAR_ALL);
-        // It is important that #onClearAll() is called before notifying the scheduler, otherwise
-        // the clear all could wipe out the new results. These are both async operations that are
-        // kicked off here, but the Feed is responsible for tracking them and making sure they're
-        // correctly respected.
-        mAppLifecycleListener.onClearAll();
-        mFeedScheduler.onArticlesCleared(suppressRefreshes);
+        // Clearing and triggering refreshes are both asynchronous operations. The Feed is able to
+        // better coordinate them if {@link AppLifecycleListener#onClearAllWithRefresh} is called.
+        // If the scheduler returns true from {@link FeedScheduler#onArticlesCleared}, this means
+        // that it did not trigger the refresh, but is allowing us to do so.
+        if (mFeedScheduler.onArticlesCleared(suppressRefreshes)) {
+            mAppLifecycleListener.onClearAllWithRefresh();
+        } else {
+            mAppLifecycleListener.onClearAll();
+        }
     }
 
     private void initialize() {

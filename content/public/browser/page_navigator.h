@@ -15,6 +15,7 @@
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_request_id.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/child_process_host.h"
@@ -22,13 +23,14 @@
 #include "ipc/ipc_message.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "third_party/blink/public/web/web_triggering_event_info.h"
+#include "third_party/blink/public/common/navigation/triggering_event_info.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 
 namespace content {
 
+class NavigationHandle;
 class WebContents;
 
 struct CONTENT_EXPORT OpenURLParams {
@@ -52,9 +54,17 @@ struct CONTENT_EXPORT OpenURLParams {
   OpenURLParams(const OpenURLParams& other);
   ~OpenURLParams();
 
+  // Creates OpenURLParams that 1) preserve all applicable |handle| properties
+  // (URL, referrer, initiator, etc.) with OpenURLParams equivalents and 2) fill
+  // in reasonable defaults for other properties (like WindowOpenDisposition).
+  static OpenURLParams FromNavigationHandle(NavigationHandle* handle);
+
   // The URL/referrer to be opened.
   GURL url;
   Referrer referrer;
+
+  // The origin of the initiator of the navigation.
+  base::Optional<url::Origin> initiator_origin;
 
   // SiteInstance of the frame that initiated the navigation or null if we
   // don't know it.
@@ -62,9 +72,6 @@ struct CONTENT_EXPORT OpenURLParams {
 
   // Any redirect URLs that occurred for this navigation before |url|.
   std::vector<GURL> redirect_chain;
-
-  // Indicates whether this navigation will be sent using POST.
-  bool uses_post;
 
   // The post data when the navigation uses POST.
   scoped_refptr<network::ResourceRequestBody> post_data;
@@ -103,8 +110,8 @@ struct CONTENT_EXPORT OpenURLParams {
 
   // Whether the call to OpenURL was triggered by an Event, and what the
   // isTrusted flag of the event was.
-  blink::WebTriggeringEventInfo triggering_event_info =
-      blink::WebTriggeringEventInfo::kUnknown;
+  blink::TriggeringEventInfo triggering_event_info =
+      blink::TriggeringEventInfo::kUnknown;
 
   // Indicates whether this navigation was started via context menu.
   bool started_from_context_menu;
@@ -121,8 +128,8 @@ struct CONTENT_EXPORT OpenURLParams {
   // language code). Empty otherwise.
   std::string href_translate;
 
- private:
-  OpenURLParams();
+  // Indicates if this navigation is a reload.
+  ReloadType reload_type;
 };
 
 class PageNavigator {

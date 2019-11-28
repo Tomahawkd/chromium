@@ -32,6 +32,14 @@ function buttonPanelElement(videoElement) {
   return element;
 }
 
+function loadingPanelElement(videoElement) {
+  var controlID = '-internal-media-controls-loading-panel';
+  var element = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
+  if (!element)
+    throw 'Failed to find loading panel';
+  return element;
+}
+
 function panelElement(videoElement) {
   var element = mediaControlsButton(videoElement, "panel");
   if (!element)
@@ -55,12 +63,28 @@ function currentTimeElement(videoElement) {
   return element;
 }
 
+function timeRemainingElement(videoElement) {
+  var controlID = '-webkit-media-controls-time-remaining-display';
+  var element = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
+  if (!element)
+    throw 'Failed to find time remaining element';
+  return element;
+}
+
 function downloadButton(videoElement) {
     var controlID = '-internal-media-controls-download-button';
     var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
     if (!button)
         throw 'Failed to find download button';
     return button;
+}
+
+function pictureInPictureButton(videoElement) {
+  var controlID = '-internal-media-controls-picture-in-picture-button';
+  var button = mediaControlsElement(internals.shadowRoot(videoElement).firstChild, controlID);
+  if (!button)
+    throw 'Failed to find picture-in-picture button';
+  return button;
 }
 
 function fullscreenButton(videoElement) {
@@ -168,6 +192,10 @@ function mediaControlsElement(first, id)
     }
 
     return null;
+}
+
+function getFocusedElement(video) {
+  return internals.shadowRoot(video).activeElement;
 }
 
 function mediaControlsButton(element, id)
@@ -376,6 +404,19 @@ function textTrackListItemInnerCheckbox(trackListItem) {
   return null;
 }
 
+function textTrackListItemInnerKindIndicator(trackListItem) {
+  const children = trackListItem.children;
+  for (var i = 0; i < children.length; i++) {
+    const child = children[i];
+    const pseudoId = internals.shadowPseudoId(child);
+    if (pseudoId == "-internal-media-controls-text-track-list-kind-captions" ||
+        pseudoId == "-internal-media-controls-text-track-list-kind-subtitles") {
+      return child;
+    }
+  }
+  return null;
+}
+
 function clickCaptionButton(video, callback) {
   openOverflowAndClickButton(video, captionsOverflowItem(video), callback);
 }
@@ -425,6 +466,17 @@ function runAfterDoubleTapTimerFired(func) {
   // 300ms timer plus 500ms slack.
   const doubleTapTimeoutMs = 300 + 500;
   setTimeout(func, doubleTapTimeoutMs);
+}
+
+// Requests an animation frame.
+function waitForHoverEffectUpdate(func) {
+  // The hover effect is updated at the next animation frame after the layout
+  // changes.
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
 }
 
 function hoverMuteButton(video, func) {
@@ -524,7 +576,7 @@ function doubleTapAtCoordinates(x, y, timeout, callback) {
       actions: [
         { name: 'pointerDown', x: x, y: y },
         { name: 'pointerUp' },
-        { name: 'pause', duration: timeout / 1000 },
+        { name: 'pause', duration: timeout },
         { name: 'pointerDown', x: x, y: y },
         { name: 'pointerUp' }
       ]
@@ -533,7 +585,6 @@ function doubleTapAtCoordinates(x, y, timeout, callback) {
 }
 
 function singleTapAtCoordinates(xPos, yPos, callback) {
-  let delayCallback = function() { setTimeout(callback); };
   chrome.gpuBenchmarking.pointerActionSequence([
     {
       source: 'mouse',
@@ -542,7 +593,7 @@ function singleTapAtCoordinates(xPos, yPos, callback) {
         { name: 'pointerUp' }
       ]
     }
-  ], delayCallback);
+  ], callback);
 }
 
 function singleTapOutsideControl(control, callback) {
@@ -590,7 +641,7 @@ function doubleTouchAtCoordinates(x, y, timeout, callback) {
       actions: [
         { name: 'pointerDown', x: x, y: y },
         { name: 'pointerUp' },
-        { name: 'pause', duration: timeout / 1000 },
+        { name: 'pause', duration: timeout },
         { name: 'pointerDown', x: x, y: y },
         { name: 'pointerUp' }
       ]

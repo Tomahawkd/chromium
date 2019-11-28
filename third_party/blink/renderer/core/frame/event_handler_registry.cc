@@ -69,11 +69,11 @@ bool EventHandlerRegistry::EventTypeToClass(
              event_type == event_type_names::kTouchmove) {
     *result = options->passive() ? kTouchStartOrMoveEventPassive
                                  : kTouchStartOrMoveEventBlocking;
-  } else if (event_type == event_type_names::kPointerrawmove) {
+  } else if (event_type == event_type_names::kPointerrawupdate) {
     // This will be used to avoid waking up the main thread to
-    // process pointerrawmove events and hit-test them when
+    // process pointerrawupdate events and hit-test them when
     // there is no listener on the page.
-    *result = kPointerRawMoveEvent;
+    *result = kPointerRawUpdateEvent;
   } else if (event_util::IsPointerEventType(event_type)) {
     // The pointer events never block scrolling and the compositor
     // only needs to know about the touch listeners.
@@ -143,7 +143,7 @@ bool EventHandlerRegistry::UpdateEventHandlerInternal(
 
   if (op != kRemoveAll) {
     if (handlers_changed)
-      NotifyHasHandlersChanged(target, handler_class, new_num_handlers > 0);
+      NotifyHandlersChanged(target, handler_class, new_num_handlers > 0);
 
     if (target_set_changed) {
       NotifyDidAddOrRemoveEventHandlerTarget(GetLocalFrameForTarget(target),
@@ -232,7 +232,7 @@ void EventHandlerRegistry::DidRemoveAllEventHandlers(EventTarget& target) {
     EventHandlerClass handler_class = static_cast<EventHandlerClass>(i);
     if (handlers_changed[i]) {
       bool has_handlers = targets_[handler_class].Contains(&target);
-      NotifyHasHandlersChanged(&target, handler_class, has_handlers);
+      NotifyHandlersChanged(&target, handler_class, has_handlers);
     }
     if (target_set_changed[i]) {
       NotifyDidAddOrRemoveEventHandlerTarget(GetLocalFrameForTarget(&target),
@@ -241,7 +241,7 @@ void EventHandlerRegistry::DidRemoveAllEventHandlers(EventTarget& target) {
   }
 }
 
-void EventHandlerRegistry::NotifyHasHandlersChanged(
+void EventHandlerRegistry::NotifyHandlersChanged(
     EventTarget* target,
     EventHandlerClass handler_class,
     bool has_active_handlers) {
@@ -276,11 +276,11 @@ void EventHandlerRegistry::NotifyHasHandlersChanged(
               HasEventHandlers(kTouchStartOrMoveEventPassive) ||
                   HasEventHandlers(kPointerEvent)));
       break;
-    case kPointerRawMoveEvent:
+    case kPointerRawUpdateEvent:
       GetPage()->GetChromeClient().SetEventListenerProperties(
-          frame, cc::EventListenerClass::kPointerRawMove,
+          frame, cc::EventListenerClass::kPointerRawUpdate,
           GetEventListenerProperties(false,
-                                     HasEventHandlers(kPointerRawMoveEvent)));
+                                     HasEventHandlers(kPointerRawUpdateEvent)));
       break;
     case kTouchEndOrCancelEventBlocking:
     case kTouchEndOrCancelEventPassive:
@@ -299,25 +299,23 @@ void EventHandlerRegistry::NotifyHasHandlersChanged(
       break;
   }
 
-  if (RuntimeEnabledFeatures::PaintTouchActionRectsEnabled()) {
-    if (handler_class == kTouchStartOrMoveEventBlocking ||
-        handler_class == kTouchStartOrMoveEventBlockingLowLatency) {
-      if (auto* node = target->ToNode()) {
-        if (auto* layout_object = node->GetLayoutObject()) {
-          layout_object->MarkEffectiveWhitelistedTouchActionChanged();
-          auto* continuation = layout_object->VirtualContinuation();
-          while (continuation) {
-            continuation->MarkEffectiveWhitelistedTouchActionChanged();
-            continuation = continuation->VirtualContinuation();
-          }
+  if (handler_class == kTouchStartOrMoveEventBlocking ||
+      handler_class == kTouchStartOrMoveEventBlockingLowLatency) {
+    if (auto* node = target->ToNode()) {
+      if (auto* layout_object = node->GetLayoutObject()) {
+        layout_object->MarkEffectiveAllowedTouchActionChanged();
+        auto* continuation = layout_object->VirtualContinuation();
+        while (continuation) {
+          continuation->MarkEffectiveAllowedTouchActionChanged();
+          continuation = continuation->VirtualContinuation();
         }
-      } else if (auto* dom_window = target->ToLocalDOMWindow()) {
-        // This event handler is on a window. Ensure the layout view is
-        // invalidated because the layout view tracks the window's blocking
-        // touch event rects.
-        if (auto* layout_view = dom_window->GetFrame()->ContentLayoutObject())
-          layout_view->MarkEffectiveWhitelistedTouchActionChanged();
       }
+    } else if (auto* dom_window = target->ToLocalDOMWindow()) {
+      // This event handler is on a window. Ensure the layout view is
+      // invalidated because the layout view tracks the window's blocking
+      // touch event rects.
+      if (auto* layout_view = dom_window->GetFrame()->ContentLayoutObject())
+        layout_view->MarkEffectiveAllowedTouchActionChanged();
     }
   }
 }
@@ -338,11 +336,11 @@ void EventHandlerRegistry::NotifyDidAddOrRemoveEventHandlerTarget(
 
 void EventHandlerRegistry::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
-  visitor->template RegisterWeakMembers<
-      EventHandlerRegistry, &EventHandlerRegistry::ClearWeakMembers>(this);
+  visitor->template RegisterWeakCallbackMethod<
+      EventHandlerRegistry, &EventHandlerRegistry::ProcessCustomWeakness>(this);
 }
 
-void EventHandlerRegistry::ClearWeakMembers(Visitor* visitor) {
+void EventHandlerRegistry::ProcessCustomWeakness(const WeakCallbackInfo& info) {
   Vector<UntracedMember<EventTarget>> dead_targets;
   for (int i = 0; i < kEventHandlerClassCount; ++i) {
     EventHandlerClass handler_class = static_cast<EventHandlerClass>(i);
@@ -350,9 +348,9 @@ void EventHandlerRegistry::ClearWeakMembers(Visitor* visitor) {
     for (const auto& event_target : *targets) {
       Node* node = event_target.key->ToNode();
       LocalDOMWindow* window = event_target.key->ToLocalDOMWindow();
-      if (node && !ThreadHeap::IsHeapObjectAlive(node)) {
+      if (node && !info.IsHeapObjectAlive(node)) {
         dead_targets.push_back(node);
-      } else if (window && !ThreadHeap::IsHeapObjectAlive(window)) {
+      } else if (window && !info.IsHeapObjectAlive(window)) {
         dead_targets.push_back(window);
       }
     }

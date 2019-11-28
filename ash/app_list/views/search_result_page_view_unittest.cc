@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "ash/app_list/app_list_util.h"
 #include "ash/app_list/model/app_list_model.h"
 #include "ash/app_list/test/app_list_test_view_delegate.h"
 #include "ash/app_list/test/test_search_result.h"
@@ -35,7 +36,7 @@ enum class AnswerCardState {
 
 }  // namespace
 
-namespace app_list {
+namespace ash {
 namespace test {
 
 class SearchResultPageViewTest
@@ -58,22 +59,30 @@ class SearchResultPageViewTest
     }
 
     // Setting up the feature set.
-    if (test_with_answer_card)
-      scoped_feature_list_.InitAndEnableFeature(
-          app_list_features::kEnableAnswerCard);
-    else
-      scoped_feature_list_.InitAndDisableFeature(
-          app_list_features::kEnableAnswerCard);
+    // Zero State will affect the UI behavior significantly. This test works
+    // if zero state feature is disabled.
+    // TODO(crbug.com/925195): Add different test suites for zero state.
+    if (test_with_answer_card) {
+      scoped_feature_list_.InitWithFeatures(
+          {app_list_features::kEnableAnswerCard},
+          {app_list_features::kEnableZeroStateSuggestions});
+    } else {
+      scoped_feature_list_.InitWithFeatures(
+          {}, {app_list_features::kEnableAnswerCard,
+               app_list_features::kEnableZeroStateSuggestions});
+    }
 
+    ASSERT_FALSE(app_list_features::IsZeroStateSuggestionsEnabled());
     ASSERT_EQ(test_with_answer_card, app_list_features::IsAnswerCardEnabled());
 
     // Setting up views.
     delegate_ = std::make_unique<AppListTestViewDelegate>();
     app_list_view_ = new AppListView(delegate_.get());
-    AppListView::InitParams params;
-    params.parent = GetContext();
-    app_list_view_->Initialize(params);
-    app_list_view_->GetWidget()->Show();
+    app_list_view_->InitView(
+        /*is_tablet_mode=*/false, GetContext(),
+        base::BindRepeating(&UpdateActivationForAppListView, app_list_view_,
+                            /*is_tablet_mode=*/false));
+    app_list_view_->Show(false /*is_side_shelf*/, false /*is_tablet_mode*/);
 
     ContentsView* contents_view =
         app_list_view_->app_list_main_view()->contents_view();
@@ -113,8 +122,8 @@ class SearchResultPageViewTest
 
 // Instantiate the Boolean which is used to toggle answer cards in
 // the parameterized tests.
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     SearchResultPageViewTest,
     ::testing::Values(AnswerCardState::ANSWER_CARD_OFF,
                       AnswerCardState::ANSWER_CARD_ON_WITHOUT_RESULT,
@@ -162,4 +171,4 @@ TEST_P(SearchResultPageViewTest, ResultsSorted) {
 }
 
 }  // namespace test
-}  // namespace app_list
+}  // namespace ash

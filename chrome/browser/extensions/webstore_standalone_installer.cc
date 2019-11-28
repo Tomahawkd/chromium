@@ -6,12 +6,15 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/install_tracker.h"
+#include "chrome/browser/extensions/scoped_active_install.h"
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/crx_file/id_util.h"
@@ -31,9 +34,9 @@ namespace extensions {
 WebstoreStandaloneInstaller::WebstoreStandaloneInstaller(
     const std::string& webstore_item_id,
     Profile* profile,
-    const Callback& callback)
+    Callback callback)
     : id_(webstore_item_id),
-      callback_(callback),
+      callback_(std::move(callback)),
       profile_(profile),
       install_source_(WebstoreInstaller::INSTALL_SOURCE_INLINE),
       show_user_count_(true),
@@ -80,7 +83,8 @@ WebstoreStandaloneInstaller::~WebstoreStandaloneInstaller() {
 void WebstoreStandaloneInstaller::RunCallback(bool success,
                                               const std::string& error,
                                               webstore_install::Result result) {
-  callback_.Run(success, error, result);
+  DCHECK(callback_);
+  std::move(callback_).Run(success, error, result);
 }
 
 void WebstoreStandaloneInstaller::AbortInstall() {
@@ -117,7 +121,7 @@ void WebstoreStandaloneInstaller::CompleteInstall(
     const std::string& error) {
   scoped_active_install_.reset();
   if (!callback_.is_null())
-    callback_.Run(result == webstore_install::SUCCESS, error, result);
+    RunCallback(result == webstore_install::SUCCESS, error, result);
   Release();  // Matches the AddRef in BeginInstall.
 }
 
@@ -136,7 +140,7 @@ WebstoreStandaloneInstaller::GetLocalizedExtensionForDisplay() {
   if (!localized_extension_for_display_.get()) {
     DCHECK(manifest_.get());
     if (!manifest_.get())
-      return NULL;
+      return nullptr;
 
     std::string error;
     localized_extension_for_display_ =
@@ -190,14 +194,15 @@ void WebstoreStandaloneInstaller::OnInstallPromptDone(
 
   std::unique_ptr<WebstoreInstaller::Approval> approval = CreateApproval();
 
-  ExtensionService* extension_service =
-      ExtensionSystem::Get(profile_)->extension_service();
+  ExtensionRegistry* extension_registry = ExtensionRegistry::Get(profile_);
   const Extension* installed_extension =
-      extension_service->GetExtensionById(id_, true /* include disabled */);
+      extension_registry->GetExtensionById(id_, ExtensionRegistry::EVERYTHING);
   if (installed_extension) {
     std::string install_message;
     webstore_install::Result install_result = webstore_install::SUCCESS;
 
+    ExtensionService* extension_service =
+        ExtensionSystem::Get(profile_)->extension_service();
     if (ExtensionPrefs::Get(profile_)->IsExtensionBlacklisted(id_)) {
       // Don't install a blacklisted extension.
       install_result = webstore_install::BLACKLISTED;
@@ -212,9 +217,9 @@ void WebstoreStandaloneInstaller::OnInstallPromptDone(
     return;
   }
 
-  scoped_refptr<WebstoreInstaller> installer =
-      new WebstoreInstaller(profile_, this, GetWebContents(), id_,
-                            std::move(approval), install_source_);
+  auto installer = base::MakeRefCounted<WebstoreInstaller>(
+      profile_, this, GetWebContents(), id_, std::move(approval),
+      install_source_);
   installer->Start();
 }
 
@@ -288,8 +293,8 @@ void WebstoreStandaloneInstaller::OnWebstoreResponseParseSuccess(
   // Assume ownership of webstore_data.
   webstore_data_ = std::move(webstore_data);
 
-  scoped_refptr<WebstoreInstallHelper> helper =
-      new WebstoreInstallHelper(this, id_, manifest, icon_url);
+  auto helper = base::MakeRefCounted<WebstoreInstallHelper>(this, id_, manifest,
+                                                            icon_url);
   // The helper will call us back via OnWebstoreParseSuccess() or
   // OnWebstoreParseFailure().
   helper->Start(content::BrowserContext::GetDefaultStoragePartition(profile_)

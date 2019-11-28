@@ -10,24 +10,17 @@
 #include "base/system/sys_info.h"
 #include "base/version.h"
 #include "build/build_config.h"
-#include "chrome/browser/chromeos/cryptauth/chrome_cryptauth_service_factory.h"
 #include "chrome/browser/chromeos/device_sync/device_sync_client_factory.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service_regular.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service_signin_chromeos.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
-#include "chrome/browser/signin/identity_manager_factory.h"
-#include "chromeos/chromeos_features.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/device_sync/public/cpp/device_sync_client.h"
-#include "components/cryptauth/cryptauth_client_impl.h"
-#include "components/cryptauth/cryptauth_device_manager.h"
-#include "components/cryptauth/cryptauth_enrollment_manager.h"
-#include "components/cryptauth/local_device_data_provider.h"
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 using proximity_auth::ScreenlockState;
 
@@ -37,15 +30,6 @@ ChromeProximityAuthClient::ChromeProximityAuthClient(Profile* profile)
     : profile_(profile) {}
 
 ChromeProximityAuthClient::~ChromeProximityAuthClient() {}
-
-std::string ChromeProximityAuthClient::GetAuthenticatedUsername() const {
-  const identity::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfileIfExists(profile_);
-  // |profile_| has to be a signed-in profile with IdentityManager already
-  // created. Otherwise, just crash to collect stack.
-  DCHECK(identity_manager);
-  return identity_manager->GetPrimaryAccountInfo().email;
-}
 
 void ChromeProximityAuthClient::UpdateScreenlockState(ScreenlockState state) {
   EasyUnlockService* service = EasyUnlockService::Get(profile_);
@@ -89,57 +73,6 @@ ChromeProximityAuthClient::GetPrefManager() {
   if (service)
     return service->GetProximityAuthPrefManager();
   return nullptr;
-}
-
-std::unique_ptr<cryptauth::CryptAuthClientFactory>
-ChromeProximityAuthClient::CreateCryptAuthClientFactory() {
-  DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return GetCryptAuthService()->CreateCryptAuthClientFactory();
-}
-
-cryptauth::DeviceClassifier ChromeProximityAuthClient::GetDeviceClassifier() {
-  DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return GetCryptAuthService()->GetDeviceClassifier();
-}
-
-std::string ChromeProximityAuthClient::GetAccountId() {
-  DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return GetCryptAuthService()->GetAccountId();
-}
-
-cryptauth::CryptAuthEnrollmentManager*
-ChromeProximityAuthClient::GetCryptAuthEnrollmentManager() {
-  DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return GetCryptAuthService()->GetCryptAuthEnrollmentManager();
-}
-
-cryptauth::CryptAuthDeviceManager*
-ChromeProximityAuthClient::GetCryptAuthDeviceManager() {
-  DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return GetCryptAuthService()->GetCryptAuthDeviceManager();
-}
-
-std::string ChromeProximityAuthClient::GetLocalDevicePublicKey() {
-  if (base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi)) {
-    return GetDeviceSyncClient()->GetLocalDeviceMetadata()->public_key();
-  } else {
-    cryptauth::LocalDeviceDataProvider provider(GetCryptAuthService());
-    std::string local_public_key;
-    provider.GetLocalDeviceData(&local_public_key, nullptr);
-    return local_public_key;
-  }
-}
-
-cryptauth::CryptAuthService* ChromeProximityAuthClient::GetCryptAuthService() {
-  DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return ChromeCryptAuthServiceFactory::GetInstance()->GetForBrowserContext(
-      profile_);
-}
-
-device_sync::DeviceSyncClient*
-ChromeProximityAuthClient::GetDeviceSyncClient() {
-  DCHECK(base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-  return device_sync::DeviceSyncClientFactory::GetForProfile(profile_);
 }
 
 }  // namespace chromeos

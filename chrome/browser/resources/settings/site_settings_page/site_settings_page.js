@@ -28,14 +28,6 @@ Polymer({
     },
 
     /** @private */
-    enableSiteSettings_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableSiteSettings');
-      },
-    },
-
-    /** @private */
     isGuest_: {
       type: Boolean,
       value: function() {
@@ -52,28 +44,11 @@ Polymer({
     },
 
     /** @private */
-    enableClipboardContentSetting_: {
+    enableExperimentalWebPlatformFeatures_: {
       type: Boolean,
       value: function() {
-        return loadTimeData.getBoolean('enableClipboardContentSetting');
-      }
-    },
-
-    /** @private */
-    enableSoundContentSetting_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableSoundContentSetting');
-      }
-    },
-
-    /** @private */
-    enableSensorsContentSetting_: {
-      type: Boolean,
-      readOnly: true,
-      value: function() {
-        return loadTimeData.getBoolean('enableSensorsContentSetting');
-      }
+        return loadTimeData.getBoolean('enableExperimentalWebPlatformFeatures');
+      },
     },
 
     /** @private */
@@ -81,6 +56,23 @@ Polymer({
       type: Boolean,
       value: function() {
         return loadTimeData.getBoolean('enablePaymentHandlerContentSetting');
+      }
+    },
+
+    /** @private */
+    enableInsecureContentContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableInsecureContentContentSetting');
+      }
+    },
+
+    /** @private */
+    enableNativeFileSystemWriteContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean(
+            'enableNativeFileSystemWriteContentSetting');
       }
     },
 
@@ -106,38 +98,53 @@ Polymer({
     // elements residing in this element's Shadow DOM.
     const R = settings.routes;
     const pairs = [
-      [R.SITE_SETTINGS_COOKIES, 'cookies'],
-      [R.SITE_SETTINGS_LOCATION, 'location'],
-      [R.SITE_SETTINGS_CAMERA, 'camera'],
-      [R.SITE_SETTINGS_MICROPHONE, 'microphone'],
-      [R.SITE_SETTINGS_NOTIFICATIONS, 'notifications'],
-      [R.SITE_SETTINGS_JAVASCRIPT, 'javascript'],
-      [R.SITE_SETTINGS_SOUND, 'sound'],
-      [R.SITE_SETTINGS_FLASH, 'flash'],
-      [R.SITE_SETTINGS_IMAGES, 'images'],
-      [R.SITE_SETTINGS_POPUPS, 'popups'],
-      [R.SITE_SETTINGS_BACKGROUND_SYNC, 'background-sync'],
-      [R.SITE_SETTINGS_AUTOMATIC_DOWNLOADS, 'automatic-downloads'],
-      [R.SITE_SETTINGS_UNSANDBOXED_PLUGINS, 'unsandboxed-plugins'],
-      [R.SITE_SETTINGS_HANDLERS, 'protocol-handlers'],
-      [R.SITE_SETTINGS_MIDI_DEVICES, 'midi-devices'],
       [R.SITE_SETTINGS_ADS, 'ads'],
-      [R.SITE_SETTINGS_ZOOM_LEVELS, 'zoom-levels'],
-      [R.SITE_SETTINGS_USB_DEVICES, 'usb-devices'],
-      [R.SITE_SETTINGS_PDF_DOCUMENTS, 'pdf-documents'],
-      [R.SITE_SETTINGS_PROTECTED_CONTENT, 'protected-content'],
+      [R.SITE_SETTINGS_ALL, 'all-sites'],
+      [R.SITE_SETTINGS_AUTOMATIC_DOWNLOADS, 'automatic-downloads'],
+      [R.SITE_SETTINGS_BACKGROUND_SYNC, 'background-sync'],
+      [R.SITE_SETTINGS_CAMERA, 'camera'],
       [R.SITE_SETTINGS_CLIPBOARD, 'clipboard'],
+      [R.SITE_SETTINGS_COOKIES, 'cookies'],
+      [R.SITE_SETTINGS_FLASH, 'flash'],
+      [R.SITE_SETTINGS_HANDLERS, 'protocol-handlers'],
+      [R.SITE_SETTINGS_IMAGES, 'images'],
+      [R.SITE_SETTINGS_JAVASCRIPT, 'javascript'],
+      [R.SITE_SETTINGS_LOCATION, 'location'],
+      [R.SITE_SETTINGS_MICROPHONE, 'microphone'],
+      [R.SITE_SETTINGS_MIDI_DEVICES, 'midi-devices'],
+      [R.SITE_SETTINGS_NOTIFICATIONS, 'notifications'],
+      [R.SITE_SETTINGS_PDF_DOCUMENTS, 'pdf-documents'],
+      [R.SITE_SETTINGS_POPUPS, 'popups'],
+      [R.SITE_SETTINGS_PROTECTED_CONTENT, 'protected-content'],
       [R.SITE_SETTINGS_SENSORS, 'sensors'],
+      [R.SITE_SETTINGS_SERIAL_PORTS, 'serial-ports'],
+      [R.SITE_SETTINGS_SOUND, 'sound'],
+      [R.SITE_SETTINGS_UNSANDBOXED_PLUGINS, 'unsandboxed-plugins'],
+      [R.SITE_SETTINGS_USB_DEVICES, 'usb-devices'],
+      [R.SITE_SETTINGS_ZOOM_LEVELS, 'zoom-levels'],
     ];
 
-    if (this.enablePaymentHandlerContentSetting_)
+    if (this.enablePaymentHandlerContentSetting_) {
       pairs.push([R.SITE_SETTINGS_PAYMENT_HANDLER, 'paymentHandler']);
+    }
 
-    pairs.forEach(pair => {
-      const route = pair[0];
-      const id = pair[1];
+    if (this.enableExperimentalWebPlatformFeatures_) {
+      pairs.push([R.SITE_SETTINGS_BLUETOOTH_SCANNING, 'bluetooth-scanning']);
+    }
+
+    if (this.enableNativeFileSystemWriteContentSetting_) {
+      pairs.push([
+        R.SITE_SETTINGS_NATIVE_FILE_SYSTEM_WRITE, 'native-file-system-write'
+      ]);
+    }
+
+    if (this.enableInsecureContentContentSetting_) {
+      pairs.push([R.SITE_SETTINGS_MIXEDSCRIPT, 'mixed-script']);
+    }
+
+    pairs.forEach(([route, id]) => {
       this.focusConfig.set(route.path, () => this.async(() => {
-        cr.ui.focusWithoutInk(assert(this.$$(`#${id} .subpage-arrow button`)));
+        cr.ui.focusWithoutInk(assert(this.$$(`#${id}`)));
       }));
     });
   },
@@ -151,8 +158,9 @@ Polymer({
     for (let i = 0; i < keys.length; ++i) {
       const key = settings.ContentSettingsTypes[keys[i]];
       // Default labels are not applicable to ZOOM.
-      if (key == settings.ContentSettingsTypes.ZOOM_LEVELS)
+      if (key == settings.ContentSettingsTypes.ZOOM_LEVELS) {
         continue;
+      }
       // Protocol handlers are not available (and will DCHECK) in guest mode.
       if (this.isGuest_ &&
           key == settings.ContentSettingsTypes.PROTOCOL_HANDLERS) {
@@ -160,8 +168,9 @@ Polymer({
       }
       // Similarly, protected content is only available in CrOS.
       // <if expr="not chromeos">
-      if (key == settings.ContentSettingsTypes.PROTECTED_CONTENT)
+      if (key == settings.ContentSettingsTypes.PROTECTED_CONTENT) {
         continue;
+      }
       // </if>
       this.updateDefaultValueLabel_(key);
     }
@@ -182,12 +191,15 @@ Polymer({
    * @private
    */
   defaultSettingLabel_: function(setting, enabled, disabled, other) {
-    if (setting == settings.ContentSetting.BLOCK)
+    if (setting == settings.ContentSetting.BLOCK) {
       return disabled;
-    if (setting == settings.ContentSetting.ALLOW)
+    }
+    if (setting == settings.ContentSetting.ALLOW) {
       return enabled;
-    if (other)
+    }
+    if (other) {
       return other;
+    }
     return enabled;
   },
 

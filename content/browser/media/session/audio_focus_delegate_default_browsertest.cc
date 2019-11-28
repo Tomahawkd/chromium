@@ -2,15 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/unguessable_token.h"
+#include "build/build_config.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "content/browser/media/session/mock_media_session_player_observer.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/system_connector.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/shell/browser/shell.h"
 #include "media/base/media_content_type.h"
-#include "services/media_session/public/cpp/switches.h"
+#include "media/base/media_switches.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/media_session/public/cpp/features.h"
 #include "services/media_session/public/cpp/test/audio_focus_test_util.h"
 #include "services/media_session/public/cpp/test/mock_media_session.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
@@ -30,25 +35,28 @@ const char kExpectedSourceName[] = "web";
 class AudioFocusDelegateDefaultBrowserTest : public ContentBrowserTest {
  protected:
   void SetUpOnMainThread() override {
-    service_manager::Connector* connector =
-        ServiceManagerConnection::GetForProcess()->GetConnector();
-    connector->BindInterface(media_session::mojom::kServiceName,
-                             mojo::MakeRequest(&audio_focus_ptr_));
+    ContentBrowserTest::SetUpOnMainThread();
+
+    GetSystemConnector()->Connect(media_session::mojom::kServiceName,
+                                  audio_focus_.BindNewPipeAndPassReceiver());
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(media_session::switches::kEnableAudioFocus);
+    scoped_feature_list_.InitWithFeatures(
+        {media_session::features::kMediaSessionService,
+         media_session::features::kAudioFocusEnforcement},
+        {});
   }
 
   void CheckSessionSourceName() {
-    audio_focus_ptr_->GetFocusRequests(base::BindOnce(
+    audio_focus_->GetFocusRequests(base::BindOnce(
         [](std::vector<media_session::mojom::AudioFocusRequestStatePtr>
                requests) {
           for (auto& request : requests)
             EXPECT_EQ(kExpectedSourceName, request->source_name.value());
         }));
 
-    audio_focus_ptr_.FlushForTesting();
+    audio_focus_.FlushForTesting();
   }
 
   void Run(WebContents* start_contents,
@@ -106,7 +114,9 @@ class AudioFocusDelegateDefaultBrowserTest : public ContentBrowserTest {
       media_session::test::MockMediaSessionMojoObserver observer(
           *media_session);
       observer.WaitForState(
-          use_separate_group_id
+          use_separate_group_id ||
+                  !base::FeatureList::IsEnabled(
+                      media_session::features::kAudioFocusSessionGrouping)
               ? media_session::mojom::MediaSessionInfo::SessionState::kSuspended
               : media_session::mojom::MediaSessionInfo::SessionState::kActive);
     }
@@ -146,14 +156,14 @@ class AudioFocusDelegateDefaultBrowserTest : public ContentBrowserTest {
   std::unique_ptr<TestAudioFocusObserver> CreateObserver() {
     std::unique_ptr<TestAudioFocusObserver> observer =
         std::make_unique<TestAudioFocusObserver>();
-    media_session::mojom::AudioFocusObserverPtr observer_ptr;
-    observer->BindToMojoRequest(mojo::MakeRequest(&observer_ptr));
-    audio_focus_ptr_->AddObserver(std::move(observer_ptr));
-    audio_focus_ptr_.FlushForTesting();
+    audio_focus_->AddObserver(observer->BindNewPipeAndPassRemote());
+    audio_focus_.FlushForTesting();
     return observer;
   }
 
-  media_session::mojom::AudioFocusManagerPtr audio_focus_ptr_;
+  mojo::Remote<media_session::mojom::AudioFocusManager> audio_focus_;
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Two windows from the same BrowserContext.

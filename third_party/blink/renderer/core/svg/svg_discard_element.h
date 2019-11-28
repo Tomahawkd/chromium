@@ -39,22 +39,12 @@ class SVGDiscardElement final : public SVGSMILElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGDiscardElement);
-
   explicit SVGDiscardElement(Document&);
 
   bool IsSVGDiscardElement() const override { return true; }
 
  private:
-  void ResetAnimatedType() override {}
-  void ClearAnimatedType() override {}
-  void ApplyResultsToTarget() override {}
-  void AnimationAttributeChanged() override {}
-
-  void StartedActiveInterval() override {}
-  void UpdateAnimation(float percent,
-                       unsigned repeat,
-                       SVGSMILElement* result_element) override {}
+  void StartedActiveInterval() override;
 };
 
 }  // namespace blink

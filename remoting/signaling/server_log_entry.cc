@@ -10,8 +10,8 @@
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 
 using base::SysInfo;
-using buzz::QName;
-using buzz::XmlElement;
+using jingle_xmpp::QName;
+using jingle_xmpp::XmlElement;
 
 namespace remoting {
 
@@ -83,6 +83,16 @@ std::unique_ptr<XmlElement> ServerLogEntry::ToStanza() const {
     stanza->AddAttr(QName(std::string(), iter->first), iter->second);
   }
   return stanza;
+}
+
+apis::v1::GenericLogEntry ServerLogEntry::ToGenericLogEntry() const {
+  apis::v1::GenericLogEntry log_entry;
+  for (auto pair : values_map_) {
+    auto* field = log_entry.add_field();
+    field->set_key(pair.first);
+    field->set_value(pair.second);
+  }
+  return log_entry;
 }
 
 }  // namespace remoting

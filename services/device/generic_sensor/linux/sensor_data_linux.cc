@@ -4,6 +4,7 @@
 
 #include "services/device/generic_sensor/linux/sensor_data_linux.h"
 
+#include "base/bind.h"
 #include "base/system/sys_info.h"
 #include "base/version.h"
 #include "services/device/generic_sensor/generic_sensor_consts.h"
@@ -80,7 +81,7 @@ void InitAccelerometerSensorData(SensorPathsLinux* data) {
   data->sensor_frequency_file_name = "in_accel_base_sampling_frequency";
   data->apply_scaling_func = base::Bind(
       [](double scaling_value, double offset, SensorReading& reading) {
-        double scaling = kMeanGravity / scaling_value;
+        double scaling = base::kMeanGravityDouble / scaling_value;
         reading.accel.x = scaling * (reading.accel.x + offset);
         reading.accel.y = scaling * (reading.accel.y + offset);
         reading.accel.z = scaling * (reading.accel.z + offset);
@@ -114,14 +115,14 @@ void InitGyroscopeSensorData(SensorPathsLinux* data) {
 #if defined(OS_CHROMEOS)
   data->sensor_scale_name = "in_anglvel_base_scale";
   data->sensor_frequency_file_name = "in_anglvel_base_frequency";
-  data->apply_scaling_func = base::Bind(
-      [](double scaling_value, double offset, SensorReading& reading) {
-        double scaling = gfx::DegToRad(kMeanGravity) / scaling_value;
-        // Adapt CrOS reading values to generic sensor api specs.
-        reading.gyro.x = -scaling * (reading.gyro.x + offset);
-        reading.gyro.y = -scaling * (reading.gyro.y + offset);
-        reading.gyro.z = -scaling * (reading.gyro.z + offset);
-      });
+  data->apply_scaling_func = base::Bind([](double scaling_value, double offset,
+                                           SensorReading& reading) {
+    double scaling = gfx::DegToRad(base::kMeanGravityDouble) / scaling_value;
+    // Adapt CrOS reading values to generic sensor api specs.
+    reading.gyro.x = -scaling * (reading.gyro.x + offset);
+    reading.gyro.y = -scaling * (reading.gyro.y + offset);
+    reading.gyro.z = -scaling * (reading.gyro.z + offset);
+  });
 #else
   data->sensor_scale_name = "in_anglvel_scale";
   data->sensor_offset_file_name = "in_anglvel_offset";
@@ -140,9 +141,9 @@ void InitGyroscopeSensorData(SensorPathsLinux* data) {
       SensorTraits<SensorType::GYROSCOPE>::kDefaultFrequency);
 }
 
-// TODO(maksims): Verify magnitometer works correctly on a chromebook when
+// TODO(maksims): Verify magnetometer works correctly on a chromebook when
 // I get one with that sensor onboard.
-void InitMagnitometerSensorData(SensorPathsLinux* data) {
+void InitMagnetometerSensorData(SensorPathsLinux* data) {
   std::vector<std::string> file_names_x{"in_magn_x_raw"};
   std::vector<std::string> file_names_y{"in_magn_y_raw"};
   std::vector<std::string> file_names_z{"in_magn_z_raw"};
@@ -185,7 +186,7 @@ bool InitSensorData(SensorType type, SensorPathsLinux* data) {
       InitGyroscopeSensorData(data);
       break;
     case SensorType::MAGNETOMETER:
-      InitMagnitometerSensorData(data);
+      InitMagnetometerSensorData(data);
       break;
     default:
       return false;
@@ -211,5 +212,7 @@ SensorInfoLinux::SensorInfoLinux(
       device_reading_files(std::move(device_reading_files)) {}
 
 SensorInfoLinux::~SensorInfoLinux() = default;
+
+SensorInfoLinux::SensorInfoLinux(const SensorInfoLinux&) = default;
 
 }  // namespace device

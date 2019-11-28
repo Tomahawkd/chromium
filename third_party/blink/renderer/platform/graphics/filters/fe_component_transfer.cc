@@ -25,10 +25,12 @@
 #include "third_party/blink/renderer/platform/graphics/filters/fe_component_transfer.h"
 
 #include <algorithm>
-#include "SkTableColorFilter.h"
+
+#include "base/stl_util.h"
 #include "third_party/blink/renderer/platform/graphics/filters/paint_filter_builder.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_stream.h"
+#include "third_party/skia/include/effects/SkTableColorFilter.h"
 
 namespace blink {
 
@@ -45,16 +47,6 @@ FEComponentTransfer::FEComponentTransfer(
       green_func_(green_func),
       blue_func_(blue_func),
       alpha_func_(alpha_func) {}
-
-FEComponentTransfer* FEComponentTransfer::Create(
-    Filter* filter,
-    const ComponentTransferFunction& red_func,
-    const ComponentTransferFunction& green_func,
-    const ComponentTransferFunction& blue_func,
-    const ComponentTransferFunction& alpha_func) {
-  return MakeGarbageCollected<FEComponentTransfer>(filter, red_func, green_func,
-                                                   blue_func, alpha_func);
-}
 
 static void Identity(unsigned char*, const ComponentTransferFunction&) {}
 
@@ -161,7 +153,7 @@ void FEComponentTransfer::GetValues(unsigned char r_values[256],
 
   for (unsigned channel = 0; channel < 4; channel++) {
     SECURITY_DCHECK(static_cast<size_t>(transfer_function[channel].type) <
-                    arraysize(call_effect));
+                    base::size(call_effect));
     (*call_effect[transfer_function[channel].type])(tables[channel],
                                                     transfer_function[channel]);
   }

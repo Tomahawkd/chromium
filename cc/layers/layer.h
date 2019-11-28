@@ -8,41 +8,36 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "cc/base/region.h"
 #include "cc/benchmarks/micro_benchmark.h"
 #include "cc/cc_export.h"
 #include "cc/input/input_handler.h"
-#include "cc/input/overscroll_behavior.h"
 #include "cc/input/scroll_snap_data.h"
 #include "cc/layers/layer_collections.h"
-#include "cc/layers/layer_position_constraint.h"
 #include "cc/layers/touch_action_region.h"
+#include "cc/paint/element_id.h"
 #include "cc/paint/filter_operations.h"
 #include "cc/paint/paint_record.h"
-#include "cc/trees/element_id.h"
+#include "cc/trees/effect_node.h"
 #include "cc/trees/property_tree.h"
 #include "cc/trees/target_property.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/scroll_offset.h"
+#include "ui/gfx/rrect_f.h"
 #include "ui/gfx/transform.h"
-
-namespace base {
-namespace trace_event {
-class TracedValue;
-}
-}
 
 namespace viz {
 class CopyOutputRequest;
@@ -50,12 +45,30 @@ class CopyOutputRequest;
 
 namespace cc {
 
-class LayerClient;
 class LayerImpl;
 class LayerTreeHost;
 class LayerTreeHostCommon;
 class LayerTreeImpl;
 class PictureLayer;
+
+// For tracing and debugging. The info will be attached to this layer's tracing
+// output.
+struct LayerDebugInfo {
+  LayerDebugInfo();
+  LayerDebugInfo(const LayerDebugInfo&);
+  ~LayerDebugInfo();
+
+  std::string name;
+  NodeId owner_node_id = kInvalidNodeId;
+  int paint_count = 0;
+  std::vector<const char*> compositing_reasons;
+  struct Invalidation {
+    gfx::Rect rect;
+    const char* reason;
+    std::string client;
+  };
+  std::vector<Invalidation> invalidations;
+};
 
 // Base class for composited layers. Special layer types are derived from
 // this class. Each layer is an independent unit in the compositor, be that
@@ -72,22 +85,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     INVALID_ID = -1,
   };
 
-  // A layer can be attached to another layer as a mask for it. These
-  // describe how the mask would be generated as a texture in that case.
-  enum LayerMaskType {
-    NOT_MASK = 0,
-    MULTI_TEXTURE_MASK,
-    SINGLE_TEXTURE_MASK,
-  };
-
   // Factory to create a new Layer, with a unique id.
   static scoped_refptr<Layer> Create();
 
-  // Sets an optional client on this layer, that will be called when relevant
-  // events happen. The client is a WeakPtr so it can be destroyed without
-  // unsetting itself as the client.
-  void SetLayerClient(base::WeakPtr<LayerClient> client);
-  LayerClient* GetLayerClientForTesting() const { return inputs_.client.get(); }
+  Layer(const Layer&) = delete;
+  Layer& operator=(const Layer&) = delete;
 
   // A unique and stable id for the Layer. Ids are always positive.
   int id() const { return inputs_.layer_id; }
@@ -158,14 +160,25 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // background_color(), but if the background_color() is opaque (and this layer
   // claims to not be), then SK_ColorTRANSPARENT is returned.
   SkColor SafeOpaqueBackgroundColor() const;
+  // For testing, return the actual stored value.
+  SkColor ActualSafeOpaqueBackgroundColorForTesting() const {
+    return safe_opaque_background_color_;
+  }
 
   // Set and get the position of this layer, relative to its parent. This is
   // specified in layer space, which excludes device scale and page scale
   // factors, and ignoring transforms for this layer or ancestor layers. The
   // root layer's position is not used as it always appears at the origin of
-  // the viewport.
+  // the viewport. When property trees are built by cc (when IsUsingLayerLists
+  // is false), position is used to update |offset_to_transform_parent|.
   void SetPosition(const gfx::PointF& position);
   const gfx::PointF& position() const { return inputs_.position; }
+
+  // Reorder the entirety of the children() vector to follow new_children_order.
+  // All elements inside new_children_order must be inside children(), and vice
+  // versa. Will empty the |new_children_order| LayerList passed into this
+  // method.
+  void ReorderChildren(LayerList* new_children_order);
 
   // Set and get the layers bounds. This is specified in layer space, which
   // excludes device scale and page scale factors, and ignoring transforms for
@@ -176,48 +189,27 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetBounds(const gfx::Size& bounds);
   const gfx::Size& bounds() const { return inputs_.bounds; }
 
-  // Set and get the behaviour to be applied for compositor-thread scrolling of
-  // this layer beyond the beginning or end of the layer's content.
-  // TODO(bokan): With blink-gen-property-trees this is stored on the
-  // ScrollNode and can be removed here.
-  void SetOverscrollBehavior(const OverscrollBehavior& behavior);
-  OverscrollBehavior overscroll_behavior() const {
-    return inputs_.overscroll_behavior;
-  }
-
-  // Set and get the snapping behaviour for compositor-thread scrolling of
-  // this layer. The default value of null means there is no snapping for the
-  // layer.
-  // TODO(crbug.com/836884) With blink-gen-property-trees this is stored on the
-  // ScrollNode and can be removed here.
-  void SetSnapContainerData(base::Optional<SnapContainerData> data);
-  const base::Optional<SnapContainerData>& snap_container_data() const {
-    return inputs_.snap_container_data;
-  }
-
   // Set or get that this layer clips its subtree to within its bounds. Content
   // of children will be intersected with the bounds of this layer when true.
   void SetMasksToBounds(bool masks_to_bounds);
   bool masks_to_bounds() const { return inputs_.masks_to_bounds; }
 
-  // Set or get a layer that is not an ancestor of this layer, but which should
-  // be clipped to this layer's bounds if SetMasksToBounds() is set to true.
-  // The parent layer does *not* retain ownership of a reference on this layer.
-  void SetClipParent(Layer* ancestor);
-  Layer* clip_parent() { return inputs_.clip_parent; }
+  // Set or get the clip rect for this layer. |clip_rect| is relative to |this|
+  // layer. If you are trying to clip the subtree to the bounds of this layer,
+  // SetMasksToBounds() would be a better alternative.
+  void SetClipRect(const gfx::Rect& clip_rect);
+  const gfx::Rect& clip_rect() const { return inputs_.clip_rect; }
 
-  // The set of layers which are not in this layers subtree but which should be
-  // clipped to only appear within this layer's bounds.
-  std::set<Layer*>* clip_children() { return clip_children_.get(); }
-  const std::set<Layer*>* clip_children() const { return clip_children_.get(); }
+  // Returns the bounds which is clipped by the clip rect.
+  gfx::RectF EffectiveClipRect();
 
   // Set or get a layer that will mask the contents of this layer. The alpha
   // channel of the mask layer's content is used as an alpha mask of this
   // layer's content. IOW the mask's alpha is multiplied by this layer's alpha
   // for each matching pixel.
-  void SetMaskLayer(PictureLayer* mask_layer);
-  PictureLayer* mask_layer() { return inputs_.mask_layer.get(); }
-  const PictureLayer* mask_layer() const { return inputs_.mask_layer.get(); }
+  // This is for layer tree mode only.
+  void SetMaskLayer(scoped_refptr<PictureLayer> mask_layer);
+  bool IsMaskedByChild() const { return !!inputs_.mask_layer; }
 
   // Marks the |dirty_rect| as being changed, which will cause a commit and
   // the compositor to submit a new frame with a damage rect that includes the
@@ -232,6 +224,28 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // Returns the union of previous calls to SetNeedsDisplayRect() and
   // SetNeedsDisplay() that have not been committed to the compositor thread.
   const gfx::Rect& update_rect() const { return inputs_.update_rect; }
+
+  void ResetUpdateRectForTesting() { inputs_.update_rect = gfx::Rect(); }
+
+  // Set or get the rounded corner radii which is applied to the layer and its
+  // subtree (as if they are together as a single composited entity) when
+  // blitting into their target. Setting this makes the layer masked to bounds.
+  // If the layer has a clip of its own, the rounded corner will be applied
+  // along the layer's clip rect corners.
+  void SetRoundedCorner(const gfx::RoundedCornersF& corner_radii);
+  const gfx::RoundedCornersF& corner_radii() const {
+    return inputs_.corner_radii;
+  }
+
+  // Returns true if any of the corner has a non-zero radius set.
+  bool HasRoundedCorner() const { return !corner_radii().IsEmpty(); }
+
+  // Set or get the flag that disables the requirement of a render surface for
+  // this layer due to it having rounded corners. This improves performance at
+  // the cost of maybe having some blending artifacts. Not having a render
+  // surface is not guaranteed however.
+  void SetIsFastRoundedCorner(bool enable);
+  bool is_fast_rounded_corner() const { return inputs_.is_fast_rounded_corner; }
 
   // Set or get the opacity which should be applied to the contents of the layer
   // and its subtree (together as a single composited entity) when blending them
@@ -252,15 +266,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetBlendMode(SkBlendMode blend_mode);
   SkBlendMode blend_mode() const { return inputs_.blend_mode; }
 
-  // A layer is root for an isolated group when it and all its descendants are
-  // drawn over a black and fully transparent background, creating an isolated
-  // group. It should be used along with SetBlendMode(), in order to restrict
-  // layers within the group to blend with layers outside this group.
-  void SetIsRootForIsolatedGroup(bool root);
-  bool is_root_for_isolated_group() const {
-    return inputs_.is_root_for_isolated_group;
-  }
-
   // Set or get the list of filter effects to be applied to the contents of the
   // layer and its subtree (together as a single composited entity) when
   // drawing them into their target.
@@ -276,11 +281,17 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   gfx::PointF filters_origin() const { return inputs_.filters_origin; }
 
   // Set or get the list of filters that should be applied to the content this
-  // layer and its subtree will be drawn into. The effect is clipped to only
-  // apply directly behind this layer and its subtree.
+  // layer and its subtree will be drawn into. The effect is clipped by
+  // backdrop_filter_bounds.
   void SetBackdropFilters(const FilterOperations& filters);
   const FilterOperations& backdrop_filters() const {
     return inputs_.backdrop_filters;
+  }
+
+  void SetBackdropFilterBounds(const gfx::RRectF& backdrop_filter_bounds);
+  void ClearBackdropFilterBounds();
+  const base::Optional<gfx::RRectF>& backdrop_filter_bounds() const {
+    return inputs_.backdrop_filter_bounds;
   }
 
   void SetBackdropFilterQuality(const float quality);
@@ -296,55 +307,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetContentsOpaque(bool opaque);
   bool contents_opaque() const { return inputs_.contents_opaque; }
 
-  // Set or get whether this layer should be a hit test target even if not
-  // visible. Normally if DrawsContent() is false, making the layer not
-  // contribute to the final composited output, the layer will not be eligable
-  // for hit testing since it is invisible. Set this to true to allow the layer
-  // to be hit tested regardless.
-  void SetHitTestableWithoutDrawsContent(bool should_hit_test);
-  bool hit_testable_without_draws_content() const {
-    return inputs_.hit_testable_without_draws_content;
-  }
-
-  // Set or gets if this layer is a container for fixed position layers in its
-  // subtree. Such layers will be positioned and transformed relative to this
-  // layer instead of their direct parent.
-  //
-  // A layer that is a container for fixed position layers cannot be both
-  // scrollable and have a non-identity transform.
-  void SetIsContainerForFixedPositionLayers(bool container);
-  bool IsContainerForFixedPositionLayers() const;
-
-  // Set or get constraints applied to the layer's position, where it may be
-  // in a fixed position relative to the nearest ancestor that returns true for
-  // IsContainerForFixedPositionLayers(). This may also specify which edges
-  // of the layer are fixed to the same edges of the container ancestor. When
-  // fixed position, this layer's transform will be appended to the container
-  // ancestor's transform instead of to this layer's direct parent's.
-  void SetPositionConstraint(const LayerPositionConstraint& constraint);
-  const LayerPositionConstraint& position_constraint() const {
-    return inputs_.position_constraint;
-  }
-
-  // Set or get constraints applied to the layer's position, where it may act
-  // like a normal layer until, during scroll, its position triggers it to
-  // become fixed position relative to its scroller. See CSS position: sticky
-  // for more details.
-  void SetStickyPositionConstraint(
-      const LayerStickyPositionConstraint& constraint);
-  const LayerStickyPositionConstraint& sticky_position_constraint() const {
-    return inputs_.sticky_position_constraint;
-  }
-
-  // On some platforms (Android renderer) the viewport may resize during scroll
-  // on the compositor thread. During this resize and until the main thread
-  // matches, position fixed layers may need to have their position adjusted on
-  // the compositor thread to keep them fixed in place.  If
-  // IsContainerForFixedPositionLayers() is true for this layer, these set and
-  // get whether fixed position descendants of this layer should have this
-  // adjustment to their position applied during such a viewport resize.
-  void SetIsResizedByBrowserControls(bool resized);
-  bool IsResizedByBrowserControls() const;
+  // Set or get whether this layer should be a hit test target
+  void SetHitTestable(bool should_hit_test);
+  virtual bool HitTestable() const;
 
   // Set or get the transform to be used when compositing this layer into its
   // target. The transform is inherited by this layers children.
@@ -367,11 +332,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   const gfx::Point3F& transform_origin() const {
     return inputs_.transform_origin;
   }
-
-  // Set or get a scroll parent layer. It is not an ancestor of this layer, but
-  // this layer will be moved by the scroll parent's scroll offset.
-  void SetScrollParent(Layer* parent);
-  Layer* scroll_parent() { return inputs_.scroll_parent; }
 
   // Set or get the scroll offset of the layer. The content of the layer, and
   // position of its subtree, as well as other layers for which this layer is
@@ -404,7 +364,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   bool is_scrollbar() const { return inputs_.is_scrollbar; }
 
   // Set or get if this layer is able to be scrolled along each axis. These are
-  // independant of the scrollable state, or size of the scrollable area
+  // independent of the scrollable state, or size of the scrollable area
   // specified in SetScrollable(), as these may be enabled or disabled
   // dynamically, while SetScrollable() defines what would be possible if these
   // are enabled.
@@ -413,27 +373,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // the scrollbars will be shown when the scroll offset changes if these are
   // set to true.
   void SetUserScrollable(bool horizontal, bool vertical);
-  bool user_scrollable_horizontal() const {
-    return inputs_.user_scrollable_horizontal;
-  }
-  bool user_scrollable_vertical() const {
-    return inputs_.user_scrollable_vertical;
-  }
-
-  // Set or get if this layer is able to be scrolled on the compositor thread.
-  // This only applies for layers that are marked as scrollable, not for layers
-  // that are moved by a scroll parent. When any reason is present, the layer
-  // will not be scrolled on the compositor thread. The reasons are a set of
-  // bitflags from MainThreadScrollingReason, used to track the reason for
-  // debugging and reporting.
-  // AddMainThreadScrollingReasons() is used to add flags to the current set,
-  // and ClearMainThreadScrollingReasons() removes flags from the current set.
-  void AddMainThreadScrollingReasons(uint32_t main_thread_scrolling_reasons);
-  void ClearMainThreadScrollingReasons(
-      uint32_t main_thread_scrolling_reasons_to_clear);
-  uint32_t main_thread_scrolling_reasons() const {
-    return inputs_.main_thread_scrolling_reasons;
-  }
+  bool GetUserScrollableHorizontal() const;
+  bool GetUserScrollableVertical() const;
 
   // Set or get an area of this layer within which initiating a scroll can not
   // be done from the compositor thread. Within this area, if the user attempts
@@ -458,12 +399,10 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // asked to prepare content with Update(), if the scroll offset for the layer
   // was changed by the InputHandlerClient, on the compositor thread (or on the
   // main thread in single-thread mode). It may be set to a null callback, in
-  // which case nothing is called.
-  void set_did_scroll_callback(
-      base::RepeatingCallback<void(const gfx::ScrollOffset&, const ElementId&)>
-          callback) {
-    inputs_.did_scroll_callback = std::move(callback);
-  }
+  // which case nothing is called. This is for layer tree mode only. Should use
+  // ScrollTree::SetScrollCallbacks() in layer list mode.
+  void SetDidScrollCallback(base::RepeatingCallback<
+                            void(const gfx::ScrollOffset&, const ElementId&)>);
 
   // Set or get if the layer and its subtree should be cached as a texture in
   // the display compositor. This is used as an optimization when it is known
@@ -477,6 +416,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // output.
   void SetCacheRenderSurface(bool cache_render_surface);
   bool cache_render_surface() const { return cache_render_surface_; }
+
+  // If the layer induces a render surface, this returns the cause for the
+  // render surface. If the layer does not induce a render surface, this returns
+  // kNone.
+  RenderSurfaceReason GetRenderSurfaceReason() const;
 
   // Set or get if the layer and its subtree will be drawn through an
   // intermediate texture, called a RenderSurface. This mimics the need
@@ -513,25 +457,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   bool use_parent_backface_visibility() const {
     return inputs_.use_parent_backface_visibility;
   }
-
-  // Set or get if the subtree of this layer is composited in 3d-space, or if
-  // the layers are flattened into the plane of this layer. This supports the
-  // transform-style CSS property.
-  void SetShouldFlattenTransform(bool flatten);
-  bool should_flatten_transform() const {
-    return inputs_.should_flatten_transform;
-  }
-
-  // Set or get a 3d sorting context for this layer, where adjacent layers (in a
-  // pre-order traversal) with the same id are sorted as a group and may occlude
-  // each other based on their z-position, including intersecting each other and
-  // each occluding the other layer partially. Layers in different sorting
-  // contexts will be composited and occlude in tree order (children occlude
-  // ancestors and earlier siblings in the children list). If the |id| is 0,
-  // then the layer is not part of any sorting context, and is always composited
-  // in tree order.
-  void Set3dSortingContextId(int id);
-  int sorting_context_id() const { return inputs_.sorting_context_id; }
 
   // When true the layer may contribute to the compositor's output. When false,
   // it does not. This property does not apply to children of the layer, they
@@ -571,7 +496,10 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // While all layers have an index into the transform tree, this value
   // indicates whether the transform tree node was created for this layer.
   void SetHasTransformNode(bool val) { has_transform_node_ = val; }
-  bool has_transform_node() { return has_transform_node_; }
+  bool has_transform_node() const { return has_transform_node_; }
+
+  // This value indicates whether a clip node was created for |this| layer.
+  void SetHasClipNode(bool val) { has_clip_node_ = val; }
 
   // Sets that the content shown in this layer may be a video. This may be used
   // by the system compositor to distinguish between animations updating the
@@ -604,8 +532,18 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetTrilinearFiltering(bool trilinear_filtering);
   bool trilinear_filtering() const { return inputs_.trilinear_filtering; }
 
+  // Increments/decrements/gets number of layers mirroring this layer.
+  void IncrementMirrorCount();
+  void DecrementMirrorCount();
+  int mirror_count() const { return inputs_.mirror_count; }
+
   // Called on the scroll layer to trigger showing the overlay scrollbars.
   void ShowScrollbars() { needs_show_scrollbars_ = true; }
+
+  // Captures text content within the given |rect| and returns the associated
+  // NodeId in |content|.
+  virtual void CaptureContent(const gfx::Rect& rect,
+                              std::vector<NodeId>* content);
 
   // For tracing. Gets a recorded rasterization of this layer's contents that
   // can be displayed inside representations of this layer. May return null, in
@@ -613,9 +551,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // display.
   virtual sk_sp<SkPicture> GetPicture() const;
 
-  // For tracing. Calls out to the LayerClient to get tracing data that will
-  // be attached to this layer's tracing outputs under the 'debug_info' key.
-  void UpdateDebugInfo();
+  const LayerDebugInfo* debug_info() const { return debug_info_.get(); }
+  LayerDebugInfo& EnsureDebugInfo();
+  void ClearDebugInfo();
 
   // For telemetry testing. Runs a given test behaviour implemented in
   // |benchmark| for this layer. The base class does nothing as benchmarks
@@ -642,23 +580,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // if there is anything new to commit. If all layers return false, the commit
   // may be aborted.
   virtual bool Update();
-  // Internal method to be overriden by Layer subclasses that override Update()
-  // and require rasterization. After Update() is called, this is immediately
-  // called, and should return whether the layer will require rasterization of
-  // paths that will be difficult/slow to raster. Only layers that do
-  // rasterization via TileManager need to override this, other layers that have
-  // content generated in other ways may leave it as the default.
-  virtual bool HasSlowPaths() const;
-  // Internal method to be overriden by Layer subclasses that override Update()
-  // and require rasterization. After Update() is called, this is immediately
-  // called, and should return whether the layer will require rasterization of a
-  // drawing operation that must not be anti-aliased. In this case using MSAA to
-  // antialias the entire layer's content would produce an incorrect result.
-  // This result is considered sticky, once a layer returns true, so false
-  // positives should be avoided. Only layers that do rasterization via
-  // TileManager need to override this, other layers that have content generated
-  // in other ways may leave it as the default.
-  virtual bool HasNonAAPaint() const;
 
   // Internal to property tree construction. This allows a layer to request that
   // its transform should be snapped such that the layer aligns with the pixel
@@ -686,11 +607,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // was called before it.
   void SetNeedsPushProperties();
 
-  // Internal method to call the LayerClient, if there is one, to inform it when
-  // overlay scrollbars have been completely hidden (due to lack of scrolling by
-  // the user).
-  void SetScrollbarsHiddenFromImplSide(bool hidden);
-
   // Internal to property tree construction. A generation number for the
   // property trees, to verify the layer's indices are pointers into the trees
   // currently held by the LayerTreeHost. The number is updated when property
@@ -709,10 +625,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetEffectTreeIndex(int index);
   void SetScrollTreeIndex(int index);
 
-  // Internal to property tree construction. Set or get the position of this
-  // layer relative to the origin after transforming according to this layer's
-  // index into the transform tree. This translation is appended to the
-  // transform that comes from the transform tree for this layer.
+  // The position of this layer after transforming by the layer's transform
+  // node. When property trees are built by cc (when IsUsingLayerLists is false)
+  // this is set by property_tree_builder.cc.
   void SetOffsetToTransformParent(gfx::Vector2dF offset);
   gfx::Vector2dF offset_to_transform_parent() const {
     return offset_to_transform_parent_;
@@ -723,6 +638,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // layer's subtree, including itself. This causes the layer's subtree to be
   // considered damaged and re-displayed to the user.
   void SetSubtreePropertyChanged();
+  void ClearSubtreePropertyChangedForTesting() {
+    subtree_property_changed_ = false;
+  }
   bool subtree_property_changed() const { return subtree_property_changed_; }
 
   // Internal to property tree construction. Returns ElementListType::ACTIVE
@@ -755,18 +673,17 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return should_check_backface_visibility_;
   }
 
-  // Internal to property tree construction. The value here derives from
-  // should_flatten_transform() along with other state, and is for internal use
-  // in order to flatten the layer's ScreenSpaceTransform() in cases where the
-  // property tree did not handle it.
-  void SetShouldFlattenScreenSpaceTransformFromPropertyTree(bool should);
-  bool should_flatten_screen_space_transform_from_property_tree() const {
-    return should_flatten_screen_space_transform_from_property_tree_;
-  }
+  // For debugging, containing information about the associated DOM, etc.
+  std::string DebugName() const;
 
-  void set_is_rounded_corner_mask(bool rounded) {
-    is_rounded_corner_mask_ = rounded;
-  }
+  std::string ToString() const;
+
+  // Called when a property has been modified in a way that the layer knows
+  // immediately that a commit is required.  This implies SetNeedsPushProperties
+  // to push that property.
+  // This is public, so that it can be called directly when needed, for example
+  // in PropertyTreeManager when handling scroll offsets.
+  void SetNeedsCommit();
 
  protected:
   friend class LayerImpl;
@@ -776,11 +693,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   virtual ~Layer();
 
   // These SetNeeds functions are in order of severity of update:
-  //
-  // Called when a property has been modified in a way that the layer knows
-  // immediately that a commit is required.  This implies SetNeedsPushProperties
-  // to push that property.
-  void SetNeedsCommit();
+
+  // See SetNeedsCommit() above - it belongs here in the order of severity.
 
   // Called when there's been a change in layer structure.  Implies
   // SetNeedsCommit and property tree rebuld, but not SetNeedsPushProperties
@@ -809,9 +723,14 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // be changed while the frame is being generated for commit.
   bool IsPropertyChangeAllowed() const;
 
-  // When true, the layer is about to perform an update. Any commit requests
-  // will be handled implicitly after the update completes.
-  bool ignore_set_needs_commit_;
+  void IncreasePaintCount() {
+    if (debug_info_)
+      ++debug_info_->paint_count;
+  }
+
+  base::AutoReset<bool> IgnoreSetNeedsCommit() {
+    return base::AutoReset<bool>(&ignore_set_needs_commit_, true);
+  }
 
  private:
   friend class base::RefCounted<Layer>;
@@ -820,6 +739,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
   // Interactions with attached animations.
   void OnFilterAnimated(const FilterOperations& filters);
+  void OnBackdropFilterAnimated(const FilterOperations& backdrop_filters);
   void OnOpacityAnimated(float opacity);
   void OnTransformAnimated(const gfx::Transform& transform);
 
@@ -827,14 +747,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void RemoveClipChild(Layer* child);
 
   void SetParent(Layer* layer);
-  bool DescendantIsFixedToContainerLayer() const;
 
   // This should only be called from RemoveFromParent().
-  void RemoveChildOrDependent(Layer* child);
-
-  // If this layer has a clip parent, it removes |this| from its list of clip
-  // children.
-  void RemoveFromClipTree();
+  void RemoveChild(Layer* child);
 
   // When we detach or attach layer to new LayerTreeHost, all property trees'
   // indices becomes invalid.
@@ -850,64 +765,45 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // they are marked as needing to be rebuilt.
   void UpdateScrollOffset(const gfx::ScrollOffset&);
 
+  void SetMirrorCount(int mirror_count);
+
   // Encapsulates all data, callbacks or interfaces received from the embedder.
-  // TODO(khushalsagar): This is only valid when PropertyTrees are built
-  // internally in cc. Update this for the SPv2 path where blink generates
-  // PropertyTrees.
   struct Inputs {
     explicit Inputs(int layer_id);
     ~Inputs();
-
-    int layer_id;
 
     LayerList children;
 
     gfx::Rect update_rect;
 
     gfx::Size bounds;
-    bool masks_to_bounds;
+    gfx::Rect clip_rect;
 
-    scoped_refptr<PictureLayer> mask_layer;
+    // If not null, points to one of child layers which is set as mask layer
+    // by SetMaskLayer().
+    Layer* mask_layer;
+
+    int layer_id;
 
     float opacity;
     SkBlendMode blend_mode;
 
-    bool is_root_for_isolated_group : 1;
+    bool masks_to_bounds : 1;
 
-    // Hit testing depends on draws_content (see: |LayerImpl::should_hit_test|)
-    // and this bit can be set to cause the LayerImpl to be hit testable without
-    // draws_content.
-    bool hit_testable_without_draws_content : 1;
+    // Hit testing depends on this bit.
+    bool hit_testable : 1;
 
     bool contents_opaque : 1;
-
-    gfx::PointF position;
-    gfx::Transform transform;
-    gfx::Point3F transform_origin;
 
     bool is_drawable : 1;
 
     bool double_sided : 1;
-    bool should_flatten_transform : 1;
-
-    // Layers that share a sorting context id will be sorted together in 3d
-    // space.  0 is a special value that means this layer will not be sorted
-    // and will be drawn in paint order.
-    int sorting_context_id;
 
     bool use_parent_backface_visibility : 1;
 
-    SkColor background_color;
-
-    FilterOperations filters;
-    FilterOperations backdrop_filters;
-    gfx::PointF filters_origin;
-    float backdrop_filter_quality;
-
-    gfx::ScrollOffset scroll_offset;
-
-    // Size of the scroll container that this layer scrolls in.
-    gfx::Size scroll_container_bounds;
+    // If set, disables this layer's rounded corner from triggering a render
+    // surface on itself if possible.
+    bool is_fast_rounded_corner : 1;
 
     // Indicates that this layer will need a scroll property node and that this
     // layer's bounds correspond to the scroll node's bounds (both |bounds| and
@@ -920,46 +816,45 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     bool user_scrollable_horizontal : 1;
     bool user_scrollable_vertical : 1;
 
-    uint32_t main_thread_scrolling_reasons;
-    Region non_fast_scrollable_region;
-
-    TouchActionRegion touch_action_region;
-
-    // When set, position: fixed children of this layer will be affected by URL
-    // bar movement. bottom-fixed element will be pushed down as the URL bar
-    // hides (and the viewport expands) so that the element stays fixed to the
-    // viewport bottom. This will always be set on the outer viewport scroll
-    // layer. In the case of a non-default rootScroller, all iframes in the
-    // rootScroller ancestor chain will also have it set on their scroll
-    // layers.
-    bool is_resized_by_browser_controls : 1;
-    bool is_container_for_fixed_position_layers : 1;
-    LayerPositionConstraint position_constraint;
-
-    LayerStickyPositionConstraint sticky_position_constraint;
-
-    ElementId element_id;
-
-    Layer* scroll_parent;
-    Layer* clip_parent;
-
     bool has_will_change_transform_hint : 1;
 
     bool trilinear_filtering : 1;
 
     bool hide_layer_and_subtree : 1;
 
-    // The following elements can not and are not serialized.
-    base::WeakPtr<LayerClient> client;
-    std::unique_ptr<base::trace_event::TracedValue> debug_info;
+    gfx::PointF position;
+    gfx::Transform transform;
+    gfx::Point3F transform_origin;
 
+    SkColor background_color;
+
+    FilterOperations filters;
+    FilterOperations backdrop_filters;
+    base::Optional<gfx::RRectF> backdrop_filter_bounds;
+    gfx::PointF filters_origin;
+    float backdrop_filter_quality;
+
+    // Corner clip radius for the 4 corners of the layer in the following order:
+    //     top left, top right, bottom right, bottom left
+    gfx::RoundedCornersF corner_radii;
+
+    gfx::ScrollOffset scroll_offset;
+
+    // Size of the scroll container that this layer scrolls in.
+    gfx::Size scroll_container_bounds;
+
+    int mirror_count;
+
+    Region non_fast_scrollable_region;
+
+    TouchActionRegion touch_action_region;
+
+    ElementId element_id;
+
+    // These for for layer tree mode (ui compositor) only.
     base::RepeatingCallback<void(const gfx::ScrollOffset&, const ElementId&)>
         did_scroll_callback;
     std::vector<std::unique_ptr<viz::CopyOutputRequest>> copy_requests;
-
-    OverscrollBehavior overscroll_behavior;
-
-    base::Optional<SnapContainerData> snap_container_data;
   };
 
   Layer* parent_;
@@ -978,7 +873,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   int scroll_tree_index_;
   int property_tree_sequence_number_;
   gfx::Vector2dF offset_to_transform_parent_;
-  bool should_flatten_screen_space_transform_from_property_tree_ : 1;
+
+  // When true, the layer is about to perform an update. Any commit requests
+  // will be handled implicitly after the update completes. Not a bitfield
+  // because it's used in base::AutoReset.
+  bool ignore_set_needs_commit_;
+
   bool draws_content_ : 1;
   bool should_check_backface_visibility_ : 1;
   // Force use of and cache render surface.
@@ -988,14 +888,13 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   bool may_contain_video_ : 1;
   bool needs_show_scrollbars_ : 1;
   bool has_transform_node_ : 1;
-  bool is_rounded_corner_mask_ : 1;
+  bool has_clip_node_ : 1;
   // This value is valid only when LayerTreeHost::has_copy_request() is true
   bool subtree_has_copy_request_ : 1;
+
   SkColor safe_opaque_background_color_;
 
-  std::unique_ptr<std::set<Layer*>> clip_children_;
-
-  DISALLOW_COPY_AND_ASSIGN(Layer);
+  std::unique_ptr<LayerDebugInfo> debug_info_;
 };
 
 }  // namespace cc

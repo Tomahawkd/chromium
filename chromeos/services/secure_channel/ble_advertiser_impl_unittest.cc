@@ -10,7 +10,7 @@
 
 #include "base/bind.h"
 #include "base/test/gtest_util.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "chromeos/services/secure_channel/error_tolerant_ble_advertisement_impl.h"
 #include "chromeos/services/secure_channel/fake_ble_advertiser.h"
@@ -52,7 +52,7 @@ class FakeErrorTolerantBleAdvertisementFactory
   // ErrorTolerantBleAdvertisementImpl::Factory:
   std::unique_ptr<ErrorTolerantBleAdvertisement> BuildInstance(
       const DeviceIdPair& device_id_pair,
-      std::unique_ptr<cryptauth::DataWithTimestamp> advertisement_data,
+      std::unique_ptr<DataWithTimestamp> advertisement_data,
       BleSynchronizerBase* ble_synchronizer) override {
     EXPECT_EQ(*ble_service_data_helper_->GenerateForegroundAdvertisement(
                   device_id_pair),
@@ -195,9 +195,9 @@ class SecureChannelBleAdvertiserImplTest : public testing::Test {
       std::stringstream ss;
       ss << request.remote_device_id() << "+" << request.local_device_id();
       fake_ble_service_data_helper_->SetAdvertisement(
-          request, cryptauth::DataWithTimestamp(ss.str() /* data */,
-                                                kDefaultStartTimestamp,
-                                                kDefaultEndTimestamp));
+          request,
+          DataWithTimestamp(ss.str() /* data */, kDefaultStartTimestamp,
+                            kDefaultEndTimestamp));
     }
 
     advertiser_->AddAdvertisementRequest(request, connection_priority);
@@ -262,7 +262,7 @@ class SecureChannelBleAdvertiserImplTest : public testing::Test {
   }
 
  private:
-  const base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   std::unique_ptr<FakeBleAdvertiserDelegate> fake_delegate_;
   std::unique_ptr<FakeBleServiceDataHelper> fake_ble_service_data_helper_;

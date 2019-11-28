@@ -8,17 +8,16 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chromeos/chromeos_features.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "chromeos/components/multidevice/software_feature_state.h"
 #include "chromeos/components/proximity_auth/fake_lock_handler.h"
 #include "chromeos/components/proximity_auth/fake_remote_device_life_cycle.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/proximity_auth/mock_proximity_auth_client.h"
 #include "chromeos/components/proximity_auth/proximity_auth_profile_pref_manager.h"
-#include "chromeos/components/proximity_auth/switches.h"
 #include "chromeos/components/proximity_auth/unlock_manager.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/multidevice_setup/public/cpp/fake_multidevice_setup_client.h"
 #include "chromeos/services/secure_channel/public/cpp/client/fake_secure_channel_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -68,7 +67,6 @@ class MockUnlockManager : public UnlockManager {
   ~MockUnlockManager() override {}
   MOCK_METHOD0(IsUnlockAllowed, bool());
   MOCK_METHOD1(SetRemoteDeviceLifeCycle, void(RemoteDeviceLifeCycle*));
-  MOCK_METHOD0(OnLifeCycleStateChanged, void());
   MOCK_METHOD1(OnAuthAttempted, void(mojom::AuthType));
   MOCK_METHOD0(CancelConnectionAttempt, void());
 
@@ -212,7 +210,7 @@ class ProximityAuthSystemTest : public testing::Test {
   base::ThreadTaskRunnerHandle thread_task_runner_handle_;
 
  private:
-  ScopedDisableLoggingForTesting disable_logging_;
+  chromeos::multidevice::ScopedDisableLoggingForTesting disable_logging_;
   base::test::ScopedFeatureList scoped_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ProximityAuthSystemTest);
@@ -395,24 +393,10 @@ TEST_F(ProximityAuthSystemTest, StopSystem_RegisteredUserFocused) {
   EXPECT_EQ(kUser1, life_cycle()->GetRemoteDevice().user_id());
 }
 
-TEST_F(ProximityAuthSystemTest, OnLifeCycleStateChanged) {
-  FocusUser(kUser1);
-
-  EXPECT_CALL(*unlock_manager_, OnLifeCycleStateChanged());
-  life_cycle()->ChangeState(RemoteDeviceLifeCycle::State::FINDING_CONNECTION);
-
-  EXPECT_CALL(*unlock_manager_, OnLifeCycleStateChanged());
-  life_cycle()->ChangeState(RemoteDeviceLifeCycle::State::AUTHENTICATING);
-
-  EXPECT_CALL(*unlock_manager_, OnLifeCycleStateChanged());
-  life_cycle()->ChangeState(
-      RemoteDeviceLifeCycle::State::SECURE_CHANNEL_ESTABLISHED);
-}
-
 TEST_F(ProximityAuthSystemTest, OnAuthAttempted) {
   FocusUser(kUser1);
   EXPECT_CALL(*unlock_manager_, OnAuthAttempted(_));
-  proximity_auth_system_->OnAuthAttempted(AccountId::FromUserEmail(kUser1));
+  proximity_auth_system_->OnAuthAttempted();
 }
 
 TEST_F(ProximityAuthSystemTest, Suspend_ScreenUnlocked) {

@@ -43,18 +43,16 @@
 #include "base/debug/debugger.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/free_deleter.h"
 #include "base/memory/singleton.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 
 #if defined(USE_SYMBOLIZE)
-#include "base/no_destructor.h"
-#include "base/synchronization/lock.h"
 #include "base/third_party/symbolize/symbolize.h"
 #endif
 
@@ -65,7 +63,9 @@ namespace {
 
 volatile sig_atomic_t in_signal_handler = 0;
 
-bool (*try_handle_signal)(int, void*, void*) = nullptr;
+#if !defined(OS_NACL)
+bool (*try_handle_signal)(int, siginfo_t*, void*) = nullptr;
+#endif
 
 #if !defined(USE_SYMBOLIZE)
 // The prefix used for mangled symbols, per the Itanium C++ ABI:
@@ -180,18 +180,7 @@ void ProcessBacktrace(void* const* trace,
     // Subtract by one as return address of function may be in the next
     // function when a function is annotated as noreturn.
     void* address = static_cast<char*>(trace[i]) - 1;
-    bool symbolize_result;
-    {
-      // Chromium version of google::Symbolize() uses SandboxSymbolizeHelper::
-      // GetFileDescriptor(), and unlike the original version, it reuses fds for
-      // multiple symbolize requests. As google::Symbolize() calls lseek() on
-      // the shared fd before reading it and changes the state of the
-      // descriptor, parallel symbolize requests are racy.
-      static base::NoDestructor<base::Lock> lock;
-      base::AutoLock auto_lock(*lock);
-      symbolize_result = google::Symbolize(address, buf, sizeof(buf));
-    }
-    if (symbolize_result)
+    if (google::Symbolize(address, buf, sizeof(buf)))
       handler->HandleOutput(buf);
     else
       handler->HandleOutput("<unknown>");
@@ -241,6 +230,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   // NOTE: This code MUST be async-signal safe.
   // NO malloc or stdio is allowed here.
 
+#if !defined(OS_NACL)
   // Give a registered callback a chance to recover from this signal
   //
   // V8 uses guard regions to guarantee memory safety in WebAssembly. This means
@@ -261,6 +251,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
     sigaction(signal, &action, nullptr);
     return;
   }
+#endif
 
 // Do not take the "in signal handler" code path on Mac in a DCHECK-enabled
 // build, as this prevents seeing a useful (symbolized) stack trace on a crash
@@ -413,7 +404,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   const int kRegisterPadding = 16;
 #endif
 
-  for (size_t i = 0; i < arraysize(registers); i++) {
+  for (size_t i = 0; i < base::size(registers); i++) {
     PrintToStderr(registers[i].label);
     internal::itoa_r(registers[i].value, buf, sizeof(buf),
                      16, kRegisterPadding);
@@ -590,10 +581,10 @@ class SandboxSymbolizeHelper {
     //   it cannot be called before the singleton is created.
     SandboxSymbolizeHelper* instance = GetInstance();
 
-    // The assumption here is that iterating over
-    // std::vector<MappedMemoryRegion> using a const_iterator does not allocate
-    // dynamic memory, hence it is async-signal-safe.
-    for (const MappedMemoryRegion& region : instance->regions_) {
+    // Cannot use STL iterators here, since debug iterators use locks.
+    // NOLINTNEXTLINE(modernize-loop-convert)
+    for (size_t i = 0; i < instance->regions_.size(); ++i) {
+      const MappedMemoryRegion& region = instance->regions_[i];
       if (region.start <= pc && pc < region.end) {
         start_address = region.start;
         base_address = region.base;
@@ -816,23 +807,39 @@ bool EnableInProcessStackDumping() {
   return success;
 }
 
-void SetStackDumpFirstChanceCallback(bool (*handler)(int, void*, void*)) {
+#if !defined(OS_NACL)
+bool SetStackDumpFirstChanceCallback(bool (*handler)(int, siginfo_t*, void*)) {
   DCHECK(try_handle_signal == nullptr || handler == nullptr);
   try_handle_signal = handler;
-}
 
-StackTrace::StackTrace(size_t count) {
-// NOTE: This code MUST be async-signal safe (it's used by in-process
-// stack dumping signal handler). NO malloc or stdio is allowed here.
+#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
+    defined(THREAD_SANITIZER) || defined(LEAK_SANITIZER) ||    \
+    defined(UNDEFINED_SANITIZER)
+  struct sigaction installed_handler;
+  CHECK_EQ(sigaction(SIGSEGV, NULL, &installed_handler), 0);
+  // If the installed handler does not point to StackDumpSignalHandler, then
+  // allow_user_segv_handler is 0.
+  if (installed_handler.sa_sigaction != StackDumpSignalHandler) {
+    LOG(WARNING)
+        << "WARNING: sanitizers are preventing signal handler installation. "
+        << "WebAssembly trap handlers are disabled.\n";
+    return false;
+  }
+#endif
+  return true;
+}
+#endif
+
+size_t CollectStackTrace(void** trace, size_t count) {
+  // NOTE: This code MUST be async-signal safe (it's used by in-process
+  // stack dumping signal handler). NO malloc or stdio is allowed here.
 
 #if !defined(__UCLIBC__) && !defined(_AIX)
-  count = std::min(arraysize(trace_), count);
-
   // Though the backtrace API man page does not list any possible negative
   // return values, we take no chance.
-  count_ = base::saturated_cast<size_t>(backtrace(trace_, count));
+  return base::saturated_cast<size_t>(backtrace(trace, count));
 #else
-  count_ = 0;
+  return 0;
 #endif
 }
 

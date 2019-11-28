@@ -9,7 +9,7 @@
 #include "base/strings/string_piece.h"
 #include "base/win/async_operation.h"
 #include "base/win/winrt_storage_util.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "device/bluetooth/test/bluetooth_test_win.h"
 #include "device/bluetooth/test/fake_gatt_read_result_winrt.h"
 #include "device/bluetooth/test/fake_gatt_write_result_winrt.h"
@@ -19,6 +19,7 @@ namespace device {
 namespace {
 
 using ABI::Windows::Devices::Bluetooth::BluetoothCacheMode;
+using ABI::Windows::Devices::Bluetooth::BluetoothCacheMode_Uncached;
 using ABI::Windows::Devices::Bluetooth::GenericAttributeProfile::
     GattCommunicationStatus;
 using ABI::Windows::Devices::Bluetooth::GenericAttributeProfile::
@@ -64,18 +65,21 @@ HRESULT FakeGattDescriptorWinrt::get_AttributeHandle(uint16_t* value) {
 
 HRESULT FakeGattDescriptorWinrt::ReadValueAsync(
     IAsyncOperation<GattReadResult*>** value) {
+  return E_NOTIMPL;
+}
+
+HRESULT FakeGattDescriptorWinrt::ReadValueWithCacheModeAsync(
+    BluetoothCacheMode cache_mode,
+    IAsyncOperation<GattReadResult*>** value) {
+  if (cache_mode != BluetoothCacheMode_Uncached)
+    return E_NOTIMPL;
+
   auto async_op = Make<base::win::AsyncOperation<GattReadResult*>>();
   DCHECK(!read_value_callback_);
   read_value_callback_ = async_op->callback();
   *value = async_op.Detach();
   bluetooth_test_winrt_->OnFakeBluetoothDescriptorReadValue();
   return S_OK;
-}
-
-HRESULT FakeGattDescriptorWinrt::ReadValueWithCacheModeAsync(
-    BluetoothCacheMode cache_mode,
-    IAsyncOperation<GattReadResult*>** value) {
-  return E_NOTIMPL;
 }
 
 HRESULT FakeGattDescriptorWinrt::WriteValueAsync(

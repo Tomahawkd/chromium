@@ -4,7 +4,35 @@
 
 /**
  * @fileoverview 'add-smb-share-dialog' is a component for adding an SMB Share.
+ *
+ * This component can only be used once to add an SMB share, and must be
+ * destroyed when finished, and re-created when shown again.
  */
+
+cr.define('smb_shares', function() {
+  /** @enum{number} */
+  const MountErrorType = {
+    NO_ERROR: 0,
+    CREDENTIAL_ERROR: 1,
+    PATH_ERROR: 2,
+    GENERAL_ERROR: 3,
+  };
+
+  /**
+   * Regular expression that matches SMB share URLs of the form
+   * smb://server/share or \\server\share. This is a coarse regexp intended for
+   * quick UI feedback and does not reject all invalid URLs.
+   *
+   * @type {!RegExp}
+   */
+  const SMB_SHARE_URL_REGEX =
+      /^((smb:\/\/[^\/]+\/[^\/].*)|(\\\\[^\\]+\\[^\\].*))$/;
+
+  return {
+    MountErrorType: MountErrorType,
+    SMB_SHARE_URL_REGEX: SMB_SHARE_URL_REGEX,
+  };
+});
 
 Polymer({
   is: 'add-smb-share-dialog',
@@ -26,6 +54,7 @@ Polymer({
     mountUrl_: {
       type: String,
       value: '',
+      observer: 'onURLChanged_',
     },
 
     /** @private {string} */
@@ -54,6 +83,12 @@ Polymer({
     },
 
     /** @private */
+    discoveryActive_: {
+      type: Boolean,
+      value: true,
+    },
+
+    /** @private */
     isActiveDirectory_: {
       type: Boolean,
       value: function() {
@@ -72,13 +107,19 @@ Polymer({
     },
 
     /** @private */
-    addShareResultText_: String,
+    generalErrorText_: String,
 
     /** @private */
     inProgress_: {
       type: Boolean,
       value: false,
-    }
+    },
+
+    /** @private {!smb_shares.MountErrorType} */
+    currentMountError_: {
+      type: Number,
+      value: smb_shares.MountErrorType.NO_ERROR,
+    },
   },
 
   /** @private {?smb_shares.SmbBrowserProxy} */
@@ -105,19 +146,26 @@ Polymer({
 
   /** @private */
   onAddButtonTap_: function() {
+    this.resetErrorState_();
     this.inProgress_ = true;
     this.browserProxy_
         .smbMount(
             this.mountUrl_, this.mountName_.trim(), this.username_,
             this.password_, this.authenticationMethod_,
-            this.shouldOpenFileManagerAfterMount)
+            this.shouldOpenFileManagerAfterMount,
+            this.$.saveCredentialsCheckbox.checked)
         .then(result => {
           this.onAddShare_(result);
         });
   },
 
-  /** @private */
-  onURLChanged_: function() {
+  /**
+   * @param {string} newValue
+   * @param {string} oldValue
+   * @private
+   */
+  onURLChanged_: function(newValue, oldValue) {
+    this.resetErrorState_();
     const parts = this.mountUrl_.split('\\');
     this.mountName_ = parts[parts.length - 1];
   },
@@ -127,15 +175,18 @@ Polymer({
    * @private
    */
   canAddShare_: function() {
-    return !!this.mountUrl_ && !this.inProgress_;
+    return !!this.mountUrl_ && !this.inProgress_ && this.isShareUrlValid_();
   },
 
   /**
-   * @param {!Array<string>} shares
+   * @param {!Array<string>} newSharesDiscovered New shares that have been
+   * discovered since the last call.
+   * @param {boolean} done Whether share discovery has finished.
    * @private
    */
-  onSharesFound_: function(shares) {
-    this.discoveredShares_ = this.discoveredShares_.concat(shares);
+  onSharesFound_: function(newSharesDiscovered, done) {
+    this.discoveredShares_ = this.discoveredShares_.concat(newSharesDiscovered);
+    this.discoveryActive_ = !done;
   },
 
   /**
@@ -152,35 +203,117 @@ Polymer({
    */
   onAddShare_: function(result) {
     this.inProgress_ = false;
+
+    // Success case. Close dialog.
+    if (result == SmbMountResult.SUCCESS) {
+      this.$.dialog.close();
+      return;
+    }
+
     switch (result) {
-      case SmbMountResult.SUCCESS:
-        this.$.dialog.close();
-        break;
+      // Credential Error
       case SmbMountResult.AUTHENTICATION_FAILED:
-        this.addShareResultText_ =
-            loadTimeData.getString('smbShareAddedAuthFailedMessage');
+        this.setCredentialError_(
+            loadTimeData.getString('smbShareAddedAuthFailedMessage'));
         break;
+
+      // Path Errors
       case SmbMountResult.NOT_FOUND:
-        this.addShareResultText_ =
-            loadTimeData.getString('smbShareAddedNotFoundMessage');
-        break;
-      case SmbMountResult.UNSUPPORTED_DEVICE:
-        this.addShareResultText_ =
-            loadTimeData.getString('smbShareAddedUnsupportedDeviceMessage');
-        break;
-      case SmbMountResult.MOUNT_EXISTS:
-        this.addShareResultText_ =
-            loadTimeData.getString('smbShareAddedMountExistsMessage');
+        this.setPathError_(
+            loadTimeData.getString('smbShareAddedNotFoundMessage'));
         break;
       case SmbMountResult.INVALID_URL:
-        this.addShareResultText_ =
-            loadTimeData.getString('smbShareAddedInvalidURLMessage');
+        this.setPathError_(
+            loadTimeData.getString('smbShareAddedInvalidURLMessage'));
+        break;
+      case SmbMountResult.INVALID_SSO_URL:
+        this.setPathError_(
+            loadTimeData.getString('smbShareAddedInvalidSSOURLMessage'));
+        break;
+
+      // General Errors
+      case SmbMountResult.UNSUPPORTED_DEVICE:
+        this.setGeneralError_(
+            loadTimeData.getString('smbShareAddedUnsupportedDeviceMessage'));
+        break;
+      case SmbMountResult.MOUNT_EXISTS:
+        this.setGeneralError_(
+            loadTimeData.getString('smbShareAddedMountExistsMessage'));
         break;
       default:
-        this.addShareResultText_ =
-            loadTimeData.getString('smbShareAddedErrorMessage');
+        this.setGeneralError_(
+            loadTimeData.getString('smbShareAddedErrorMessage'));
     }
-    this.$.errorToast.show();
   },
 
+  /** @private */
+  resetErrorState_: function() {
+    this.currentMountError_ = smb_shares.MountErrorType.NO_ERROR;
+    this.$.address.errorMessage = '';
+    this.$.password.errorMessage = '';
+    this.generalErrorText_ = '';
+  },
+
+  /**
+   * @param {string} errorMessage
+   * @private
+   */
+  setCredentialError_: function(errorMessage) {
+    this.$.password.errorMessage = errorMessage;
+    this.currentMountError_ = smb_shares.MountErrorType.CREDENTIAL_ERROR;
+  },
+
+  /**
+   * @param {string} errorMessage
+   * @private
+   */
+  setGeneralError_: function(errorMessage) {
+    this.generalErrorText_ = errorMessage;
+    this.currentMountError_ = smb_shares.MountErrorType.GENERAL_ERROR;
+  },
+
+  /**
+   * @param {string} errorMessage
+   * @private
+   */
+  setPathError_: function(errorMessage) {
+    this.$.address.errorMessage = errorMessage;
+    this.currentMountError_ = smb_shares.MountErrorType.PATH_ERROR;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowCredentialError_: function() {
+    return this.currentMountError_ ==
+        smb_shares.MountErrorType.CREDENTIAL_ERROR;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowGeneralError_: function() {
+    return this.currentMountError_ == smb_shares.MountErrorType.GENERAL_ERROR;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowPathError_: function() {
+    return this.currentMountError_ == smb_shares.MountErrorType.PATH_ERROR;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  isShareUrlValid_: function() {
+    if (!this.mountUrl_ || this.shouldShowPathError_()) {
+      return false;
+    }
+    return smb_shares.SMB_SHARE_URL_REGEX.test(this.mountUrl_);
+  },
 });

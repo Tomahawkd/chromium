@@ -6,7 +6,7 @@
  * @fileoverview
  * 'incompatible-application-item' represents one item in a "list-box" of
  * incompatible applications, as defined in
- * chrome/browser/conflicts/incompatible_applications_updater_win.h.
+ * chrome/browser/win/conflicts/incompatible_applications_updater_win.h.
  * This element contains a button that can be used to remove or update the
  * incompatible application, depending on the value of the action-type property.
  *
@@ -49,7 +49,7 @@ Polymer({
     /**
      * The type of the action to be taken on this incompatible application. Must
      * be one of BlacklistMessageType in
-     * chrome/browser/conflicts/proto/module_list.proto.
+     * chrome/browser/win/conflicts/proto/module_list.proto.
      * @type {!settings.ActionTypes}
      */
     actionType: Number,
@@ -92,12 +92,15 @@ Polymer({
    * @private
    */
   getActionName_: function(actionType) {
-    if (actionType === settings.ActionTypes.UNINSTALL)
+    if (actionType === settings.ActionTypes.UNINSTALL) {
       return this.i18n('incompatibleApplicationsRemoveButton');
-    if (actionType === settings.ActionTypes.MORE_INFO)
+    }
+    if (actionType === settings.ActionTypes.MORE_INFO) {
       return this.i18n('learnMore');
-    if (actionType === settings.ActionTypes.UPGRADE)
+    }
+    if (actionType === settings.ActionTypes.UPGRADE) {
       return this.i18n('incompatibleApplicationsUpdateButton');
+    }
     assertNotReached();
   },
 });

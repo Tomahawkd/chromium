@@ -27,8 +27,8 @@ ProcessType MainDelegate::OverrideProcessType() {
 void MainDelegate::OverrideMojoConfiguration(
     mojo::core::Configuration* config) {}
 
-std::unique_ptr<base::Value> MainDelegate::CreateServiceCatalog() {
-  return nullptr;
+std::vector<Manifest> MainDelegate::GetServiceManifests() {
+  return std::vector<Manifest>();
 }
 
 bool MainDelegate::ShouldLaunchAsServiceProcess(const Identity& identity) {
@@ -40,7 +40,7 @@ void MainDelegate::AdjustServiceProcessCommandLine(
     base::CommandLine* command_line) {}
 
 void MainDelegate::OnServiceManagerInitialized(
-    const base::Closure& quit_closure,
+    base::OnceClosure quit_closure,
     BackgroundServiceManager* service_manager) {}
 
 std::unique_ptr<Service> MainDelegate::CreateEmbeddedService(

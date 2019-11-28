@@ -37,30 +37,23 @@ static inline bool IsOutOfSync(const base::TimeDelta& timestamp_1,
 DecryptingAudioDecoder::DecryptingAudioDecoder(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     MediaLog* media_log)
-    : task_runner_(task_runner),
-      media_log_(media_log),
-      state_(kUninitialized),
-      decryptor_(NULL),
-      key_added_while_decode_pending_(false),
-      support_clear_content_(false),
-      weak_factory_(this) {}
+    : task_runner_(task_runner), media_log_(media_log) {}
 
 std::string DecryptingAudioDecoder::GetDisplayName() const {
   return "DecryptingAudioDecoder";
 }
 
-void DecryptingAudioDecoder::Initialize(
-    const AudioDecoderConfig& config,
-    CdmContext* cdm_context,
-    const InitCB& init_cb,
-    const OutputCB& output_cb,
-    const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb) {
+void DecryptingAudioDecoder::Initialize(const AudioDecoderConfig& config,
+                                        CdmContext* cdm_context,
+                                        InitCB init_cb,
+                                        const OutputCB& output_cb,
+                                        const WaitingCB& waiting_cb) {
   DVLOG(2) << "Initialize()";
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(!decode_cb_);
   DCHECK(!reset_cb_);
 
-  init_cb_ = BindToCurrentLoop(init_cb);
+  init_cb_ = BindToCurrentLoop(std::move(init_cb));
   if (!cdm_context) {
     // Once we have a CDM context, one should always be present.
     DCHECK(!support_clear_content_);
@@ -80,8 +73,8 @@ void DecryptingAudioDecoder::Initialize(
   weak_this_ = weak_factory_.GetWeakPtr();
   output_cb_ = BindToCurrentLoop(output_cb);
 
-  DCHECK(waiting_for_decryption_key_cb);
-  waiting_for_decryption_key_cb_ = waiting_for_decryption_key_cb;
+  DCHECK(waiting_cb);
+  waiting_cb_ = waiting_cb;
 
   // TODO(xhwang): We should be able to DCHECK config.IsValidConfig().
   if (!config.IsValidConfig()) {
@@ -138,7 +131,7 @@ void DecryptingAudioDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DecodePendingBuffer();
 }
 
-void DecryptingAudioDecoder::Reset(const base::Closure& closure) {
+void DecryptingAudioDecoder::Reset(base::OnceClosure closure) {
   DVLOG(2) << "Reset() - state: " << state_;
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(state_ == kIdle || state_ == kPendingDecode ||
@@ -147,7 +140,7 @@ void DecryptingAudioDecoder::Reset(const base::Closure& closure) {
   DCHECK(!init_cb_);  // No Reset() during pending initialization.
   DCHECK(!reset_cb_);
 
-  reset_cb_ = BindToCurrentLoop(closure);
+  reset_cb_ = BindToCurrentLoop(std::move(closure));
 
   decryptor_->ResetDecoder(Decryptor::kAudio);
 
@@ -162,7 +155,7 @@ void DecryptingAudioDecoder::Reset(const base::Closure& closure) {
 
   if (state_ == kWaitingForKey) {
     DCHECK(decode_cb_);
-    pending_buffer_to_decode_ = NULL;
+    pending_buffer_to_decode_.reset();
     std::move(decode_cb_).Run(DecodeStatus::ABORTED);
   }
 
@@ -181,7 +174,7 @@ DecryptingAudioDecoder::~DecryptingAudioDecoder() {
     decryptor_->DeinitializeDecoder(Decryptor::kAudio);
     decryptor_ = NULL;
   }
-  pending_buffer_to_decode_ = NULL;
+  pending_buffer_to_decode_.reset();
   if (init_cb_)
     std::move(init_cb_).Run(false);
   if (decode_cb_)
@@ -294,7 +287,7 @@ void DecryptingAudioDecoder::DeliverFrame(
     }
 
     state_ = kWaitingForKey;
-    waiting_for_decryption_key_cb_.Run();
+    waiting_cb_.Run(WaitingReason::kNoDecryptionKey);
     return;
   }
 

@@ -30,11 +30,11 @@
             android:id="@+id/menu_item_summary"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:textAppearance="@style/BlackCaption" />
+            android:textAppearance="@style/TextAppearance.BlackCaption" />
 
     </LinearLayout>
 
-    <org.chromium.chrome.browser.appmenu.AppMenuItemIcon
+    <org.chromium.ui.widget.ChromeImageView
         android:id="@+id/menu_item_icon"
         android:layout_weight="0"
         android:layout_width="wrap_content"

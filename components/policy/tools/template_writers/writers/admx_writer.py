@@ -4,7 +4,7 @@
 # found in the LICENSE file.
 
 from xml.dom import minidom
-from writers import xml_formatted_writer
+from writers import gpo_editor_writer, xml_formatted_writer
 
 
 class AdmxElementType:
@@ -82,10 +82,11 @@ def GetWriter(config):
   GetWriter method because the TemplateFormatter uses this method to
   instantiate a Writer.
   '''
-  return ADMXWriter(['win'], config)
+  return ADMXWriter(['win', 'win7'], config)
 
 
-class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
+class ADMXWriter(xml_formatted_writer.XMLFormattedWriter,
+                 gpo_editor_writer.GpoEditorWriter):
   '''Class for generating an ADMX policy template. It is used by the
   PolicyTemplateGenerator to write the admx file.
   '''
@@ -99,7 +100,7 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
 
   def Init(self):
     # Shortcut to platform-specific ADMX/ADM specific configuration.
-    assert len(self.platforms) == 1
+    assert len(self.platforms) <= 2
     self.winconfig = self.config['win_config'][self.platforms[0]]
 
   def _AdmlString(self, name):
@@ -219,7 +220,7 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
         self._AddCategory(self._categories_elem, category_name,
                           self._AdmlString(category_name), parent_category_name)
 
-  def _AddSupportedOn(self, parent, supported_os):
+  def _AddSupportedOn(self, parent, supported_os_list):
     '''Generates the "supportedOn" ADMX element and adds it to the passed
     parent node. The "supportedOn" element contains information about supported
     Windows OS versions. The following code snippet contains an example of a
@@ -227,8 +228,8 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
 
     <supportedOn>
       <definitions>
-        <definition name="SUPPORTED_WIN7"
-                    displayName="$(string.SUPPORTED_WIN7)"/>
+        <definition name="$(supported_os)"
+                    displayName="$(string.$(supported_os))"/>
         </definitions>
         ...
     </supportedOn>
@@ -239,11 +240,12 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     '''
     supported_on_elem = self.AddElement(parent, 'supportedOn')
     definitions_elem = self.AddElement(supported_on_elem, 'definitions')
-    attributes = {
-        'name': supported_os,
-        'displayName': self._AdmlString(supported_os)
-    }
-    self.AddElement(definitions_elem, 'definition', attributes)
+    for supported_os in supported_os_list:
+      attributes = {
+          'name': supported_os,
+          'displayName': self._AdmlString(supported_os)
+      }
+      self.AddElement(definitions_elem, 'definition', attributes)
 
   def _AddStringPolicy(self, parent, name, id=None):
     '''Generates ADMX elements for a String-Policy and adds them to the
@@ -269,14 +271,26 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     }
     self.AddElement(parent, 'multiText', attributes)
 
-  def _AddIntPolicy(self, parent, name):
+  def _AddIntPolicy(self, parent, policy):
     '''Generates ADMX elements for an Int-Policy and adds them to the passed
     parent node.
     '''
+    #default max value for an integer
+    max = 2000000000
+    min = 0
+    if self.PolicyHasRestrictions(policy):
+      schema = policy['schema']
+      if 'minimum' in schema and schema['minimum'] >= 0:
+        min = schema['minimum']
+      if 'maximum' in schema and schema['maximum'] >= 0:
+        max = schema['maximum']
+    assert type(min) == int
+    assert type(max) == int
     attributes = {
-        'id': name,
-        'valueName': name,
-        'maxValue': '2000000000',
+        'id': policy['name'],
+        'valueName': policy['name'],
+        'maxValue': str(max),
+        'minValue': str(min),
     }
     self.AddElement(parent, 'decimal', attributes)
 
@@ -323,6 +337,12 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
     disabled_value_elem = self.AddElement(parent, 'disabledValue')
     self.AddElement(disabled_value_elem, 'decimal', {'value': '0'})
 
+  def PolicyHasRestrictions(self, policy):
+    if 'schema' in policy:
+      return any(keyword in policy['schema'] \
+        for keyword in ['minimum', 'maximum'])
+    return False
+
   def _GetElements(self, policy_group_elem):
     '''Returns the ADMX "elements" child from an ADMX "policy" element. If the
     "policy" element has no "elements" child yet, a new child is created.
@@ -362,13 +382,16 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
         'presentation': self._AdmlPresentation(policy_name),
         'key': key,
     }
+    is_win7_only = self.IsPolicyOnWin7Only(policy)
+    supported_key = ('win_supported_os_win7'
+                     if is_win7_only else 'win_supported_os')
+    supported_on_text = self.config[supported_key]
 
     # Store the current "policy" AMDX element in self for later use by the
     # WritePolicy method.
     policy_elem = self.AddElement(policies_elem, 'policy', attributes)
     self.AddElement(policy_elem, 'parentCategory', {'ref': parent})
-    self.AddElement(policy_elem, 'supportedOn',
-                    {'ref': self.config['win_supported_os']})
+    self.AddElement(policy_elem, 'supportedOn', {'ref': supported_on_text})
 
     element_type = self._GetAdmxElementType(policy)
     if element_type == AdmxElementType.MAIN:
@@ -382,7 +405,7 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
       self._AddMultiStringPolicy(parent, policy_name)
     elif element_type == AdmxElementType.INT:
       parent = self._GetElements(policy_elem)
-      self._AddIntPolicy(parent, policy_name)
+      self._AddIntPolicy(parent, policy)
     elif element_type == AdmxElementType.ENUM:
       parent = self._GetElements(policy_elem)
       self._AddEnumPolicy(parent, policy)
@@ -455,8 +478,9 @@ class ADMXWriter(xml_formatted_writer.XMLFormattedWriter):
                               self.winconfig['namespace'])
     self.AddElement(policy_definitions_elem, 'resources',
                     {'minRequiredRevision': '1.0'})
-    self._AddSupportedOn(policy_definitions_elem,
-                         self.config['win_supported_os'])
+    self._AddSupportedOn(
+        policy_definitions_elem,
+        [self.config['win_supported_os'], self.config['win_supported_os_win7']])
     self._categories_elem = self.AddElement(policy_definitions_elem,
                                             'categories')
     self._AddCategories(self.winconfig['mandatory_category_path'])

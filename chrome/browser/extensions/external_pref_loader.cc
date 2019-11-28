@@ -16,23 +16,30 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/scoped_observer.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/lazy_task_runner.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
+#include "chrome/browser/apps/user_type_filter.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/chrome_paths.h"
-#include "components/browser_sync/profile_sync_service.h"
+#include "components/sync/driver/sync_service.h"
 #include "components/sync/driver/sync_service_observer.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_preferences/pref_service_syncable_observer.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_file_task_runner.h"
+
+#if defined(OS_CHROMEOS)
+#include "chromeos/constants/chromeos_switches.h"
+#endif
 
 using content::BrowserThread;
 
@@ -41,8 +48,31 @@ namespace {
 constexpr base::FilePath::CharType kExternalExtensionJson[] =
     FILE_PATH_LITERAL("external_extensions.json");
 
+// Extension installations are skipped here as excluding these in the overlay
+// is a bit complicated.
+// TODO(crbug.com/1023268) This is a temporary measure and should be replaced.
+bool SkipInstallForChromeOSTablet(const base::FilePath& file_path) {
+#if defined(OS_CHROMEOS)
+  if (!chromeos::switches::IsTabletFormFactor())
+    return false;
+
+  constexpr char const* kIdsNotToBeInstalledOnTabletFormFactor[] = {
+      "blpcfgokakmgnkcojhhkbfbldkacnbeo.json",  // Youtube file name.
+      "ejjicmeblgpmajnghnpcppodonldlgfn.json",  // Calendar file name.
+      "hcglmfcclpfgljeaiahehebeoaiicbko.json",  // Google Photos file name.
+      "lneaknkopdijkpnocmklfnjbeapigfbh.json",  // Google Maps file name.
+      "pjkljhegncpnkpknbcohdijeoejaedia.json",  // Gmail file name.
+  };
+
+  return base::Contains(kIdsNotToBeInstalledOnTabletFormFactor,
+                        file_path.BaseName().value());
+#else
+  return false;
+#endif
+}
+
 std::set<base::FilePath> GetPrefsCandidateFilesFromFolder(
-      const base::FilePath& external_extension_search_path) {
+    const base::FilePath& external_extension_search_path) {
   std::set<base::FilePath> external_extension_paths;
 
   if (!base::PathExists(external_extension_search_path)) {
@@ -66,6 +96,8 @@ std::set<base::FilePath> GetPrefsCandidateFilesFromFolder(
     if (file.empty())
       break;
     if (file.MatchesExtension(extension)) {
+      if (SkipInstallForChromeOSTablet(file))
+        continue;
       external_extension_paths.insert(file.BaseName());
     } else {
       DVLOG(1) << "Not considering: " << file.LossyDisplayName()
@@ -100,11 +132,12 @@ class ExternalPrefLoader::PrioritySyncReadyWaiter
     }
     // Start observing sync changes.
     DCHECK(profile_);
-    browser_sync::ProfileSyncService* service =
+    syncer::SyncService* service =
         ProfileSyncServiceFactory::GetForProfile(profile_);
     DCHECK(service);
-    if (service->CanSyncFeatureStart() && (service->IsFirstSetupComplete() ||
-                                           browser_defaults::kSyncAutoStarts)) {
+    if (service->CanSyncFeatureStart() &&
+        (service->GetUserSettings()->IsFirstSetupComplete() ||
+         browser_defaults::kSyncAutoStarts)) {
       done_closure_ = std::move(done_closure);
       AddObservers();
     } else {
@@ -144,7 +177,7 @@ class ExternalPrefLoader::PrioritySyncReadyWaiter
     DCHECK(prefs);
     syncable_pref_observer_.Add(prefs);
 
-    browser_sync::ProfileSyncService* service =
+    syncer::SyncService* service =
         ProfileSyncServiceFactory::GetForProfile(profile_);
     sync_service_observer_.Add(service);
   }
@@ -159,16 +192,19 @@ class ExternalPrefLoader::PrioritySyncReadyWaiter
   ScopedObserver<sync_preferences::PrefServiceSyncable,
                  sync_preferences::PrefServiceSyncableObserver>
       syncable_pref_observer_;
-  ScopedObserver<browser_sync::ProfileSyncService, syncer::SyncServiceObserver>
+  ScopedObserver<syncer::SyncService, syncer::SyncServiceObserver>
       sync_service_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(PrioritySyncReadyWaiter);
 };
 
 ExternalPrefLoader::ExternalPrefLoader(int base_path_id,
-                                       Options options,
+                                       int options,
                                        Profile* profile)
-    : base_path_id_(base_path_id), options_(options), profile_(profile) {
+    : base_path_id_(base_path_id),
+      options_(options),
+      profile_(profile),
+      user_type_(profile ? apps::DetermineUserType(profile) : std::string()) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -262,9 +298,9 @@ void ExternalPrefLoader::LoadOnFileThread() {
   if (!prefs->empty())
     CHECK(!base_path_.empty());
 
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(&ExternalPrefLoader::LoadFinished,
-                                          this, std::move(prefs)));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&ExternalPrefLoader::LoadFinished, this,
+                                std::move(prefs)));
 }
 
 void ExternalPrefLoader::ReadExternalExtensionPrefFile(
@@ -309,11 +345,18 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
   CHECK(NULL != prefs);
 
   // First list the potential .json candidates.
-  std::set<base::FilePath>
-      candidates = GetPrefsCandidateFilesFromFolder(base_path_);
+  std::set<base::FilePath> candidates =
+      GetPrefsCandidateFilesFromFolder(base_path_);
   if (candidates.empty()) {
     DVLOG(1) << "Extension candidates list empty";
     return;
+  }
+
+  // TODO(crbug.com/1407498): Remove this once migration is completed.
+  std::unique_ptr<base::ListValue> default_user_types;
+  if (options_ & USE_USER_TYPE_PROFILE_FILTER) {
+    default_user_types = std::make_unique<base::ListValue>();
+    default_user_types->Append(base::Value(apps::kUserTypeUnmanaged));
   }
 
   // For each file read the json description & build the proper
@@ -321,7 +364,7 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
   for (auto it = candidates.begin(); it != candidates.end(); ++it) {
     base::FilePath extension_candidate_path = base_path_.Append(*it);
 
-    std::string id =
+    const std::string id =
 #if defined(OS_WIN)
         base::UTF16ToASCII(
             extension_candidate_path.RemoveExtension().BaseName().value());
@@ -335,10 +378,19 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
     JSONFileValueDeserializer deserializer(extension_candidate_path);
     std::unique_ptr<base::DictionaryValue> ext_prefs =
         ExtractExtensionPrefs(&deserializer, extension_candidate_path);
-    if (ext_prefs) {
-      DVLOG(1) << "Adding extension with id: " << id;
-      prefs->Set(id, std::move(ext_prefs));
+    if (!ext_prefs)
+      continue;
+
+    if (options_ & USE_USER_TYPE_PROFILE_FILTER &&
+        !apps::UserTypeMatchesJsonUserType(user_type_, id /* app_id */,
+                                           ext_prefs.get(),
+                                           default_user_types.get())) {
+      // Already logged.
+      continue;
     }
+
+    DVLOG(1) << "Adding extension with id: " << id;
+    prefs->Set(id, std::move(ext_prefs));
   }
 }
 

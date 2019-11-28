@@ -44,38 +44,38 @@ float NormalizeXInputAxis(SHORT value) {
   return ((value + 32768.f) / 32767.5f) - 1.f;
 }
 
-const UChar* GamepadSubTypeName(BYTE sub_type) {
+const base::char16* GamepadSubTypeName(BYTE sub_type) {
   switch (sub_type) {
     case kDeviceSubTypeGamepad:
-      return L"GAMEPAD";
+      return STRING16_LITERAL("GAMEPAD");
     case kDeviceSubTypeWheel:
-      return L"WHEEL";
+      return STRING16_LITERAL("WHEEL");
     case kDeviceSubTypeArcadeStick:
-      return L"ARCADE_STICK";
+      return STRING16_LITERAL("ARCADE_STICK");
     case kDeviceSubTypeFlightStick:
-      return L"FLIGHT_STICK";
+      return STRING16_LITERAL("FLIGHT_STICK");
     case kDeviceSubTypeDancePad:
-      return L"DANCE_PAD";
+      return STRING16_LITERAL("DANCE_PAD");
     case kDeviceSubTypeGuitar:
-      return L"GUITAR";
+      return STRING16_LITERAL("GUITAR");
     case kDeviceSubTypeGuitarAlternate:
-      return L"GUITAR_ALTERNATE";
+      return STRING16_LITERAL("GUITAR_ALTERNATE");
     case kDeviceSubTypeDrumKit:
-      return L"DRUM_KIT";
+      return STRING16_LITERAL("DRUM_KIT");
     case kDeviceSubTypeGuitarBass:
-      return L"GUITAR_BASS";
+      return STRING16_LITERAL("GUITAR_BASS");
     case kDeviceSubTypeArcadePad:
-      return L"ARCADE_PAD";
+      return STRING16_LITERAL("ARCADE_PAD");
     default:
-      return L"<UNKNOWN>";
+      return STRING16_LITERAL("<UNKNOWN>");
   }
 }
 
-const UChar* XInputDllFileName() {
+const base::FilePath::CharType* XInputDllFileName() {
   // Xinput.h defines filename (XINPUT_DLL) on different Windows versions, but
   // Xinput.h specifies it in build time. Approach here uses the same values
   // and it is resolving dll filename based on Windows version it is running on.
-  if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
+  if (base::win::GetVersion() >= base::win::Version::WIN8) {
     // For Windows 8+, XINPUT_DLL is xinput1_4.dll.
     return FILE_PATH_LITERAL("xinput1_4.dll");
   }
@@ -87,15 +87,19 @@ const UChar* XInputDllFileName() {
 GamepadPlatformDataFetcherWin::GamepadPlatformDataFetcherWin()
     : xinput_available_(false) {}
 
-GamepadPlatformDataFetcherWin::~GamepadPlatformDataFetcherWin() = default;
+GamepadPlatformDataFetcherWin::~GamepadPlatformDataFetcherWin() {
+  for (auto& haptic_gamepad : haptics_) {
+    if (haptic_gamepad)
+      haptic_gamepad->Shutdown();
+  }
+}
 
 GamepadSource GamepadPlatformDataFetcherWin::source() {
   return Factory::static_source();
 }
 
 void GamepadPlatformDataFetcherWin::OnAddedToProvider() {
-  xinput_dll_.Reset(
-      base::LoadNativeLibrary(base::FilePath(XInputDllFileName()), nullptr));
+  xinput_dll_ = base::ScopedNativeLibrary(base::FilePath(XInputDllFileName()));
   xinput_available_ = GetXInputDllFunctions();
 }
 
@@ -135,10 +139,10 @@ void GamepadPlatformDataFetcherWin::EnumerateDevices() {
         pad.vibration_actuator.type = GamepadHapticActuatorType::kDualRumble;
         pad.vibration_actuator.not_null = true;
 
-        swprintf(pad.id, Gamepad::kIdLengthCap,
-                 L"Xbox 360 Controller (XInput STANDARD %ls)",
-                 GamepadSubTypeName(caps.SubType));
-        swprintf(pad.mapping, Gamepad::kMappingLengthCap, L"standard");
+        pad.SetID(
+            base::StringPrintf(L"Xbox 360 Controller (XInput STANDARD %ls)",
+                               GamepadSubTypeName(caps.SubType)));
+        pad.mapping = GamepadMapping::kStandard;
       }
     }
   }
@@ -167,7 +171,7 @@ void GamepadPlatformDataFetcherWin::GetGamepadData(bool devices_changed_hint) {
 }
 
 void GamepadPlatformDataFetcherWin::GetXInputPadData(int i) {
-  PadState* pad_state = provider()->GetPadState(GAMEPAD_SOURCE_WIN_XINPUT, i);
+  PadState* pad_state = GetPadState(i);
   if (!pad_state)
     return;
 
@@ -244,40 +248,48 @@ void GamepadPlatformDataFetcherWin::PlayEffect(
     int pad_id,
     mojom::GamepadHapticEffectType type,
     mojom::GamepadEffectParametersPtr params,
-    mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback) {
+    mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> callback_runner) {
   if (pad_id < 0 || pad_id >= XUSER_MAX_COUNT) {
-    std::move(callback).Run(
+    RunVibrationCallback(
+        std::move(callback), std::move(callback_runner),
         mojom::GamepadHapticsResult::GamepadHapticsResultError);
     return;
   }
 
   if (!xinput_available_ || !xinput_connected_[pad_id] ||
       haptics_[pad_id] == nullptr) {
-    std::move(callback).Run(
+    RunVibrationCallback(
+        std::move(callback), std::move(callback_runner),
         mojom::GamepadHapticsResult::GamepadHapticsResultNotSupported);
     return;
   }
 
-  haptics_[pad_id]->PlayEffect(type, std::move(params), std::move(callback));
+  haptics_[pad_id]->PlayEffect(type, std::move(params), std::move(callback),
+                               std::move(callback_runner));
 }
 
 void GamepadPlatformDataFetcherWin::ResetVibration(
     int pad_id,
-    mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback) {
+    mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> callback_runner) {
   if (pad_id < 0 || pad_id >= XUSER_MAX_COUNT) {
-    std::move(callback).Run(
+    RunVibrationCallback(
+        std::move(callback), std::move(callback_runner),
         mojom::GamepadHapticsResult::GamepadHapticsResultError);
     return;
   }
 
   if (!xinput_available_ || !xinput_connected_[pad_id] ||
       haptics_[pad_id] == nullptr) {
-    std::move(callback).Run(
+    RunVibrationCallback(
+        std::move(callback), std::move(callback_runner),
         mojom::GamepadHapticsResult::GamepadHapticsResultNotSupported);
     return;
   }
 
-  haptics_[pad_id]->ResetVibration(std::move(callback));
+  haptics_[pad_id]->ResetVibration(std::move(callback),
+                                   std::move(callback_runner));
 }
 
 bool GamepadPlatformDataFetcherWin::GetXInputDllFunctions() {

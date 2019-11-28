@@ -15,13 +15,16 @@
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/color_chooser.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_manager.h"
+#include "components/performance_manager/performance_manager_tab_helper.h"
+#include "components/performance_manager/public/performance_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/notification_source.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
@@ -61,13 +64,11 @@ class ExtensionViewHost::AssociatedWebContentsObserver
   DISALLOW_COPY_AND_ASSIGN(AssociatedWebContentsObserver);
 };
 
-ExtensionViewHost::ExtensionViewHost(
-    const Extension* extension,
-    content::SiteInstance* site_instance,
-    const GURL& url,
-    ViewType host_type)
-    : ExtensionHost(extension, site_instance, url, host_type),
-      associated_web_contents_(NULL) {
+ExtensionViewHost::ExtensionViewHost(const Extension* extension,
+                                     content::SiteInstance* site_instance,
+                                     const GURL& url,
+                                     ViewType host_type)
+    : ExtensionHost(extension, site_instance, url, host_type) {
   // Not used for panels, see PanelHost.
   DCHECK(host_type == VIEW_TYPE_EXTENSION_DIALOG ||
          host_type == VIEW_TYPE_EXTENSION_POPUP);
@@ -81,6 +82,22 @@ ExtensionViewHost::ExtensionViewHost(
       autofill::ChromeAutofillClient::FromWebContents(host_contents()),
       g_browser_process->GetApplicationLocale(),
       autofill::AutofillManager::ENABLE_AUTOFILL_DOWNLOAD_MANAGER);
+  if (performance_manager::PerformanceManager::IsAvailable()) {
+    performance_manager::PerformanceManagerTabHelper::CreateForWebContents(
+        host_contents());
+  }
+
+  // The popup itself cannot be zoomed, but we must specify a zoom level to use.
+  // Otherwise, if a user zooms a page of the same extension, the popup would
+  // use the per-origin zoom level.
+  if (host_type == VIEW_TYPE_EXTENSION_POPUP) {
+    content::HostZoomMap* zoom_map =
+        content::HostZoomMap::GetForWebContents(host_contents());
+    zoom_map->SetTemporaryZoomLevel(
+        host_contents()->GetRenderViewHost()->GetProcess()->GetID(),
+        host_contents()->GetRenderViewHost()->GetRoutingID(),
+        zoom_map->GetDefaultZoomLevel());
+  }
 }
 
 ExtensionViewHost::~ExtensionViewHost() {
@@ -93,7 +110,13 @@ ExtensionViewHost::~ExtensionViewHost() {
 }
 
 void ExtensionViewHost::CreateView(Browser* browser) {
-  view_ = CreateExtensionView(this, browser);
+  // TODO(devlin): Add the following sanity check:
+  // if (browser) {
+  //   DCHECK_EQ(Profile::FromBrowserContext(browser_context()),
+  //             browser->profile());
+  // }
+  browser_ = browser;
+  view_ = CreateExtensionView(this, browser ? browser->profile() : nullptr);
 }
 
 void ExtensionViewHost::SetAssociatedWebContents(WebContents* web_contents) {
@@ -107,10 +130,10 @@ void ExtensionViewHost::SetAssociatedWebContents(WebContents* web_contents) {
   }
 }
 
-void ExtensionViewHost::UnhandledKeyboardEvent(
+bool ExtensionViewHost::UnhandledKeyboardEvent(
     WebContents* source,
     const content::NativeWebKeyboardEvent& event) {
-  view_->HandleKeyboardEvent(source, event);
+  return view_->HandleKeyboardEvent(source, event);
 }
 
 // ExtensionHost overrides:
@@ -160,8 +183,7 @@ WebContents* ExtensionViewHost::OpenURLFromTab(
     case WindowOpenDisposition::OFF_THE_RECORD: {
       // Only allow these from hosts that are bound to a browser (e.g. popups).
       // Otherwise they are not driven by a user gesture.
-      Browser* browser = view_->GetBrowser();
-      return browser ? browser->OpenURL(params) : nullptr;
+      return browser_ ? browser_->OpenURL(params) : nullptr;
     }
     default:
       return nullptr;
@@ -186,9 +208,8 @@ ExtensionViewHost::PreHandleKeyboardEvent(WebContents* source,
   }
 
   // Handle higher priority browser shortcuts such as Ctrl-w.
-  Browser* browser = view_->GetBrowser();
-  if (browser)
-    return browser->PreHandleKeyboardEvent(source, event);
+  if (browser_)
+    return browser_->PreHandleKeyboardEvent(source, event);
 
   return content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
@@ -203,8 +224,7 @@ bool ExtensionViewHost::HandleKeyboardEvent(
       return true;
     }
   }
-  UnhandledKeyboardEvent(source, event);
-  return true;
+  return UnhandledKeyboardEvent(source, event);
 }
 
 bool ExtensionViewHost::PreHandleGestureEvent(
@@ -286,8 +306,7 @@ void ExtensionViewHost::RemoveObserver(
 }
 
 WindowController* ExtensionViewHost::GetExtensionWindowController() const {
-  Browser* browser = view_->GetBrowser();
-  return browser ? browser->extension_window_controller() : NULL;
+  return browser_ ? browser_->extension_window_controller() : nullptr;
 }
 
 WebContents* ExtensionViewHost::GetAssociatedWebContents() const {

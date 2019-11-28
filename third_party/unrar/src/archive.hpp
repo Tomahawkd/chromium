@@ -37,8 +37,7 @@ class Archive:public File
     void RequestArcPassword();
     void UnexpEndArcMsg();
     void BrokenHeaderMsg();
-    void UnkEncVerMsg(const wchar *Name);
-    void UnkEncVerMsg();
+    void UnkEncVerMsg(const wchar *Name,const wchar *Info);
     bool ReadCommentData(Array<wchar> *CmtData);
 
 #if !defined(RAR_NOCRYPT)
@@ -58,6 +57,13 @@ class Archive:public File
     QuickOpen QOpen;
     bool ProhibitQOpen;
 #endif
+
+#if defined(CHROMIUM_UNRAR)
+    // A handle for a temporary file that should be used when extracting the
+    // archive. This is used to extract the contents while in a sandbox.
+    FileHandle hTempFile;
+#endif
+
   public:
     Archive(RAROptions *InitCmd=NULL);
     ~Archive();
@@ -85,7 +91,7 @@ class Archive:public File
     void AddSubData(byte *SrcData,uint64 DataSize,File *SrcFile,
          const wchar *Name,uint Flags);
     bool ReadSubData(Array<byte> *UnpData,File *DestFile);
-    HEADER_TYPE GetHeaderType() {return CurHeaderType;};
+    HEADER_TYPE GetHeaderType() {return CurHeaderType;}
     RAROptions* GetRAROptions() {return Cmd;}
     void SetSilentOpen(bool Mode) {SilentOpen=Mode;}
 #if 0
@@ -98,6 +104,10 @@ class Archive:public File
     int64 Tell();
     void QOpenUnload() {QOpen.Unload();}
     void SetProhibitQOpen(bool Mode) {ProhibitQOpen=Mode;}
+#endif
+#if defined(CHROMIUM_UNRAR)
+    void SetTempFileHandle(FileHandle hF);
+    FileHandle GetTempFileHandle();
 #endif
 
     BaseBlock ShortBlock;

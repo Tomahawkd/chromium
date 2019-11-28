@@ -16,24 +16,9 @@ InsecureSensitiveInputDriver::InsecureSensitiveInputDriver(
 
 InsecureSensitiveInputDriver::~InsecureSensitiveInputDriver() {}
 
-void InsecureSensitiveInputDriver::BindInsecureInputServiceRequest(
-    blink::mojom::InsecureInputServiceRequest request) {
-  insecure_input_bindings_.AddBinding(this, std::move(request));
-}
-
-void InsecureSensitiveInputDriver::PasswordFieldVisibleInInsecureContext() {
-  InsecureSensitiveInputDriverFactory* parent =
-      InsecureSensitiveInputDriverFactory::GetOrCreateForWebContents(
-          content::WebContents::FromRenderFrameHost(render_frame_host_));
-  parent->RenderFrameHasVisiblePasswordField(render_frame_host_);
-}
-
-void InsecureSensitiveInputDriver::
-    AllPasswordFieldsInInsecureContextInvisible() {
-  InsecureSensitiveInputDriverFactory* parent =
-      InsecureSensitiveInputDriverFactory::GetOrCreateForWebContents(
-          content::WebContents::FromRenderFrameHost(render_frame_host_));
-  parent->RenderFrameHasNoVisiblePasswordFields(render_frame_host_);
+void InsecureSensitiveInputDriver::BindInsecureInputServiceReceiver(
+    mojo::PendingReceiver<blink::mojom::InsecureInputService> receiver) {
+  insecure_input_receivers_.Add(this, std::move(receiver));
 }
 
 void InsecureSensitiveInputDriver::DidEditFieldInInsecureContext() {

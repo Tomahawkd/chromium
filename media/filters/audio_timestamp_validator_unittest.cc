@@ -6,6 +6,7 @@
 
 #include <tuple>
 
+#include "base/stl_util.h"
 #include "base/time/time.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media_util.h"
@@ -62,8 +63,9 @@ class AudioTimestampValidatorTest
 TEST_P(AudioTimestampValidatorTest, WarnForEraticTimes) {
   AudioDecoderConfig decoder_config;
   decoder_config.Initialize(kCodec, kSampleFormat, kChannelLayout,
-                            kSamplesPerSecond, EmptyExtraData(), Unencrypted(),
-                            kSeekPreroll, codec_delay_);
+                            kSamplesPerSecond, EmptyExtraData(),
+                            EncryptionScheme::kUnencrypted, kSeekPreroll,
+                            codec_delay_);
 
   // Validator should fail to stabilize pattern for timestamp expectations.
   EXPECT_MEDIA_LOG(
@@ -87,7 +89,7 @@ TEST_P(AudioTimestampValidatorTest, WarnForEraticTimes) {
     // Ping-pong between two random offsets to prevent validator from
     // stabilizing timestamp pattern.
     base::TimeDelta randomOffset =
-        kRandomOffsets[i % arraysize(kRandomOffsets)];
+        kRandomOffsets[i % base::size(kRandomOffsets)];
     encoded_buffer->set_timestamp(i * kBufferDuration + randomOffset);
 
     if (i == 0) {
@@ -103,7 +105,7 @@ TEST_P(AudioTimestampValidatorTest, WarnForEraticTimes) {
       scoped_refptr<AudioBuffer> decoded_buffer = MakeAudioBuffer<float>(
           kSampleFormat, kChannelLayout, kChannelCount, kSamplesPerSecond, 1.0f,
           0.0f, kFramesPerBuffer, i * kBufferDuration);
-      validator.RecordOutputDuration(decoded_buffer.get());
+      validator.RecordOutputDuration(*decoded_buffer);
     }
   }
 }
@@ -111,8 +113,9 @@ TEST_P(AudioTimestampValidatorTest, WarnForEraticTimes) {
 TEST_P(AudioTimestampValidatorTest, NoWarningForValidTimes) {
   AudioDecoderConfig decoder_config;
   decoder_config.Initialize(kCodec, kSampleFormat, kChannelLayout,
-                            kSamplesPerSecond, EmptyExtraData(), Unencrypted(),
-                            kSeekPreroll, codec_delay_);
+                            kSamplesPerSecond, EmptyExtraData(),
+                            EncryptionScheme::kUnencrypted, kSeekPreroll,
+                            codec_delay_);
 
   // Validator should quickly stabilize pattern for timestamp expectations.
   EXPECT_MEDIA_LOG(HasSubstr("Failed to reconcile encoded audio times "
@@ -142,7 +145,7 @@ TEST_P(AudioTimestampValidatorTest, NoWarningForValidTimes) {
       scoped_refptr<AudioBuffer> decoded_buffer = MakeAudioBuffer<float>(
           kSampleFormat, kChannelLayout, kChannelCount, kSamplesPerSecond, 1.0f,
           0.0f, kFramesPerBuffer, i * kBufferDuration);
-      validator.RecordOutputDuration(decoded_buffer.get());
+      validator.RecordOutputDuration(*decoded_buffer);
     }
   }
 }
@@ -150,8 +153,9 @@ TEST_P(AudioTimestampValidatorTest, NoWarningForValidTimes) {
 TEST_P(AudioTimestampValidatorTest, SingleWarnForSingleLargeGap) {
   AudioDecoderConfig decoder_config;
   decoder_config.Initialize(kCodec, kSampleFormat, kChannelLayout,
-                            kSamplesPerSecond, EmptyExtraData(), Unencrypted(),
-                            kSeekPreroll, codec_delay_);
+                            kSamplesPerSecond, EmptyExtraData(),
+                            EncryptionScheme::kUnencrypted, kSeekPreroll,
+                            codec_delay_);
 
   AudioTimestampValidator validator(decoder_config, &media_log_);
 
@@ -187,7 +191,7 @@ TEST_P(AudioTimestampValidatorTest, SingleWarnForSingleLargeGap) {
       scoped_refptr<AudioBuffer> decoded_buffer = MakeAudioBuffer<float>(
           kSampleFormat, kChannelLayout, kChannelCount, kSamplesPerSecond, 1.0f,
           0.0f, kFramesPerBuffer, i * kBufferDuration);
-      validator.RecordOutputDuration(decoded_buffer.get());
+      validator.RecordOutputDuration(*decoded_buffer);
     }
   }
 }
@@ -195,8 +199,9 @@ TEST_P(AudioTimestampValidatorTest, SingleWarnForSingleLargeGap) {
 TEST_P(AudioTimestampValidatorTest, RepeatedWarnForSlowAccumulatingDrift) {
   AudioDecoderConfig decoder_config;
   decoder_config.Initialize(kCodec, kSampleFormat, kChannelLayout,
-                            kSamplesPerSecond, EmptyExtraData(), Unencrypted(),
-                            kSeekPreroll, codec_delay_);
+                            kSamplesPerSecond, EmptyExtraData(),
+                            EncryptionScheme::kUnencrypted, kSeekPreroll,
+                            codec_delay_);
 
   AudioTimestampValidator validator(decoder_config, &media_log_);
 
@@ -237,7 +242,7 @@ TEST_P(AudioTimestampValidatorTest, RepeatedWarnForSlowAccumulatingDrift) {
       scoped_refptr<AudioBuffer> decoded_buffer = MakeAudioBuffer<float>(
           kSampleFormat, kChannelLayout, kChannelCount, kSamplesPerSecond, 1.0f,
           0.0f, kFramesPerBuffer, i * kBufferDuration);
-      validator.RecordOutputDuration(decoded_buffer.get());
+      validator.RecordOutputDuration(*decoded_buffer);
     }
   }
 }
@@ -245,8 +250,8 @@ TEST_P(AudioTimestampValidatorTest, RepeatedWarnForSlowAccumulatingDrift) {
 // Test with cartesian product of various output delay, codec delay, and front
 // discard values. These simulate configurations for different containers/codecs
 // which present different challenges when building timestamp expectations.
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     AudioTimestampValidatorTest,
     ::testing::Combine(
         ::testing::Values(0, 10),             // output delay

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -21,7 +22,7 @@ namespace remoting {
 
 FakeSecurityKeyIpcClient::FakeSecurityKeyIpcClient(
     const base::Closure& channel_event_callback)
-    : channel_event_callback_(channel_event_callback), weak_factory_(this) {
+    : channel_event_callback_(channel_event_callback) {
   DCHECK(!channel_event_callback_.is_null());
 }
 
@@ -51,7 +52,7 @@ bool FakeSecurityKeyIpcClient::SendSecurityKeyRequest(
   if (send_security_request_should_succeed_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(response_callback, security_key_response_payload_));
+        base::BindOnce(response_callback, security_key_response_payload_));
   }
 
   return send_security_request_should_succeed_;

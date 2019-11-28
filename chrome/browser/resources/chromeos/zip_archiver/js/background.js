@@ -14,6 +14,18 @@ if (chrome.test) {
         unpacker.app.DEFAULT_MODULE_NMF, unpacker.app.DEFAULT_MODULE_TYPE);
   });
   chrome.test.sendMessage(JSON.stringify({name: 'zipArchiverLoaded'}));
+} else {
+  // Preload the NaCl module the first time the user logs in, or when Chrome OS
+  // is updated. This triggers a PNaCl translation, which can be very slow
+  // (>10s) on old devices. This prevents a preformance regression when the user
+  // tries to zip or unzip files the first time they log in to a device. Using
+  // onInstalled should be a compromise between preloading always (inefficient),
+  // and doing it lazily (pref regression on first load).
+  // See https://crbug.com/907032
+  chrome.runtime.onInstalled.addListener((details) => {
+    unpacker.app.loadNaclModule(
+        unpacker.app.DEFAULT_MODULE_NMF, unpacker.app.DEFAULT_MODULE_TYPE);
+  });
 }
 
 function setupZipArchiver() {
@@ -29,12 +41,6 @@ function setupZipArchiver() {
       unpacker.app.onCloseFileRequested);
   chrome.fileSystemProvider.onReadFileRequested.addListener(
       unpacker.app.onReadFileRequested);
-
-  // Provide a dummy onGetActionsRequested implementation to make FSP happy.
-  chrome.fileSystemProvider.onGetActionsRequested.addListener(
-      (options, success, error) => {
-        success([]);
-      });
 
   // Clean all temporary files inside the work directory, just in case the
   // extension aborted previously without removing ones.

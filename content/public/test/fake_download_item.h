@@ -11,11 +11,14 @@
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_source.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -30,7 +33,7 @@ class FakeDownloadItem : public download::DownloadItem {
   void UpdateObservers() override;
   void Remove() override;
   void Pause() override;
-  void Resume() override;
+  void Resume(bool user_resume) override;
   void Cancel(bool user_cancel) override;
   void OpenDownload() override;
   void ShowDownloadInShell() override;
@@ -58,13 +61,16 @@ class FakeDownloadItem : public download::DownloadItem {
   const std::string& GetETag() const override;
   const std::string& GetLastModifiedTime() const override;
   bool IsPaused() const override;
+  bool AllowMetered() const override;
   bool IsTemporary() const override;
   bool CanResume() const override;
   int64_t GetBytesWasted() const override;
+  int32_t GetAutoResumeCount() const override;
   const GURL& GetReferrerUrl() const override;
   const GURL& GetSiteUrl() const override;
   const GURL& GetTabUrl() const override;
   const GURL& GetTabReferrerUrl() const override;
+  const base::Optional<url::Origin>& GetRequestInitiator() const override;
   std::string GetSuggestedFilename() const override;
   std::string GetContentDisposition() const override;
   std::string GetOriginalMimeType() const override;
@@ -72,6 +78,7 @@ class FakeDownloadItem : public download::DownloadItem {
   bool HasUserGesture() const override;
   ui::PageTransition GetTransitionType() const override;
   bool IsSavePackageDownload() const override;
+  download::DownloadSource GetDownloadSource() const override;
   const base::FilePath& GetFullPath() const override;
   const base::FilePath& GetForcedFilePath() const override;
   base::FilePath GetTemporaryFilePath() const override;
@@ -107,6 +114,10 @@ class FakeDownloadItem : public download::DownloadItem {
   void ValidateDangerousDownload() override;
   void StealDangerousDownload(bool delete_file_afterward,
                               const AcquireFileCallback& callback) override;
+  void Rename(const base::FilePath& name,
+              RenameDownloadCallback callback) override;
+  void OnAsyncScanningCompleted(
+      download::DownloadDangerType danger_type) override;
 
   bool removed() const { return removed_; }
   void NotifyDownloadDestroyed();
@@ -133,6 +144,7 @@ class FakeDownloadItem : public download::DownloadItem {
   void SetIsDone(bool is_done);
   void SetETag(const std::string& etag);
   void SetLastModifiedTime(const std::string& last_modified_time);
+  void SetHash(const std::string& hash);
 
  private:
   base::ObserverList<Observer>::Unchecked observers_;
@@ -161,10 +173,12 @@ class FakeDownloadItem : public download::DownloadItem {
   bool is_done_ = false;
   std::string etag_;
   std::string last_modified_time_;
+  std::string hash_;
 
   // The members below are to be returned by methods, which return by reference.
   std::string dummy_string;
   GURL dummy_url;
+  base::Optional<url::Origin> dummy_origin;
   base::FilePath dummy_file_path;
 
   DISALLOW_COPY_AND_ASSIGN(FakeDownloadItem);

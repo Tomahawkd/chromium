@@ -30,9 +30,10 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_FONT_RENDER_STYLE_H_
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_FONT_RENDER_STYLE_H_
 
-#include "SkFontStyle.h"
-#include "SkPaint.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/skia/include/core/SkFontStyle.h"
+#include "third_party/skia/include/core/SkFontTypes.h"
+#include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
 class SkFont;
@@ -72,7 +73,6 @@ struct WebFontRenderStyle {
   // kNoPreference in |other|.
   void OverrideWith(const WebFontRenderStyle& other);
 
-  void ApplyToSkPaint(SkPaint&, float device_scale_factor) const;
   void ApplyToSkFont(SkFont*, float device_scale_factor) const;
 
   // Each of the use* members below can take one of three values:

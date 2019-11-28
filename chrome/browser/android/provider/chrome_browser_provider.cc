@@ -13,19 +13,20 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
+#include "chrome/android/chrome_jni_headers/ChromeBrowserProvider_jni.h"
 #include "chrome/browser/android/provider/blocking_ui_thread_async_request.h"
 #include "chrome/browser/android/provider/bookmark_model_task.h"
 #include "chrome/browser/android/provider/run_on_ui_thread_blocking.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/history/android/sqlite_cursor.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history/top_sites_factory.h"
@@ -35,17 +36,13 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
-#include "components/favicon/core/favicon_service.h"
 #include "components/history/core/browser/android/android_history_types.h"
-#include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/top_sites.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "jni/ChromeBrowserProvider_jni.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/gfx/favicon_size.h"
 
 using base::android::AttachCurrentThread;
 using base::android::CheckException;
@@ -58,7 +55,6 @@ using base::android::GetClass;
 using base::android::JavaParamRef;
 using base::android::MethodID;
 using base::android::JavaRef;
-using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
@@ -136,22 +132,6 @@ jint JNI_ChromeBrowserProvider_ConvertJIntegerToJint(
   return env->CallIntMethod(integer_obj.obj(), int_value, NULL);
 }
 
-std::vector<base::string16> ConvertJStringArrayToString16Array(
-    JNIEnv* env,
-    const JavaRef<jobjectArray>& array) {
-  std::vector<base::string16> results;
-  if (!array.is_null()) {
-    jsize len = env->GetArrayLength(array.obj());
-    for (int i = 0; i < len; i++) {
-      ScopedJavaLocalRef<jstring> j_str(
-          env,
-          static_cast<jstring>(env->GetObjectArrayElement(array.obj(), i)));
-      results.push_back(ConvertJavaStringToUTF16(env, j_str));
-    }
-  }
-  return results;
-}
-
 // ------------- Utility methods used by tasks ------------- //
 
 // Parse the given url and return a GURL, appending the default scheme
@@ -204,10 +184,9 @@ class AddBookmarkTask : public BookmarkModelTask {
       if (!parent_node)
         parent_node = model->bookmark_bar_node();
 
-      if (is_folder)
-        node = model->AddFolder(parent_node, parent_node->child_count(), title);
-      else
-        node = model->AddURL(parent_node, 0, title, gurl);
+      node = is_folder ? model->AddFolder(parent_node,
+                                          parent_node->children().size(), title)
+                       : model->AddURL(parent_node, 0, title, gurl);
     }
 
     *result = node ? node ->id() : kInvalidBookmarkId;
@@ -333,7 +312,7 @@ class IsInMobileBookmarksBranchTask : public BookmarkModelTask {
 // ------------- Aynchronous requests classes ------------- //
 
 // Base class for asynchronous blocking requests to Chromium services.
-// Service: type of the service to use (e.g. HistoryService, FaviconService).
+// Service: type of the service to use (e.g. HistoryService).
 template <typename Service>
 class AsyncServiceRequest : protected BlockingUIThreadAsyncRequest {
  public:
@@ -810,15 +789,11 @@ static jlong JNI_ChromeBrowserProvider_Init(JNIEnv* env,
 }
 
 ChromeBrowserProvider::ChromeBrowserProvider(JNIEnv* env, jobject obj)
-    : weak_java_provider_(env, obj),
-      history_service_observer_(this),
-      handling_extensive_changes_(false) {
+    : weak_java_provider_(env, obj), handling_extensive_changes_(false) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   profile_ = g_browser_process->profile_manager()->GetLastUsedProfile();
   bookmark_model_ = BookmarkModelFactory::GetForBrowserContext(profile_);
   top_sites_ = TopSitesFactory::GetForProfile(profile_);
-  favicon_service_ = FaviconServiceFactory::GetForProfile(
-      profile_, ServiceAccessType::EXPLICIT_ACCESS),
   service_.reset(new AndroidHistoryProviderService(profile_));
 
   // Register as observer for service we are interested.
@@ -833,11 +808,7 @@ ChromeBrowserProvider::ChromeBrowserProvider(JNIEnv* env, jobject obj)
 
 ChromeBrowserProvider::~ChromeBrowserProvider() {
   bookmark_model_->RemoveObserver(this);
-}
-
-void ChromeBrowserProvider::Destroy(JNIEnv*, const JavaParamRef<jobject>&) {
   history_service_observer_.RemoveAll();
-  delete this;
 }
 
 // ------------- Provider public APIs ------------- //
@@ -921,10 +892,7 @@ ScopedJavaLocalRef<jobject> ChromeBrowserProvider::QueryBookmarkFromAPI(
   // Used to store the projection column names according their sequence.
   std::vector<std::string> columns_name;
   if (projection) {
-    jsize len = env->GetArrayLength(projection);
-    for (int i = 0; i < len; i++) {
-      ScopedJavaLocalRef<jstring> j_name(
-          env, static_cast<jstring>(env->GetObjectArrayElement(projection, i)));
+    for (auto j_name : projection.ReadElements<jstring>()) {
       std::string name = ConvertJavaStringToUTF8(env, j_name);
       history::HistoryAndBookmarkRow::ColumnID id =
           history::HistoryAndBookmarkRow::GetColumnID(name);
@@ -938,8 +906,8 @@ ScopedJavaLocalRef<jobject> ChromeBrowserProvider::QueryBookmarkFromAPI(
     }
   }
 
-  std::vector<base::string16> where_args =
-      ConvertJStringArrayToString16Array(env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections) {
@@ -983,8 +951,8 @@ jint ChromeBrowserProvider::UpdateBookmarkFromAPI(
                                             date, favicon, title, visits,
                                             parent_id, &row, bookmark_model_);
 
-  std::vector<base::string16> where_args =
-      ConvertJStringArrayToString16Array(env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections)
@@ -999,8 +967,8 @@ jint ChromeBrowserProvider::RemoveBookmarkFromAPI(
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& selections,
     const JavaParamRef<jobjectArray>& selection_args) {
-  std::vector<base::string16> where_args =
-      ConvertJStringArrayToString16Array(env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections)
@@ -1015,8 +983,8 @@ jint ChromeBrowserProvider::RemoveHistoryFromAPI(
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& selections,
     const JavaParamRef<jobjectArray>& selection_args) {
-  std::vector<base::string16> where_args =
-      ConvertJStringArrayToString16Array(env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections)
@@ -1063,10 +1031,7 @@ ScopedJavaLocalRef<jobject> ChromeBrowserProvider::QuerySearchTermFromAPI(
   // Used to store the projection column names according their sequence.
   std::vector<std::string> columns_name;
   if (projection) {
-    jsize len = env->GetArrayLength(projection);
-    for (int i = 0; i < len; i++) {
-      ScopedJavaLocalRef<jstring> j_name(
-          env, static_cast<jstring>(env->GetObjectArrayElement(projection, i)));
+    for (auto j_name : projection.ReadElements<jstring>()) {
       std::string name = ConvertJavaStringToUTF8(env, j_name);
       history::SearchRow::ColumnID id =
           history::SearchRow::GetColumnID(name);
@@ -1079,8 +1044,8 @@ ScopedJavaLocalRef<jobject> ChromeBrowserProvider::QuerySearchTermFromAPI(
     }
   }
 
-  std::vector<base::string16> where_args =
-      ConvertJStringArrayToString16Array(env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections) {
@@ -1117,8 +1082,8 @@ jint ChromeBrowserProvider::UpdateSearchTermFromAPI(
   history::SearchRow row;
   JNI_ChromeBrowserProvider_FillSearchRow(env, obj, search_term, date, &row);
 
-  std::vector<base::string16> where_args = ConvertJStringArrayToString16Array(
-      env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections)
@@ -1135,8 +1100,8 @@ jint ChromeBrowserProvider::RemoveSearchTermFromAPI(
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& selections,
     const JavaParamRef<jobjectArray>& selection_args) {
-  std::vector<base::string16> where_args =
-      ConvertJStringArrayToString16Array(env, selection_args);
+  std::vector<base::string16> where_args;
+  AppendJavaStringArrayToStringVector(env, selection_args, &where_args);
 
   std::string where_clause;
   if (selections)
@@ -1166,19 +1131,16 @@ void ChromeBrowserProvider::BookmarkModelChanged() {
     return;
 
   JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
-  if (obj.is_null())
-    return;
-
-  Java_ChromeBrowserProvider_onBookmarkChanged(env, obj);
+  ScopedJavaLocalRef<jobject> obj;
+  if (GetJavaProviderOrDeleteSelf(&obj, env))
+    Java_ChromeBrowserProvider_onBookmarkChanged(env, obj);
 }
 
 void ChromeBrowserProvider::OnHistoryChanged() {
   JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
-  if (obj.is_null())
-    return;
-  Java_ChromeBrowserProvider_onHistoryChanged(env, obj);
+  ScopedJavaLocalRef<jobject> obj;
+  if (GetJavaProviderOrDeleteSelf(&obj, env))
+    Java_ChromeBrowserProvider_onHistoryChanged(env, obj);
 }
 
 void ChromeBrowserProvider::OnURLVisited(
@@ -1202,13 +1164,27 @@ void ChromeBrowserProvider::OnKeywordSearchTermUpdated(
     history::KeywordID keyword_id,
     const base::string16& term) {
   JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = weak_java_provider_.get(env);
-  if (obj.is_null())
-    return;
-  Java_ChromeBrowserProvider_onSearchTermChanged(env, obj);
+  ScopedJavaLocalRef<jobject> obj;
+  if (GetJavaProviderOrDeleteSelf(&obj, env))
+    Java_ChromeBrowserProvider_onSearchTermChanged(env, obj);
 }
 
 void ChromeBrowserProvider::OnKeywordSearchTermDeleted(
     history::HistoryService* history_service,
     history::URLID url_id) {
+}
+
+bool ChromeBrowserProvider::GetJavaProviderOrDeleteSelf(
+    ScopedJavaLocalRef<jobject>* out_ref,
+    JNIEnv* env) {
+  *out_ref = weak_java_provider_.get(env);
+  // Providers are never destroyed on Android (that's why there is no
+  // onDestroy() for them). However, tests create multiple of them, and there
+  // have also been reports of them being destroyed in the wild
+  // (https://crbug.com/606992).
+  if (out_ref->is_null()) {
+    delete this;
+    return false;
+  }
+  return true;
 }

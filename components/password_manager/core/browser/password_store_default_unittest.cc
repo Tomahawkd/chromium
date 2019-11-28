@@ -10,11 +10,11 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/os_crypt/os_crypt_mocker.h"
 #include "components/password_manager/core/browser/login_database.h"
@@ -51,7 +51,7 @@ class MockPasswordStoreConsumer : public PasswordStoreConsumer {
 // A mock LoginDatabase that simulates a failing Init() method.
 class BadLoginDatabase : public LoginDatabase {
  public:
-  BadLoginDatabase() : LoginDatabase(base::FilePath()) {}
+  BadLoginDatabase() : LoginDatabase(base::FilePath(), IsAccountStore(false)) {}
   ~BadLoginDatabase() override {}
 
   // LoginDatabase:
@@ -62,7 +62,7 @@ class BadLoginDatabase : public LoginDatabase {
 };
 
 PasswordFormData CreateTestPasswordFormData() {
-  PasswordFormData data = {PasswordForm::SCHEME_HTML,
+  PasswordFormData data = {PasswordForm::Scheme::kHtml,
                            "http://bar.example.com",
                            "http://bar.example.com/origin",
                            "http://bar.example.com/action",
@@ -97,26 +97,22 @@ class PasswordStoreDefaultTestDelegate {
 
   base::FilePath test_login_db_file_path() const;
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_{base::test::TaskEnvironment::MainThreadType::UI};
   base::ScopedTempDir temp_dir_;
   scoped_refptr<PasswordStoreDefault> store_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordStoreDefaultTestDelegate);
 };
 
-PasswordStoreDefaultTestDelegate::PasswordStoreDefaultTestDelegate()
-    : scoped_task_environment_(
-          base::test::ScopedTaskEnvironment::MainThreadType::UI) {
+PasswordStoreDefaultTestDelegate::PasswordStoreDefaultTestDelegate() {
   OSCryptMocker::SetUp();
   SetupTempDir();
-  store_ = CreateInitializedStore(
-      std::make_unique<LoginDatabase>(test_login_db_file_path()));
+  store_ = CreateInitializedStore(std::make_unique<LoginDatabase>(
+      test_login_db_file_path(), IsAccountStore(false)));
 }
 
 PasswordStoreDefaultTestDelegate::PasswordStoreDefaultTestDelegate(
-    std::unique_ptr<LoginDatabase> database)
-    : scoped_task_environment_(
-          base::test::ScopedTaskEnvironment::MainThreadType::UI) {
+    std::unique_ptr<LoginDatabase> database) {
   OSCryptMocker::SetUp();
   SetupTempDir();
   store_ = CreateInitializedStore(std::move(database));
@@ -128,7 +124,7 @@ PasswordStoreDefaultTestDelegate::~PasswordStoreDefaultTestDelegate() {
 }
 
 void PasswordStoreDefaultTestDelegate::FinishAsyncProcessing() {
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 void PasswordStoreDefaultTestDelegate::SetupTempDir() {
@@ -158,9 +154,9 @@ base::FilePath PasswordStoreDefaultTestDelegate::test_login_db_file_path()
 
 }  // anonymous namespace
 
-INSTANTIATE_TYPED_TEST_CASE_P(Default,
-                              PasswordStoreOriginTest,
-                              PasswordStoreDefaultTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(Default,
+                               PasswordStoreOriginTest,
+                               PasswordStoreDefaultTestDelegate);
 
 TEST(PasswordStoreDefaultTest, NonASCIIData) {
   PasswordStoreDefaultTestDelegate delegate;
@@ -168,14 +164,14 @@ TEST(PasswordStoreDefaultTest, NonASCIIData) {
 
   // Some non-ASCII password form data.
   static const PasswordFormData form_data[] = {
-      {PasswordForm::SCHEME_HTML, "http://foo.example.com",
+      {PasswordForm::Scheme::kHtml, "http://foo.example.com",
        "http://foo.example.com/origin", "http://foo.example.com/action",
        L"มีสีสัน", L"お元気ですか?", L"盆栽", L"أحب كرة", L"£éä국수çà", true, 1},
   };
 
   // Build the expected forms vector and add the forms to the store.
   std::vector<std::unique_ptr<PasswordForm>> expected_forms;
-  for (unsigned int i = 0; i < arraysize(form_data); ++i) {
+  for (unsigned int i = 0; i < base::size(form_data); ++i) {
     expected_forms.push_back(FillPasswordFormWithData(form_data[i]));
     store->AddLogin(*expected_forms.back());
   }
@@ -276,7 +272,7 @@ TEST(PasswordStoreDefaultTest, OperationsOnABadDatabaseSilentlyFail) {
   delegate.FinishAsyncProcessing();
   testing::Mock::VerifyAndClearExpectations(&mock_consumer);
   EXPECT_CALL(mock_consumer, OnGetPasswordStoreResultsConstRef(IsEmpty()));
-  bad_store->GetBlacklistLogins(&mock_consumer);
+  bad_store->GetAllLogins(&mock_consumer);
   delegate.FinishAsyncProcessing();
   testing::Mock::VerifyAndClearExpectations(&mock_consumer);
 
@@ -296,8 +292,6 @@ TEST(PasswordStoreDefaultTest, OperationsOnABadDatabaseSilentlyFail) {
   bad_store->RemoveLoginsCreatedBetween(base::Time(), base::Time::Max(),
                                         run_loop.QuitClosure());
   run_loop.Run();
-
-  bad_store->RemoveLoginsSyncedBetween(base::Time(), base::Time::Max());
   delegate.FinishAsyncProcessing();
 
   // Ensure no notifications and no explosions during shutdown either.

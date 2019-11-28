@@ -8,9 +8,10 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "chromeos/chromeos_export.h"
+#include "chromeos/network/onc/certificate_scope.h"
 
 namespace base {
 class Value;
@@ -24,7 +25,7 @@ namespace chromeos {
 namespace onc {
 
 // Represents certificates parsed from the ONC Certificates section.
-class CHROMEOS_EXPORT OncParsedCertificates {
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) OncParsedCertificates {
  public:
   // A Server or Authority certificate parsed from ONC. The payload is
   // represented as a net::X509Certificate.
@@ -33,6 +34,7 @@ class CHROMEOS_EXPORT OncParsedCertificates {
     enum class Type { kServer, kAuthority };
 
     ServerOrAuthorityCertificate(
+        CertificateScope scope,
         Type type,
         const std::string& guid,
         const scoped_refptr<net::X509Certificate>& certificate,
@@ -47,6 +49,8 @@ class CHROMEOS_EXPORT OncParsedCertificates {
     bool operator==(const ServerOrAuthorityCertificate& other) const;
     bool operator!=(const ServerOrAuthorityCertificate& other) const;
 
+    CertificateScope scope() const { return scope_; }
+
     Type type() const { return type_; }
 
     const std::string& guid() const { return guid_; }
@@ -58,6 +62,7 @@ class CHROMEOS_EXPORT OncParsedCertificates {
     bool web_trust_requested() const { return web_trust_requested_; }
 
    private:
+    CertificateScope scope_;
     Type type_;
     std::string guid_;
     scoped_refptr<net::X509Certificate> certificate_;

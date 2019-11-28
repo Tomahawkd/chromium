@@ -12,19 +12,19 @@ import shutil
 import sys
 import tempfile
 
-REPOSITORY_ROOT = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), '..', '..', '..'))
+REPOSITORY_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir))
 
-sys.path.append(os.path.join(REPOSITORY_ROOT, 'build/android/gyp/util'))
-import build_utils
+sys.path.insert(0, os.path.join(REPOSITORY_ROOT, 'build/android/gyp'))
+from util import build_utils  # pylint: disable=wrong-import-position
 
-sys.path.append(os.path.join(REPOSITORY_ROOT, 'components'))
-from cronet.tools import update_api
+sys.path.insert(0, os.path.join(REPOSITORY_ROOT, 'components'))
+from cronet.tools import update_api  # pylint: disable=wrong-import-position
 
 
 # These regular expressions catch the beginning of lines that declare classes
 # and methods.  The first group returned by a match is the class or method name.
-from cronet.tools.update_api import CLASS_RE
+from cronet.tools.update_api import CLASS_RE  # pylint: disable=wrong-import-position
 METHOD_RE = re.compile(r'.* ([^ ]*)\(.*\);')
 
 # Allowed exceptions.  Adding anything to this list is dangerous and should be
@@ -121,7 +121,7 @@ def check_api_calls(opts):
   # Extract API class files from jar
   jar_cmd = ['jar', 'xf', os.path.abspath(opts.api_jar)]
   build_utils.CheckOutput(jar_cmd, cwd=temp_dir)
-  shutil.rmtree(os.path.join(temp_dir, 'META-INF'))
+  shutil.rmtree(os.path.join(temp_dir, 'META-INF'), ignore_errors=True)
 
   # Collect names of API classes
   api_classes = []
@@ -141,7 +141,7 @@ def check_api_calls(opts):
   for impl_jar in opts.impl_jar:
     jar_cmd = ['jar', 'xf', os.path.abspath(impl_jar)]
     build_utils.CheckOutput(jar_cmd, cwd=temp_dir)
-  shutil.rmtree(os.path.join(temp_dir, 'META-INF'))
+  shutil.rmtree(os.path.join(temp_dir, 'META-INF'), ignore_errors=True)
 
   # Process classes
   bad_api_calls = []

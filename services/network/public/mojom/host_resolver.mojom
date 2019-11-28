@@ -28,6 +28,25 @@ struct DnsOverHttpsServer {
   bool use_post = false;
 };
 
+// The secure DNS mode specifies what types of lookups (secure/insecure) should
+// be performed and in what order when resolving a specific query. This is
+// an expanded version of DnsConfig::SecureDnsMode that includes representation
+// of an optional SecureDnsMode. Needed because Mojo does not support optional
+// enums.
+enum OptionalSecureDnsMode {
+  NO_OVERRIDE,
+  OFF,
+  AUTOMATIC,
+  SECURE,
+};
+
+// This enum corresponds to DnsConfig::SecureDnsMode.
+enum SecureDnsMode {
+  OFF,
+  AUTOMATIC,
+  SECURE,
+};
+
 // Overridable DNS configuration values for host resolution. All fields default
 // to a non-overriding state where the relevant value will be used from system
 // DNS configuration.
@@ -79,6 +98,24 @@ struct DnsConfigOverrides {
   // List of servers to query over HTTPS, queried in order
   // (https://tools.ietf.org/id/draft-ietf-doh-dns-over-https-12.txt).
   array<DnsOverHttpsServer>? dns_over_https_servers;
+
+  // The default SecureDnsMode to use when resolving queries. It can be
+  // for individual requests such as requests to resolve a DoH server hostname.
+  OptionalSecureDnsMode secure_dns_mode = OptionalSecureDnsMode.NO_OVERRIDE;
+
+  // Whether automatic upgrade to DNS over HTTPS servers is permitted.
+  Tristate allow_dns_over_https_upgrade = Tristate.NO_OVERRIDE;
+
+  // List of providers to exclude from upgrade mapping. See the
+  // mapping in net/dns/dns_util.cc for provider ids.
+  array<string>? disabled_upgrade_providers;
+};
+
+// Host resolution error info.
+struct ResolveErrorInfo {
+  // Underlying network error code. See net/base/net_error_list.h for error
+  // descriptions.
+  int32 error;
 };
 
 // Control handle used to control outstanding NetworkContext::ResolveHost
@@ -97,27 +134,49 @@ interface ResolveHostHandle {
 // Response interface used to receive results of NetworkContext::ResolveHost
 // requests.
 //
-// TODO(crbug.com/821021): Add additional methods to receive non-address
-// results (eg TXT DNS responses).
+// If only some result types are expected for an implementation, e.g. only
+// address types will be queried, see
+// services/network/public/cpp/resolve_host_client_base.h for a partial C++
+// implementation that allows overriding just expected result types.
 interface ResolveHostClient {
   // Called on completion of a resolve host request. Results are a network error
-  // code, and on success (network error code OK), an AddressList.
-  OnComplete(int32 result, AddressList? resolved_addresses);
+  // code, additional error info, and on success (result == OK,
+  // resolve_error_info.error == OK) and when results are in address form, an
+  // AddressList. The error code in |resolve_error_info.error| should be used
+  // when detailed error information is needed, whereas the error code in
+  // |result| should be used when less specific error information (i.e. OK vs
+  // ERR_NAME_NOT_RESOLVED) is sufficient.
+  //
+  // Always called last to signal completion of the ResolveHost() request.
+  // Unless the ResolveHostClient is closed, this method will always be called
+  // exactly once, and afterwards, no more methods in the interface will be
+  // called.
+  OnComplete(int32 result,
+             ResolveErrorInfo resolve_error_info,
+             AddressList? resolved_addresses);
+
+  // One or more On...Results() methods may be called when non-address results
+  // are available. Always called before OnComplete().
+  OnTextResults(array<string> text_results);
+  OnHostnameResults(array<HostPortPair> hosts);
+};
+
+// DNS query type for a ResolveHostRequest.
+// See:
+// https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
+enum DnsQueryType {
+  UNSPECIFIED,
+  A,
+  AAAA,
+  TXT,
+  PTR,
+  SRV,
 };
 
 // Parameter-grouping struct for additional optional parameters for
 // HostResolver::ResolveHost() calls. All fields are optional and have a
 // reasonable default.
 struct ResolveHostParameters {
-  // DNS query type for a ResolveHostRequest.
-  // See:
-  // https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
-  enum DnsQueryType {
-    UNSPECIFIED,
-    A,
-    AAAA,
-  };
-
   // Requested DNS query type. If UNSPECIFIED, resolver will pick A or AAAA (or
   // both) based on IPv4/IPv6 settings.
   DnsQueryType dns_query_type = DnsQueryType.UNSPECIFIED;
@@ -140,6 +199,11 @@ struct ResolveHostParameters {
 
     // Results will only come from Multicast DNS queries.
     MULTICAST_DNS,
+
+    // No external sources will be used. Results will only come from fast local
+    // sources that are available no matter the source setting, e.g. cache,
+    // hosts file, IP literal resolution, etc.
+    LOCAL_ONLY,
   };
 
   // The source to use for resolved addresses. Default allows the resolver to
@@ -154,7 +218,7 @@ struct ResolveHostParameters {
 
   // If set, the outstanding request can be controlled, eg cancelled, via the
   // handle.
-  ResolveHostHandle&? control_handle;
+  pending_receiver<ResolveHostHandle>? control_handle;
 
   // If |true|, requests that the resolver include AddressList::canonical_name
   // in the results. If the resolver can do so without significant performance
@@ -171,11 +235,42 @@ struct ResolveHostParameters {
   // will receive special logging/observer treatment, and
   // ResolveHostClient::OnComplete will not receive any addresses.
   bool is_speculative = false;
+
+  // Set to override the resolver's default secure dns mode for this request.
+  OptionalSecureDnsMode secure_dns_mode_override =
+      OptionalSecureDnsMode.NO_OVERRIDE;
+};
+
+// Response interface used to receive notifications from
+// HostResolver::MdnsListen requests. All methods have a |query_type| field to
+// allow a single BindingSet and implementation to be used to listen for updates
+// for multiple types for the same host.
+interface MdnsListenClient {
+  enum UpdateType {
+    ADDED,
+    CHANGED,
+    REMOVED
+  };
+
+  OnAddressResult(UpdateType update_type,
+                  DnsQueryType query_type,
+                  IPEndPoint endpoint);
+  OnTextResult(UpdateType update_type,
+               DnsQueryType query_type,
+               array<string> text_records);
+  OnHostnameResult(UpdateType update_type,
+                   DnsQueryType query_type,
+                   HostPortPair host);
+
+  // For results which may be valid MDNS but are not handled/parsed by network
+  // service, e.g. pointers to the root domain.
+  OnUnhandledResult(UpdateType update_type, DnsQueryType query_type);
 };
 
 // Interface that can be passed to code/processes without direct access to
 // NetworkContext to make ResolveHost requests. If destroyed, all outstanding
-// ResolveHost requests from the destroyed interface will be cancelled.
+// ResolveHost and MdnsListen requests from the destroyed interface will be
+// cancelled.
 interface HostResolver {
   // Resolves the given hostname (or IP address literal). Results are a network
   // error code, and on success (network error code OK), an AddressList. All
@@ -192,24 +287,34 @@ interface HostResolver {
   // All outstanding requests are cancelled if the HostResolver or parent
   // NetworkContext are destroyed. Such requests will receive ERR_FAILED via
   // |response_client|.
-  //
-  // TODO(crbug.com/821021): Implement more complex functionality to meet full
-  // capabilities of Resolve() and DnsClient/MDnsClient functionality.
   ResolveHost(HostPortPair host,
               ResolveHostParameters? optional_parameters,
-              ResolveHostClient response_client);
+              pending_remote<ResolveHostClient> response_client);
+
+  // Starts a listener to watch for updates to a multicast DNS result. Result is
+  // a network error code indicating the success of starting the listener. On
+  // success (result OK), |response_client| will begin receiving update
+  // notifications.
+  //
+  // All outstanding listeners are cancelled and will receive no further
+  // notifications if the HostResolver or parent NetworkContext are destroyed.
+  MdnsListen(HostPortPair host,
+             DnsQueryType query_type,
+             pending_remote<MdnsListenClient> response_client)
+      => (int32 result);
 };
 
 // A client interface that subscribes to DNS config change events from
 // DnsConfigChangeManager.
 interface DnsConfigChangeManagerClient {
-  // Notifies that a potential change has been detected in the DNS settings of
-  // the system that may affect results of host resolution.
-  OnSystemDnsConfigChanged();
+  // Notifies that a potential change has been detected in the DNS configuration
+  // that may affect results of host resolution. May be a change in system DNS
+  // settings or effective changes added on top by Chrome net code.
+  OnDnsConfigChanged();
 };
 
 // An interface that broadcasts DNS config change events.
 interface DnsConfigChangeManager {
   // Requests to receive notification when there is a DNS config change.
-  RequestNotifications(DnsConfigChangeManagerClient client_ptr);
+  RequestNotifications(pending_remote<DnsConfigChangeManagerClient> client);
 };

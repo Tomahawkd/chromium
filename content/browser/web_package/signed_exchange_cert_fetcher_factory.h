@@ -13,17 +13,20 @@
 #include "base/unguessable_token.h"
 #include "content/browser/web_package/signed_exchange_cert_fetcher.h"
 #include "content/common/content_export.h"
-#include "url/origin.h"
 
 namespace network {
 class SharedURLLoaderFactory;
 }  // namespace network
 
+namespace blink {
+class URLLoaderThrottle;
+}  // namespace blink
+
 namespace content {
 
 class SignedExchangeDevToolsProxy;
 class SignedExchangeCertFetcher;
-class URLLoaderThrottle;
+class SignedExchangeReporter;
 
 // An interface for creating SignedExchangeCertFetcher object.
 class CONTENT_EXPORT SignedExchangeCertFetcherFactory {
@@ -34,14 +37,13 @@ class CONTENT_EXPORT SignedExchangeCertFetcherFactory {
   virtual std::unique_ptr<SignedExchangeCertFetcher> CreateFetcherAndStart(
       const GURL& cert_url,
       bool force_fetch,
-      SignedExchangeVersion version,
       SignedExchangeCertFetcher::CertificateCallback callback,
-      SignedExchangeDevToolsProxy* devtools_proxy) = 0;
+      SignedExchangeDevToolsProxy* devtools_proxy,
+      SignedExchangeReporter* reporter) = 0;
 
   using URLLoaderThrottlesGetter = base::RepeatingCallback<
-      std::vector<std::unique_ptr<content::URLLoaderThrottle>>()>;
+      std::vector<std::unique_ptr<blink::URLLoaderThrottle>>()>;
   static std::unique_ptr<SignedExchangeCertFetcherFactory> Create(
-      url::Origin request_initiator,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       URLLoaderThrottlesGetter url_loader_throttles_getter,
       const base::Optional<base::UnguessableToken>& throttling_profile_id);

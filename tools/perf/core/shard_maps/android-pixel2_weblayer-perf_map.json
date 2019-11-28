@@ -1,0 +1,45 @@
+{
+    "0": {
+        "benchmarks": {
+            "system_health.common_mobile": {
+                "end": 18,
+                "abridged": true
+            }
+        }
+    },
+    "1": {
+        "benchmarks": {
+            "system_health.common_mobile": {
+                "begin": 18,
+                "abridged": true
+            }
+        }
+    },
+    "2": {
+        "benchmarks": {
+            "system_health.memory_mobile": {
+                "end": 13,
+                "abridged": true
+            }
+        }
+    },
+    "3": {
+        "benchmarks": {
+            "system_health.memory_mobile": {
+                "begin": 13,
+                "abridged": true
+            }
+        }
+    },
+    "extra_infos": {
+        "num_stories": 56,
+        "predicted_min_shard_time": 546,
+        "predicted_min_shard_index": 2,
+        "predicted_max_shard_time": 710.0,
+        "predicted_max_shard_index": 1,
+        "shard #0": 636.0,
+        "shard #1": 710.0,
+        "shard #2": 546,
+        "shard #3": 630
+    }
+}

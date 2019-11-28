@@ -79,10 +79,15 @@ class CONTENT_EXPORT SiteInstance : public base::RefCounted<SiteInstance> {
   // Returns a unique ID for this SiteInstance.
   virtual int32_t GetId() = 0;
 
+  // Returns a unique ID for the BrowsingInstance (i.e., group of related
+  // browsing contexts) to which this SiteInstance belongs. This allows callers
+  // to identify which SiteInstances can asynchronously script each other.
+  virtual int32_t GetBrowsingInstanceId() = 0;
+
   // Whether this SiteInstance has a running process associated with it.
   // This may return true before the first call to GetProcess(), in cases where
   // we use process-per-site and there is an existing process available.
-  virtual bool HasProcess() const = 0;
+  virtual bool HasProcess() = 0;
 
   // Returns the current RenderProcessHost being used to render pages for this
   // SiteInstance.  If there is no RenderProcessHost (because either none has
@@ -98,17 +103,23 @@ class CONTENT_EXPORT SiteInstance : public base::RefCounted<SiteInstance> {
 
   // Browser context to which this SiteInstance (and all related
   // SiteInstances) belongs.
-  virtual content::BrowserContext* GetBrowserContext() const = 0;
+  virtual content::BrowserContext* GetBrowserContext() = 0;
 
-  // Get the web site that this SiteInstance is rendering pages for.  This
+  // Get the web site that this SiteInstance is rendering pages for. This
   // includes the scheme and registered domain, but not the port.
   //
-  // NOTE: In most cases, this value should not be considered authoritative
-  // because a SiteInstance can usually host pages from multiple sites.  It is
-  // only an accurate representation of the pages within the SiteInstance in
-  // the "site per process" process model, or for sites that require process
-  // isolation (e.g., WebUI, extensions).
-  virtual const GURL& GetSiteURL() const = 0;
+  // NOTE: In most cases, code should be performing checks against the origin
+  // returned by |RenderFrameHost::GetLastCommittedOrigin()|. In contrast, the
+  // GURL returned by |GetSiteURL()| should not be considered authoritative
+  // because:
+  // - a SiteInstance can host pages from multiple sites if "site per process"
+  //   is not enabled and the SiteInstance isn't hosting pages that require
+  //   process isolation (e.g. WebUI or extensions)
+  // - even with site per process, the site URL is not an origin: while often
+  //   derived from the origin, it only contains the scheme and the eTLD + 1,
+  //   i.e. an origin with the host "deeply.nested.subdomain.example.com"
+  //   corresponds to a site URL with the host "example.com".
+  virtual const GURL& GetSiteURL() = 0;
 
   // Gets a SiteInstance for the given URL that shares the current
   // BrowsingInstance, creating a new SiteInstance if necessary.  This ensures
@@ -168,6 +179,26 @@ class CONTENT_EXPORT SiteInstance : public base::RefCounted<SiteInstance> {
   // determining the site, |url| is resolved to an effective URL via
   // ContentBrowserClient::GetEffectiveURL().
   static GURL GetSiteForURL(BrowserContext* context, const GURL& url);
+
+  // Starts requiring a dedicated process for |url|'s site.  On platforms where
+  // strict site isolation is disabled, this may be used as a runtime signal
+  // that a certain site should become process-isolated, because its security
+  // is important to the user (e.g., if the user has typed a password on that
+  // site).  The site will be determined from |url|'s scheme and eTLD+1. If
+  // |context| is non-null, the site will be isolated only within that
+  // BrowserContext; if |context| is null, the site will be isolated globally
+  // for all BrowserContexts.
+  //
+  // Note that this has no effect if site isolation is turned off, such as via
+  // the kDisableSiteIsolation cmdline flag or enterprise policy -- see also
+  // SiteIsolationPolicy::AreDynamicIsolatedOriginsEnabled().
+  //
+  // Currently this function assumes that the site is added *persistently*: it
+  // will ask the embedder to save the site as part of profile data for
+  // |context|, so that it survives restarts.  The site will be cleared from
+  // profile data if the user clears browsing data.  Future uses of this
+  // function may want to avoid persistence by passing in a new flag.
+  static void StartIsolatingSite(BrowserContext* context, const GURL& url);
 
  protected:
   friend class base::RefCounted<SiteInstance>;

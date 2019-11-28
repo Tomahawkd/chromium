@@ -4,14 +4,15 @@
 
 #include "net/url_request/test_url_request_interceptor.h"
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/test/url_request/url_request_test_job_backed_by_file.h"
 #include "net/url_request/url_request.h"
-#include "net/url_request/url_request_file_job.h"
 #include "net/url_request/url_request_filter.h"
 #include "net/url_request/url_request_interceptor.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -20,18 +21,18 @@ namespace net {
 
 namespace {
 
-// This class is needed because URLRequestFileJob always returns a -1
-// HTTP response status code.
-class TestURLRequestJob : public URLRequestFileJob {
+// This class is needed because URLRequestTestJobBackedByFile always returns a
+// -1 HTTP response status code.
+class TestURLRequestJob : public URLRequestTestJobBackedByFile {
  public:
   TestURLRequestJob(URLRequest* request,
                     NetworkDelegate* network_delegate,
                     const base::FilePath& file_path,
                     const scoped_refptr<base::TaskRunner>& worker_task_runner)
-      : URLRequestFileJob(request,
-                          network_delegate,
-                          file_path,
-                          worker_task_runner) {}
+      : URLRequestTestJobBackedByFile(request,
+                                      network_delegate,
+                                      file_path,
+                                      worker_task_runner) {}
 
   void GetResponseInfo(HttpResponseInfo* info) override {
     info->headers = new net::HttpResponseHeaders("HTTP/1.1 200 OK");
@@ -101,7 +102,7 @@ class TestURLRequestInterceptor::Delegate : public URLRequestInterceptor {
     DCHECK(network_task_runner_->RunsTasksInCurrentSequence());
     if (request->url().scheme() != scheme_ ||
         request->url().host() != hostname_) {
-      return NULL;
+      return nullptr;
     }
 
     auto it = responses_.find(request->url());
@@ -115,7 +116,7 @@ class TestURLRequestInterceptor::Delegate : public URLRequestInterceptor {
       }
       it = ignore_query_responses_.find(url);
       if (it == ignore_query_responses_.end())
-        return NULL;
+        return nullptr;
     }
     {
       base::AutoLock auto_lock(hit_count_lock_);
@@ -154,24 +155,22 @@ TestURLRequestInterceptor::TestURLRequestInterceptor(
                              network_task_runner_,
                              worker_task_runner)) {
   network_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Delegate::Register, base::Unretained(delegate_)));
+      FROM_HERE,
+      base::BindOnce(&Delegate::Register, base::Unretained(delegate_)));
 }
 
 TestURLRequestInterceptor::~TestURLRequestInterceptor() {
   network_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Delegate::Unregister, scheme_, hostname_));
+      FROM_HERE, base::BindOnce(&Delegate::Unregister, scheme_, hostname_));
 }
 
 void TestURLRequestInterceptor::SetResponse(const GURL& url,
                                             const base::FilePath& path) {
   CHECK_EQ(scheme_, url.scheme());
   CHECK_EQ(hostname_, url.host());
-  network_task_runner_->PostTask(FROM_HERE,
-                                 base::Bind(&Delegate::SetResponse,
-                                            base::Unretained(delegate_),
-                                            url,
-                                            path,
-                                            false));
+  network_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&Delegate::SetResponse,
+                                base::Unretained(delegate_), url, path, false));
 }
 
 void TestURLRequestInterceptor::SetResponseIgnoreQuery(
@@ -179,12 +178,9 @@ void TestURLRequestInterceptor::SetResponseIgnoreQuery(
     const base::FilePath& path) {
   CHECK_EQ(scheme_, url.scheme());
   CHECK_EQ(hostname_, url.host());
-  network_task_runner_->PostTask(FROM_HERE,
-                                 base::Bind(&Delegate::SetResponse,
-                                            base::Unretained(delegate_),
-                                            url,
-                                            path,
-                                            true));
+  network_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&Delegate::SetResponse,
+                                base::Unretained(delegate_), url, path, true));
 }
 
 int TestURLRequestInterceptor::GetHitCount() {

@@ -27,7 +27,7 @@ Widget* CreateControlWidget(aura::Window* parent, const gfx::Rect& bounds) {
   params.parent = parent;
   params.bounds = bounds;
   Widget* widget = new Widget();
-  widget->Init(params);
+  widget->Init(std::move(params));
   return widget;
 }
 
@@ -45,8 +45,8 @@ View* CreateViewWithLayer(const gfx::Rect& bounds, const char* layer_name) {
 
 class ViewAuraTest : public ViewsTestBase {
  public:
-  ViewAuraTest() {}
-  ~ViewAuraTest() override {}
+  ViewAuraTest() = default;
+  ~ViewAuraTest() override = default;
 
   const View::Views& GetViewsWithLayers(Widget* widget) {
     return widget->GetViewsWithLayers();
@@ -72,11 +72,6 @@ class ViewAuraTest : public ViewsTestBase {
 //     +-- v8
 //     +-- v9
 TEST_F(ViewAuraTest, RecreateLayersWithWindows) {
-  // TODO: test uses GetContext(), which is not applicable to aura-mus.
-  // http://crbug.com/663809.
-  if (IsMus())
-    return;
-
   Widget* w1 = CreateControlWidget(GetContext(), gfx::Rect(0, 0, 100, 100));
   w1->GetNativeView()->layer()->set_name("w1");
 

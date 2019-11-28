@@ -7,9 +7,12 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <set>
+#include <tuple>
 
+#include "base/callback.h"
 #include "base/containers/queue.h"
 #include "base/containers/stack.h"
 #include "base/gtest_prod_util.h"
@@ -18,17 +21,18 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/services/storage/indexed_db/scopes/scope_lock.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
+#include "content/browser/indexed_db/indexed_db_blob_storage.h"
 #include "content/browser/indexed_db/indexed_db_connection.h"
-#include "content/browser/indexed_db/indexed_db_database.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
 #include "content/browser/indexed_db/indexed_db_observer.h"
+#include "content/browser/indexed_db/indexed_db_task_helper.h"
 #include "third_party/blink/public/common/indexeddb/web_idb_types.h"
-#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-forward.h"
 
 namespace content {
 
-class BlobWriteCallbackImpl;
 class IndexedDBCursor;
 class IndexedDBDatabaseCallbacks;
 
@@ -47,6 +51,7 @@ FORWARD_DECLARE_TEST(IndexedDBTransactionTest, IndexedDBObserver);
 
 class CONTENT_EXPORT IndexedDBTransaction {
  public:
+  using TearDownCallback = base::RepeatingCallback<void(leveldb::Status)>;
   using Operation = base::OnceCallback<leveldb::Status(IndexedDBTransaction*)>;
   using AbortOperation = base::OnceClosure;
 
@@ -60,18 +65,21 @@ class CONTENT_EXPORT IndexedDBTransaction {
 
   virtual ~IndexedDBTransaction();
 
-  leveldb::Status Commit();
+  // Signals the transaction for commit.
+  void SetCommitFlag();
 
-  // This object is destroyed by this method.
-  void Abort(const IndexedDBDatabaseError& error);
+  // This transaction is ultimately backed by a LevelDBScope. Aborting a
+  // transaction rolls back the LevelDBScopes, which (if LevelDBScopes is in
+  // single-sequence mode) can fail. This returns the result of that rollback,
+  // if applicable.
+  leveldb::Status Abort(const IndexedDBDatabaseError& error);
 
-  // Called by the transaction coordinator when this transaction is unblocked.
+  // Called by the scopes lock manager when this transaction is unblocked.
   void Start();
 
   blink::mojom::IDBTransactionMode mode() const { return mode_; }
   const std::set<int64_t>& scope() const { return object_store_ids_; }
 
-  // Tasks cannot call Commit.
   void ScheduleTask(Operation task) {
     ScheduleTask(blink::mojom::IDBTaskType::Normal, std::move(task));
   }
@@ -84,6 +92,7 @@ class CONTENT_EXPORT IndexedDBTransaction {
     pending_preemptive_events_--;
     DCHECK_GE(pending_preemptive_events_, 0);
   }
+
   void AddPendingObserver(int32_t observer_id,
                           const IndexedDBObserver::Options& options);
   // Delete pending observers with ID's listed in |pending_observer_ids|.
@@ -93,19 +102,32 @@ class CONTENT_EXPORT IndexedDBTransaction {
   void AddObservation(int32_t connection_id,
                       blink::mojom::IDBObservationPtr observation);
 
+  void EnsureBackingStoreTransactionBegun();
+
   blink::mojom::IDBObserverChangesPtr* GetPendingChangesForConnection(
       int32_t connection_id);
+
+  enum class RunTasksResult { kError, kNotFinished, kCommitted, kAborted };
+  std::tuple<RunTasksResult, leveldb::Status> RunTasks();
 
   IndexedDBBackingStore::Transaction* BackingStoreTransaction() {
     return transaction_.get();
   }
   int64_t id() const { return id_; }
 
-  IndexedDBDatabase* database() const { return database_.get(); }
+  base::WeakPtr<IndexedDBDatabase> database() const { return database_; }
   IndexedDBDatabaseCallbacks* callbacks() const { return callbacks_.get(); }
   IndexedDBConnection* connection() const { return connection_.get(); }
+  bool is_commit_pending() const { return is_commit_pending_; }
+  int64_t num_errors_sent() const { return num_errors_sent_; }
+  int64_t num_errors_handled() const { return num_errors_handled_; }
+  void IncrementNumErrorsSent() { ++num_errors_sent_; }
+  void SetNumErrorsHandled(int64_t num_errors_handled) {
+    num_errors_handled_ = num_errors_handled;
+  }
 
   State state() const { return state_; }
+  bool aborted() const { return aborted_; }
   bool IsTimeoutTimerRunning() const { return timeout_timer_.IsRunning(); }
 
   struct Diagnostics {
@@ -120,6 +142,12 @@ class CONTENT_EXPORT IndexedDBTransaction {
   void set_size(int64_t size) { size_ = size; }
   int64_t size() const { return size_; }
 
+  base::WeakPtr<IndexedDBTransaction> AsWeakPtr() {
+    return ptr_factory_.GetWeakPtr();
+  }
+
+  ScopesLocksHolder* mutable_locks_receiver() { return &locks_receiver_; }
+
  protected:
   // Test classes may derive, but most creation should be done via
   // IndexedDBClassFactory.
@@ -128,13 +156,14 @@ class CONTENT_EXPORT IndexedDBTransaction {
       IndexedDBConnection* connection,
       const std::set<int64_t>& object_store_ids,
       blink::mojom::IDBTransactionMode mode,
+      TasksAvailableCallback tasks_available_callback,
+      TearDownCallback tear_down_callback,
       IndexedDBBackingStore::Transaction* backing_store_transaction);
 
   // May be overridden in tests.
   virtual base::TimeDelta GetInactivityTimeout() const;
 
  private:
-  friend class BlobWriteCallbackImpl;
   friend class IndexedDBClassFactory;
   friend class IndexedDBConnection;
   friend class base::RefCounted<IndexedDBTransaction>;
@@ -164,14 +193,18 @@ class CONTENT_EXPORT IndexedDBTransaction {
       indexed_db_transaction_unittest::IndexedDBTransactionTest,
       IndexedDBObserver);
 
-  void RunTasksIfStarted();
+  leveldb::Status Commit();
+
+  // Helper for posting a task to call IndexedDBTransaction::CommitPhaseTwo when
+  // we know the transaction had no requests and therefore the commit must
+  // succeed.
+  static leveldb::Status CommitPhaseTwoProxy(IndexedDBTransaction* transaction);
 
   bool IsTaskQueueEmpty() const;
   bool HasPendingTasks() const;
 
-  leveldb::Status BlobWriteComplete(
-      IndexedDBBackingStore::BlobWriteResult result);
-  void ProcessTaskQueue();
+  leveldb::Status BlobWriteComplete(BlobWriteResult result);
+  void CloseOpenCursorBindings();
   void CloseOpenCursors();
   leveldb::Status CommitPhaseTwo();
   void Timeout();
@@ -182,12 +215,18 @@ class CONTENT_EXPORT IndexedDBTransaction {
 
   bool used_ = false;
   State state_ = CREATED;
-  bool commit_pending_ = false;
+  ScopesLocksHolder locks_receiver_;
+  bool is_commit_pending_ = false;
+
   // We are owned by the connection object, but during force closes sometimes
   // there are issues if there is a pending OpenRequest. So use a WeakPtr.
   base::WeakPtr<IndexedDBConnection> connection_;
   scoped_refptr<IndexedDBDatabaseCallbacks> callbacks_;
-  scoped_refptr<IndexedDBDatabase> database_;
+  base::WeakPtr<IndexedDBDatabase> database_;
+  TasksAvailableCallback run_tasks_callback_;
+  // Note: calling this will tear down the IndexedDBOriginState (and probably
+  // destroy this object).
+  TearDownCallback tear_down_callback_;
 
   // Observers in pending queue do not listen to changes until activated.
   std::vector<std::unique_ptr<IndexedDBObserver>> pending_observers_;
@@ -234,9 +273,12 @@ class CONTENT_EXPORT IndexedDBTransaction {
   std::unique_ptr<IndexedDBBackingStore::Transaction> transaction_;
   bool backing_store_transaction_begun_ = false;
 
-  bool should_process_queue_ = false;
   int pending_preemptive_events_ = 0;
   bool processing_event_queue_ = false;
+  bool aborted_ = false;
+
+  int64_t num_errors_sent_ = 0;
+  int64_t num_errors_handled_ = 0;
 
   std::set<IndexedDBCursor*> open_cursors_;
 
@@ -247,7 +289,7 @@ class CONTENT_EXPORT IndexedDBTransaction {
 
   Diagnostics diagnostics_;
 
-  base::WeakPtrFactory<IndexedDBTransaction> ptr_factory_;
+  base::WeakPtrFactory<IndexedDBTransaction> ptr_factory_{this};
 };
 
 }  // namespace content

@@ -16,23 +16,13 @@ class CORE_EXPORT AudioTrack final : public ScriptWrappable, public TrackBase {
   USING_GARBAGE_COLLECTED_MIXIN(AudioTrack);
 
  public:
-  static AudioTrack* Create(const String& id,
-                            const AtomicString& kind,
-                            const AtomicString& label,
-                            const AtomicString& language,
-                            bool enabled) {
-    return MakeGarbageCollected<AudioTrack>(
-        id, IsValidKindKeyword(kind) ? kind : g_empty_atom, label, language,
-        enabled);
-  }
-
   AudioTrack(const String& id,
              const AtomicString& kind,
              const AtomicString& label,
              const AtomicString& language,
              bool enabled);
   ~AudioTrack() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   bool enabled() const { return enabled_; }
   void setEnabled(bool);

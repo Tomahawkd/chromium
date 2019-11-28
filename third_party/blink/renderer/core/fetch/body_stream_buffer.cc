@@ -8,9 +8,10 @@
 #include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fetch/body.h"
+#include "third_party/blink/renderer/core/fetch/bytes_consumer_tee.h"
 #include "third_party/blink/renderer/core/fetch/readable_stream_bytes_consumer.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
-#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_wrapper.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_interface.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
@@ -18,6 +19,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -26,7 +28,7 @@
 namespace blink {
 
 class BodyStreamBuffer::LoaderClient final
-    : public GarbageCollectedFinalized<LoaderClient>,
+    : public GarbageCollected<LoaderClient>,
       public ContextLifecycleObserver,
       public FetchDataLoader::Client {
   USING_GARBAGE_COLLECTED_MIXIN(LoaderClient);
@@ -105,9 +107,20 @@ BodyStreamBuffer::BodyStreamBuffer(ScriptState* script_state,
       consumer_(consumer),
       signal_(signal),
       made_from_readable_stream_(false) {
+  // inside_create_stream_ is set to track down the cause of the crash in
+  // https://crbug.com/1007162.
+  // TODO(ricea): Remove it and the CHECK once the cause is found.
+  inside_create_stream_ = true;
+  CHECK(consumer_);
+
   stream_ =
       ReadableStream::CreateWithCountQueueingStrategy(script_state_, this, 0);
   stream_broken_ = !stream_;
+
+  // TODO(ricea): Remove this and the CHECK once https://crbug.com/1007162 is
+  // fixed.
+  inside_create_stream_ = false;
+  CHECK(consumer_);
 
   consumer_->SetClient(this);
   if (signal) {
@@ -240,8 +253,8 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
     stream_broken_ = true;
     return;
   }
-  BytesConsumer::Tee(ExecutionContext::From(script_state_), handle, &dest1,
-                     &dest2);
+  BytesConsumerTee(ExecutionContext::From(script_state_), handle, &dest1,
+                   &dest2);
   *branch1 =
       MakeGarbageCollected<BodyStreamBuffer>(script_state_, dest1, signal_);
   *branch2 =
@@ -293,9 +306,7 @@ void BodyStreamBuffer::OnStateChange() {
 }
 
 bool BodyStreamBuffer::HasPendingActivity() const {
-  if (loader_)
-    return true;
-  return UnderlyingSourceBase::HasPendingActivity();
+  return loader_;
 }
 
 void BodyStreamBuffer::ContextDestroyed(ExecutionContext* destroyed_context) {
@@ -348,7 +359,7 @@ void BodyStreamBuffer::CloseAndLockAndDisturb(ExceptionState& exception_state) {
     return;
   }
 
-  if (stream_->IsInternalStreamMissing()) {
+  if (stream_->IsBroken()) {
     stream_broken_ = true;
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
@@ -392,7 +403,8 @@ void BodyStreamBuffer::Abort() {
     DCHECK(!consumer_);
     return;
   }
-  Controller()->GetError(DOMException::Create(DOMExceptionCode::kAbortError));
+  Controller()->Error(
+      MakeGarbageCollected<DOMException>(DOMExceptionCode::kAbortError));
   CancelConsumer();
 }
 
@@ -407,7 +419,7 @@ void BodyStreamBuffer::Close() {
 void BodyStreamBuffer::GetError() {
   {
     ScriptState::Scope scope(script_state_);
-    Controller()->GetError(V8ThrowException::CreateTypeError(
+    Controller()->Error(V8ThrowException::CreateTypeError(
         script_state_->GetIsolate(), "network error"));
   }
   CancelConsumer();
@@ -415,6 +427,9 @@ void BodyStreamBuffer::GetError() {
 
 void BodyStreamBuffer::CancelConsumer() {
   if (consumer_) {
+    // TODO(ricea): Remove this CHECK once the cause of
+    // https://crbug.com/1007162 is found.
+    CHECK(!inside_create_stream_);
     consumer_->Cancel();
     consumer_ = nullptr;
   }
@@ -512,20 +527,13 @@ BytesConsumer* BodyStreamBuffer::ReleaseHandle(
 
   if (made_from_readable_stream_) {
     ScriptState::Scope scope(script_state_);
-    // We need to have |reader| alive by some means (as noted in
-    // ReadableStreamDataConsumerHandle). Based on the following facts:
-    //  - This function is used only from Tee and StartLoading.
-    //  - This branch cannot be taken when called from Tee.
-    //  - StartLoading makes HasPendingActivity return true while loading.
-    //  - ReadableStream holds a reference to |reader| inside JS.
-    // we don't need to keep the reader explicitly.
-    ScriptValue reader = stream_->getReader(script_state_, exception_state);
+    auto* consumer = MakeGarbageCollected<ReadableStreamBytesConsumer>(
+        script_state_, stream_, exception_state);
     if (exception_state.HadException()) {
       stream_broken_ = true;
       return nullptr;
     }
-    return MakeGarbageCollected<ReadableStreamBytesConsumer>(script_state_,
-                                                             reader);
+    return consumer;
   }
   // We need to call these before calling CloseAndLockAndDisturb.
   const base::Optional<bool> is_closed = IsStreamClosed(exception_state);
@@ -535,6 +543,9 @@ BytesConsumer* BodyStreamBuffer::ReleaseHandle(
   if (exception_state.HadException())
     return nullptr;
 
+  // TODO(ricea): Remove this CHECK once the cause of https://crbug.com/1007162
+  // is found.
+  CHECK(!inside_create_stream_);
   BytesConsumer* consumer = consumer_.Release();
 
   CloseAndLockAndDisturb(exception_state);

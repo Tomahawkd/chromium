@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/dom/character_data.h"
 #include "third_party/blink/renderer/core/loader/resource/text_resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -44,7 +45,7 @@ class CORE_EXPORT ProcessingInstruction final : public CharacterData,
 
   ProcessingInstruction(Document&, const String& target, const String& data);
   ~ProcessingInstruction() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   const String& target() const { return target_; }
   const String& LocalHref() const { return local_href_; }
@@ -64,7 +65,7 @@ class CORE_EXPORT ProcessingInstruction final : public CharacterData,
     // Detach event listener from its processing instruction.
     virtual void Detach() = 0;
 
-    void Trace(blink::Visitor* visitor) override {}
+    void Trace(Visitor* visitor) override {}
   };
 
   void SetEventListenerForXSLT(DetachableEventListener* listener) {
@@ -80,7 +81,7 @@ class CORE_EXPORT ProcessingInstruction final : public CharacterData,
 
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
-  void DetachLayoutTree(const AttachContext&) final {}
+  void DetachLayoutTree(bool performing_reattach) final {}
 
   bool CheckStyleSheet(String& href, String& charset);
   void Process(const String& href, const String& charset);
@@ -109,12 +110,16 @@ class CORE_EXPORT ProcessingInstruction final : public CharacterData,
   Member<DetachableEventListener> listener_for_xslt_;
 };
 
-DEFINE_NODE_TYPE_CASTS(ProcessingInstruction,
-                       getNodeType() == Node::kProcessingInstructionNode);
+template <>
+struct DowncastTraits<ProcessingInstruction> {
+  static bool AllowFrom(const Node& node) {
+    return node.getNodeType() == Node::kProcessingInstructionNode;
+  }
+};
 
 inline bool IsXSLStyleSheet(const Node& node) {
   return node.getNodeType() == Node::kProcessingInstructionNode &&
-         ToProcessingInstruction(node).IsXSL();
+         To<ProcessingInstruction>(node).IsXSL();
 }
 
 }  // namespace blink

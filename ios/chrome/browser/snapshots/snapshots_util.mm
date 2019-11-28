@@ -6,6 +6,7 @@
 
 #import <UIKit/UIKit.h>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/mac/foundation_util.h"
@@ -39,8 +40,9 @@ void ClearIOSSnapshots(base::OnceClosure callback) {
   // list of snapshots stored on the device can't be obtained programmatically.
   std::vector<base::FilePath> snapshots_paths;
   GetSnapshotsPaths(&snapshots_paths);
-  base::PostTaskWithTraitsAndReply(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReply(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&DeleteAllFiles, std::move(snapshots_paths)),
       std::move(callback));
 }

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/bind_helpers.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/test_chrome_web_ui_controller_factory.h"
@@ -13,6 +14,8 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "url/gurl.h"
+
+// NOTE: ChromeKeyboardUITest is not used with the Window Service.
 
 namespace {
 
@@ -24,7 +27,7 @@ class ChromeKeyboardUITest : public ChromeRenderViewHostTestHarness {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     chrome_keyboard_controller_client_ =
-        ChromeKeyboardControllerClient::CreateForTest(nullptr /* connector */);
+        ChromeKeyboardControllerClient::CreateForTest();
     chrome_keyboard_ui_ = std::make_unique<ChromeKeyboardUI>(profile());
   }
 

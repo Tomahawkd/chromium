@@ -7,13 +7,15 @@
 
 #include <memory>
 
+#include "ash/public/cpp/tablet_mode_observer.h"
+#include "ash/shelf/shelf_observer.h"
 #include "ash/system/screen_layout_observer.h"
 #include "ash/system/tray/time_to_click_recorder.h"
 #include "ash/system/tray/tray_bubble_base.h"
-#include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/time/time.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
 
@@ -35,17 +37,15 @@ class UnifiedSystemTrayView;
 // Shows the bubble on the constructor, and closes the bubble on the destructor.
 // It is possible that the bubble widget is closed on deactivation. In such
 // case, this class calls UnifiedSystemTray::CloseBubble() to delete itself.
-class UnifiedSystemTrayBubble : public TrayBubbleBase,
-                                public ash::ScreenLayoutObserver,
-                                public views::WidgetObserver,
-                                public ::wm::ActivationChangeObserver,
-                                public TimeToClickRecorder::Delegate,
-                                public TabletModeObserver {
+class ASH_EXPORT UnifiedSystemTrayBubble
+    : public TrayBubbleBase,
+      public ash::ScreenLayoutObserver,
+      public views::WidgetObserver,
+      public ShelfObserver,
+      public ::wm::ActivationChangeObserver,
+      public TimeToClickRecorder::Delegate,
+      public TabletModeObserver {
  public:
-  // Return adjusted anchor insets that take into account shelf alignment and
-  // bubble insets.
-  static gfx::Insets GetAdjustedAnchorInsets(UnifiedSystemTray* tray,
-                                             TrayBubbleView* bubble_view);
 
   explicit UnifiedSystemTrayBubble(UnifiedSystemTray* tray, bool show_by_click);
   ~UnifiedSystemTrayBubble() override;
@@ -62,11 +62,23 @@ class UnifiedSystemTrayBubble : public TrayBubbleBase,
   // Close the bubble immediately.
   void CloseNow();
 
+  // Collapse the message center bubble.
+  void CollapseMessageCenter();
+
+  // Expand the message center bubble.
+  void ExpandMessageCenter();
+
+  // Ensure the bubble is collapsed.
+  void EnsureCollapsed();
+
   // Ensure the bubble is expanded.
   void EnsureExpanded();
 
   // Show audio settings detailed view.
   void ShowAudioDetailedView();
+
+  // Show network settings detailed view.
+  void ShowNetworkDetailedView(bool force);
 
   // Update bubble bounds and focus if necessary.
   void UpdateBubble();
@@ -76,6 +88,20 @@ class UnifiedSystemTrayBubble : public TrayBubbleBase,
   // performance bottleneck. This method makes use of layer transform to avoid
   // resizing of the bubble during animation.
   void UpdateTransform();
+
+  // Return the maximum height available for both the system tray and
+  // the message center.
+  int CalculateMaxHeight() const;
+
+  // Return the current visible height of the tray, even when partially
+  // collapsed / expanded.
+  int GetCurrentTrayHeight() const;
+
+  // Relinquish focus and transfer it to the message center widget.
+  bool FocusOut(bool reverse);
+
+  // Inform UnifiedSystemTrayView of focus being acquired.
+  void FocusEntered(bool reverse);
 
   // TrayBubbleBase:
   TrayBackgroundView* GetTray() const override;
@@ -100,6 +126,15 @@ class UnifiedSystemTrayBubble : public TrayBubbleBase,
   void OnTabletModeStarted() override;
   void OnTabletModeEnded() override;
 
+  // ShelfObserver:
+  void OnAutoHideStateChanged(ShelfAutoHideState new_state) override;
+
+  UnifiedSystemTrayView* unified_view() { return unified_view_; }
+
+  UnifiedSystemTrayController* controller_for_test() {
+    return controller_.get();
+  }
+
  private:
   friend class UnifiedSystemTrayTestApi;
 
@@ -112,6 +147,9 @@ class UnifiedSystemTrayBubble : public TrayBubbleBase,
   // Set visibility of bubble frame border. Used for disabling the border during
   // animation.
   void SetFrameVisible(bool visible);
+
+  // Returns the insets for the bubble.
+  gfx::Insets GetInsets();
 
   // Controller of UnifiedSystemTrayView. As the view is owned by views
   // hierarchy, we have to own the controller here.
@@ -139,9 +177,6 @@ class UnifiedSystemTrayBubble : public TrayBubbleBase,
 
   TrayBubbleView* bubble_view_ = nullptr;
   UnifiedSystemTrayView* unified_view_ = nullptr;
-
- private:
-  int CalculateMaxHeight() const;
 
   DISALLOW_COPY_AND_ASSIGN(UnifiedSystemTrayBubble);
 };

@@ -5,6 +5,7 @@
 #ifndef CHROMEOS_SERVICES_SECURE_CHANNEL_CONNECTION_ATTEMPT_BASE_H_
 #define CHROMEOS_SERVICES_SECURE_CHANNEL_CONNECTION_ATTEMPT_BASE_H_
 
+#include "base/bind.h"
 #include "base/containers/flat_map.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -12,7 +13,7 @@
 #include "base/observer_list.h"
 #include "base/stl_util.h"
 #include "base/time/default_clock.h"
-#include "chromeos/components/proximity_auth/logging/logging.h"
+#include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/services/secure_channel/authenticated_channel.h"
 #include "chromeos/services/secure_channel/connect_to_device_operation.h"
 #include "chromeos/services/secure_channel/connection_attempt.h"
@@ -53,8 +54,7 @@ class ConnectionAttemptBase : public ConnectionAttempt<FailureDetailType> {
       base::Clock* clock = base::DefaultClock::GetInstance())
       : ConnectionAttempt<FailureDetailType>(delegate,
                                              clock,
-                                             connection_attempt_details),
-        weak_ptr_factory_(this) {}
+                                             connection_attempt_details) {}
 
   ~ConnectionAttemptBase() override {
     if (operation_)
@@ -78,7 +78,7 @@ class ConnectionAttemptBase : public ConnectionAttempt<FailureDetailType> {
     ConnectionPriority priority_before_add =
         GetHighestRemainingConnectionPriority();
 
-    if (base::ContainsKey(id_to_request_map_, request->GetRequestId())) {
+    if (base::Contains(id_to_request_map_, request->GetRequestId())) {
       PA_LOG(ERROR) << "ConnectionAttemptBase::"
                     << "ProcessAddingNewConnectionRequest(): Processing "
                     << "request whose ID has already been processed.";
@@ -175,7 +175,7 @@ class ConnectionAttemptBase : public ConnectionAttempt<FailureDetailType> {
       id_to_request_map_;
 
   base::WeakPtrFactory<ConnectionAttemptBase<FailureDetailType>>
-      weak_ptr_factory_;
+      weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ConnectionAttemptBase);
 };

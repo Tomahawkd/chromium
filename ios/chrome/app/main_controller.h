@@ -12,8 +12,8 @@
 #import "ios/chrome/app/application_delegate/startup_information.h"
 #import "ios/chrome/app/application_delegate/tab_opening.h"
 #import "ios/chrome/app/application_delegate/tab_switching.h"
+#import "ios/chrome/app/main_controller_guts.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
-#import "ios/chrome/browser/ui/main/browser_view_information.h"
 
 @class AppState;
 @class MetricsMediator;
@@ -24,16 +24,12 @@
 //
 // By design, it has no public API of its own. Anything interacting with
 // MainController should be doing so through a specific protocol.
-@interface MainController : NSObject<ApplicationCommands,
-                                     AppNavigation,
-                                     BrowserLauncher,
-                                     StartupInformation,
-                                     TabOpening,
-                                     TabSwitching>
-
-// A BrowserViewInformation object to perform BrowserViewController operations.
-@property(weak, nonatomic, readonly) id<BrowserViewInformation>
-    browserViewInformation;
+@interface MainController : NSObject <AppNavigation,
+                                      BrowserLauncher,
+                                      MainControllerGuts,
+                                      StartupInformation,
+                                      TabOpening,
+                                      TabSwitching>
 
 // The application window.
 @property(nonatomic, strong) UIWindow* window;
@@ -46,9 +42,8 @@
 // to the user preferences.
 @property(nonatomic, weak) MetricsMediator* metricsMediator;
 
-// Returns whether the app is showing or partially showing the
-// incognito panel.
-@property(nonatomic, assign, readonly) BOOL incognitoContentVisible;
+// For temporary plumbing only.
+@property(nonatomic, weak) id<ApplicationCommands> sceneController;
 
 @end
 

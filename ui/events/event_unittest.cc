@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -25,7 +25,6 @@
 
 #if defined(USE_X11)
 #include "ui/events/test/events_test_utils_x11.h"
-#include "ui/events/x/events_x_utils.h"  // nogncheck
 #include "ui/gfx/x/x11.h"        // nogncheck
 #include "ui/gfx/x/x11_types.h"  // nogncheck
 #endif
@@ -51,6 +50,8 @@ TEST(EventTest, NativeEvent) {
 }
 
 TEST(EventTest, GetCharacter) {
+  ui::ScopedKeyboardLayout keyboard_layout(ui::KEYBOARD_LAYOUT_ENGLISH_US);
+
   // Check if Control+Enter returns 10.
   KeyEvent keyev1(ET_KEY_PRESSED, VKEY_RETURN, EF_CONTROL_DOWN);
   EXPECT_EQ(10, keyev1.GetCharacter());
@@ -195,6 +196,8 @@ TEST(EventTest, SingleClickRightLeft) {
 }
 
 TEST(EventTest, KeyEvent) {
+  ui::ScopedKeyboardLayout keyboard_layout(ui::KEYBOARD_LAYOUT_ENGLISH_US);
+
   static const struct {
     KeyboardCode key_code;
     int flags;
@@ -270,7 +273,7 @@ TEST(EventTest, KeyEvent) {
     { VKEY_OEM_3, EF_SHIFT_DOWN, '~' },
   };
 
-  for (size_t i = 0; i < arraysize(kTestData); ++i) {
+  for (size_t i = 0; i < base::size(kTestData); ++i) {
     KeyEvent key(ET_KEY_PRESSED,
                  kTestData[i].key_code,
                  kTestData[i].flags);
@@ -431,15 +434,6 @@ TEST(EventTest, KeyEventCode) {
 #if defined(USE_X11)
 namespace {
 
-class MockTimestampServer : public ui::TimestampServer {
- public:
-  Time GetCurrentServerTime() override { return base_time_; }
-  void SetBaseTime(Time time) { base_time_ = time; }
-
- private:
-  Time base_time_ = 0;
-};
-
 void SetKeyEventTimestamp(XEvent* event, int64_t time) {
   event->xkey.time = time & UINT32_MAX;
 }
@@ -450,29 +444,7 @@ void AdvanceKeyEventTimestamp(XEvent* event) {
 
 }  // namespace
 
-class X11EventTest : public testing::Test {
- public:
-  X11EventTest() {}
-  ~X11EventTest() override {}
-
-  void SetUp() override {
-    SetTimestampServer(&server_);
-    SetUseFixedTimeForXEventTesting(true);
-  }
-
-  void TearDown() override {
-    SetTimestampServer(nullptr);
-    SetUseFixedTimeForXEventTesting(false);
-  }
-
- protected:
-  MockTimestampServer server_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(X11EventTest);
-};
-
-TEST_F(X11EventTest, AutoRepeat) {
+TEST(EventTest, AutoRepeat) {
   const uint16_t kNativeCodeA =
       ui::KeycodeConverter::DomCodeToNativeKeycode(DomCode::US_A);
   const uint16_t kNativeCodeB =
@@ -500,7 +472,6 @@ TEST_F(X11EventTest, AutoRepeat) {
 
   int64_t ticks_base =
       (base::TimeTicks::Now() - base::TimeTicks()).InMilliseconds() - 5000;
-  server_.SetBaseTime(static_cast<Time>(ticks_base));
   SetKeyEventTimestamp(native_event_a_pressed, ticks_base);
   SetKeyEventTimestamp(native_event_a_pressed_1500, ticks_base + 1500);
   SetKeyEventTimestamp(native_event_a_pressed_3000, ticks_base + 3000);
@@ -912,6 +883,19 @@ TEST(EventTest, OperatorEqual) {
   EXPECT_EQ(properties, *(m2.properties()));
 }
 
+// Verifies that ToString() generates something and doesn't crash. The specific
+// format isn't important.
+TEST(EventTest, ToStringNotEmpty) {
+  MouseEvent mouse_event(ET_MOUSE_PRESSED, gfx::Point(1, 2), gfx::Point(2, 3),
+                         EventTimeForNow(), EF_LEFT_MOUSE_BUTTON,
+                         EF_RIGHT_MOUSE_BUTTON);
+  EXPECT_FALSE(mouse_event.ToString().empty());
+
+  ScrollEvent scroll_event(ET_SCROLL, gfx::Point(1, 2), EventTimeForNow(),
+                           EF_NONE, 1.f, 2.f, 3.f, 4.f, 1);
+  EXPECT_FALSE(scroll_event.ToString().empty());
+}
+
 #if defined(OS_WIN)
 namespace {
 
@@ -1004,12 +988,12 @@ TEST_P(AltGraphEventTest, KeyEventAltGraphModifer) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     WM_KEY,
     AltGraphEventTest,
     ::testing::Combine(::testing::Values(WM_KEYDOWN, WM_KEYUP),
                        ::testing::ValuesIn(kAltGraphEventTestCases)));
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     WM_CHAR,
     AltGraphEventTest,
     ::testing::Combine(::testing::Values(WM_CHAR),

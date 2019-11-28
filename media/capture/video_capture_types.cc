@@ -5,7 +5,7 @@
 #include "media/capture/video_capture_types.h"
 
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
@@ -14,10 +14,9 @@ namespace media {
 
 // This list is ordered by precedence of use.
 static VideoPixelFormat const kSupportedCapturePixelFormats[] = {
-    PIXEL_FORMAT_I420,  PIXEL_FORMAT_YV12,  PIXEL_FORMAT_NV12,
-    PIXEL_FORMAT_NV21,  PIXEL_FORMAT_UYVY,  PIXEL_FORMAT_YUY2,
-    PIXEL_FORMAT_RGB24, PIXEL_FORMAT_RGB32, PIXEL_FORMAT_ARGB,
-    PIXEL_FORMAT_MJPEG,
+    PIXEL_FORMAT_I420, PIXEL_FORMAT_YV12,  PIXEL_FORMAT_NV12,
+    PIXEL_FORMAT_NV21, PIXEL_FORMAT_YUY2,  PIXEL_FORMAT_RGB24,
+    PIXEL_FORMAT_ARGB, PIXEL_FORMAT_MJPEG,
 };
 
 VideoCaptureFormat::VideoCaptureFormat()
@@ -60,11 +59,11 @@ bool VideoCaptureFormat::ComparePixelFormatPreference(
     const VideoPixelFormat& rhs) {
   auto* format_lhs = std::find(
       kSupportedCapturePixelFormats,
-      kSupportedCapturePixelFormats + arraysize(kSupportedCapturePixelFormats),
+      kSupportedCapturePixelFormats + base::size(kSupportedCapturePixelFormats),
       lhs);
   auto* format_rhs = std::find(
       kSupportedCapturePixelFormats,
-      kSupportedCapturePixelFormats + arraysize(kSupportedCapturePixelFormats),
+      kSupportedCapturePixelFormats + base::size(kSupportedCapturePixelFormats),
       rhs);
   return format_lhs < format_rhs;
 }

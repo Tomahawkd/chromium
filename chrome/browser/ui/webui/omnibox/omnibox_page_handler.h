@@ -16,7 +16,11 @@
 #include "components/omnibox/browser/autocomplete_controller_delegate.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "components/omnibox/browser/omnibox_controller_emitter.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 
 class AutocompleteController;
 class Profile;
@@ -26,22 +30,34 @@ class Profile;
 // AutocompleteController to OnResultChanged() and passes those results to
 // the OmniboxPage.
 class OmniboxPageHandler : public AutocompleteControllerDelegate,
-                           public mojom::OmniboxPageHandler {
+                           public mojom::OmniboxPageHandler,
+                           public OmniboxControllerEmitter::Observer {
  public:
   // OmniboxPageHandler is deleted when the supplied pipe is destroyed.
   OmniboxPageHandler(Profile* profile,
-                     mojo::InterfaceRequest<mojom::OmniboxPageHandler> request);
+                     mojo::PendingReceiver<mojom::OmniboxPageHandler> receiver);
   ~OmniboxPageHandler() override;
 
   // AutocompleteControllerDelegate overrides:
   void OnResultChanged(bool default_match_changed) override;
 
+  // OmniboxControllerEmitter::Observer overrides:
+  void OnOmniboxQuery(AutocompleteController* controller,
+                      const AutocompleteInput& input) override;
+  void OnOmniboxResultChanged(bool default_match_changed,
+                              AutocompleteController* controller) override;
+
   // mojom::OmniboxPageHandler overrides:
-  void SetClientPage(mojom::OmniboxPagePtr page) override;
+  void SetClientPage(mojo::PendingRemote<mojom::OmniboxPage> page) override;
+  // current_url may be invalid, in which case, autocomplete input's url won't
+  // be set.
   void StartOmniboxQuery(const std::string& input_string,
+                         bool reset_autocomplete_controller,
                          int32_t cursor_position,
+                         bool zero_suggest,
                          bool prevent_inline_autocomplete,
                          bool prefer_keyword,
+                         const std::string& current_url,
                          int32_t page_classification) override;
 
  private:
@@ -67,12 +83,15 @@ class OmniboxPageHandler : public AutocompleteControllerDelegate,
   AutocompleteInput input_;
 
   // Handle back to the page by which we can pass results.
-  mojom::OmniboxPagePtr page_;
+  mojo::Remote<mojom::OmniboxPage> page_;
 
   // The Profile* handed to us in our constructor.
   Profile* profile_;
 
-  mojo::Binding<mojom::OmniboxPageHandler> binding_;
+  mojo::Receiver<mojom::OmniboxPageHandler> receiver_;
+
+  ScopedObserver<OmniboxControllerEmitter, OmniboxControllerEmitter::Observer>
+      observer_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxPageHandler);
 };

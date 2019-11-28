@@ -3,29 +3,71 @@
 // found in the LICENSE file.
 
 // Namespace
-var importer;
+var importer = importer || {};
 
-importer.MediaImportHandler;
+/*
+ * Externs definition for  MediaImportHandler to allow for Closure compilation
+ * of its media import unittest and caller sites.
+ */
 
 /**
+ * Define MediaImportHandler constructor: handler for importing media from
+ * removable devices into the user's Drive.
+ *
+ * @interface
+ */
+importer.MediaImportHandler = class extends importer.ImportRunner {
+  /**
+   * @param {!ProgressCenter} progressCenter
+   * @param {!importer.HistoryLoader} historyLoader
+   * @param {!importer.DispositionChecker.CheckerFunction} dispositionChecker
+   * @param {!DriveSyncHandler} driveSyncHandler
+   */
+  constructor(
+      progressCenter, historyLoader, dispositionChecker, driveSyncHandler) {}
+};
+
+/**
+ * Define MediaImportHandler.ImportTask.
+ *
  * Note that this isn't an actual FileOperationManager.Task.  It currently uses
  * the FileOperationManager (and thus *spawns* an associated
  * FileOperationManager.CopyTask) but this is a temporary state of affairs.
  *
- * @constructor
- * @struct
+ * @extends {importer.TaskQueue.BaseTask}
+ * @interface
  */
-importer.MediaImportHandler.ImportTask = function() {};
+importer.MediaImportHandler.ImportTask = class {
+  /**
+   * @param {string} taskId
+   * @param {!importer.HistoryLoader} historyLoader
+   * @param {!importer.ScanResult} scanResult
+   * @param {!Promise<!DirectoryEntry>} directoryPromise
+   * @param {!importer.Destination} destination The logical destination.
+   * @param {!importer.DispositionChecker.CheckerFunction} dispositionChecker
+   */
+  constructor(
+      taskId, historyLoader, scanResult, directoryPromise, destination,
+      dispositionChecker) {}
 
-/** @struct */
-importer.MediaImportHandler.ImportTask.prototype = {
-  /** @return {!Promise} Resolves when task
-      is complete, or cancelled, rejects on error. */
+  /**
+   * @return {!Promise} Resolves when task is complete, or cancelled, rejects
+   *     on error.
+   */
   get whenFinished() {}
+
+  /**
+   * Requests cancellation of this task: an update will be sent to all observers
+   * of this task when the task is actually cancelled.
+   */
+  requestCancel() {}
 };
 
 /**
- * Request cancellation of this task.  An update will be sent to observers once
- * the task is actually cancelled.
+ * Auxiliary info for ENTRY_CHANGED notifications.
+ * @typedef {{
+ *   sourceUrl: string,
+ *   destination: !Entry
+ * }}
  */
-importer.MediaImportHandler.ImportTask.prototype.requestCancel = function() {};
+importer.MediaImportHandler.ImportTask.EntryChangedInfo;

@@ -18,9 +18,13 @@ class RenderTextTestApi {
  public:
   RenderTextTestApi(RenderText* render_text) : render_text_(render_text) {}
 
-  static cc::PaintFlags& GetRendererPaint(
+  static const cc::PaintFlags& GetRendererPaint(
       internal::SkiaTextRenderer* renderer) {
     return renderer->flags_;
+  }
+
+  static const SkFont& GetRendererFont(internal::SkiaTextRenderer* renderer) {
+    return renderer->font_;
   }
 
   // Callers must ensure that the associated RenderText object is a
@@ -29,9 +33,13 @@ class RenderTextTestApi {
     return render_text_->GetRunList();
   }
 
-  void DrawVisualText(internal::SkiaTextRenderer* renderer) {
+  void DrawVisualText(internal::SkiaTextRenderer* renderer, Range selection) {
     render_text_->EnsureLayout();
-    render_text_->DrawVisualText(renderer);
+    render_text_->DrawVisualText(renderer, selection);
+  }
+
+  const base::string16& GetLayoutText() {
+    return render_text_->GetLayoutText();
   }
 
   const BreakList<SkColor>& colors() const { return render_text_->colors(); }
@@ -81,13 +89,19 @@ class RenderTextTestApi {
   // Callers must ensure that the underlying RenderText object is a
   // RenderTextHarfBuzz instance.
   void SetGlyphWidth(float test_width) {
-    render_text_->SetGlyphWidthForTest(test_width);
+    render_text_->set_glyph_width_for_test(test_width);
   }
 
   static gfx::Rect ExpandToBeVerticallySymmetric(
       const gfx::Rect& rect,
       const gfx::Rect& display_rect) {
     return RenderText::ExpandToBeVerticallySymmetric(rect, display_rect);
+  }
+
+  void reset_cached_cursor_x() { render_text_->reset_cached_cursor_x(); }
+
+  int GetLineContainingYCoord(float text_y) {
+    return render_text_->GetLineContainingYCoord(text_y);
   }
 
  private:

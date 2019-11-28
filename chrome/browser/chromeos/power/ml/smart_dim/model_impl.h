@@ -7,21 +7,20 @@
 
 #include <memory>
 
+#include "base/cancelable_callback.h"
 #include "base/macros.h"
+#include "base/sequenced_task_runner.h"
+#include "base/time/time.h"
+#include "chrome/browser/chromeos/power/ml/smart_dim/ml_service_client.h"
 #include "chrome/browser/chromeos/power/ml/smart_dim/model.h"
 
 namespace assist_ranker {
-class ExamplePreprocessor;
 class ExamplePreprocessorConfig;
 }  // namespace assist_ranker
 
 namespace chromeos {
 namespace power {
 namespace ml {
-
-namespace tfnative_model {
-struct FixedAllocations;
-}  // namespace tfnative_model
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -30,7 +29,9 @@ enum class SmartDimModelResult {
   kPreprocessorInitializationFailed = 1,
   kPreprocessorOtherError = 2,
   kOtherError = 3,
-  kMaxValue = kOtherError
+  kMismatchedFeatureSizeError = 4,
+  kMlServiceInitializationFailedError = 5,
+  kMaxValue = kMlServiceInitializationFailedError
 };
 
 // These values are persisted to logs. Entries should not be renumbered and
@@ -39,7 +40,8 @@ enum class SmartDimParameterResult {
   kSuccess = 0,
   kUndefinedError = 1,
   kParsingError = 2,
-  kMaxValue = kParsingError
+  kUseDefaultValue = 3,
+  kMaxValue = kUseDefaultValue
 };
 
 // Real implementation of SmartDimModel that predicts whether an upcoming screen
@@ -50,27 +52,52 @@ class SmartDimModelImpl : public SmartDimModel {
   ~SmartDimModelImpl() override;
 
   // chromeos::power::ml::SmartDimModel overrides:
-  UserActivityEvent::ModelPrediction ShouldDim(
-      const UserActivityEvent::Features& features) override;
+  void RequestDimDecision(const UserActivityEvent::Features& features,
+                          DimDecisionCallback dim_callback) override;
+  void CancelPreviousRequest() override;
+
+  // Override MlServiceClient in a unit test environment where there is no real
+  // ML Service daemon to connect to.
+  void SetMlServiceClientForTesting(std::unique_ptr<MlServiceClient> client);
 
  private:
-  friend class SmartDimModelImplTest;
-  // Loads the preprocessor config if not already loaded.
+  // Loads the preprocessor config if not already loaded. Also initializes the
+  // MlServiceClient object.
   void LazyInitialize();
 
-  // Calculates inactivity score and returns result status. Also logs the status
-  // to UMA.
-  SmartDimModelResult CalculateInactivityScore(
+  // Pre-processes the input features into a vector, placed in
+  // |*vectorized_features|, which is consumable by the ML model.
+  //
+  // Returns SmartDimModelResult::kSuccess on success, and the appropriate
+  // error on failure.
+  SmartDimModelResult PreprocessInput(
       const UserActivityEvent::Features& features,
-      float* inactivity_score_out);
+      std::vector<float>* vectorized_features);
+
+  // Takes an |inactivity_score| returned from the ML model and, using that,
+  // returns a ModelPrediction.
+  UserActivityEvent::ModelPrediction CreatePredictionFromInactivityScore(
+      float inactivity_score);
+
+  // Calls the ML service Mojo API to perform an Smart Dim inference call,
+  // given |input_features|. The |callback| is supplied to the Mojo API,
+  // which in turn will call it to provide the result (a ModelPrediction), once
+  // the inference is complete.
+  void ShouldDim(const UserActivityEvent::Features& input_features,
+                 DimDecisionCallback callback);
 
   std::unique_ptr<assist_ranker::ExamplePreprocessorConfig>
       preprocessor_config_;
-  std::unique_ptr<assist_ranker::ExamplePreprocessor> preprocessor_;
 
-  // Fixed-size working memory provided to the inferencing function. Lazily
-  // initialized once so it isn't reallocated for every inference.
-  std::unique_ptr<tfnative_model::FixedAllocations> model_alloc_;
+  // Cancelable wrapper for the DimDecisionCallback passed by the client to
+  // RequestDimDecision().
+  base::CancelableOnceCallback<void(UserActivityEvent::ModelPrediction)>
+      cancelable_callback_;
+
+  // Pointer to the object that handles the ML service calls.
+  std::unique_ptr<MlServiceClient> ml_service_client_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(SmartDimModelImpl);
 };

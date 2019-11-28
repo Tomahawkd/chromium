@@ -6,7 +6,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "jni/DOMUtils_jni.h"
+#include "content/public/test/android/content_test_jni/DOMUtils_jni.h"
 #include "ui/android/view_android.h"
 
 using base::android::JavaParamRef;
@@ -22,9 +22,8 @@ jint JNI_DOMUtils_GetTopControlsShrinkBlinkHeight(
 
   // Android obtains the top control size via WebContentsDelegate.
   WebContentsDelegate* delegate = web_contents->GetDelegate();
-  float scale = web_contents->GetNativeView()->GetDipScale();
   return delegate && delegate->DoBrowserControlsShrinkRendererSize(web_contents)
-             ? delegate->GetTopControlsHeight() * scale
+             ? delegate->GetTopControlsHeight()
              : 0;
 }
 

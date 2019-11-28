@@ -19,6 +19,7 @@
 #include "net/base/filename_util.h"
 
 #if defined(OS_MACOSX)
+#include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #endif
 
@@ -68,13 +69,9 @@ WebURL RewriteAbsolutePathInCsswgTest(const std::string& utf8_url) {
 
 namespace content {
 
-void ExportLayoutTestSpecificPreferences(
-    const test_runner::TestPreferences& from,
-    WebPreferences* to) {
-  to->allow_universal_access_from_file_urls =
-      from.allow_universal_access_from_file_urls;
+void ExportWebTestSpecificPreferences(const test_runner::TestPreferences& from,
+                                      WebPreferences* to) {
   to->javascript_can_access_clipboard = from.java_script_can_access_clipboard;
-  to->xss_auditor_enabled = from.xss_auditor_enabled;
   to->editing_behavior = static_cast<EditingBehavior>(from.editing_behavior);
   to->default_font_size = from.default_font_size;
   to->minimum_font_size = from.minimum_font_size;
@@ -97,17 +94,16 @@ void ExportLayoutTestSpecificPreferences(
   to->spatial_navigation_enabled = from.spatial_navigation_enabled;
 }
 
-// Applies settings that differ between layout tests and regular mode. Some
+// Applies settings that differ between web tests and regular mode. Some
 // of the defaults are controlled via command line flags which are
-// automatically set for layout tests.
-void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
+// automatically set for web tests.
+void ApplyWebTestDefaultPreferences(WebPreferences* prefs) {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
-  prefs->allow_universal_access_from_file_urls = true;
+  prefs->allow_universal_access_from_file_urls = false;
   prefs->dom_paste_enabled = true;
   prefs->javascript_can_access_clipboard = true;
   prefs->xslt_enabled = true;
-  prefs->xss_auditor_enabled = false;
 #if defined(OS_MACOSX)
   prefs->editing_behavior = EDITING_BEHAVIOR_MAC;
 #else
@@ -141,12 +137,7 @@ void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
   prefs->minimum_logical_font_size = 9;
   prefs->accelerated_2d_canvas_enabled =
       command_line.HasSwitch(switches::kEnableAccelerated2DCanvas);
-  prefs->mock_scrollbars_enabled = false;
   prefs->smart_insert_delete_enabled = true;
-  prefs->minimum_accelerated_2d_canvas_size = 0;
-#if defined(OS_ANDROID)
-  prefs->text_autosizing_enabled = false;
-#endif
   prefs->viewport_enabled = command_line.HasSwitch(switches::kEnableViewport);
   prefs->default_minimum_page_scale_factor = 1.f;
   prefs->default_maximum_page_scale_factor = 4.f;
@@ -156,24 +147,22 @@ void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
 }
 
 base::FilePath GetBuildDirectory() {
+#if defined(OS_MACOSX)
+  if (base::mac::AmIBundled()) {
+    // If this is a bundled Content Shell.app, go up one from the outer bundle
+    // directory.
+    return base::mac::OuterBundlePath().DirName();
+  }
+#endif
+
   base::FilePath result;
   bool success = base::PathService::Get(base::DIR_EXE, &result);
   CHECK(success);
 
-#if defined(OS_MACOSX)
-  if (base::mac::AmIBundled()) {
-    // The bundled app executables live three levels down from the build
-    // directory, eg:
-    // Content Shell.app/Contents/Frameworks/Content Shell Helper.app
-    // And this helper executable lives an additional three levels down:
-    // Content Shell Helper.app/Contents/MacOS/Content Shell Helper
-    result = result.DirName().DirName().DirName().DirName().DirName().DirName();
-  }
-#endif
   return result;
 }
 
-WebURL RewriteLayoutTestsURL(const std::string& utf8_url, bool is_wpt_mode) {
+WebURL RewriteWebTestsURL(const std::string& utf8_url, bool is_wpt_mode) {
   if (is_wpt_mode) {
     WebURL rewritten_url = RewriteAbsolutePathInCsswgTest(utf8_url);
     if (!rewritten_url.IsEmpty())

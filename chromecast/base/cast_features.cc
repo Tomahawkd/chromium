@@ -148,6 +148,20 @@ const base::Feature kDisableIdleSocketsCloseOnMemoryPressure{
     "disable_idle_sockets_close_on_memory_pressure",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
+const base::Feature kEnableGeneralAudienceBrowsing{
+    "enable_general_audience_browsing", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Uses unified IPC QueryableData bindings backend instead of v8 injection.
+const base::Feature kUseQueryableDataBackend{"use_queryable_data_backend",
+                                             base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kEnableSideGesturePassThrough{
+    "enable_side_gesture_pass_through", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Lowers frame rate for headless
+const base::Feature kReduceHeadlessFrameRate{"reduce_headless_frame_rate",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
 // End Chromecast Feature definitions.
 const base::Feature* kFeatures[] = {
     &kAllowUserMediaAccess,
@@ -155,6 +169,10 @@ const base::Feature* kFeatures[] = {
     &kTripleBuffer720,
     &kSingleBuffer,
     &kDisableIdleSocketsCloseOnMemoryPressure,
+    &kEnableGeneralAudienceBrowsing,
+    &kUseQueryableDataBackend,
+    &kEnableSideGesturePassThrough,
+    &kReduceHeadlessFrameRate,
 };
 
 // An iterator for a base::DictionaryValue. Use an alias for brevity in loops.
@@ -181,7 +199,8 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
                            const base::ListValue& dcs_experiment_ids,
                            const std::string& cmd_line_enable_features,
                            const std::string& cmd_line_disable_features,
-                           const std::string& extra_enable_features) {
+                           const std::string& extra_enable_features,
+                           const std::string& extra_disable_features) {
   DCHECK(!base::FeatureList::GetInstance());
 
   // Set the experiments.
@@ -189,11 +208,13 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
 
   std::string all_enable_features =
       cmd_line_enable_features + "," + extra_enable_features;
+  std::string all_disable_features =
+      cmd_line_disable_features + "," + extra_disable_features;
 
   // Initialize the FeatureList from the command line.
   auto feature_list = std::make_unique<base::FeatureList>();
   feature_list->InitializeFromCommandLine(all_enable_features,
-                                          cmd_line_disable_features);
+                                          all_disable_features);
 
   // Override defaults from the DCS config.
   for (Iterator it(dcs_features); !it.IsAtEnd(); it.Advance()) {
@@ -217,7 +238,6 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
     const std::string& feature_name = it.key();
     auto* field_trial = base::FieldTrialList::FactoryGetFieldTrial(
         feature_name, k100PercentProbability, kDefaultDCSFeaturesGroup,
-        base::FieldTrialList::kNoExpirationYear, 1 /* month */, 1 /* day */,
         base::FieldTrial::SESSION_RANDOMIZED, nullptr);
 
     bool enabled;
@@ -244,7 +264,7 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
               feature_name, base::FeatureList::OVERRIDE_DISABLE_FEATURE)) {
         // Build a map of the FieldTrial parameters and associate it to the
         // FieldTrial.
-        base::FieldTrialParamAssociator::FieldTrialParams params;
+        base::FieldTrialParams params;
         for (Iterator p(*params_dict); !p.IsAtEnd(); p.Advance()) {
           std::string val;
           if (p.value().GetAsString(&val)) {
@@ -272,7 +292,7 @@ void InitializeFeatureList(const base::DictionaryValue& dcs_features,
 }
 
 bool IsFeatureEnabled(const base::Feature& feature) {
-  DCHECK(base::ContainsValue(GetFeatures(), &feature)) << feature.name;
+  DCHECK(base::Contains(GetFeatures(), &feature)) << feature.name;
   return base::FeatureList::IsEnabled(feature);
 }
 
@@ -301,7 +321,7 @@ base::DictionaryValue GetOverriddenFeaturesForStorage(
         if (param_val.GetAsBoolean(&bval)) {
           params->SetString(param_key, bval ? "true" : "false");
         } else if (param_val.GetAsInteger(&ival)) {
-          params->SetString(param_key, base::IntToString(ival));
+          params->SetString(param_key, base::NumberToString(ival));
         } else if (param_val.GetAsDouble(&dval)) {
           params->SetString(param_key, base::NumberToString(dval));
         } else if (param_val.GetAsString(&sval)) {

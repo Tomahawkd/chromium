@@ -4,23 +4,9 @@
 -BluetoothBlocklistTest.InvalidUUID
 -WebBluetoothDeviceIdTest.DefaultConstructor
 
-# These rely on chmod() for MakeFileUnread/writable(), https://crbug.com/759853.
--BaseFileTest.ReadonlyBaseFile
--BaseFileTest.RenameWithError
--BaseFileTest.RenameWithErrorInProgress
--BlobTransportControllerTest.Disk
--DownloadFile/DownloadFileTestWithRename.RenameError/0
--DownloadFile/DownloadFileTestWithRename.RenameError/1
--DownloadFile/DownloadFileTestWithRename.RenameWithErrorRetry/0
--DownloadFile/DownloadFileTestWithRename.RenameWithErrorRetry/1
-
 # https://crbug.com/761214
 -RendererAudioOutputStreamFactoryIntegrationTest.StreamIntegrationTest
 -WebContentsAudioInputStreamTest.MirroringNothingWithTargetChange/0
-
-# Flaky: https://crbug.com/760687.
--CacheStorageManagerTest.GetAllOriginsUsageWithOldIndex
--CacheStorageManagerTest.GetOriginSizeWithOldIndex
 
 # Flaky: https://crbug.com/759653.
 -RenderWidgetHostViewAuraTest.Resize
@@ -40,9 +26,6 @@
 # Failing: https://crbug.com/771701.
 -IndexedDBFactoryTest.DataFormatVersion
 
-# Flaky: https://crbug.com/776424.
--RenderWidgetHostViewGuestSurfaceTest.TestGuestSurface
-
 # Flaky: https://crbug.com/800877.
 -RenderWidgetHostViewAuraTest.SetCanScrollForWebMouseWheelEvent
 
@@ -61,12 +44,14 @@
 # Flaky, https://crbug.com/784449.
 -WebContentsAudioInputStreamTest.MirroringOneStreamAfterTargetChange*
 
-# Flaky, https://crbug.com/802375 and https://crbug.com/776424.
--RenderWidgetHostViewAuraOverscrollTest.GestureScrollDebounceOverscrolls
--RenderWidgetHostViewAuraOverscrollTest.GestureScrollDebounceTimerOverscroll
--RenderWidgetHostViewAuraOverscrollTest.TouchGestureEndDispatchedAfterOverscrollComplete
+# Flaky, https://crbug.com/802375.
 -RenderWidgetHostViewAuraTest.SyntheticFlingCancelAtTouchpadScrollBegin
 -RenderWidgetHostViewAuraTest.TimerBasedWheelEventPhaseInfo
 
 # Flaky, https://crbug.com/884250.
 -ReferrerSanitizerTest.SanitizesPolicyForNonEmptyReferrers
+
+# These tests require OSExchangeDataProviderFactory::CreateProvider to
+# be implemented: https://crbug.com/750934.
+-WebContentsViewAuraTest.DragDropFiles
+-WebContentsViewAuraTest.DragDropFilesOriginateFromRenderer

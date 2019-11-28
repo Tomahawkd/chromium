@@ -18,10 +18,8 @@
 #include "chrome/browser/chromeos/policy/cloud_external_data_manager_base_test_util.h"
 #include "chrome/browser/chromeos/policy/login_policy_test_base.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
-#include "chrome/browser/chromeos/policy/user_policy_manager_factory_chromeos.h"
 #include "chrome/browser/chromeos/policy/user_policy_test_helper.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -48,7 +46,7 @@ const char kExternalDataPath[] = "policy/blank.html";
 class UserCloudExternalDataManagerTest : public LoginPolicyTestBase {
  protected:
   void SetUp() override {
-    set_initialize_fake_merge_session(false);
+    fake_gaia_.set_initialize_fake_merge_session(false);
 
     LoginPolicyTestBase::SetUp();
   }
@@ -86,14 +84,14 @@ IN_PROC_BROWSER_TEST_F(UserCloudExternalDataManagerTest, FetchExternalData) {
   std::unique_ptr<base::DictionaryValue> policy =
       std::make_unique<base::DictionaryValue>();
   policy->SetKey(key::kWallpaperImage, base::Value(value));
-  user_policy_helper()->UpdatePolicy(*policy, base::DictionaryValue(), profile);
+  user_policy_helper()->SetPolicyAndWait(*policy, base::DictionaryValue(),
+                                         profile);
 
   UserCloudPolicyManagerChromeOS* policy_manager =
-      UserPolicyManagerFactoryChromeOS::GetCloudPolicyManagerForProfile(
-          profile);
+      profile->GetUserCloudPolicyManagerChromeOS();
   ASSERT_TRUE(policy_manager);
   ProfilePolicyConnector* policy_connector =
-      ProfilePolicyConnectorFactory::GetForBrowserContext(profile);
+      profile->GetProfilePolicyConnector();
   ASSERT_TRUE(policy_connector);
 
   {
@@ -112,10 +110,10 @@ IN_PROC_BROWSER_TEST_F(UserCloudExternalDataManagerTest, FetchExternalData) {
 
   base::RunLoop run_loop;
   std::unique_ptr<std::string> fetched_external_data;
-  policy_entry->external_data_fetcher->Fetch(base::Bind(
-      &test::ExternalDataFetchCallback,
-      &fetched_external_data,
-      run_loop.QuitClosure()));
+  base::FilePath file_path;
+  policy_entry->external_data_fetcher->Fetch(
+      base::BindOnce(&test::ExternalDataFetchCallback, &fetched_external_data,
+                     &file_path, run_loop.QuitClosure()));
   run_loop.Run();
 
   ASSERT_TRUE(fetched_external_data);

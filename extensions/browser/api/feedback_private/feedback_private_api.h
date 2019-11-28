@@ -41,7 +41,9 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
                               const std::string& category_tag,
                               const std::string& extra_diagnostics,
                               const GURL& page_url,
-                              api::feedback_private::FeedbackFlow flow);
+                              api::feedback_private::FeedbackFlow flow,
+                              bool from_assistant = false,
+                              bool include_bluetooth_logs = false);
 
   // BrowserContextKeyedAPI implementation.
   static BrowserContextKeyedAPIFactory<FeedbackPrivateAPI>*
@@ -66,7 +68,7 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
 };
 
 // Feedback strings.
-class FeedbackPrivateGetStringsFunction : public UIThreadExtensionFunction {
+class FeedbackPrivateGetStringsFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getStrings",
                              FEEDBACKPRIVATE_GETSTRINGS)
@@ -86,21 +88,20 @@ class FeedbackPrivateGetStringsFunction : public UIThreadExtensionFunction {
   static base::Closure* test_callback_;
 };
 
-class FeedbackPrivateGetUserEmailFunction : public UIThreadExtensionFunction {
+class FeedbackPrivateGetUserEmailFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getUserEmail",
-                             FEEDBACKPRIVATE_GETUSEREMAIL);
+                             FEEDBACKPRIVATE_GETUSEREMAIL)
 
  protected:
   ~FeedbackPrivateGetUserEmailFunction() override {}
   ResponseAction Run() override;
 };
 
-class FeedbackPrivateGetSystemInformationFunction
-    : public UIThreadExtensionFunction {
+class FeedbackPrivateGetSystemInformationFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getSystemInformation",
-                             FEEDBACKPRIVATE_GETSYSTEMINFORMATION);
+                             FEEDBACKPRIVATE_GETSYSTEMINFORMATION)
 
  protected:
   ~FeedbackPrivateGetSystemInformationFunction() override {}
@@ -112,10 +113,10 @@ class FeedbackPrivateGetSystemInformationFunction
 
 // This function only reads from actual log sources on Chrome OS. On other
 // platforms, it just returns EmptyResponse().
-class FeedbackPrivateReadLogSourceFunction : public UIThreadExtensionFunction {
+class FeedbackPrivateReadLogSourceFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.readLogSource",
-                             FEEDBACKPRIVATE_READLOGSOURCE);
+                             FEEDBACKPRIVATE_READLOGSOURCE)
 
  protected:
   ~FeedbackPrivateReadLogSourceFunction() override {}
@@ -128,32 +129,29 @@ class FeedbackPrivateReadLogSourceFunction : public UIThreadExtensionFunction {
 #endif  // defined(OS_CHROMEOS)
 };
 
-class FeedbackPrivateSendFeedbackFunction : public UIThreadExtensionFunction {
+class FeedbackPrivateSendFeedbackFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.sendFeedback",
-                             FEEDBACKPRIVATE_SENDFEEDBACK);
+                             FEEDBACKPRIVATE_SENDFEEDBACK)
 
  protected:
   ~FeedbackPrivateSendFeedbackFunction() override {}
   ResponseAction Run() override;
 
  private:
-  void OnAllLogsFetched(
-      scoped_refptr<feedback::FeedbackData> feedback_data,
-      bool send_histograms,
-      bool send_bluetooth_logs,
-      std::unique_ptr<FeedbackCommon::SystemLogsMap> sys_logs);
+  void OnAllLogsFetched(bool send_histograms,
+                        bool send_bluetooth_logs,
+                        scoped_refptr<feedback::FeedbackData> feedback_data);
   void OnCompleted(api::feedback_private::LandingPageType type, bool success);
 };
 
-class FeedbackPrivateLogSrtPromptResultFunction
-    : public UIThreadExtensionFunction {
+class FeedbackPrivateLoginFeedbackCompleteFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("feedbackPrivate.logSrtPromptResult",
-                             FEEDBACKPRIVATE_LOGSRTPROMPTRESULT);
+  DECLARE_EXTENSION_FUNCTION("feedbackPrivate.loginFeedbackComplete",
+                             FEEDBACKPRIVATE_LOGINFEEDBACKCOMPLETE)
 
  protected:
-  ~FeedbackPrivateLogSrtPromptResultFunction() override {}
+  ~FeedbackPrivateLoginFeedbackCompleteFunction() override {}
   ResponseAction Run() override;
 };
 
